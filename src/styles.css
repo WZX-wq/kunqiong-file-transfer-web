@@ -211,7 +211,7 @@ h1, h2, p { margin-top: 0; }
 .collection-history-list { overflow: hidden; background: #fff; border: 1px solid #e0ebe7; border-radius: 12px; box-shadow: 0 15px 45px rgba(40,84,74,.05); }
 .collection-history-row { display: flex; align-items: center; gap: 12px; min-height: 70px; padding: 12px 17px; border-bottom: 1px solid #edf3f0; }
 .collection-history-row:last-child { border-bottom: 0; }
-.collection-history-row > div { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
+.collection-history-row > div:not(.collection-history-actions) { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
 .collection-history-row strong { overflow: hidden; color: #3a5750; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .collection-history-row div span { color: #9baca7; font-size: 11px; }
 .collection-history-actions { display: flex; align-items: center; justify-content: flex-end; flex: none; gap: 7px; margin-left: auto; }
