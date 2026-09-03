@@ -310,6 +310,19 @@ app.get('/api/collections/manage/:manageToken', (req, res) => {
   res.json({ collection: managerCollection(task, req) })
 })
 
+app.delete('/api/collections/manage/:manageToken', (req, res, next) => {
+  try {
+    const index = metadata.collections.findIndex((item) => item.manageToken === req.params.manageToken)
+    if (index < 0) return res.status(404).json({ message: '管理链接不存在' })
+    const [task] = metadata.collections.splice(index, 1)
+    removeDirectory(path.join(collectionsRoot, task.id))
+    persistMetadata()
+    res.json({ ok: true })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.get('/api/collections/manage/:manageToken/download', async (req, res, next) => {
   try {
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)

@@ -236,6 +236,27 @@ function WorkspaceApp() {
     setCollectionManageData(data.collection)
   }
 
+  const destroyCollection = async (target) => {
+    const manageToken = target?.manageToken || getManageToken(target?.manageUrl)
+    if (!manageToken) {
+      setToast('这条收集任务没有可用的管理链接')
+      return
+    }
+    if (!window.confirm('销毁后，收集链接和已提交文件都将失效，确定销毁本次任务吗？')) return
+    try {
+      await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`, { method: 'DELETE' })
+      replaceRecords((current) => current.filter((record) => {
+        const normalized = normalizeRecord(record)
+        return !(normalized.scope === 'my_collections' && normalized.manageToken === manageToken)
+      }))
+      setCollectionResult(null)
+      setCollectionManageData(null)
+      setToast('收集任务已销毁')
+    } catch (error) {
+      setToast(error.message)
+    }
+  }
+
   const lookupShare = (resolvedData) => {
     if (resolvedData?.share) {
       setRetrieveResult(resolvedData)
@@ -369,12 +390,13 @@ function WorkspaceApp() {
             onCopy={copyValue}
             onCopyQrImage={copyQrImage}
             onOpenManager={openCollectionManager}
+            onDestroy={destroyCollection}
             onCloseManager={() => setCollectionManageData(null)}
             onRefreshManager={refreshCollectionManager}
             onRefreshRecords={refreshRecords}
           />
         )}
-        {activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} />}
+        {activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} />}
       </main>
 
       <footer className="page-footer">
@@ -549,7 +571,7 @@ function CollectionLimitInfo({ allowedTypes, maxFileSizeMb, compact = false }) {
   )
 }
 
-function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onCloseManager, onRefreshManager, onRefreshRecords }) {
+function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onDestroy, onCloseManager, onRefreshManager, onRefreshRecords }) {
   const [form, setForm] = useState(createDefaultCollectionForm)
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const collectionRecords = records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
@@ -575,7 +597,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
       {manageLoading ? (
         <div className="collection-files-card collection-loading"><span className="loading-dot" /><p>正在加载已收文件...</p></div>
       ) : manageData ? (
-        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} />
+        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} onDestroy={onDestroy} />
       ) : (
         <div className={`collect-builder ${result ? 'created' : ''}`}>
           {!result ? (
@@ -600,7 +622,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
               </div>
             </>
           ) : (
-            <CollectionSuccess result={result} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onOpenManager={onOpenManager} onBack={backToCreate} />
+            <CollectionSuccess result={result} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onOpenManager={onOpenManager} onDestroy={onDestroy} onBack={backToCreate} />
           )}
         </div>
       )}
@@ -619,7 +641,10 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
                   <span>{record.meta}</span>
                   <CollectionLimitInfo allowedTypes={record.allowedTypes} maxFileSizeMb={record.maxFileSizeMb} compact />
                 </div>
-                <button className="secondary-button" disabled={!recordManageUrl(record) && !record.publicUrl && !record.shareUrl} onClick={() => onOpenManager(recordManageUrl(record) || record.publicUrl || record.shareUrl)}><FolderOpen size={15} /> 查看已收文件</button>
+                <div className="collection-history-actions">
+                  <button className="secondary-button" disabled={!recordManageUrl(record) && !record.publicUrl && !record.shareUrl} onClick={() => onOpenManager(recordManageUrl(record) || record.publicUrl || record.shareUrl)}><FolderOpen size={15} /> 查看已收文件</button>
+                  <button className="secondary-button danger-lite" disabled={!recordManageUrl(record)} onClick={() => onDestroy(record)}><Trash2 size={15} /> 销毁任务</button>
+                </div>
               </div>
             ))}
           </div>
@@ -630,7 +655,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
   )
 }
 
-function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onBack }) {
+function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onDestroy, onBack }) {
   const [qrOpen, setQrOpen] = useState(false)
 
   return (
@@ -651,6 +676,7 @@ function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onBac
         <div className="result-actions">
           <button className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回创建</button>
           <button className="secondary-button" onClick={() => onOpenManager(result.manageUrl)}><FolderOpen size={15} /> 查看已收文件</button>
+          <button className="secondary-button danger-lite" onClick={() => onDestroy(result)}><Trash2 size={15} /> 销毁本次任务</button>
           <button className="primary-button" onClick={() => onCopy(result.manageUrl)}><KeyRound size={15} /> 复制管理链接</button>
         </div>
       </div>
@@ -669,7 +695,7 @@ function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onBac
   )
 }
 
-function CollectionFilesPanel({ data, onClose, onRefresh }) {
+function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy }) {
   return (
     <div className="collection-files-card">
       <div className="collection-files-header">
@@ -682,6 +708,7 @@ function CollectionFilesPanel({ data, onClose, onRefresh }) {
         <div className="collection-files-actions">
           <button className="secondary-button" onClick={onClose}><ArrowLeft size={15} /> 返回任务</button>
           <button className="ghost-icon" aria-label="刷新已收文件" onClick={onRefresh}><RefreshCw size={17} /></button>
+          <button className="secondary-button danger-lite" onClick={() => onDestroy(data)}><Trash2 size={15} /> 销毁本次任务</button>
         </div>
       </div>
       {data.submissions.length ? (
@@ -790,19 +817,34 @@ function CollectionSubmitPage({ token }) {
 function CollectionManagePage({ token }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
+  const [destroyed, setDestroyed] = useState(false)
   useEffect(() => {
     apiRequest(`/api/collections/manage/${token}`).then((result) => {
       setData(result.collection)
       saveLocalRecord(createCollectionRecord(result.collection, 'my_collections'))
     }).catch((err) => setError(err.message))
   }, [token])
+  const destroyTask = async () => {
+    if (!window.confirm('销毁后，收集链接和已提交文件都将失效，确定销毁本次任务吗？')) return
+    try {
+      await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'DELETE' })
+      writeRecords(readRecords().filter((record) => {
+        const normalized = normalizeRecord(record)
+        return !(normalized.scope === 'my_collections' && normalized.manageToken === token)
+      }))
+      setDestroyed(true)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
   if (error) return <PublicShell><StateBlock title="管理链接不可用" detail={error} /></PublicShell>
+  if (destroyed) return <PublicShell><StateBlock title="收集任务已销毁" detail="收集链接和已提交文件均已失效。" /></PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   return (
     <PublicShell>
       <div className="public-card manage-card">
         <p className="eyebrow">收集任务管理</p>
-        <h1>{data.title}</h1>
+        <div className="manage-title-row"><h1>{data.title}</h1><button className="secondary-button danger-lite" onClick={destroyTask}><Trash2 size={15} /> 销毁本次任务</button></div>
         <p className="public-copy">{data.submissions.length} 份提交 · 状态：{data.status === 'active' ? '进行中' : '已截止'}</p>
         <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
         <div className="manage-list">
@@ -895,7 +937,7 @@ const RECORD_STATUS_FILTERS = [
   ['expired', '已过期/已截止'],
 ]
 
-function RecordsView({ records, onCopy, onDelete, onClear, onRefresh, onOpen }) {
+function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, onRefresh, onOpen }) {
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
@@ -1084,7 +1126,11 @@ function RecordsView({ records, onCopy, onDelete, onClear, onRefresh, onOpen }) 
                   <div className="record-menu row-menu" onClick={(event) => event.stopPropagation()}>
                     <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
                     <button disabled={!link} onClick={runMenuAction(() => onOpen(record))}><ExternalLink size={14} /> 打开链接</button>
-                    <button className="danger" onClick={runMenuAction(() => onDelete(record.id))}><Trash2 size={14} /> 删除记录</button>
+                    {record.scope === 'my_collections' ? (
+                      <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onDestroyCollection(record))}><Trash2 size={14} /> 销毁收集任务</button>
+                    ) : (
+                      <button className="danger" onClick={runMenuAction(() => onDelete(record.id))}><Trash2 size={14} /> 删除记录</button>
+                    )}
                   </div>
                 )}
               </div>

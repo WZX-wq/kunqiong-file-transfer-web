@@ -214,7 +214,8 @@ h1, h2, p { margin-top: 0; }
 .collection-history-row > div { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
 .collection-history-row strong { overflow: hidden; color: #3a5750; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .collection-history-row div span { color: #9baca7; font-size: 11px; }
-.collection-history-row .secondary-button { flex: none; min-height: 35px; padding: 0 12px; font-size: 11px; }
+.collection-history-actions { display: flex; align-items: center; flex: none; gap: 7px; }
+.collection-history-actions .secondary-button { min-height: 35px; padding: 0 12px; font-size: 11px; }
 .records-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0 6px 13px; color: #6f8981; border-bottom: 1px solid #dfeae6; font-size: 13px; }
 .records-toolbar strong { color: var(--accent); }
 .records-toolbar button { display: grid; place-items: center; color: #769189; background: transparent; }
@@ -364,6 +365,8 @@ h1, h2, p { margin-top: 0; }
 .loading-dot { width: 22px; height: 22px; border: 3px solid #dbece6; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .manage-card { width: min(760px, 100%); }
+.manage-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; }
+.manage-title-row h1 { min-width: 0; }
 .manage-list { margin: 22px 0; overflow: hidden; border: 1px solid #e1ece8; border-radius: 9px; }
 .manage-submission { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 16px; border-bottom: 1px solid #edf3f0; }
 .manage-submission:last-child { border-bottom: 0; }
@@ -426,8 +429,11 @@ h1, h2, p { margin-top: 0; }
   .collection-files-card { padding: 20px 17px; }
   .collection-files-header { flex-direction: column; gap: 15px; }
   .collection-files-actions { width: 100%; justify-content: space-between; }
+  .manage-title-row { align-items: stretch; flex-direction: column; }
+  .manage-title-row .secondary-button { align-self: flex-start; }
   .collection-history-row { align-items: flex-start; flex-wrap: wrap; }
-  .collection-history-row .secondary-button { margin-left: 48px; }
+  .collection-history-actions { width: calc(100% - 48px); margin-left: 48px; }
+  .collection-history-actions .secondary-button { flex: 1; }
   .page-footer { width: calc(100% - 28px); align-items: flex-start; flex-direction: column; gap: 13px; }
   .page-footer div { gap: 12px; }
   .queue-actions, .result-actions { flex-wrap: wrap; }
