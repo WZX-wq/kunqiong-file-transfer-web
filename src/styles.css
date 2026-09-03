@@ -243,11 +243,6 @@ h1, h2, p { margin-top: 0; }
 .record-menu button:disabled { cursor: not-allowed; opacity: .45; }
 .records-page { width: min(1040px, 100%); }
 .records-heading { align-items: center; margin-bottom: 18px; }
-.record-summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
-.record-summary-card { display: flex; align-items: center; justify-content: space-between; min-height: 70px; padding: 14px 16px; color: #6d8981; background: rgba(255,255,255,.78); border: 1px solid #dfeae6; border-radius: 10px; box-shadow: 0 12px 34px rgba(40,84,74,.05); text-align: left; }
-.record-summary-card:hover, .record-summary-card.active { color: var(--accent-dark); border-color: #b8dbd2; background: #f6fbf9; transform: translateY(-1px); }
-.record-summary-card span { font-size: 12px; font-weight: 700; }
-.record-summary-card strong { color: var(--ink); font-family: 'DM Sans', 'Noto Sans SC', sans-serif; font-size: 24px; line-height: 1; }
 .record-scope-tabs { display: flex; gap: 7px; margin-bottom: 12px; padding: 6px; overflow-x: auto; background: #fff; border: 1px solid #e0ebe7; border-radius: 12px; box-shadow: 0 13px 38px rgba(40,84,74,.05); }
 .record-scope-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 12px; color: #718982; background: transparent; border-radius: 8px; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .record-scope-tabs button strong { color: #94aaa5; font-family: 'DM Sans', sans-serif; font-size: 12px; }
@@ -255,10 +250,15 @@ h1, h2, p { margin-top: 0; }
 .record-scope-tabs button.active strong { color: var(--accent); }
 .records-filter-panel { margin-bottom: 12px; padding: 14px; background: #fff; border: 1px solid #e0ebe7; border-radius: 12px; box-shadow: 0 15px 45px rgba(40,84,74,.05); }
 .records-filter-row { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; }
-.record-filter-field { display: flex; flex-direction: column; gap: 7px; min-width: 150px; color: #68847d; font-size: 11px; font-weight: 800; }
+.record-filter-field { display: flex; flex-direction: column; gap: 7px; min-width: 154px; color: #68847d; font-size: 11px; font-weight: 800; }
 .record-filter-field select, .record-date-range input { height: 38px; padding: 0 11px; color: #496b62; background: #fbfdfc; border: 1px solid #dbe8e4; border-radius: 7px; outline: 0; font-size: 12px; font-weight: 600; }
 .record-filter-field select:focus, .record-date-range input:focus { border-color: #76b6a5; background: #fff; }
+.record-date-field { min-width: 270px; }
 .record-date-range { display: flex; gap: 8px; }
+.record-date-range input { min-width: 0; flex: 1; }
+.record-filter-actions { display: flex; align-items: flex-end; gap: 8px; margin-left: auto; }
+.record-filter-actions .secondary-button { min-height: 38px; }
+.filter-reset-button:disabled { color: #a4b4af; background: #f5f8f7; border-color: #e5eeeb; cursor: not-allowed; opacity: 1; }
 .records-bulk-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 13px; padding-top: 12px; border-top: 1px solid #edf3f0; }
 .record-select-all { display: flex; align-items: center; gap: 8px; color: #819891; font-size: 12px; font-weight: 700; }
 .record-select-all input, .record-check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
@@ -388,7 +388,6 @@ h1, h2, p { margin-top: 0; }
   .value-item:nth-child(2) { border-right: 0; }
   .value-item:nth-child(-n + 2) { border-bottom: 1px solid #e2ece9; padding-bottom: 15px; }
   .value-item:nth-child(n + 3) { padding-top: 2px; }
-  .record-summary-grid { grid-template-columns: repeat(2, 1fr); }
   .record-row-enhanced { grid-template-columns: 22px 36px minmax(0, 1fr) 116px 84px 34px; }
   .record-row-enhanced .record-code { display: none; }
 }
@@ -405,7 +404,6 @@ h1, h2, p { margin-top: 0; }
   .page-content { width: min(100% - 28px, 600px); padding-top: 31px; }
   .section-intro, .workspace-heading { align-items: flex-start; flex-direction: column; gap: 17px; }
   .section-intro h1, .workspace-heading h1 { font-size: 28px; }
-  .retrieve-trigger { align-self: flex-start; }
   .upload-panel, .upload-panel.has-files { min-height: 420px; padding: 20px 17px; }
   .upload-choice { flex-direction: column; width: 100%; }
   .upload-choice button { width: 100%; }
@@ -446,12 +444,12 @@ h1, h2, p { margin-top: 0; }
   .record-type { padding: 4px 6px; }
   .record-menu { right: -4px; min-width: 136px; }
   .records-heading { margin-bottom: 14px; }
-  .record-summary-grid { gap: 8px; }
-  .record-summary-card { min-height: 62px; padding: 12px; }
-  .record-summary-card strong { font-size: 20px; }
   .record-scope-tabs { margin-left: -2px; margin-right: -2px; }
   .records-filter-row { align-items: stretch; flex-direction: column; }
   .record-filter-field { min-width: 0; width: 100%; }
+  .record-date-field { min-width: 0; }
+  .record-filter-actions { width: 100%; margin-left: 0; }
+  .record-filter-actions .secondary-button { flex: 1; }
   .record-date-range { width: 100%; }
   .record-date-range input { flex: 1; min-width: 0; }
   .records-bulk-row { align-items: stretch; flex-direction: column; }

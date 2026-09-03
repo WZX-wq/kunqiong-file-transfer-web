@@ -366,7 +366,7 @@ function WorkspaceApp() {
             onRefreshRecords={refreshRecords}
           />
         )}
-        {activeView === 'records' && <RecordsView records={records} onRetrieve={() => setRetrieveOpen(true)} onCopy={copyValue} onDelete={deleteRecord} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} />}
+        {activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} />}
       </main>
 
       <footer className="page-footer">
@@ -845,11 +845,11 @@ function SettingsModal({ settings, setSettings, onClose, onSave }) {
 }
 
 const RECORD_SCOPE_TABS = [
-  { key: 'all', label: '全部', shortLabel: '全部记录' },
-  { key: 'my_sent', label: '我发送的', shortLabel: '发出分享' },
-  { key: 'sent_to_me', label: '发给我的', shortLabel: '收到分享' },
-  { key: 'my_collections', label: '我收集的', shortLabel: '收集任务' },
-  { key: 'collect_from_me', label: '向我收集的', shortLabel: '我的提交' },
+  { key: 'all', label: '全部' },
+  { key: 'my_sent', label: '我发送的' },
+  { key: 'sent_to_me', label: '发给我的' },
+  { key: 'my_collections', label: '我收集的' },
+  { key: 'collect_from_me', label: '向我收集的' },
 ]
 
 const RECORD_DATE_FILTERS = [
@@ -867,7 +867,7 @@ const RECORD_STATUS_FILTERS = [
   ['expired', '已过期/已截止'],
 ]
 
-function RecordsView({ records, onRetrieve, onCopy, onDelete, onClear, onRefresh, onOpen }) {
+function RecordsView({ records, onCopy, onDelete, onClear, onRefresh, onOpen }) {
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
@@ -960,6 +960,14 @@ function RecordsView({ records, onRetrieve, onCopy, onDelete, onClear, onRefresh
     setSelectedIds(new Set())
   }
 
+  const hasRecordFilters = dateFilter !== 'all' || Boolean(dateFrom) || Boolean(dateTo) || statusFilter !== 'all'
+  const resetRecordFilters = () => {
+    setDateFilter('all')
+    setDateFrom('')
+    setDateTo('')
+    setStatusFilter('all')
+  }
+
   return (
     <section className="workspace-page records-page">
       <div className="workspace-heading records-heading">
@@ -968,16 +976,6 @@ function RecordsView({ records, onRetrieve, onCopy, onDelete, onClear, onRefresh
           <h1>收发记录</h1>
           <p>按发送、接收、收集和提交归档最近活动。</p>
         </div>
-        <button className="retrieve-trigger" onClick={onRetrieve}><KeyRound size={17} /><span>输入取件码</span><ArrowRight size={15} /></button>
-      </div>
-
-      <div className="record-summary-grid">
-        {RECORD_SCOPE_TABS.slice(1).map((tab) => (
-          <button key={tab.key} className={`record-summary-card ${scopeFilter === tab.key ? 'active' : ''}`} onClick={() => setScopeFilter(tab.key)}>
-            <span>{tab.shortLabel}</span>
-            <strong>{recordCounts[tab.key] || 0}</strong>
-          </button>
-        ))}
       </div>
 
       <div className="record-scope-tabs" role="tablist" aria-label="记录分类">
@@ -998,9 +996,12 @@ function RecordsView({ records, onRetrieve, onCopy, onDelete, onClear, onRefresh
             </select>
           </label>
           {dateFilter === 'range' && (
-            <div className="record-date-range">
-              <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} aria-label="开始日期" />
-              <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} aria-label="结束日期" />
+            <div className="record-filter-field record-date-field">
+              <span>日期范围</span>
+              <div className="record-date-range">
+                <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} aria-label="开始日期" />
+                <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} aria-label="结束日期" />
+              </div>
             </div>
           )}
           <label className="record-filter-field">
@@ -1009,7 +1010,10 @@ function RecordsView({ records, onRetrieve, onCopy, onDelete, onClear, onRefresh
               {RECORD_STATUS_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
-          <button className="secondary-button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</button>
+          <div className="record-filter-actions">
+            <button className="secondary-button filter-reset-button" onClick={resetRecordFilters} disabled={!hasRecordFilters}><RotateCcw size={15} /> 重置</button>
+            <button className="secondary-button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</button>
+          </div>
         </div>
         <div className="records-bulk-row">
           <label className="record-select-all">
@@ -1250,24 +1254,52 @@ function matchesRecordScope(record, scope) {
 
 function matchesRecordDate(record, dateFilter, dateFrom, dateTo) {
   if (dateFilter === 'all') return true
-  const date = new Date(record.createdAt || record.updatedAt)
+  const date = new Date(record.createdAt)
   if (Number.isNaN(date.getTime())) return false
-  const now = new Date()
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  if (dateFilter === 'today') return date >= startToday
-  if (dateFilter === '7d') return date >= new Date(now.getTime() - 7 * 86400000)
-  if (dateFilter === '30d') return date >= new Date(now.getTime() - 30 * 86400000)
-  if (dateFilter === 'range') {
-    const from = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null
-    const to = dateTo ? new Date(`${dateTo}T23:59:59`) : null
-    if (from && date < from) return false
-    if (to && date > to) return false
+  const today = startOfLocalDay(new Date())
+  let from = null
+  let to = null
+  if (dateFilter === 'today') {
+    from = today
+    to = addLocalDays(today, 1)
+  } else if (dateFilter === '7d') {
+    from = addLocalDays(today, -6)
+    to = addLocalDays(today, 1)
+  } else if (dateFilter === '30d') {
+    from = addLocalDays(today, -29)
+    to = addLocalDays(today, 1)
   }
+  if (dateFilter === 'range') {
+    from = parseLocalDate(dateFrom)
+    const endDate = parseLocalDate(dateTo)
+    to = endDate ? addLocalDays(endDate, 1) : null
+  }
+  if (from && date < from) return false
+  if (to && date >= to) return false
   return true
 }
 
 function matchesRecordStatus(record, statusFilter) {
-  return statusFilter === 'all' || recordStatusGroup(record) === statusFilter
+  const group = recordStatusGroup(record)
+  return statusFilter === 'all' || group === statusFilter || (statusFilter === 'active' && group === 'expiring')
+}
+
+function startOfLocalDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function addLocalDays(date, days) {
+  const result = new Date(date)
+  result.setDate(result.getDate() + days)
+  return result
+}
+
+function parseLocalDate(value) {
+  if (!value) return null
+  const [year, month, day] = value.split('-').map(Number)
+  if (![year, month, day].every(Number.isFinite)) return null
+  const date = new Date(year, month - 1, day)
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null
 }
 
 function recordStatusGroup(record) {
