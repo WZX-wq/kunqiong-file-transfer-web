@@ -25,6 +25,8 @@ import {
   LockKeyhole,
   LogOut,
   Mail,
+  Megaphone,
+  MessageCircle,
   Menu,
   MoreHorizontal,
   Pause,
@@ -104,6 +106,8 @@ function WorkspaceApp() {
   const [authUser, setAuthUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authMenuOpen, setAuthMenuOpen] = useState(false)
+  const [messageOpen, setMessageOpen] = useState(false)
+  const [messages, setMessages] = useState(() => readMessages(null))
 
   const refreshAuthUser = async () => {
     setAuthLoading(true)
@@ -142,6 +146,10 @@ function WorkspaceApp() {
     window.addEventListener('click', closeMenu)
     return () => window.removeEventListener('click', closeMenu)
   }, [authMenuOpen])
+
+  useEffect(() => {
+    setMessages(readMessages(authUser))
+  }, [authUser?.id])
 
   const addFiles = (incoming) => {
     const nextFiles = Array.from(incoming || []).map((file, index) => ({
@@ -228,6 +236,7 @@ function WorkspaceApp() {
       await apiRequest('/api/auth/logout', { method: 'POST' })
       setAuthUser(null)
       setAuthMenuOpen(false)
+      setMessageOpen(false)
       setToast('已退出登录')
     } catch (error) {
       setToast(error.message)
@@ -244,17 +253,26 @@ function WorkspaceApp() {
 
   const openSettings = () => {
     setAuthMenuOpen(false)
+    setMessageOpen(false)
     window.location.href = '/settings/profile'
   }
 
-  const saveProfile = async (nickname) => {
+  const saveProfile = async (profile) => {
     const data = await apiRequest('/api/auth/profile', {
       method: 'PATCH',
-      body: JSON.stringify({ nickname }),
+      body: JSON.stringify(profile),
     })
     setAuthUser(data.user || null)
-    setToast('个人资料已保存')
+    setToast(profile.avatar === null || profile.avatar ? '头像已更新' : '个人资料已保存')
     return data.user
+  }
+
+  const updateMessages = (updater) => {
+    setMessages((current) => {
+      const next = typeof updater === 'function' ? updater(current) : updater
+      writeMessages(authUser, next)
+      return next
+    })
   }
 
   const saveRecord = (record) => {
@@ -424,6 +442,7 @@ function WorkspaceApp() {
           <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
         </nav>
         <div className="topbar-actions">
+          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); setMessageOpen((current) => !current) }} onClose={() => setMessageOpen(false)} onMarkRead={(id) => updateMessages((current) => current.map((message) => message.id === id ? { ...message, unread: false } : message))} onMarkAllRead={() => updateMessages((current) => current.map((message) => ({ ...message, unread: false })))} onLogin={startLogin} />
           <button className="merchant-button" onClick={() => setToast('企业版将在后续版本开放')}><Sparkles size={15} /> 企业版</button>
           <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
           <button className="mobile-menu" aria-label="打开菜单"><Menu size={20} /></button>
@@ -431,7 +450,7 @@ function WorkspaceApp() {
       </header>
 
       <main className="page-content">
-        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(window.location.pathname)} onLogin={startLogin} onLogout={logout} onSaveProfile={saveProfile} />}
+        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(window.location.pathname)} onLogin={startLogin} onLogout={logout} onBack={() => { window.location.href = '/' }} onSaveProfile={saveProfile} />}
         {!isSettingsRoute && activeView === 'send' && (
           <SendView
             files={files}
@@ -1246,16 +1265,22 @@ function settingsSectionForPath(pathname = '') {
   return SETTINGS_NAV_ITEMS.some((item) => item.key === section) ? section : 'profile'
 }
 
-function SettingsPage({ user, loading, section, onLogin, onLogout, onSaveProfile }) {
+function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile }) {
   const [nickname, setNickname] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
   const [noticeSettings, setNoticeSettings] = useState(DEFAULT_NOTICE_SETTINGS)
+  const [avatarPreview, setAvatarPreview] = useState('')
+  const [avatarError, setAvatarError] = useState('')
+  const [savingAvatar, setSavingAvatar] = useState(false)
+  const avatarInputRef = useRef(null)
 
   useEffect(() => {
     if (!user?.id) return
     setNickname(user.nickname || user.username || '')
     setNoticeSettings(readNoticeSettings(user))
+    setAvatarPreview('')
+    setAvatarError('')
   }, [user?.id])
 
   const updateNoticeSetting = (key) => {
@@ -1273,11 +1298,50 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onSaveProfile
     setSavingProfile(true)
     setProfileError('')
     try {
-      await onSaveProfile(nextNickname)
+      await onSaveProfile({ nickname: nextNickname })
     } catch (error) {
       setProfileError(error.message || '保存失败，请稍后重试')
     } finally {
       setSavingProfile(false)
+    }
+  }
+
+  const saveAvatarFile = async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setAvatarError('')
+    if (!file.type.startsWith('image/')) {
+      setAvatarError('请选择图片文件')
+      return
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setAvatarError('头像图片不能超过 2 MB')
+      return
+    }
+    setSavingAvatar(true)
+    try {
+      const dataUrl = await resizeAvatarFile(file)
+      setAvatarPreview(dataUrl)
+      await onSaveProfile({ avatar: dataUrl })
+      setAvatarPreview('')
+    } catch (error) {
+      setAvatarPreview('')
+      setAvatarError(error.message || '头像保存失败，请稍后重试')
+    } finally {
+      setSavingAvatar(false)
+    }
+  }
+
+  const restoreProviderAvatar = async () => {
+    setAvatarError('')
+    setSavingAvatar(true)
+    try {
+      await onSaveProfile({ avatar: null })
+    } catch (error) {
+      setAvatarError(error.message || '头像恢复失败，请稍后重试')
+    } finally {
+      setSavingAvatar(false)
     }
   }
 
@@ -1320,12 +1384,18 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onSaveProfile
         <div className="settings-panel">
           {section === 'profile' && (
             <>
-              <SettingsPanelHeader eyebrow="账户设置" title="个人资料" detail="管理在鲲穹文件传输中展示的账户信息。" />
+              <SettingsPanelHeader eyebrow="账户设置" title="个人资料" detail="管理在鲲穹文件传输中展示的账户信息。" onBack={onBack} />
               <div className="settings-form">
                 <div className="settings-profile-row">
-                  <div className="settings-row-label"><strong>头像</strong><span>头像由统一登录中心提供</span></div>
-                  <UserAvatar user={user} />
+                  <div className="settings-row-label"><strong>头像</strong><span>上传后仅在当前鲲穹账户中使用</span></div>
+                  <div className="settings-avatar-actions">
+                    <UserAvatar user={user} overrideSrc={avatarPreview} />
+                    <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={saveAvatarFile} />
+                    <button className="settings-row-action" onClick={() => avatarInputRef.current?.click()} disabled={savingAvatar}>{savingAvatar ? '保存中' : '上传头像'}</button>
+                  </div>
                 </div>
+                {avatarError && <p className="settings-form-error">{avatarError}</p>}
+                <div className="settings-avatar-note"><span>优先显示自定义头像；未上传时使用微信或 QQ 登录头像。</span>{user.avatarSource === 'custom' && <button className="settings-row-action" onClick={restoreProviderAvatar} disabled={savingAvatar}>恢复登录头像</button>}</div>
                 <form className="settings-profile-edit" onSubmit={saveNickname}>
                   <label className="settings-input-field">
                     <span>昵称</span>
@@ -1343,11 +1413,11 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onSaveProfile
 
           {section === 'security' && (
             <>
-              <SettingsPanelHeader eyebrow="账户设置" title="账号与安全" detail="查看当前登录账户和会话安全状态。" />
+              <SettingsPanelHeader eyebrow="账户设置" title="账号与安全" detail="查看当前登录账户和会话安全状态。" onBack={onBack} />
               <div className="settings-list">
                 <SettingsActionRow label="鲲穹账号" value={user.username || user.id || '未设置'} detail={user.id ? `账号 ID：${user.id}` : ''} />
-                <SettingsActionRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定手机号'} action={user.phone ? '已绑定' : '待绑定'} />
-                <SettingsActionRow label="邮箱" value={user.email || '未绑定邮箱'} action={user.email ? '已绑定' : '待绑定'} />
+                <SettingsActionRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定手机号'} action="登录中心管理" disabled />
+                <SettingsActionRow label="邮箱" value={user.email || '未绑定邮箱'} action="登录中心管理" disabled />
                 <SettingsActionRow label="登录密码" value="由统一登录中心管理" action="重新登录" onAction={onLogin} />
                 <SettingsActionRow label="当前会话" value="此设备已安全登录" action="退出登录" onAction={onLogout} />
                 <SettingsActionRow label="注销账户" value="账户注销请前往统一登录中心操作" action="暂未开放" disabled />
@@ -1358,7 +1428,7 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onSaveProfile
 
           {section === 'notice' && (
             <>
-              <SettingsPanelHeader eyebrow="账户设置" title="消息通知" detail="选择你希望收到的账户和文件动态提醒，修改会自动保存。" />
+              <SettingsPanelHeader eyebrow="账户设置" title="消息通知" detail="选择你希望收到的账户和文件动态提醒，修改会自动保存。" onBack={onBack} />
               <div className="settings-notice-group">
                 <h2>通知方式</h2>
                 <NoticeToggle label="站内消息" detail="在鲲穹页面内显示处理结果和状态提醒" checked={noticeSettings.inApp} onChange={() => updateNoticeSetting('inApp')} />
@@ -1380,8 +1450,8 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onSaveProfile
   )
 }
 
-function SettingsPanelHeader({ eyebrow, title, detail }) {
-  return <div className="settings-panel-header"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{detail}</p></div>
+function SettingsPanelHeader({ eyebrow, title, detail, onBack }) {
+  return <div className="settings-panel-header"><div className="settings-panel-header-top"><p className="eyebrow">{eyebrow}</p><button className="settings-back-button" onClick={onBack}><ArrowLeft size={15} /> 返回</button></div><h1>{title}</h1><p>{detail}</p></div>
 }
 
 function SettingsInfoRow({ label, value }) {
@@ -1392,7 +1462,7 @@ function SettingsActionRow({ label, value, detail, action, onAction, disabled = 
   return (
     <div className="settings-action-row">
       <div><strong>{label}</strong><span>{value}</span>{detail && <small>{detail}</small>}</div>
-      {action && <button className={disabled ? 'settings-row-action disabled' : 'settings-row-action'} onClick={onAction} disabled={disabled}>{action}{!disabled && onAction && <ChevronRight size={15} />}</button>}
+      {action && <button className={disabled || !onAction ? 'settings-row-action disabled' : 'settings-row-action'} onClick={onAction} disabled={disabled || !onAction}>{action}{!disabled && onAction && <ChevronRight size={15} />}</button>}
     </div>
   )
 }
@@ -1413,6 +1483,63 @@ function PublicShell({ children }) {
 function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }
 function LoadingBlock() { return <div className="state-block"><span className="loading-dot" /><h1>正在打开</h1><p>正在检查分享状态，请稍候。</p></div> }
 function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
+function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onLogin }) {
+  const [category, setCategory] = useState('all')
+  const unreadCount = messages.filter((message) => message.unread).length
+  const visibleMessages = messages.filter((message) => category === 'all' || message.category === category)
+  const categories = [
+    ['all', '全部'],
+    ['system', '系统信息'],
+    ['official', '官方消息'],
+    ['other', '他人消息'],
+  ]
+
+  useEffect(() => {
+    if (!open) return undefined
+    window.addEventListener('click', onClose)
+    return () => window.removeEventListener('click', onClose)
+  }, [open, onClose])
+
+  return (
+    <div className="message-center-wrap">
+      <button className={`message-trigger ${open ? 'active' : ''}`} aria-label={unreadCount ? `消息中心，有 ${unreadCount} 条未读消息` : '消息中心'} aria-haspopup="dialog" aria-expanded={open} onClick={onToggle}>
+        <Bell size={18} />
+        {unreadCount > 0 && <span className="message-unread-dot" />}
+      </button>
+      {open && (
+        <div className="message-center" role="dialog" aria-label="消息中心" onClick={(event) => event.stopPropagation()}>
+          <div className="message-center-header">
+            <div><strong>消息中心</strong><span>{unreadCount ? `${unreadCount} 条未读消息` : '没有未读消息'}</span></div>
+            {user ? <button className="message-mark-all" onClick={onMarkAllRead} disabled={!unreadCount}>全部已读</button> : null}
+          </div>
+          <div className="message-tabs" role="tablist" aria-label="消息分类">
+            {categories.map(([key, label]) => <button key={key} role="tab" aria-selected={category === key} className={category === key ? 'active' : ''} onClick={() => setCategory(key)}>{label}{key !== 'all' && <small>{messages.filter((message) => message.category === key && message.unread).length || ''}</small>}</button>)}
+          </div>
+          {!user ? (
+            <div className="message-empty"><MessageCircle size={22} /><strong>登录后查看消息</strong><span>登录后可以接收系统、官方和他人发送的消息。</span><button className="secondary-button" onClick={onLogin}><UserRound size={15} /> 前往登录</button></div>
+          ) : visibleMessages.length ? (
+            <div className="message-list">
+              {visibleMessages.map((message) => (
+                <button key={message.id} className={`message-item ${message.unread ? 'unread' : ''}`} onClick={() => onMarkRead(message.id)}>
+                  <span className={`message-item-icon ${message.category}`}><MessageIcon category={message.category} /></span>
+                  <span className="message-item-content"><strong>{message.title}</strong><span>{message.body}</span><small>{formatMessageTime(message.createdAt)}</small></span>
+                  {message.unread && <i className="message-item-dot" />}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="message-empty"><Bell size={22} /><strong>暂无消息</strong><span>新的动态会显示在这里。</span></div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+function MessageIcon({ category }) {
+  if (category === 'official') return <Megaphone size={15} />
+  if (category === 'other') return <MessageCircle size={15} />
+  return <ShieldCheck size={15} />
+}
 function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onSettings, onLogout }) {
   if (!user) {
     return <button className="login-button" onClick={onLogin} disabled={loading}><UserRound size={18} /><span>{loading ? '检查登录' : '登录'}</span><ChevronDown size={14} /></button>
@@ -1437,8 +1564,9 @@ function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onSettings
     </div>
   )
 }
-function UserAvatar({ user }) {
-  return user.avatar ? <img className="user-avatar" src={user.avatar} alt="" /> : <span className="user-avatar">{displayUserInitial(user)}</span>
+function UserAvatar({ user, overrideSrc = '' }) {
+  const avatarSrc = overrideSrc || userAvatarSource(user)
+  return avatarSrc ? <img className="user-avatar" src={avatarSrc} alt={`${displayUserName(user)}头像`} /> : <span className="user-avatar">{displayUserInitial(user)}</span>
 }
 function FeatureOrb({ icon: Icon, value, label, tone }) { return <div className={`feature-orb ${tone}`}><span className="orb-icon"><Icon size={21} /></span><strong>{value}</strong><span>{label}</span></div> }
 function ValueItem({ icon: Icon, title, detail }) { return <div className="value-item"><span className="value-icon"><Icon size={18} /></span><div><strong>{title}</strong><span>{detail}</span></div></div> }
@@ -2091,6 +2219,11 @@ function formatExpiry(value) { return value ? `有效期至 ${new Date(value).to
 function formatDate(value) { return new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 function defaultDeadline(days) { return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10) }
 const NOTICE_STORAGE_KEY = 'kunqiong-notice-settings'
+const MESSAGE_STORAGE_KEY = 'kunqiong-messages'
+const DEFAULT_MESSAGES = [
+  { id: 'system-welcome', category: 'system', title: '欢迎使用鲲穹文件传输', body: '你的账户已连接，可以开始发送和收集文件。', unread: true },
+  { id: 'official-update', category: 'official', title: '鲲穹服务通知', body: '设置中心已上线，消息和账户信息可以在这里统一管理。', unread: true },
+]
 function noticeStorageKey(user = {}) { return `${NOTICE_STORAGE_KEY}:${user.id || user.username || user.email || 'account'}` }
 function readNoticeSettings(user) {
   try {
@@ -2101,6 +2234,60 @@ function readNoticeSettings(user) {
 }
 function writeNoticeSettings(user, settings) {
   window.localStorage.setItem(noticeStorageKey(user), JSON.stringify(settings))
+}
+function messageStorageKey(user = {}) { return `${MESSAGE_STORAGE_KEY}:${user.id || user.username || user.email || 'guest'}` }
+function readMessages(user) {
+  if (!user?.id && !user?.username && !user?.email) return []
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(messageStorageKey(user)) || 'null')
+    return Array.isArray(stored) ? stored : DEFAULT_MESSAGES.map((message) => ({ ...message, createdAt: new Date().toISOString() }))
+  } catch {
+    return DEFAULT_MESSAGES.map((message) => ({ ...message, createdAt: new Date().toISOString() }))
+  }
+}
+function writeMessages(user, messages) {
+  window.localStorage.setItem(messageStorageKey(user), JSON.stringify(messages))
+}
+function formatMessageTime(value) {
+  if (!value) return '刚刚'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '刚刚' : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+function resizeAvatarFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('头像读取失败，请重试'))
+    reader.onload = () => {
+      const image = new Image()
+      image.onerror = () => reject(new Error('头像图片无法读取'))
+      image.onload = () => {
+        const maxSize = 512
+        const scale = Math.min(1, maxSize / Math.max(image.width, image.height))
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(image.width * scale))
+        canvas.height = Math.max(1, Math.round(image.height * scale))
+        const context = canvas.getContext('2d')
+        context.drawImage(image, 0, 0, canvas.width, canvas.height)
+        const dataUrl = canvas.toDataURL('image/webp', 0.86)
+        if (dataUrl.length > 580000) {
+          reject(new Error('头像压缩后仍然过大，请选择更小的图片'))
+          return
+        }
+        resolve(dataUrl)
+      }
+      image.src = reader.result
+    }
+    reader.readAsDataURL(file)
+  })
+}
+function userAvatarSource(user = {}) {
+  if (user.avatarSource === 'custom' && user.avatar) return user.avatar
+  if (user.providerAvatar || user.avatar) return user.providerAvatar || user.avatar
+  const provider = String(user.provider || '').toLowerCase()
+  const label = provider.includes('qq') ? 'QQ' : provider.includes('wechat') || provider.includes('weixin') || provider.includes('微信') ? '微' : ''
+  if (!label) return ''
+  const background = label === 'QQ' ? '#4c9fe8' : '#20ad68'
+  return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" rx="64" fill="${background}"/><text x="64" y="76" text-anchor="middle" fill="white" font-family="Arial,sans-serif" font-size="${label === 'QQ' ? 30 : 42}" font-weight="700">${label}</text></svg>`)}`
 }
 function displayUserName(user = {}) { return user.nickname || user.username || user.email || '鲲穹用户' }
 function displayUserInitial(user = {}) { return displayUserName(user).trim().slice(0, 1).toUpperCase() || '鲲' }

@@ -80,11 +80,28 @@ app.patch('/api/auth/profile', (req, res) => {
   const session = authSessionFromRequest(req)
   if (!session) return res.status(401).json({ message: '请先登录' })
 
-  const nickname = String(req.body?.nickname || '').trim()
-  if (!nickname) return res.status(400).json({ message: '昵称不能为空' })
-  if (nickname.length > 40) return res.status(400).json({ message: '昵称最多 40 个字符' })
+  const body = req.body || {}
+  const hasNickname = Object.prototype.hasOwnProperty.call(body, 'nickname')
+  const hasAvatar = Object.prototype.hasOwnProperty.call(body, 'avatar')
+  if (!hasNickname && !hasAvatar) return res.status(400).json({ message: '没有可保存的资料' })
 
-  session.user = { ...session.user, nickname }
+  if (hasNickname) {
+    const nickname = String(body.nickname || '').trim()
+    if (!nickname) return res.status(400).json({ message: '昵称不能为空' })
+    if (nickname.length > 40) return res.status(400).json({ message: '昵称最多 40 个字符' })
+    session.user = { ...session.user, nickname }
+  }
+  if (hasAvatar) {
+    const avatar = body.avatar === null ? null : String(body.avatar || '')
+    if (avatar && (!/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(avatar) || Buffer.byteLength(avatar, 'utf8') > 600000)) {
+      return res.status(400).json({ message: '头像格式不支持或图片过大，请上传 2 MB 以内的图片' })
+    }
+    session.user = {
+      ...session.user,
+      avatar: avatar || session.user.providerAvatar || null,
+      avatarSource: avatar ? 'custom' : '',
+    }
+  }
   persistMetadata()
   res.json({ user: publicUser(session.user) })
 })
@@ -554,6 +571,8 @@ function managerCollection(task, req) {
 }
 
 function publicUser(user = {}) {
+  const avatarSource = String(user.avatarSource || '')
+  const providerAvatar = user.providerAvatar || (!avatarSource ? user.avatar : null) || null
   return {
     id: String(user.id || ''),
     username: String(user.username || ''),
@@ -561,6 +580,9 @@ function publicUser(user = {}) {
     email: String(user.email || ''),
     phone: String(user.phone || ''),
     avatar: user.avatar || null,
+    avatarSource,
+    providerAvatar,
+    provider: String(user.provider || user.login_provider || user.oauth_provider || user.channel || user.source || ''),
   }
 }
 
