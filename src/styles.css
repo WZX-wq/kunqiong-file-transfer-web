@@ -340,7 +340,7 @@ h1, h2, p { margin-top: 0; }
 .record-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .record-main strong { overflow: hidden; color: #3a5750; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .record-main span { color: #9baca7; font-size: 11px; }
-.record-type { color: #3d9d82; background: #e5f5ef; border-radius: 5px; padding: 5px 8px; font-size: 10px; }
+.record-type { display: inline-flex; align-items: center; justify-content: center; width: 88px; min-height: 25px; padding: 5px 8px; color: #3d9d82; background: #e5f5ef; border-radius: 5px; font-size: 10px; text-align: center; }
 .record-type.expired { color: #b08b82; background: #f6ece9; }
 .record-code { width: 88px; color: #729089; font-family: 'DM Sans', sans-serif; font-size: 12px; text-align: right; }
 .records-footnote { display: flex; align-items: center; gap: 7px; justify-content: center; margin-top: 18px; color: #9aaea8; font-size: 11px; }
@@ -385,7 +385,7 @@ h1, h2, p { margin-top: 0; }
 .record-check { display: grid; place-items: center; }
 .record-title-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .record-title-line strong { min-width: 0; }
-.scope-pill { flex: none; padding: 3px 6px; color: #6f9188; background: #eef7f4; border-radius: 5px; font-size: 10px; font-weight: 700; }
+.scope-pill { display: inline-flex; align-items: center; justify-content: center; flex: none; padding: 3px 6px; color: #6f9188; background: #eef7f4; border-radius: 5px; font-size: 10px; font-weight: 700; text-align: center; }
 .record-expiry { overflow: hidden; color: #829991; font-size: 11px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .record-icon.my_sent { color: #4d90d7; background: #e5f0fc; }
 .record-icon.sent_to_me { color: #328f70; background: #e3f4ed; }
