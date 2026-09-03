@@ -206,13 +206,20 @@ function WorkspaceApp() {
   }
 
   const openCollectionManager = async (manageUrl) => {
-    const token = getManageToken(manageUrl)
-    if (!token) {
-      setToast('管理链接无效')
-      return
-    }
     setCollectionManageLoading(true)
     try {
+      let token = getManageToken(manageUrl)
+      if (!token) {
+        const collectionToken = getCollectionToken(manageUrl)
+        if (collectionToken) {
+          const publicData = await apiRequest(`/api/collections/${encodeURIComponent(collectionToken)}`)
+          token = getManageToken(publicData.collection?.manageUrl)
+        }
+      }
+      if (!token) {
+        setToast('管理链接无效')
+        return
+      }
       const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`)
       setCollectionManageData(data.collection)
       setActiveView('collect')
@@ -360,6 +367,7 @@ function WorkspaceApp() {
             onResetResult={() => setCollectionResult(null)}
             onRetrieve={() => setRetrieveOpen(true)}
             onCopy={copyValue}
+            onCopyQrImage={copyQrImage}
             onOpenManager={openCollectionManager}
             onCloseManager={() => setCollectionManageData(null)}
             onRefreshManager={refreshCollectionManager}
@@ -541,7 +549,7 @@ function CollectionLimitInfo({ allowedTypes, maxFileSizeMb, compact = false }) {
   )
 }
 
-function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onOpenManager, onCloseManager, onRefreshManager, onRefreshRecords }) {
+function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onCloseManager, onRefreshManager, onRefreshRecords }) {
   const [form, setForm] = useState(createDefaultCollectionForm)
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const collectionRecords = records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
@@ -592,7 +600,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
               </div>
             </>
           ) : (
-            <CollectionSuccess result={result} onCopy={onCopy} onOpenManager={onOpenManager} onBack={backToCreate} />
+            <CollectionSuccess result={result} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onOpenManager={onOpenManager} onBack={backToCreate} />
           )}
         </div>
       )}
@@ -611,7 +619,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
                   <span>{record.meta}</span>
                   <CollectionLimitInfo allowedTypes={record.allowedTypes} maxFileSizeMb={record.maxFileSizeMb} compact />
                 </div>
-                <button className="secondary-button" disabled={!record.manageUrl} onClick={() => onOpenManager(record.manageUrl)}><FolderOpen size={15} /> 查看已收文件</button>
+                <button className="secondary-button" disabled={!recordManageUrl(record) && !record.publicUrl && !record.shareUrl} onClick={() => onOpenManager(recordManageUrl(record) || record.publicUrl || record.shareUrl)}><FolderOpen size={15} /> 查看已收文件</button>
               </div>
             ))}
           </div>
@@ -622,22 +630,42 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
   )
 }
 
-function CollectionSuccess({ result, onCopy, onOpenManager, onBack }) {
+function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onBack }) {
+  const [qrOpen, setQrOpen] = useState(false)
+
   return (
-    <div className="collection-success">
-      <span className="success-large"><Check size={27} /></span>
-      <p className="eyebrow">收集任务已创建</p>
-      <h2>{result.title}</h2>
-      <p>分享下面的链接，参与者即可匿名提交文件。</p>
-      <CollectionLimitInfo allowedTypes={result.allowedTypes} maxFileSizeMb={result.maxFileSizeMb} />
-      <div className="collection-share"><Link2 size={16} /><strong>{result.publicUrl}</strong><button onClick={() => onCopy(result.publicUrl)} aria-label="复制收集链接"><Copy size={15} /></button></div>
-      {result.qrDataUrl && <img className="collection-qr" src={result.qrDataUrl} alt="收集二维码" />}
-      <div className="result-actions">
-        <button className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回创建</button>
-        <button className="secondary-button" onClick={() => onOpenManager(result.manageUrl)}><FolderOpen size={15} /> 查看已收文件</button>
-        <button className="primary-button" onClick={() => onCopy(result.manageUrl)}><KeyRound size={15} /> 复制管理链接</button>
+    <>
+      <div className="collection-success">
+        <span className="success-large"><Check size={27} /></span>
+        <p className="eyebrow">收集任务已创建</p>
+        <h2>{result.title}</h2>
+        <p>分享下面的链接，参与者即可匿名提交文件。</p>
+        <CollectionLimitInfo allowedTypes={result.allowedTypes} maxFileSizeMb={result.maxFileSizeMb} />
+        <div className="collection-share"><Link2 size={16} /><strong>{result.publicUrl}</strong><button onClick={() => onCopy(result.publicUrl)} aria-label="复制收集链接"><Copy size={15} /></button></div>
+        {result.qrDataUrl && (
+          <button className="qr-trigger" onClick={() => setQrOpen(true)} aria-label="打开收集二维码">
+            <img className="collection-qr" src={result.qrDataUrl} alt="收集二维码" />
+            <span>点击放大</span>
+          </button>
+        )}
+        <div className="result-actions">
+          <button className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回创建</button>
+          <button className="secondary-button" onClick={() => onOpenManager(result.manageUrl)}><FolderOpen size={15} /> 查看已收文件</button>
+          <button className="primary-button" onClick={() => onCopy(result.manageUrl)}><KeyRound size={15} /> 复制管理链接</button>
+        </div>
       </div>
-    </div>
+      {qrOpen && (
+        <QrPreviewModal
+          title="收集二维码"
+          detail="分享链接"
+          qrDataUrl={result.qrDataUrl}
+          targetUrl={result.publicUrl}
+          onClose={() => setQrOpen(false)}
+          onCopyImage={() => onCopyQrImage(result.qrDataUrl, result.publicUrl)}
+          onCopyLink={() => onCopy(result.publicUrl)}
+        />
+      )}
+    </>
   )
 }
 
@@ -1142,6 +1170,8 @@ function normalizeRecord(record = {}) {
   const shareId = record.shareId || getShareToken(record.shareUrl)
   const manageToken = record.manageToken || getManageToken(record.manageUrl)
   const collectionToken = record.collectionToken || getCollectionToken(record.publicUrl || record.shareUrl)
+  const manageUrl = record.manageUrl || (manageToken ? `${window.location.origin}/collect/manage/${manageToken}` : '')
+  const publicUrl = record.publicUrl || record.shareUrl || (collectionToken ? `${window.location.origin}/collect/${collectionToken}` : '')
   const stableToken = kind === 'share' ? (shareId || record.code) : (scope === 'my_collections' ? (manageToken || collectionToken) : (collectionToken || manageToken))
   const id = stableToken ? `${scope}:${kind}:${stableToken}` : (record.id || `${scope}:${kind}:${Date.now()}-${Math.random().toString(36).slice(2)}`)
   const createdAt = record.createdAt || record.submittedAt || now
@@ -1157,7 +1187,9 @@ function normalizeRecord(record = {}) {
     code: record.code || (kind === 'collection' ? (scope === 'collect_from_me' ? '提交入口' : '收集任务') : ''),
     shareId,
     manageToken,
+    manageUrl,
     collectionToken,
+    publicUrl,
     expiresAt,
     deadline,
     createdAt,
@@ -1281,7 +1313,7 @@ function matchesRecordDate(record, dateFilter, dateFrom, dateTo) {
 
 function matchesRecordStatus(record, statusFilter) {
   const group = recordStatusGroup(record)
-  return statusFilter === 'all' || group === statusFilter || (statusFilter === 'active' && group === 'expiring')
+  return statusFilter === 'all' || group === statusFilter
 }
 
 function startOfLocalDay(date) {
@@ -1350,14 +1382,20 @@ function recordScopeLabel(scope) {
 }
 
 function recordLink(record) {
-  if (record.scope === 'my_collections') return record.manageUrl || record.publicUrl || record.shareUrl
+  if (record.scope === 'my_collections') return recordManageUrl(record) || record.publicUrl || record.shareUrl
   return record.shareUrl || record.publicUrl || record.manageUrl
 }
 
 function recordCopyTarget(record) {
   if (record.kind === 'share') return record.code || record.shareUrl
-  if (record.scope === 'my_collections') return record.manageUrl || record.publicUrl
+  if (record.scope === 'my_collections') return recordManageUrl(record) || record.publicUrl
   return record.publicUrl || record.shareUrl
+}
+
+function recordManageUrl(record) {
+  if (record.manageUrl) return record.manageUrl
+  if (!record.manageToken) return ''
+  return `${window.location.origin}/collect/manage/${record.manageToken}`
 }
 
 function recordCopyLabel(record) {
