@@ -3,8 +3,11 @@ import { createRoot } from 'react-dom/client'
 import {
   ArrowRight,
   ArrowLeft,
+  Bell,
   Check,
+  CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Clock3,
   Cloud,
   Copy,
@@ -77,10 +80,11 @@ function App() {
 }
 
 function WorkspaceApp() {
+  const isSettingsRoute = window.location.pathname.startsWith('/settings')
   const inputRef = useRef(null)
   const folderInputRef = useRef(null)
   const uploadRef = useRef(createUploadSessionState())
-  const [activeView, setActiveView] = useState('send')
+  const [activeView, setActiveView] = useState(() => new URLSearchParams(window.location.search).get('view') || 'send')
   const [files, setFiles] = useState([])
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -228,6 +232,29 @@ function WorkspaceApp() {
     } catch (error) {
       setToast(error.message)
     }
+  }
+
+  const navigateMainView = (view) => {
+    if (isSettingsRoute) {
+      window.location.href = view === 'send' ? '/' : `/?view=${encodeURIComponent(view)}`
+      return
+    }
+    setActiveView(view)
+  }
+
+  const openSettings = () => {
+    setAuthMenuOpen(false)
+    window.location.href = '/settings/profile'
+  }
+
+  const saveProfile = async (nickname) => {
+    const data = await apiRequest('/api/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({ nickname }),
+    })
+    setAuthUser(data.user || null)
+    setToast('个人资料已保存')
+    return data.user
   }
 
   const saveRecord = (record) => {
@@ -387,24 +414,25 @@ function WorkspaceApp() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand" onClick={() => setActiveView('send')} role="button" tabIndex={0}>
+        <div className="brand" onClick={() => navigateMainView('send')} role="button" tabIndex={0}>
           <span className="brand-mark"><Cloud size={20} strokeWidth={2.3} /></span>
           <span className="brand-copy"><strong>鲲穹</strong><em>文件传输</em></span>
         </div>
         <nav className="main-nav" aria-label="主导航">
-          <NavItem icon={Send} label="发文件" active={activeView === 'send'} onClick={() => setActiveView('send')} />
-          <NavItem icon={Inbox} label="收集文件" active={activeView === 'collect'} onClick={() => setActiveView('collect')} />
-          <NavItem icon={History} label="收发记录" active={activeView === 'records'} onClick={() => setActiveView('records')} />
+          <NavItem icon={Send} label="发文件" active={!isSettingsRoute && activeView === 'send'} onClick={() => navigateMainView('send')} />
+          <NavItem icon={Inbox} label="收集文件" active={!isSettingsRoute && activeView === 'collect'} onClick={() => navigateMainView('collect')} />
+          <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
         </nav>
         <div className="topbar-actions">
           <button className="merchant-button" onClick={() => setToast('企业版将在后续版本开放')}><Sparkles size={15} /> 企业版</button>
-          <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onLogout={logout} />
+          <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
           <button className="mobile-menu" aria-label="打开菜单"><Menu size={20} /></button>
         </div>
       </header>
 
       <main className="page-content">
-        {activeView === 'send' && (
+        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(window.location.pathname)} onLogin={startLogin} onLogout={logout} onSaveProfile={saveProfile} />}
+        {!isSettingsRoute && activeView === 'send' && (
           <SendView
             files={files}
             inputRef={inputRef}
@@ -430,7 +458,7 @@ function WorkspaceApp() {
             onRetrieve={() => setRetrieveOpen(true)}
           />
         )}
-        {activeView === 'collect' && (
+        {!isSettingsRoute && activeView === 'collect' && (
           <CollectView
             result={collectionResult}
             manageData={collectionManageData}
@@ -448,7 +476,7 @@ function WorkspaceApp() {
             onRefreshRecords={refreshRecords}
           />
         )}
-        {activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} />}
+        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} />}
       </main>
 
       <footer className="page-footer">
@@ -1197,6 +1225,187 @@ function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, 
   )
 }
 
+const SETTINGS_NAV_ITEMS = [
+  { key: 'profile', label: '个人资料', icon: UserRound, path: '/settings/profile' },
+  { key: 'security', label: '账号与安全', icon: ShieldCheck, path: '/settings/security' },
+  { key: 'notice', label: '消息通知', icon: Bell, path: '/settings/notice' },
+]
+
+const DEFAULT_NOTICE_SETTINGS = {
+  inApp: true,
+  email: false,
+  incomingShare: true,
+  shareExpiring: true,
+  shareDownloaded: true,
+  collectionExpiring: true,
+  collectionSubmitted: true,
+}
+
+function settingsSectionForPath(pathname = '') {
+  const section = pathname.split('/')[2]
+  return SETTINGS_NAV_ITEMS.some((item) => item.key === section) ? section : 'profile'
+}
+
+function SettingsPage({ user, loading, section, onLogin, onLogout, onSaveProfile }) {
+  const [nickname, setNickname] = useState('')
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [profileError, setProfileError] = useState('')
+  const [noticeSettings, setNoticeSettings] = useState(DEFAULT_NOTICE_SETTINGS)
+
+  useEffect(() => {
+    if (!user?.id) return
+    setNickname(user.nickname || user.username || '')
+    setNoticeSettings(readNoticeSettings(user))
+  }, [user?.id])
+
+  const updateNoticeSetting = (key) => {
+    setNoticeSettings((current) => {
+      const next = { ...current, [key]: !current[key] }
+      writeNoticeSettings(user, next)
+      return next
+    })
+  }
+
+  const saveNickname = async (event) => {
+    event.preventDefault()
+    const nextNickname = nickname.trim()
+    if (!nextNickname) return
+    setSavingProfile(true)
+    setProfileError('')
+    try {
+      await onSaveProfile(nextNickname)
+    } catch (error) {
+      setProfileError(error.message || '保存失败，请稍后重试')
+    } finally {
+      setSavingProfile(false)
+    }
+  }
+
+  if (loading) {
+    return <section className="settings-state"><span className="loading-dot" /><strong>正在加载账户信息</strong><p>请稍候。</p></section>
+  }
+
+  if (!user) {
+    return (
+      <section className="settings-state">
+        <div className="settings-state-icon"><UserRound size={23} /></div>
+        <strong>登录后管理账户设置</strong>
+        <p>个人资料、账号安全和消息通知会与当前账户关联。</p>
+        <button className="primary-button" onClick={onLogin}><UserRound size={16} /> 前往登录</button>
+      </section>
+    )
+  }
+
+  return (
+    <section className="settings-page">
+      <div className="settings-layout">
+        <aside className="settings-sidebar">
+          <div className="settings-user-card">
+            <UserAvatar user={user} />
+            <strong>{displayUserName(user)}</strong>
+            <span>{displayUserSubtitle(user)}</span>
+            <div className="settings-account-line"><CheckCircle2 size={14} /> 鲲穹账号已连接</div>
+          </div>
+          <nav className="settings-nav" aria-label="账户设置">
+            {SETTINGS_NAV_ITEMS.map(({ key, label, icon: Icon, path }) => (
+              <button key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => { window.location.href = path }}>
+                <Icon size={17} />
+                <span>{label}</span>
+                <ChevronRight size={15} />
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <div className="settings-panel">
+          {section === 'profile' && (
+            <>
+              <SettingsPanelHeader eyebrow="账户设置" title="个人资料" detail="管理在鲲穹文件传输中展示的账户信息。" />
+              <div className="settings-form">
+                <div className="settings-profile-row">
+                  <div className="settings-row-label"><strong>头像</strong><span>头像由统一登录中心提供</span></div>
+                  <UserAvatar user={user} />
+                </div>
+                <form className="settings-profile-edit" onSubmit={saveNickname}>
+                  <label className="settings-input-field">
+                    <span>昵称</span>
+                    <input value={nickname} maxLength={40} onChange={(event) => setNickname(event.target.value)} placeholder="请输入昵称" />
+                  </label>
+                  <button className="primary-button" type="submit" disabled={savingProfile || !nickname.trim()}>{savingProfile ? '保存中' : '保存昵称'}</button>
+                </form>
+                {profileError && <p className="settings-form-error">{profileError}</p>}
+                <SettingsInfoRow label="登录账号" value={user.username || user.id || '未设置'} />
+                <SettingsInfoRow label="邮箱" value={user.email || '未绑定'} />
+                <SettingsInfoRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定'} />
+              </div>
+            </>
+          )}
+
+          {section === 'security' && (
+            <>
+              <SettingsPanelHeader eyebrow="账户设置" title="账号与安全" detail="查看当前登录账户和会话安全状态。" />
+              <div className="settings-list">
+                <SettingsActionRow label="鲲穹账号" value={user.username || user.id || '未设置'} detail={user.id ? `账号 ID：${user.id}` : ''} />
+                <SettingsActionRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定手机号'} action={user.phone ? '已绑定' : '待绑定'} />
+                <SettingsActionRow label="邮箱" value={user.email || '未绑定邮箱'} action={user.email ? '已绑定' : '待绑定'} />
+                <SettingsActionRow label="登录密码" value="由统一登录中心管理" action="重新登录" onAction={onLogin} />
+                <SettingsActionRow label="当前会话" value="此设备已安全登录" action="退出登录" onAction={onLogout} />
+                <SettingsActionRow label="注销账户" value="账户注销请前往统一登录中心操作" action="暂未开放" disabled />
+              </div>
+              <div className="settings-notice"><ShieldCheck size={16} /><span>鲲穹不会在前端保存你的登录密码。</span></div>
+            </>
+          )}
+
+          {section === 'notice' && (
+            <>
+              <SettingsPanelHeader eyebrow="账户设置" title="消息通知" detail="选择你希望收到的账户和文件动态提醒，修改会自动保存。" />
+              <div className="settings-notice-group">
+                <h2>通知方式</h2>
+                <NoticeToggle label="站内消息" detail="在鲲穹页面内显示处理结果和状态提醒" checked={noticeSettings.inApp} onChange={() => updateNoticeSetting('inApp')} />
+                <NoticeToggle label="邮件提醒" detail="邮箱通知能力接入后生效" checked={noticeSettings.email} onChange={() => updateNoticeSetting('email')} />
+              </div>
+              <div className="settings-notice-group">
+                <h2>文件与任务动态</h2>
+                <NoticeToggle label="有人给我发送文件" checked={noticeSettings.incomingShare} onChange={() => updateNoticeSetting('incomingShare')} />
+                <NoticeToggle label="我发送的文件即将过期" checked={noticeSettings.shareExpiring} onChange={() => updateNoticeSetting('shareExpiring')} />
+                <NoticeToggle label="我发送的文件已被下载" checked={noticeSettings.shareDownloaded} onChange={() => updateNoticeSetting('shareDownloaded')} />
+                <NoticeToggle label="我创建的收集任务即将截止" checked={noticeSettings.collectionExpiring} onChange={() => updateNoticeSetting('collectionExpiring')} />
+                <NoticeToggle label="我创建的收集任务有人提交" checked={noticeSettings.collectionSubmitted} onChange={() => updateNoticeSetting('collectionSubmitted')} />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function SettingsPanelHeader({ eyebrow, title, detail }) {
+  return <div className="settings-panel-header"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{detail}</p></div>
+}
+
+function SettingsInfoRow({ label, value }) {
+  return <div className="settings-info-row"><strong>{label}</strong><span>{value}</span></div>
+}
+
+function SettingsActionRow({ label, value, detail, action, onAction, disabled = false }) {
+  return (
+    <div className="settings-action-row">
+      <div><strong>{label}</strong><span>{value}</span>{detail && <small>{detail}</small>}</div>
+      {action && <button className={disabled ? 'settings-row-action disabled' : 'settings-row-action'} onClick={onAction} disabled={disabled}>{action}{!disabled && onAction && <ChevronRight size={15} />}</button>}
+    </div>
+  )
+}
+
+function NoticeToggle({ label, detail, checked, onChange }) {
+  return (
+    <div className="settings-notice-row">
+      <div><strong>{label}</strong>{detail && <span>{detail}</span>}</div>
+      <button className={`switch ${checked ? 'on' : ''}`} aria-label={`${checked ? '关闭' : '开启'}${label}`} aria-pressed={checked} onClick={onChange}><span /></button>
+    </div>
+  )
+}
+
 function PublicShell({ children }) {
   return <div className="app-shell public-shell"><header className="topbar"><div className="brand"><span className="brand-mark"><Cloud size={20} /></span><span className="brand-copy"><strong>鲲穹</strong><em>文件传输</em></span></div><span className="public-safe"><ShieldCheck size={15} /> 安全临时空间</span></header><main className="public-page">{children}</main><footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span></footer></div>
 }
@@ -1204,7 +1413,7 @@ function PublicShell({ children }) {
 function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }
 function LoadingBlock() { return <div className="state-block"><span className="loading-dot" /><h1>正在打开</h1><p>正在检查分享状态，请稍候。</p></div> }
 function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
-function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onLogout }) {
+function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onSettings, onLogout }) {
   if (!user) {
     return <button className="login-button" onClick={onLogin} disabled={loading}><UserRound size={18} /><span>{loading ? '检查登录' : '登录'}</span><ChevronDown size={14} /></button>
   }
@@ -1221,6 +1430,7 @@ function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onLogout }
             <UserAvatar user={user} />
             <div><strong>{displayUserName(user)}</strong><span>{displayUserSubtitle(user)}</span></div>
           </div>
+          <button role="menuitem" onClick={onSettings}><Settings2 size={14} /> 账户设置</button>
           <button role="menuitem" onClick={onLogout}><LogOut size={14} /> 退出登录</button>
         </div>
       )}
@@ -1880,6 +2090,18 @@ function formatDuration(seconds) {
 function formatExpiry(value) { return value ? `有效期至 ${new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '永久有效' }
 function formatDate(value) { return new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 function defaultDeadline(days) { return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10) }
+const NOTICE_STORAGE_KEY = 'kunqiong-notice-settings'
+function noticeStorageKey(user = {}) { return `${NOTICE_STORAGE_KEY}:${user.id || user.username || user.email || 'account'}` }
+function readNoticeSettings(user) {
+  try {
+    return { ...DEFAULT_NOTICE_SETTINGS, ...JSON.parse(window.localStorage.getItem(noticeStorageKey(user)) || '{}') }
+  } catch {
+    return DEFAULT_NOTICE_SETTINGS
+  }
+}
+function writeNoticeSettings(user, settings) {
+  window.localStorage.setItem(noticeStorageKey(user), JSON.stringify(settings))
+}
 function displayUserName(user = {}) { return user.nickname || user.username || user.email || '鲲穹用户' }
 function displayUserInitial(user = {}) { return displayUserName(user).trim().slice(0, 1).toUpperCase() || '鲲' }
 function displayUserSubtitle(user = {}) { return user.email || maskPhone(user.phone) || user.username || '已登录' }

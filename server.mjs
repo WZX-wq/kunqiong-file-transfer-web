@@ -76,6 +76,19 @@ app.get('/api/auth/me', (req, res) => {
   res.json({ user: session ? publicUser(session.user) : null })
 })
 
+app.patch('/api/auth/profile', (req, res) => {
+  const session = authSessionFromRequest(req)
+  if (!session) return res.status(401).json({ message: '请先登录' })
+
+  const nickname = String(req.body?.nickname || '').trim()
+  if (!nickname) return res.status(400).json({ message: '昵称不能为空' })
+  if (nickname.length > 40) return res.status(400).json({ message: '昵称最多 40 个字符' })
+
+  session.user = { ...session.user, nickname }
+  persistMetadata()
+  res.json({ user: publicUser(session.user) })
+})
+
 app.post('/api/auth/logout', (req, res) => {
   const sessionId = readCookie(req, AUTH_COOKIE_NAME)
   if (sessionId) removeAuthSession(sessionId)
