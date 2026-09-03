@@ -10,6 +10,8 @@ _api-*.txt
 _requirements.*
 _requirements_render/
 _docx_extract*/
+登录/
 
 .env
 .env.*
+!.env.example

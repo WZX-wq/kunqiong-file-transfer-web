@@ -8,26 +8,40 @@ import archiver from 'archiver'
 import QRCode from 'qrcode'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+loadEnvFile(path.join(__dirname, '.env'))
+
 const storageRoot = path.join(__dirname, 'storage')
 const tempRoot = path.join(storageRoot, 'tmp')
 const filesRoot = path.join(storageRoot, 'files')
 const collectionsRoot = path.join(storageRoot, 'collections')
+const distRoot = path.join(__dirname, 'dist')
 const metadataPath = path.join(storageRoot, 'metadata.json')
 const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
 const MAX_FILES = 100
+const serverPort = Number(process.env.PORT || process.env.KUNQIONG_PORT || 8045)
+const oauthAuthorizeUrl = process.env.KUNQIONG_OAUTH_AUTHORIZE_URL || 'https://login.kunqiongai.com/authorize.html'
+const oauthTokenUrl = process.env.KUNQIONG_OAUTH_TOKEN_URL || 'https://login.kunqiongai.com/api/oauth/token'
+const oauthClientId = process.env.KUNQIONG_OAUTH_CLIENT_ID || 'app_d1fbbfc18f7908d5'
+const oauthClientSecret = process.env.KUNQIONG_OAUTH_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || ''
+const configuredCallbackUrls = splitConfigValues(process.env.KUNQIONG_AUTH_CALLBACK_URL)
+const configuredAppUrl = process.env.KUNQIONG_APP_URL || ''
+const AUTH_COOKIE_NAME = 'kunqiong_session'
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
   fs.mkdirSync(directory, { recursive: true })
 }
 
-const metadata = loadMetadata()
+const metadata = normalizeMetadata(loadMetadata())
 const uploadSessions = new Map()
+const oauthStates = new Map()
 const upload = multer({
   dest: tempRoot,
   limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE },
 })
 const app = express()
 
+app.set('trust proxy', true)
 app.use(express.json({ limit: '1mb' }))
 app.use((req, res, next) => {
   res.setHeader('Cache-Control', 'no-store')
@@ -36,6 +50,56 @@ app.use((req, res, next) => {
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'kunqiong-local-api', now: new Date().toISOString() })
+})
+
+app.get('/api/auth/login', (req, res) => {
+  const returnTo = safeReturnUrl(req.query.return_to, req)
+  if (!isOAuthConfigured()) {
+    return res.redirect(appendAuthResult(returnTo, 'failed', '登录服务未配置'))
+  }
+
+  cleanupOAuthStates()
+  const state = createToken(32)
+  const redirectUri = authRedirectUri(req)
+  oauthStates.set(state, { redirectUri, returnTo, createdAt: Date.now() })
+
+  const loginUrl = new URL(oauthAuthorizeUrl)
+  loginUrl.searchParams.set('client_id', oauthClientId)
+  loginUrl.searchParams.set('redirect_uri', redirectUri)
+  loginUrl.searchParams.set('response_type', 'code')
+  loginUrl.searchParams.set('state', state)
+  res.redirect(loginUrl.toString())
+})
+
+app.get('/api/auth/me', (req, res) => {
+  const session = authSessionFromRequest(req)
+  res.json({ user: session ? publicUser(session.user) : null })
+})
+
+app.post('/api/auth/logout', (req, res) => {
+  const sessionId = readCookie(req, AUTH_COOKIE_NAME)
+  if (sessionId) removeAuthSession(sessionId)
+  clearAuthCookie(res, req)
+  res.json({ ok: true })
+})
+
+app.get('/auth/callback', async (req, res) => {
+  const code = firstValue(req.query.code)
+  const state = firstValue(req.query.state)
+  const pendingState = consumeOAuthState(state)
+  const returnTo = pendingState?.returnTo || safeReturnUrl('', req)
+
+  if (!pendingState) return res.redirect(appendAuthResult(returnTo, 'failed', '登录状态已过期，请重新登录'))
+  if (!code) return res.redirect(appendAuthResult(returnTo, 'failed', '授权码缺失，请重新登录'))
+
+  try {
+    const tokenData = await exchangeOAuthToken(code, pendingState.redirectUri)
+    const session = createAuthSession(tokenData)
+    setAuthCookie(res, session.id, session.expiresAt, req)
+    res.redirect(appendAuthResult(returnTo, 'success'))
+  } catch (error) {
+    res.redirect(appendAuthResult(returnTo, 'failed', error.message || '登录失败'))
+  }
 })
 
 app.post('/api/shares', upload.array('files', MAX_FILES), async (req, res, next) => {
@@ -353,6 +417,17 @@ app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:f
   res.download(path.join(collectionsRoot, task.id, submission.id, file.storedName), file.name)
 })
 
+app.use('/api', (_req, res) => {
+  res.status(404).json({ message: '接口不存在' })
+})
+
+if (fs.existsSync(distRoot)) {
+  app.use(express.static(distRoot))
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(distRoot, 'index.html'))
+  })
+}
+
 app.use((error, _req, res, _next) => {
   console.error(error)
   if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: '文件超过 5 GB 限制' })
@@ -360,8 +435,8 @@ app.use((error, _req, res, _next) => {
   res.status(500).json({ message: '服务器处理失败，请稍后重试' })
 })
 
-const server = app.listen(4174, '0.0.0.0', () => {
-  console.log('鲲穹 API listening on http://localhost:4174')
+const server = app.listen(serverPort, '0.0.0.0', () => {
+  console.log(`鲲穹服务 listening on http://localhost:${serverPort}`)
 })
 
 const cleanupTimer = setInterval(cleanupExpired, 60 * 1000)
@@ -372,7 +447,16 @@ function loadMetadata() {
   try {
     return JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
   } catch {
-    return { shares: [], collections: [] }
+    return { shares: [], collections: [], sessions: [] }
+  }
+}
+
+function normalizeMetadata(value = {}) {
+  return {
+    ...value,
+    shares: Array.isArray(value.shares) ? value.shares : [],
+    collections: Array.isArray(value.collections) ? value.collections : [],
+    sessions: Array.isArray(value.sessions) ? value.sessions : [],
   }
 }
 
@@ -401,6 +485,11 @@ function cleanupExpired() {
       task.cleanedAt = new Date().toISOString()
       changed = true
     }
+  }
+  const activeSessions = metadata.sessions.filter((session) => new Date(session.expiresAt).getTime() > now)
+  if (activeSessions.length !== metadata.sessions.length) {
+    metadata.sessions = activeSessions
+    changed = true
   }
   if (changed) persistMetadata()
 }
@@ -449,6 +538,199 @@ function managerCollection(task, req) {
     submissions: task.submissions.map(publicSubmission),
     downloadUrl: `${getOrigin(req)}/api/collections/manage/${task.manageToken}/download`,
   }
+}
+
+function publicUser(user = {}) {
+  return {
+    id: String(user.id || ''),
+    username: String(user.username || ''),
+    nickname: String(user.nickname || user.username || '鲲穹用户'),
+    email: String(user.email || ''),
+    phone: String(user.phone || ''),
+    avatar: user.avatar || null,
+  }
+}
+
+function isOAuthConfigured() {
+  return Boolean(oauthClientId && oauthClientSecret)
+}
+
+function authRedirectUri(req) {
+  const origin = getRequestOrigin(req)
+  if (configuredCallbackUrls.length) {
+    try {
+      const requestHost = new URL(origin).hostname
+      const exactMatch = configuredCallbackUrls.find((item) => new URL(item).hostname === requestHost)
+      if (exactMatch) return exactMatch
+      if (['localhost', '127.0.0.1', '::1'].includes(requestHost)) {
+        const localMatch = configuredCallbackUrls.find((item) => ['localhost', '127.0.0.1', '::1'].includes(new URL(item).hostname))
+        if (localMatch) return localMatch
+      }
+    } catch {}
+    return configuredCallbackUrls[0]
+  }
+  try {
+    const url = new URL(origin)
+    if (['localhost', '127.0.0.1', '::1'].includes(url.hostname)) {
+      return `http://localhost:${serverPort}/auth/callback`
+    }
+    return `${url.origin}/auth/callback`
+  } catch {
+    return `http://localhost:${serverPort}/auth/callback`
+  }
+}
+
+async function exchangeOAuthToken(code, redirectUri) {
+  const response = await fetch(oauthTokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      code,
+      client_id: oauthClientId,
+      client_secret: oauthClientSecret,
+      redirect_uri: redirectUri,
+    }),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || (payload.code && payload.code !== 200)) {
+    throw new Error(payload.message || `登录服务返回 ${response.status}`)
+  }
+  const data = payload.data || payload
+  if (!data.access_token || !data.user) throw new Error('登录服务返回数据不完整')
+  return data
+}
+
+function createAuthSession(tokenData) {
+  cleanupExpiredAuthSessions()
+  const now = new Date()
+  const expiresIn = Math.max(60, Number(tokenData.expires_in || 3600))
+  const session = {
+    id: createToken(40),
+    accessToken: tokenData.access_token,
+    tokenType: tokenData.token_type || 'Bearer',
+    expiresAt: new Date(now.getTime() + expiresIn * 1000).toISOString(),
+    createdAt: now.toISOString(),
+    user: publicUser(tokenData.user),
+  }
+  metadata.sessions.push(session)
+  persistMetadata()
+  return session
+}
+
+function authSessionFromRequest(req) {
+  const sessionId = readCookie(req, AUTH_COOKIE_NAME)
+  if (!sessionId) return null
+  const session = metadata.sessions.find((item) => item.id === sessionId)
+  if (!session) return null
+  if (new Date(session.expiresAt).getTime() <= Date.now()) {
+    removeAuthSession(sessionId)
+    return null
+  }
+  return session
+}
+
+function removeAuthSession(sessionId) {
+  const before = metadata.sessions.length
+  metadata.sessions = metadata.sessions.filter((session) => session.id !== sessionId)
+  if (metadata.sessions.length !== before) persistMetadata()
+}
+
+function cleanupExpiredAuthSessions() {
+  const now = Date.now()
+  const nextSessions = metadata.sessions.filter((session) => new Date(session.expiresAt).getTime() > now)
+  if (nextSessions.length !== metadata.sessions.length) {
+    metadata.sessions = nextSessions
+    persistMetadata()
+  }
+}
+
+function cleanupOAuthStates() {
+  const now = Date.now()
+  for (const [state, value] of oauthStates.entries()) {
+    if (now - value.createdAt > OAUTH_STATE_TTL_MS) oauthStates.delete(state)
+  }
+}
+
+function consumeOAuthState(state) {
+  cleanupOAuthStates()
+  if (!state || !oauthStates.has(state)) return null
+  const value = oauthStates.get(state)
+  oauthStates.delete(state)
+  return value
+}
+
+function safeReturnUrl(value, req) {
+  const fallback = configuredAppUrl || getRequestOrigin(req)
+  const allowedOrigins = new Set([
+    fallback,
+    getRequestOrigin(req),
+    `http://localhost:${serverPort}`,
+    'http://localhost:4173',
+    `http://127.0.0.1:${serverPort}`,
+    'http://127.0.0.1:4173',
+    'http://43.154.197.96:8045',
+  ].filter(Boolean).map((item) => {
+    try { return new URL(item).origin } catch { return '' }
+  }).filter(Boolean))
+  try {
+    const candidate = new URL(firstValue(value) || fallback, fallback)
+    return allowedOrigins.has(candidate.origin) ? candidate.toString() : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function appendAuthResult(value, status, message = '') {
+  const url = new URL(value)
+  url.searchParams.set('login', status)
+  if (message) url.searchParams.set('message', message)
+  else url.searchParams.delete('message')
+  return url.toString()
+}
+
+function setAuthCookie(res, sessionId, expiresAt, req) {
+  const maxAge = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+  res.setHeader('Set-Cookie', serializeCookie(AUTH_COOKIE_NAME, sessionId, {
+    httpOnly: true,
+    maxAge,
+    path: '/',
+    sameSite: 'Lax',
+    secure: isSecureRequest(req),
+  }))
+}
+
+function clearAuthCookie(res, req) {
+  res.setHeader('Set-Cookie', serializeCookie(AUTH_COOKIE_NAME, '', {
+    httpOnly: true,
+    maxAge: 0,
+    path: '/',
+    sameSite: 'Lax',
+    secure: isSecureRequest(req),
+  }))
+}
+
+function serializeCookie(name, value, options = {}) {
+  const parts = [`${name}=${encodeURIComponent(value)}`]
+  if (options.maxAge !== undefined) parts.push(`Max-Age=${options.maxAge}`)
+  if (options.path) parts.push(`Path=${options.path}`)
+  if (options.httpOnly) parts.push('HttpOnly')
+  if (options.secure) parts.push('Secure')
+  if (options.sameSite) parts.push(`SameSite=${options.sameSite}`)
+  return parts.join('; ')
+}
+
+function readCookie(req, name) {
+  const cookies = String(req.get('cookie') || '').split(';')
+  for (const cookie of cookies) {
+    const [key, ...valueParts] = cookie.trim().split('=')
+    if (key === name) return decodeURIComponent(valueParts.join('=') || '')
+  }
+  return ''
+}
+
+function isSecureRequest(req) {
+  return req.secure || firstHeader(req.get('x-forwarded-proto')) === 'https'
 }
 
 function publicSubmission(submission) {
@@ -555,7 +837,25 @@ function validateCollection(task) {
 }
 
 function getOrigin(req) {
-  return `${req.protocol}://${req.get('host')}`.replace(':4174', ':4173')
+  return getRequestOrigin(req)
+}
+
+function getRequestOrigin(req) {
+  const proto = firstHeader(req.get('x-forwarded-proto')) || req.protocol
+  const host = firstHeader(req.get('x-forwarded-host')) || req.get('host') || `localhost:${serverPort}`
+  return `${proto}://${host}`
+}
+
+function firstHeader(value) {
+  return String(value || '').split(',')[0].trim()
+}
+
+function firstValue(value) {
+  return Array.isArray(value) ? String(value[0] || '') : String(value || '')
+}
+
+function splitConfigValues(value = '') {
+  return String(value).split(',').map((item) => item.trim()).filter(Boolean)
 }
 
 function createToken(length) {
@@ -608,4 +908,22 @@ function cleanupUploadedFiles(files = []) {
 
 function removeDirectory(directory) {
   try { fs.rmSync(directory, { recursive: true, force: true }) } catch {}
+}
+
+function loadEnvFile(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8')
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      const index = trimmed.indexOf('=')
+      if (index <= 0) continue
+      const key = trimmed.slice(0, index).trim()
+      let value = trimmed.slice(index + 1).trim()
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1)
+      }
+      if (process.env[key] === undefined) process.env[key] = value
+    }
+  } catch {}
 }

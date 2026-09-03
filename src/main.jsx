@@ -20,6 +20,7 @@ import {
   KeyRound,
   Link2,
   LockKeyhole,
+  LogOut,
   Mail,
   Menu,
   MoreHorizontal,
@@ -96,12 +97,47 @@ function WorkspaceApp() {
   const [toast, setToast] = useState('')
   const [settings, setSettings] = useState(defaultSettings)
   const [records, setRecords] = useState(() => readRecords())
+  const [authUser, setAuthUser] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authMenuOpen, setAuthMenuOpen] = useState(false)
+
+  const refreshAuthUser = async () => {
+    setAuthLoading(true)
+    try {
+      const data = await apiRequest('/api/auth/me')
+      setAuthUser(data.user || null)
+    } catch {
+      setAuthUser(null)
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const loginStatus = params.get('login')
+    if (loginStatus) {
+      setToast(loginStatus === 'success' ? '登录成功' : params.get('message') || '登录失败')
+      params.delete('login')
+      params.delete('message')
+      const query = params.toString()
+      window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+    }
+    refreshAuthUser()
+  }, [])
 
   useEffect(() => {
     if (!toast) return undefined
     const timer = window.setTimeout(() => setToast(''), 3000)
     return () => window.clearTimeout(timer)
   }, [toast])
+
+  useEffect(() => {
+    if (!authMenuOpen) return undefined
+    const closeMenu = () => setAuthMenuOpen(false)
+    window.addEventListener('click', closeMenu)
+    return () => window.removeEventListener('click', closeMenu)
+  }, [authMenuOpen])
 
   const addFiles = (incoming) => {
     const nextFiles = Array.from(incoming || []).map((file, index) => ({
@@ -176,6 +212,22 @@ function WorkspaceApp() {
     setUploadProgress(0)
     setUploadState(createUploadState())
     setIsUploading(false)
+  }
+
+  const startLogin = () => {
+    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`
+    window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
+  }
+
+  const logout = async () => {
+    try {
+      await apiRequest('/api/auth/logout', { method: 'POST' })
+      setAuthUser(null)
+      setAuthMenuOpen(false)
+      setToast('已退出登录')
+    } catch (error) {
+      setToast(error.message)
+    }
   }
 
   const saveRecord = (record) => {
@@ -346,7 +398,7 @@ function WorkspaceApp() {
         </nav>
         <div className="topbar-actions">
           <button className="merchant-button" onClick={() => setToast('企业版将在后续版本开放')}><Sparkles size={15} /> 企业版</button>
-          <button className="login-button" onClick={() => setToast('登录功能将在后续版本开放')}><UserRound size={18} /><span>登录</span><ChevronDown size={14} /></button>
+          <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onLogout={logout} />
           <button className="mobile-menu" aria-label="打开菜单"><Menu size={20} /></button>
         </div>
       </header>
@@ -1152,6 +1204,32 @@ function PublicShell({ children }) {
 function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }
 function LoadingBlock() { return <div className="state-block"><span className="loading-dot" /><h1>正在打开</h1><p>正在检查分享状态，请稍候。</p></div> }
 function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
+function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onLogout }) {
+  if (!user) {
+    return <button className="login-button" onClick={onLogin} disabled={loading}><UserRound size={18} /><span>{loading ? '检查登录' : '登录'}</span><ChevronDown size={14} /></button>
+  }
+  return (
+    <div className="auth-menu-wrap">
+      <button className="login-button signed-in" onClick={onToggleMenu} aria-haspopup="menu" aria-expanded={menuOpen}>
+        <UserAvatar user={user} />
+        <span>{displayUserName(user)}</span>
+        <ChevronDown size={14} />
+      </button>
+      {menuOpen && (
+        <div className="auth-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+          <div className="auth-menu-profile">
+            <UserAvatar user={user} />
+            <div><strong>{displayUserName(user)}</strong><span>{displayUserSubtitle(user)}</span></div>
+          </div>
+          <button role="menuitem" onClick={onLogout}><LogOut size={14} /> 退出登录</button>
+        </div>
+      )}
+    </div>
+  )
+}
+function UserAvatar({ user }) {
+  return user.avatar ? <img className="user-avatar" src={user.avatar} alt="" /> : <span className="user-avatar">{displayUserInitial(user)}</span>
+}
 function FeatureOrb({ icon: Icon, value, label, tone }) { return <div className={`feature-orb ${tone}`}><span className="orb-icon"><Icon size={21} /></span><strong>{value}</strong><span>{label}</span></div> }
 function ValueItem({ icon: Icon, title, detail }) { return <div className="value-item"><span className="value-icon"><Icon size={18} /></span><div><strong>{title}</strong><span>{detail}</span></div></div> }
 function FileRow({ file, onRemove }) { const Icon = fileIcon(file.name); return <div className="file-row"><span className="file-type"><Icon size={18} /></span><div className="file-info"><strong>{file.name}</strong><span>{formatBytes(file.size)}</span></div>{onRemove && <button className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={onRemove}><X size={16} /></button>}</div> }
@@ -1802,6 +1880,13 @@ function formatDuration(seconds) {
 function formatExpiry(value) { return value ? `有效期至 ${new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '永久有效' }
 function formatDate(value) { return new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 function defaultDeadline(days) { return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10) }
+function displayUserName(user = {}) { return user.nickname || user.username || user.email || '鲲穹用户' }
+function displayUserInitial(user = {}) { return displayUserName(user).trim().slice(0, 1).toUpperCase() || '鲲' }
+function displayUserSubtitle(user = {}) { return user.email || maskPhone(user.phone) || user.username || '已登录' }
+function maskPhone(value = '') {
+  const phone = String(value)
+  return phone.length >= 7 ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : phone
+}
 
 createRoot(document.getElementById('root')).render(<App />)
 

@@ -41,6 +41,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .merchant-button:hover { color: var(--accent-dark); }
 .login-button { display: flex; align-items: center; gap: 7px; padding: 8px 0 8px 10px; background: transparent; color: #697b77; font-size: 13px; }
 .login-button svg:first-child { color: var(--accent); }
+.login-button:disabled { cursor: wait; opacity: .62; }
+.login-button.signed-in { min-height: 40px; padding: 5px 10px 5px 6px; color: var(--accent-dark); background: #f1faf7; border: 1px solid #d8ebe5; border-radius: 999px; font-weight: 700; }
+.login-button.signed-in:hover { background: #e7f5f0; border-color: #b9dcd2; }
+.auth-menu-wrap { position: relative; display: inline-flex; }
+.user-avatar { display: grid; place-items: center; flex: none; width: 28px; height: 28px; overflow: hidden; color: #fff; background: linear-gradient(135deg, #168b73, #4d90d7); border-radius: 50%; object-fit: cover; font-size: 12px; font-weight: 800; }
+.auth-menu { position: absolute; right: 0; top: calc(100% + 10px); z-index: 7; width: 226px; padding: 9px; background: #fff; border: 1px solid #dbe8e4; border-radius: 10px; box-shadow: 0 18px 48px rgba(32, 72, 62, .16); }
+.auth-menu-profile { display: flex; align-items: center; gap: 10px; padding: 7px 7px 10px; margin-bottom: 7px; border-bottom: 1px solid #edf3f0; }
+.auth-menu-profile div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.auth-menu-profile strong { overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.auth-menu-profile div span { overflow: hidden; color: #8ea39d; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.auth-menu button { display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; min-height: 35px; padding: 0 9px; color: #55736b; background: transparent; border-radius: 7px; font-size: 12px; font-weight: 700; }
+.auth-menu button:hover { color: var(--accent-dark); background: #eff7f4; }
 .mobile-menu { display: none; color: var(--ink); background: transparent; }
 
 .page-content { flex: 1; width: min(1260px, calc(100% - 48px)); margin: 0 auto; padding: 50px 0 34px; }
@@ -397,9 +409,11 @@ h1, h2, p { margin-top: 0; }
 
 @media (max-width: 650px) {
   .topbar { height: 62px; padding: 0 17px; }
-  .brand-copy em, .merchant-button, .login-button span, .login-button svg:last-child { display: none; }
+  .brand-copy em, .merchant-button, .login-button > span:not(.user-avatar), .login-button svg:last-child { display: none; }
   .topbar-actions { gap: 3px; }
   .login-button { padding: 8px; }
+  .login-button.signed-in { min-width: 38px; min-height: 38px; padding: 4px; }
+  .auth-menu { right: -40px; }
   .mobile-menu { display: grid; place-items: center; }
   .main-nav { margin-left: auto; }
   .nav-item { padding: 0 8px; font-size: 12px; }
