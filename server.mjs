@@ -26,7 +26,14 @@ const oauthClientSecret = process.env.KUNQIONG_OAUTH_CLIENT_SECRET || process.en
 const configuredCallbackUrls = splitConfigValues(process.env.KUNQIONG_AUTH_CALLBACK_URL)
 const configuredAppUrl = process.env.KUNQIONG_APP_URL || ''
 const AUTH_COOKIE_NAME = 'kunqiong_session'
+const SHARE_ACCESS_COOKIE_PREFIX = 'kunqiong_share_access_'
+const SHARE_ACCESS_TTL_SECONDS = 15 * 60
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
+const MAX_ACCOUNT_RECORDS = 200
+const MAX_RECORD_FILES = 120
+const MAX_RECORD_SUBMISSIONS = 80
+const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections', 'collect_from_me'])
+const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 let metadataNeedsPersist = false
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
@@ -113,6 +120,48 @@ app.post('/api/auth/logout', (req, res) => {
   if (sessionId) removeAuthSession(sessionId)
   clearAuthCookie(res, req)
   res.json({ ok: true })
+})
+
+app.get('/api/account/records', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  res.json({ records: accountRecordsForUser(session.user.id) })
+})
+
+app.put('/api/account/records', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const key = accountRecordOwnerKey(session.user.id)
+  metadata.records[key] = normalizeAccountRecords(req.body?.records)
+  persistMetadata()
+  res.json({ records: metadata.records[key] })
+})
+
+app.post('/api/account/records', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const body = req.body || {}
+  const incoming = Array.isArray(body.records) ? body.records : body.record ? [body.record] : []
+  if (!incoming.length) return res.status(400).json({ message: '没有可同步的记录' })
+  const key = accountRecordOwnerKey(session.user.id)
+  metadata.records[key] = mergeAccountRecords(accountRecordsForUser(session.user.id), incoming)
+  persistMetadata()
+  res.status(201).json({ records: metadata.records[key] })
+})
+
+app.delete('/api/account/records', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const key = accountRecordOwnerKey(session.user.id)
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : []
+  if (ids.length) {
+    const targets = new Set(ids)
+    metadata.records[key] = accountRecordsForUser(session.user.id).filter((record) => !targets.has(record.id))
+  } else {
+    metadata.records[key] = []
+  }
+  persistMetadata()
+  res.json({ records: metadata.records[key] })
 })
 
 app.get('/auth/callback', async (req, res) => {
@@ -275,6 +324,7 @@ app.post('/api/shares/lookup/:code', (req, res) => {
   if (!share) return res.status(404).json({ message: '取件码不存在或已失效' })
   const access = validateShare(share, req.body.password)
   if (!access.ok) return res.status(access.status).json({ message: access.message })
+  setShareAccessCookie(res, req, share)
   res.json({ share: publicShare(share, req, true), requiresPassword: false })
 })
 
@@ -328,25 +378,47 @@ app.get('/api/shares/:token/download', async (req, res, next) => {
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
     const access = validateShare(share, req.get('x-share-password'))
     if (!access.ok) return res.status(access.status).json({ message: access.message })
-    if (share.downloadLimit && share.downloadCount >= share.downloadLimit) {
-      return res.status(410).json({ message: '下载次数已用完' })
-    }
-    share.downloadCount += 1
-    persistMetadata()
+    registerShareDownload(share, res)
     const shareDirectory = path.join(filesRoot, share.id)
     if (share.files.length === 1) {
       const file = share.files[0]
-      res.download(path.join(shareDirectory, file.storedName), file.name)
+      sendDownloadFile(res, next, path.join(shareDirectory, file.storedName), file)
       return
     }
-    res.attachment('鲲穹文件包.zip')
-    const archive = archiver('zip', { zlib: { level: 6 } })
-    archive.on('error', next)
-    archive.pipe(res)
-    for (const file of share.files) {
-      archive.file(path.join(shareDirectory, file.storedName), { name: file.relativePath })
-    }
-    await archive.finalize()
+    await streamZip(res, next, '鲲穹文件包.zip', share.files.map((file) => ({
+      path: path.join(shareDirectory, file.storedName),
+      name: file.relativePath,
+      size: file.size,
+    })))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/shares/:token/files/:fileIndex/download', (req, res, next) => {
+  try {
+    const share = metadata.shares.find((item) => item.id === req.params.token)
+    if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
+    const access = validateShare(share, req.get('x-share-password'))
+    if (!access.ok) return res.status(access.status).json({ message: access.message })
+    const file = share.files[Number(req.params.fileIndex)]
+    if (!file) return res.status(404).json({ message: '文件不存在' })
+    registerShareDownload(share, res)
+    sendDownloadFile(res, next, path.join(filesRoot, share.id, file.storedName), file)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/shares/:token/files/:fileIndex/preview', (req, res, next) => {
+  try {
+    const share = metadata.shares.find((item) => item.id === req.params.token)
+    if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
+    const access = validateShareRequest(share, req)
+    if (!access.ok) return res.status(access.status).json({ message: access.message })
+    const file = share.files[Number(req.params.fileIndex)]
+    if (!file) return res.status(404).json({ message: '文件不存在' })
+    sendPreviewFile(res, next, path.join(filesRoot, share.id, file.storedName), file)
   } catch (error) {
     next(error)
   }
@@ -488,30 +560,52 @@ app.get('/api/collections/manage/:manageToken/download', async (req, res, next) 
   try {
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
     if (!task) return res.status(404).json({ message: '管理链接不存在' })
-    res.attachment(`${task.title}.zip`)
-    const archive = archiver('zip', { zlib: { level: 6 } })
-    archive.on('error', next)
-    archive.pipe(res)
-    for (const submission of task.submissions) {
-      for (const file of submission.files) {
-        archive.file(path.join(collectionsRoot, task.id, submission.id, file.storedName), {
-          name: path.join(submission.participantName, file.relativePath),
-        })
-      }
-    }
-    await archive.finalize()
+    const entries = collectionZipEntries(task)
+    if (!entries.length) return res.status(404).json({ message: '暂无可下载的提交文件' })
+    await streamZip(res, next, `${task.title || '收集文件'}.zip`, entries)
   } catch (error) {
     next(error)
   }
 })
 
-app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/download', (req, res) => {
-  const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
-  if (!task) return res.status(404).json({ message: '管理链接不存在' })
-  const submission = task.submissions.find((item) => item.id === req.params.submissionId)
-  const file = submission?.files[Number(req.params.fileIndex)]
-  if (!file) return res.status(404).json({ message: '文件不存在' })
-  res.download(path.join(collectionsRoot, task.id, submission.id, file.storedName), file.name)
+app.get('/api/collections/manage/:manageToken/submissions/:submissionId/download', async (req, res, next) => {
+  try {
+    const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
+    if (!task) return res.status(404).json({ message: '管理链接不存在' })
+    const submission = task.submissions.find((item) => item.id === req.params.submissionId)
+    if (!submission) return res.status(404).json({ message: '提交记录不存在' })
+    const entries = collectionZipEntries(task, submission)
+    if (!entries.length) return res.status(404).json({ message: '暂无可下载的提交文件' })
+    await streamZip(res, next, `${submission.participantName || '提交文件'}.zip`, entries)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/download', (req, res, next) => {
+  try {
+    const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
+    if (!task) return res.status(404).json({ message: '管理链接不存在' })
+    const submission = task.submissions.find((item) => item.id === req.params.submissionId)
+    const file = submission?.files[Number(req.params.fileIndex)]
+    if (!file) return res.status(404).json({ message: '文件不存在' })
+    sendDownloadFile(res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/preview', (req, res, next) => {
+  try {
+    const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
+    if (!task) return res.status(404).json({ message: '管理链接不存在' })
+    const submission = task.submissions.find((item) => item.id === req.params.submissionId)
+    const file = submission?.files[Number(req.params.fileIndex)]
+    if (!file) return res.status(404).json({ message: '文件不存在' })
+    sendPreviewFile(res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
+  } catch (error) {
+    next(error)
+  }
 })
 
 app.use('/api', (_req, res) => {
@@ -545,7 +639,7 @@ function loadMetadata() {
   try {
     return JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
   } catch {
-    return { shares: [], collections: [], sessions: [] }
+    return { shares: [], collections: [], sessions: [], records: {} }
   }
 }
 
@@ -573,6 +667,7 @@ function normalizeMetadata(value = {}) {
     shares,
     collections,
     sessions: Array.isArray(value.sessions) ? value.sessions : [],
+    records: normalizeAccountRecordStore(value.records),
   }
 }
 
@@ -664,6 +759,169 @@ function managerCollection(task, req) {
   }
 }
 
+function validateShareRequest(share, req, options = {}) {
+  return validateShare(share, req.get('x-share-password'), {
+    ...options,
+    hasAccessCookie: hasShareAccessCookie(req, share),
+  })
+}
+
+function setShareAccessCookie(res, req, share) {
+  if (!share.passwordHash) return
+  res.setHeader('Set-Cookie', serializeCookie(shareAccessCookieName(share), shareAccessCookieValue(share), {
+    httpOnly: true,
+    maxAge: SHARE_ACCESS_TTL_SECONDS,
+    path: `/api/shares/${share.id}`,
+    sameSite: 'Lax',
+    secure: isSecureRequest(req),
+  }))
+}
+
+function hasShareAccessCookie(req, share) {
+  if (!share.passwordHash) return false
+  return readCookie(req, shareAccessCookieName(share)) === shareAccessCookieValue(share)
+}
+
+function shareAccessCookieName(share) {
+  return `${SHARE_ACCESS_COOKIE_PREFIX}${share.id}`
+}
+
+function shareAccessCookieValue(share) {
+  return hashSecret(`share-preview:${share.id}:${share.passwordHash}`)
+}
+
+function registerShareDownload(share, res) {
+  let counted = false
+  res.on('finish', () => {
+    if (counted || res.statusCode < 200 || res.statusCode >= 300) return
+    counted = true
+    share.downloadCount += 1
+    share.updatedAt = new Date().toISOString()
+    persistMetadata()
+  })
+}
+
+function sendPreviewFile(res, next, filePath, file) {
+  const kind = previewKind(file)
+  if (!kind) return res.status(415).json({ message: '当前文件类型暂不支持在线预览' })
+  if (!fs.existsSync(filePath)) return res.status(410).json({ message: '文件已清理，无法预览' })
+  const stat = fs.statSync(filePath)
+  res.setHeader('Accept-Ranges', 'bytes')
+  res.setHeader('Content-Disposition', contentDisposition('inline', file.name || path.basename(filePath)))
+  res.setHeader('X-Preview-Type', kind)
+  res.setHeader('X-Preview-File-Size', String(stat.size))
+  res.type(fileContentType(file))
+  res.sendFile(filePath, (error) => {
+    if (!error) return
+    if (!res.headersSent) next(error)
+    else console.error(error)
+  })
+}
+
+function sendDownloadFile(res, next, filePath, file) {
+  if (!fs.existsSync(filePath)) return res.status(410).json({ message: '文件已清理，无法下载' })
+  const stat = fs.statSync(filePath)
+  res.setHeader('Accept-Ranges', 'bytes')
+  res.setHeader('X-Download-File-Count', '1')
+  res.setHeader('X-Download-Resume', 'range')
+  res.setHeader('X-Download-Total-Size', String(stat.size))
+  if (file.mimeType) res.type(file.mimeType)
+  res.download(filePath, file.name || path.basename(filePath), (error) => {
+    if (!error) return
+    if (!res.headersSent) next(error)
+    else console.error(error)
+  })
+}
+
+async function streamZip(res, next, filename, entries) {
+  const availableEntries = entries.filter((entry) => fs.existsSync(entry.path))
+  if (!availableEntries.length) return res.status(410).json({ message: '文件已清理，无法下载' })
+  const totalSize = availableEntries.reduce((sum, entry) => sum + Number(entry.size || 0), 0)
+  res.setHeader('X-Download-File-Count', String(availableEntries.length))
+  res.setHeader('X-Download-Resume', 'unsupported-for-archive')
+  res.setHeader('X-Download-Total-Size', String(totalSize))
+  res.setHeader('Accept-Ranges', 'none')
+  res.attachment(filename)
+  const archive = archiver('zip', { zlib: { level: 6 } })
+  archive.on('warning', (error) => {
+    if (error.code === 'ENOENT') console.warn(error)
+    else next(error)
+  })
+  archive.on('error', next)
+  archive.pipe(res)
+  for (const entry of availableEntries) {
+    archive.file(entry.path, { name: zipEntryPath(entry.name) })
+  }
+  await archive.finalize()
+}
+
+function collectionZipEntries(task, targetSubmission = null) {
+  const submissions = targetSubmission ? [targetSubmission] : task.submissions
+  return submissions.flatMap((submission) => {
+    const folder = targetSubmission ? '' : `${submission.participantName || '提交文件'}-${submission.id.slice(0, 6)}`
+    return submission.files.map((file) => ({
+      path: path.join(collectionsRoot, task.id, submission.id, file.storedName),
+      name: zipEntryPath(folder, file.relativePath),
+      size: file.size,
+    }))
+  })
+}
+
+function zipEntryPath(...parts) {
+  return parts
+    .filter((part) => String(part || '').trim())
+    .flatMap((part) => safeRelativePath(part).split('/'))
+    .filter(Boolean)
+    .join('/') || '未命名文件'
+}
+
+function previewKind(file = {}) {
+  const contentType = fileContentType(file)
+  const extension = path.extname(file.name || file.relativePath || '').toLowerCase()
+  if (contentType === 'application/pdf' || extension === '.pdf') return 'pdf'
+  if (contentType.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].includes(extension)) return 'image'
+  if (contentType.startsWith('video/') || ['.mp4', '.webm', '.ogv', '.mov', '.m4v'].includes(extension)) return 'video'
+  if (contentType.startsWith('audio/') || ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.oga', '.ogg'].includes(extension)) return 'audio'
+  return ''
+}
+
+function fileContentType(file = {}) {
+  const mimeType = String(file.mimeType || '').trim().toLowerCase()
+  if (mimeType && mimeType !== 'application/octet-stream') return mimeType
+  const extension = path.extname(file.name || file.relativePath || '').toLowerCase()
+  const mimeTypes = {
+    '.aac': 'audio/aac',
+    '.bmp': 'image/bmp',
+    '.flac': 'audio/flac',
+    '.gif': 'image/gif',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.m4a': 'audio/mp4',
+    '.m4v': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.mp3': 'audio/mpeg',
+    '.mp4': 'video/mp4',
+    '.oga': 'audio/ogg',
+    '.ogg': 'audio/ogg',
+    '.ogv': 'video/ogg',
+    '.pdf': 'application/pdf',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.wav': 'audio/wav',
+    '.webm': 'video/webm',
+    '.webp': 'image/webp',
+  }
+  return mimeTypes[extension] || 'application/octet-stream'
+}
+
+function contentDisposition(type, filename) {
+  const fallback = String(filename || 'preview')
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/["\\]/g, '')
+    .trim() || 'preview'
+  return `${type}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(String(filename || fallback))}`
+}
+
 function publicUser(user = {}) {
   const avatarSource = String(user.avatarSource || '')
   const providerAvatar = user.providerAvatar || (!avatarSource ? user.avatar : null) || null
@@ -678,6 +936,174 @@ function publicUser(user = {}) {
     providerAvatar,
     provider: String(user.provider || user.login_provider || user.oauth_provider || user.channel || user.source || ''),
   }
+}
+
+function requireAuthSession(req, res) {
+  const session = authSessionFromRequest(req)
+  if (!session) res.status(401).json({ message: '请先登录' })
+  return session
+}
+
+function accountRecordOwnerKey(userId) {
+  return trimRecordString(userId, 120)
+}
+
+function accountRecordsForUser(userId) {
+  const key = accountRecordOwnerKey(userId)
+  if (!key) return []
+  if (!metadata.records || typeof metadata.records !== 'object' || Array.isArray(metadata.records)) metadata.records = {}
+  if (!Array.isArray(metadata.records[key])) metadata.records[key] = []
+  return metadata.records[key]
+}
+
+function normalizeAccountRecordStore(value = {}) {
+  const store = {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return store
+  for (const [userId, records] of Object.entries(value)) {
+    const key = accountRecordOwnerKey(userId)
+    if (key) store[key] = normalizeAccountRecords(records)
+  }
+  return store
+}
+
+function mergeAccountRecords(currentRecords, incomingRecords) {
+  const merged = new Map()
+  normalizeAccountRecords(currentRecords).forEach((record) => merged.set(record.id, record))
+  normalizeAccountRecords(incomingRecords).forEach((record) => {
+    const existing = merged.get(record.id)
+    merged.set(record.id, existing ? mergeAccountRecord(existing, record) : record)
+  })
+  return Array.from(merged.values()).sort(compareAccountRecords).slice(0, MAX_ACCOUNT_RECORDS)
+}
+
+function normalizeAccountRecords(records) {
+  if (!Array.isArray(records)) return []
+  const deduped = new Map()
+  records.map(normalizeAccountRecord).filter(Boolean).forEach((record) => {
+    const existing = deduped.get(record.id)
+    deduped.set(record.id, existing ? mergeAccountRecord(existing, record) : record)
+  })
+  return Array.from(deduped.values()).sort(compareAccountRecords).slice(0, MAX_ACCOUNT_RECORDS)
+}
+
+function normalizeAccountRecord(record = {}) {
+  if (!record || typeof record !== 'object') return null
+  const id = trimRecordString(record.id, 180)
+  if (!id) return null
+  const scope = ACCOUNT_RECORD_SCOPES.has(record.scope) ? record.scope : legacyScopeFromType(record.type)
+  const kind = ACCOUNT_RECORD_KINDS.has(record.kind)
+    ? record.kind
+    : scope === 'my_collections' || scope === 'collect_from_me'
+      ? 'collection'
+      : 'share'
+  const now = new Date().toISOString()
+  const createdAt = normalizeRecordDate(record.createdAt || record.submittedAt) || now
+  const updatedAt = normalizeRecordDate(record.updatedAt || record.lastSeenAt) || createdAt
+  return {
+    id,
+    scope,
+    kind,
+    type: trimRecordString(record.type, 20) || (kind === 'collection' ? '收集' : '发送'),
+    name: trimRecordString(record.name, 160) || (kind === 'collection' ? '收集任务' : '文件分享'),
+    alias: trimRecordString(record.alias, 160),
+    meta: trimRecordString(record.meta, 240),
+    code: trimRecordString(record.code, 40),
+    status: trimRecordString(record.status, 40),
+    shareId: trimRecordString(record.shareId, 80),
+    shareUrl: trimRecordString(record.shareUrl, 400),
+    manageToken: trimRecordString(record.manageToken, 120),
+    manageUrl: trimRecordString(record.manageUrl, 400),
+    collectionToken: trimRecordString(record.collectionToken, 120),
+    publicUrl: trimRecordString(record.publicUrl, 400),
+    expiresAt: normalizeRecordDate(record.expiresAt),
+    deadline: normalizeRecordDate(record.deadline),
+    downloadLimit: normalizeNullablePositiveInteger(record.downloadLimit),
+    downloadCount: normalizeNonNegativeInteger(record.downloadCount),
+    fileCount: normalizeNonNegativeInteger(record.fileCount),
+    totalSize: normalizeNonNegativeInteger(record.totalSize),
+    submissionCount: normalizeNonNegativeInteger(record.submissionCount),
+    participantName: trimRecordString(record.participantName, 80),
+    submittedAt: normalizeRecordDate(record.submittedAt),
+    allowedTypes: normalizeRecordStringArray(record.allowedTypes, 12, 20),
+    maxFileSizeMb: normalizeNullablePositiveInteger(record.maxFileSizeMb),
+    files: normalizeRecordFiles(record.files),
+    submissions: normalizeRecordSubmissions(record.submissions),
+    createdAt,
+    updatedAt,
+  }
+}
+
+function mergeAccountRecord(existing, incoming) {
+  const merged = { ...existing, ...incoming }
+  merged.createdAt = existing.createdAt || incoming.createdAt
+  merged.updatedAt = incoming.updatedAt || existing.updatedAt || merged.createdAt
+  if (!incoming.alias && existing.alias) merged.alias = existing.alias
+  if ((!incoming.name || incoming.name === '文件分享' || incoming.name === '收集任务') && existing.name) merged.name = existing.name
+  if (!incoming.meta && existing.meta) merged.meta = existing.meta
+  if (!incoming.fileCount && existing.fileCount) merged.fileCount = existing.fileCount
+  if (!incoming.totalSize && existing.totalSize) merged.totalSize = existing.totalSize
+  if (!incoming.submissionCount && existing.submissionCount) merged.submissionCount = existing.submissionCount
+  if ((!incoming.files || !incoming.files.length) && existing.files?.length) merged.files = existing.files
+  if ((!incoming.submissions || !incoming.submissions.length) && existing.submissions?.length) merged.submissions = existing.submissions
+  return merged
+}
+
+function normalizeRecordFiles(files) {
+  if (!Array.isArray(files)) return []
+  return files.slice(0, MAX_RECORD_FILES).map((file, index) => ({
+    name: trimRecordString(file?.name, 180) || `文件 ${index + 1}`,
+    relativePath: trimRecordString(file?.relativePath || file?.name, 260),
+    size: normalizeNonNegativeInteger(file?.size),
+    mimeType: trimRecordString(file?.mimeType, 100),
+  }))
+}
+
+function normalizeRecordSubmissions(submissions) {
+  if (!Array.isArray(submissions)) return []
+  return submissions.slice(0, MAX_RECORD_SUBMISSIONS).map((submission) => ({
+    id: trimRecordString(submission?.id, 120),
+    participantName: trimRecordString(submission?.participantName, 80),
+    submittedAt: normalizeRecordDate(submission?.submittedAt),
+    files: normalizeRecordFiles(submission?.files),
+  })).filter((submission) => submission.id || submission.files.length)
+}
+
+function normalizeRecordStringArray(value, limit, maxLength) {
+  if (!Array.isArray(value)) return []
+  return Array.from(new Set(value.map((item) => trimRecordString(item, maxLength)).filter(Boolean))).slice(0, limit)
+}
+
+function normalizeRecordDate(value) {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function normalizeNullablePositiveInteger(value) {
+  if (value === null || value === undefined || value === '' || value === 'unlimited') return null
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : null
+}
+
+function normalizeNonNegativeInteger(value) {
+  const number = Number(value || 0)
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0
+}
+
+function trimRecordString(value, maxLength) {
+  const text = String(value ?? '').trim()
+  return text.length > maxLength ? text.slice(0, maxLength) : text
+}
+
+function legacyScopeFromType(type) {
+  if (type === '收取' || type === '接收') return 'sent_to_me'
+  if (type === '被收集' || type === '提交') return 'collect_from_me'
+  if (type === '收集') return 'my_collections'
+  return 'my_sent'
+}
+
+function compareAccountRecords(a, b) {
+  return new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime()
 }
 
 function isOAuthConfigured() {
@@ -1019,7 +1445,7 @@ function findShareByCode(code) {
   return metadata.shares.find((share) => share.code.toLowerCase() === String(code).trim().toLowerCase())
 }
 
-function validateShare(share, password, { allowMissingPassword = false } = {}) {
+function validateShare(share, password, { allowMissingPassword = false, hasAccessCookie = false } = {}) {
   if (share.status !== 'active') return { ok: false, status: 410, message: '分享已失效' }
   if (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now()) {
     share.status = 'expired'
@@ -1030,6 +1456,7 @@ function validateShare(share, password, { allowMissingPassword = false } = {}) {
   if (share.downloadLimit && share.downloadCount >= share.downloadLimit) {
     return { ok: false, status: 410, message: '下载次数已用完' }
   }
+  if (hasAccessCookie && share.passwordHash) return { ok: true }
   if (allowMissingPassword && share.passwordHash && !password) return { ok: true }
   if (share.passwordHash && hashSecret(password || '') !== share.passwordHash) {
     return { ok: false, status: password ? 401 : 403, message: password ? '提取密码不正确' : '请输入提取密码' }

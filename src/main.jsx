@@ -14,6 +14,7 @@ import {
   Cloud,
   Copy,
   Download,
+  Eye,
   ExternalLink,
   FileArchive,
   FileCheck2,
@@ -33,12 +34,15 @@ import {
   MoreHorizontal,
   Pause,
   Play,
+  Search,
   RefreshCw,
   RotateCcw,
   Send,
   Settings2,
   ShieldCheck,
   Sparkles,
+  HardDrive,
+  PencilLine,
   Trash2,
   UploadCloud,
   UserRound,
@@ -89,6 +93,7 @@ function WorkspaceApp() {
   const inputRef = useRef(null)
   const folderInputRef = useRef(null)
   const uploadRef = useRef(createUploadSessionState())
+  const recordSyncUserRef = useRef('')
   const [activeView, setActiveView] = useState(() => new URLSearchParams(window.location.search).get('view') || 'send')
   const [files, setFiles] = useState([])
   const [isDragging, setIsDragging] = useState(false)
@@ -107,6 +112,7 @@ function WorkspaceApp() {
   const [toast, setToast] = useState('')
   const [settings, setSettings] = useState(defaultSettings)
   const [records, setRecords] = useState(() => readRecords())
+  const [recordsSyncing, setRecordsSyncing] = useState(false)
   const [authUser, setAuthUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authMenuOpen, setAuthMenuOpen] = useState(false)
@@ -123,6 +129,31 @@ function WorkspaceApp() {
     } finally {
       setAuthLoading(false)
     }
+  }
+
+  const syncAccountRecords = async ({ silent = true } = {}) => {
+    if (!authUser?.id) return readRecords()
+    setRecordsSyncing(true)
+    try {
+      const cloudRecords = await fetchCloudRecords()
+      const merged = writeRecords(upsertRecords(readRecords(), cloudRecords))
+      setRecords(merged)
+      const persisted = await replaceCloudRecords(merged)
+      const synced = writeRecords(upsertRecords(merged, persisted.records || []))
+      setRecords(synced)
+      if (!silent) setToast('账号记录已同步')
+      return synced
+    } catch (error) {
+      if (!silent) setToast(`账号记录同步失败：${error.message}`)
+      throw error
+    } finally {
+      setRecordsSyncing(false)
+    }
+  }
+
+  const syncRecordMutation = (action) => {
+    if (!authUser?.id) return
+    action().catch((error) => setToast(`账号记录同步失败：${error.message}`))
   }
 
   useEffect(() => {
@@ -153,6 +184,14 @@ function WorkspaceApp() {
 
   useEffect(() => {
     setMessages(readMessages(authUser))
+    if (!authUser?.id) {
+      recordSyncUserRef.current = ''
+      setRecords(readRecords())
+      return
+    }
+    if (recordSyncUserRef.current === authUser.id) return
+    recordSyncUserRef.current = authUser.id
+    syncAccountRecords({ silent: true }).catch((error) => setToast(`账号记录同步失败：${error.message}`))
   }, [authUser?.id])
 
   const addFiles = (incoming) => {
@@ -280,14 +319,24 @@ function WorkspaceApp() {
   }
 
   const saveRecord = (record) => {
-    setRecords((current) => saveLocalRecord(record, current))
+    const normalized = normalizeRecord(record)
+    const next = saveLocalRecord(normalized, readRecords())
+    setRecords(next)
+    syncRecordMutation(() => upsertCloudRecords([normalized]))
   }
 
-  const replaceRecords = (updater) => {
-    setRecords((current) => {
-      const next = typeof updater === 'function' ? updater(current) : updater
-      return writeRecords(next)
-    })
+  const replaceRecords = (updater, cloudOptions = {}) => {
+    const current = readRecords()
+    const next = writeRecords(typeof updater === 'function' ? updater(current) : updater)
+    setRecords(next)
+    if (cloudOptions.mode === 'delete') {
+      syncRecordMutation(() => deleteCloudRecords(cloudOptions.ids || []))
+    } else if (cloudOptions.mode === 'clear') {
+      syncRecordMutation(() => clearCloudRecords())
+    } else if (cloudOptions.mode !== 'local') {
+      syncRecordMutation(() => replaceCloudRecords(next))
+    }
+    return next
   }
 
   const createCollection = (form) => {
@@ -536,19 +585,45 @@ function WorkspaceApp() {
 
   const deleteRecord = (recordIds) => {
     const targets = new Set(Array.isArray(recordIds) ? recordIds : [recordIds])
-    replaceRecords((current) => current.filter((record) => !targets.has(normalizeRecord(record).id)))
+    replaceRecords((current) => current.filter((record) => !targets.has(normalizeRecord(record).id)), { mode: 'delete', ids: Array.from(targets) })
     setToast(targets.size > 1 ? `已删除 ${targets.size} 条记录` : '记录已删除')
   }
 
   const clearRecords = () => {
-    replaceRecords([])
-    setToast('本机记录已清空')
+    replaceRecords([], { mode: 'clear' })
+    setToast(authUser?.id ? '账号记录已清空' : '本机记录已清空')
+  }
+
+  const renameRecord = (recordId, nextName) => {
+    const alias = String(nextName || '').trim()
+    if (!alias) {
+      setToast('显示名称不能为空')
+      return
+    }
+    replaceRecords((current) => current.map((record) => {
+      const normalized = normalizeRecord(record)
+      return normalized.id === recordId ? { ...normalized, alias, updatedAt: new Date().toISOString() } : normalized
+    }))
+    setToast('显示名称已更新')
   }
 
   const refreshRecords = async ({ silent = false } = {}) => {
-    const nextRecords = await syncRecords(readRecords())
-    setRecords(writeRecords(nextRecords))
-    if (!silent) setToast('收发记录已刷新')
+    setRecordsSyncing(Boolean(authUser?.id))
+    try {
+      let baseRecords = readRecords()
+      if (authUser?.id) {
+        const cloudRecords = await fetchCloudRecords()
+        baseRecords = writeRecords(upsertRecords(baseRecords, cloudRecords))
+      }
+      const nextRecords = writeRecords(await syncRecords(baseRecords))
+      setRecords(nextRecords)
+      if (authUser?.id) await replaceCloudRecords(nextRecords)
+      if (!silent) setToast(authUser?.id ? '收发记录已刷新并同步' : '收发记录已刷新')
+    } catch (error) {
+      if (!silent) setToast(error.message || '刷新失败')
+    } finally {
+      setRecordsSyncing(false)
+    }
   }
 
   const openRecordLink = (record) => {
@@ -631,7 +706,7 @@ function WorkspaceApp() {
             onRefreshRecords={refreshRecords}
           />
         )}
-        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} />}
+        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onDelete={deleteRecord} onRename={renameRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} />}
       </main>
 
       <footer className="page-footer">
@@ -732,6 +807,36 @@ function UploadProgressPanel({ progress, uploadState, isUploading, onPause, onRe
   )
 }
 
+function DownloadProgressPanel({ task, onRetry }) {
+  if (!task || task.status === 'idle') return null
+  const busy = ['preparing', 'downloading', 'saving'].includes(task.status)
+  const statusText = downloadStatusText(task)
+  const progress = task.totalBytes ? Math.min(100, Math.max(0, task.progress || 0)) : task.status === 'complete' ? 100 : task.progress || 0
+  const trackWidth = task.totalBytes || task.status === 'complete' ? progress : busy ? 18 : 0
+  return (
+    <div className={`progress-wrap enhanced-progress download-progress ${task.status}`}>
+      <div className="progress-label"><span>{statusText}</span><strong>{task.totalBytes ? `${progress}%` : formatBytes(task.loadedBytes)}</strong></div>
+      <div className="progress-track"><span style={{ width: `${trackWidth}%` }} /></div>
+      <div className="upload-metrics">
+        <span>已下 {formatBytes(task.loadedBytes)}{task.totalBytes ? ` / ${formatBytes(task.totalBytes)}` : ''}</span>
+        <span>速度 {task.speedBps ? `${formatBytes(task.speedBps)}/s` : '计算中'}</span>
+        <span>剩余 {formatDuration(task.etaSeconds)}</span>
+      </div>
+      {task.filename && <small>文件：{task.filename}</small>}
+      {task.canResume && <small>单文件服务端已开启 Range，可被浏览器用于断点续传。</small>}
+      {task.isEstimated && <small>ZIP 为实时压缩生成，进度按原文件大小估算。</small>}
+      {task.retryCount > 0 && <small>已重试 {task.retryCount} 次</small>}
+      {task.status === 'complete' && <small>已调用浏览器保存，请在下载列表查看。</small>}
+      {task.error && <p className="upload-error">{task.error}</p>}
+      {task.status === 'failed' && (
+        <div className="upload-control-row">
+          <button className="primary-button" onClick={onRetry}><RotateCcw size={15} /> 重试下载</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }) {
   const [qrOpen, setQrOpen] = useState(false)
   return (
@@ -809,6 +914,59 @@ function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, onCopyIm
       </div>
     </div>
   )
+}
+
+function FilePreviewModal({ preview, onClose, onDownload, downloadDisabled = false }) {
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  if (!preview) return null
+  const file = preview.file || {}
+  return (
+    <div className="modal-backdrop preview-backdrop" onMouseDown={onClose}>
+      <div className={`modal preview-modal ${preview.kind}`} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header preview-modal-header">
+          <div>
+            <p className="eyebrow">{previewTypeLabel(preview.kind)}预览</p>
+            <h2>{file.name || '文件预览'}</h2>
+            <span className="preview-meta">{file.relativePath || file.name} · {formatBytes(file.size)}</span>
+          </div>
+          <button className="ghost-icon modal-close" aria-label="关闭预览" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="preview-modal-body">
+          {error ? <div className="preview-error"><FileText size={28} /><strong>预览加载失败</strong><span>{error}</span></div> : renderPreviewContent(preview, () => setError('浏览器无法打开这个文件，可下载后查看。'))}
+        </div>
+        <div className="modal-footer preview-modal-footer">
+          <span>{previewSupportLabel(preview.kind)}</span>
+          <button className="secondary-button" onClick={onDownload} disabled={downloadDisabled}><Download size={15} /> 下载文件</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function renderPreviewContent(preview, onError) {
+  const title = preview.file?.name || '文件预览'
+  if (preview.kind === 'image') return <img className="preview-image" src={preview.url} alt={title} onError={onError} />
+  if (preview.kind === 'pdf') return <iframe className="preview-frame" src={preview.url} title={title} onError={onError} />
+  if (preview.kind === 'video') return <video className="preview-video" src={preview.url} controls preload="metadata" onError={onError} />
+  if (preview.kind === 'audio') {
+    return (
+      <div className="preview-audio-shell">
+        <span className="preview-audio-icon"><FileText size={28} /></span>
+        <strong>{title}</strong>
+        <audio className="preview-audio" src={preview.url} controls preload="metadata" onError={onError} />
+      </div>
+    )
+  }
+  return <div className="preview-error"><FileText size={28} /><strong>暂不支持预览</strong><span>请下载后查看这个文件。</span></div>
 }
 
 function CollectionLimitInfo({ allowedTypes, maxFileSizeMb, compact = false }) {
@@ -1029,6 +1187,12 @@ function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onDes
 
 function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission }) {
   const isActive = data.status === 'active'
+  const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
+  const [previewItem, setPreviewItem] = useState(null)
+  const downloadAll = () => startDownload(createCollectionDownloadConfig(data))
+  const downloadSubmissionItem = (submission) => startDownload(createSubmissionDownloadConfig(data, submission))
+  const downloadFile = (submission, fileIndex) => startDownload(createSubmissionFileDownloadConfig(data, submission, fileIndex))
+  const previewFile = (submission, fileIndex) => setPreviewItem(createSubmissionFilePreviewConfig(data, submission, fileIndex))
   return (
     <div className="collection-files-card">
       <div className="collection-files-header">
@@ -1060,17 +1224,20 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSet
                 <div><strong>{submission.participantName}</strong><span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span></div>
                 <div className="submission-heading-actions">
                   <span className="submission-badge">已提交</span>
+                  <button className="submission-download-button" onClick={() => downloadSubmissionItem(submission)} disabled={downloadBusy}><Download size={14} /> 下载此提交</button>
                   <button className="submission-delete-button" onClick={() => onDeleteSubmission(data, submission.id)}><Trash2 size={14} /> 删除提交</button>
                 </div>
               </div>
-              <div className="submission-files">{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><FileText size={15} /><span>{file.name}</span><small>{formatBytes(file.size)}</small><button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadSubmissionFile(submission, fileIndex, data)}><Download size={15} /></button></div>)}</div>
+              <div className="submission-files">{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><FileText size={15} /><span>{file.name}</span><small>{formatBytes(file.size)}</small>{canPreviewFile(file) && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}<button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><Download size={15} /></button></div>)}</div>
             </div>
           ))}
         </div>
       ) : (
         <div className="empty-manage collection-empty"><Inbox size={25} /><span>暂时还没有人提交文件</span></div>
       )}
-      {data.submissions.length > 0 && <button className="primary-button wide" onClick={() => { window.location.href = data.downloadUrl }}><Download size={16} /> 打包下载全部提交</button>}
+      {data.submissions.length > 0 && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
+      <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+      {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
     </div>
   )
 }
@@ -1079,6 +1246,9 @@ function SharePage({ token }) {
   const [data, setData] = useState(null)
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
+  const [previewItem, setPreviewItem] = useState(null)
   useEffect(() => {
     apiRequest(`/api/shares/token/${token}`).then((result) => {
       setData(result)
@@ -1089,13 +1259,42 @@ function SharePage({ token }) {
     try {
       const result = await apiRequest(`/api/shares/lookup/${data.share.code}`, { method: 'POST', body: JSON.stringify({ password }) })
       setData(result)
+      setActionError('')
       saveLocalRecord(createShareRecord(result.share, 'sent_to_me'))
-    } catch (err) { setError(err.message) }
+    } catch (err) { setActionError(err.message) }
   }
   if (error) return <PublicShell><StateBlock title="这个分享暂时不可用" detail={error} /></PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   const share = data.share
-  return <PublicShell><div className="public-card"><span className="public-icon"><Download size={24} /></span><p className="eyebrow">鲲穹临时分享</p><h1>有人给你发来了文件</h1><p className="public-copy">{share.files.length} 个文件 · {formatBytes(share.files.reduce((sum, file) => sum + file.size, 0))} · {formatExpiry(share.expiresAt)}</p>{data.requiresPassword && !share.files?.length ? <div className="public-password"><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入提取密码" /><button className="primary-button" onClick={findShare}>验证密码</button></div> : <><div className="public-files">{share.files.map((file) => <FileRow key={file.relativePath} file={file} />)}</div><button className="primary-button wide" onClick={() => downloadShare(share, password, setError)}><Download size={17} /> 下载全部文件</button></>}</div></PublicShell>
+  const downloadAll = () => startDownload(createShareDownloadConfig(share, { password }))
+  const downloadFile = (file, fileIndex) => startDownload(createShareFileDownloadConfig(share, file, fileIndex, { password }))
+  const previewFile = (file, fileIndex) => setPreviewItem(createShareFilePreviewConfig(share, file, fileIndex, { password }))
+  return (
+    <PublicShell>
+      <div className="public-card">
+        <span className="public-icon"><Download size={24} /></span>
+        <p className="eyebrow">鲲穹临时分享</p>
+        <h1>有人给你发来了文件</h1>
+        <p className="public-copy">{share.files.length} 个文件 · {formatBytes(share.files.reduce((sum, file) => sum + file.size, 0))} · {formatExpiry(share.expiresAt)}</p>
+        {data.requiresPassword && !share.files?.length ? (
+          <div className="public-password">
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入提取密码" />
+            <button className="primary-button" onClick={findShare}>验证密码</button>
+          </div>
+        ) : (
+          <>
+            <div className="public-files">
+              {share.files.map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={downloadBusy} />)}
+            </div>
+            <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy}><Download size={17} /> {share.files.length > 1 ? '下载全部文件' : '下载文件'}</button>
+            <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+          </>
+        )}
+        {actionError && <p className="public-message">{actionError}</p>}
+        {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+      </div>
+    </PublicShell>
+  )
 }
 
 function ShareManagePage({ token }) {
@@ -1197,7 +1396,7 @@ function CollectionSubmitPage({ token }) {
     setSubmitting(true)
     xhrRequest(`/api/collections/${token}/submissions`, { method: 'POST', body, onProgress: setProgress }).then((result) => {
       const submittedAt = result.submission?.submittedAt || new Date().toISOString()
-      saveLocalRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt }))
+      saveLocalRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt, files: result.submission?.files || files }))
       setMessage('提交成功，感谢你的文件')
       setFiles([])
     }).catch((err) => setMessage(err.message)).finally(() => setSubmitting(false))
@@ -1239,6 +1438,8 @@ function CollectionManagePage({ token }) {
   const [destroyed, setDestroyed] = useState(false)
   const [editing, setEditing] = useState(false)
   const [actionError, setActionError] = useState('')
+  const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
+  const [previewItem, setPreviewItem] = useState(null)
 
   const saveManagedCollection = (collection) => {
     setActionError('')
@@ -1311,6 +1512,10 @@ function CollectionManagePage({ token }) {
       setActionError(err.message)
     }
   }
+  const downloadAll = () => startDownload(createCollectionDownloadConfig(data))
+  const downloadSubmissionItem = (submission) => startDownload(createSubmissionDownloadConfig(data, submission))
+  const downloadFile = (submission, fileIndex) => startDownload(createSubmissionFileDownloadConfig(data, submission, fileIndex))
+  const previewFile = (submission, fileIndex) => setPreviewItem(createSubmissionFilePreviewConfig(data, submission, fileIndex))
   if (error) return <PublicShell><StateBlock title="管理链接不可用" detail={error} /></PublicShell>
   if (destroyed) return <PublicShell><StateBlock title="收集任务已销毁" detail="收集链接和已提交文件均已失效。" /></PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
@@ -1343,10 +1548,10 @@ function CollectionManagePage({ token }) {
               <div>
                 <strong>{submission.participantName}</strong>
                 <span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span>
-                <div className="manage-file-names">{submission.files.map((file, fileIndex) => <button key={`${submission.id}-${file.relativePath}`} onClick={() => downloadSubmissionFile(submission, fileIndex, data)}><FileText size={13} /> {file.name}</button>)}</div>
+                <div className="manage-file-names">{submission.files.map((file, fileIndex) => <span className="manage-file-chip" key={`${submission.id}-${file.relativePath}`}>{canPreviewFile(file) && <button className="manage-file-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={13} /></button>}<button onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><FileText size={13} /> {file.name}</button></span>)}</div>
               </div>
               <div className="manage-submission-actions">
-                <button className="secondary-button" onClick={() => downloadSubmission(submission, data)}><Download size={15} /> 下载</button>
+                <button className="secondary-button" onClick={() => downloadSubmissionItem(submission)} disabled={downloadBusy}><Download size={15} /> 下载</button>
                 <button className="secondary-button danger-lite" onClick={() => deleteSubmission(submission.id)}><Trash2 size={15} /> 删除提交</button>
               </div>
             </div>
@@ -1354,7 +1559,9 @@ function CollectionManagePage({ token }) {
             <div className="empty-manage"><Inbox size={25} /><span>暂时还没有人提交文件</span></div>
           )}
         </div>
-        {data.submissions.length > 0 && <button className="primary-button wide" onClick={() => { window.location.href = data.downloadUrl }}><Download size={16} /> 打包下载全部提交</button>}
+        {data.submissions.length > 0 && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
+        <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+        {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       </div>
       {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveTaskSettings} onCloseTask={async () => { const closed = await closeTask(); if (closed) setEditing(false); return closed }} onReopenTask={async (payload) => { const reopened = await reopenTask(payload); if (reopened) setEditing(false); return reopened }} />}
     </PublicShell>
@@ -1364,17 +1571,57 @@ function CollectionManagePage({ token }) {
 function RetrieveModal({ code, setCode, result, onClose, onFind }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
+  const [previewItem, setPreviewItem] = useState(null)
   useEffect(() => {
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape' && !previewItem) onClose()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
+  }, [onClose, previewItem])
   const verify = async () => {
     try { const data = await apiRequest(`/api/shares/lookup/${code.trim().toUpperCase()}`, { method: 'POST', body: JSON.stringify({ password }) }); setError(''); onFind(data) } catch (err) { setError(err.message) }
   }
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className={`modal retrieve-modal ${result ? 'retrieve-modal-result' : ''}`} onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><p className="eyebrow">取件</p><h2>{result ? '文件已找到' : '输入取件码'}</h2></div><button className="ghost-icon modal-close" aria-label="关闭取件窗口" onClick={onClose}><X size={18} /></button></div><div className="modal-body">{!result ? <><p className="modal-intro">输入分享者发给你的 4-6 位取件码，开始下载文件。</p><input className="code-input" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === 'Enter') onFind() }} placeholder="例如 QK7P" autoFocus /><div className="retrieve-hint"><ShieldCheck size={15} /> 取件无需登录</div></> : <><p className="modal-intro">{result.requiresPassword ? '这个分享已开启提取密码，验证后即可查看文件。' : `${result.share.files.length} 个文件 · ${formatExpiry(result.share.expiresAt)}`}</p>{result.requiresPassword && <input className="modal-inline-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') verify() }} placeholder="请输入提取密码" />}{result.requiresPassword && <button className="secondary-button verify-button" onClick={verify}>验证密码</button>}{result.share.files.length > 0 && <div className="public-files compact">{result.share.files.map((file) => <FileRow key={file.relativePath} file={file} />)}</div>}{!result.requiresPassword && <button className="primary-button wide" onClick={() => downloadShare(result.share, '', setError)}><Download size={16} /> 下载全部文件</button>}{error && <p className="public-message">{error}</p>}</>}</div>{!result && <div className="modal-footer retrieve-footer"><button className="primary-button" onClick={() => onFind()}><KeyRound size={16} /> 查找文件</button></div>}</div></div>
+  const share = result?.share
+  const downloadAll = () => share && startDownload(createShareDownloadConfig(share, { password }))
+  const downloadFile = (file, fileIndex) => share && startDownload(createShareFileDownloadConfig(share, file, fileIndex, { password }))
+  const previewFile = (file, fileIndex) => share && setPreviewItem(createShareFilePreviewConfig(share, file, fileIndex, { password }))
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className={`modal retrieve-modal ${result ? 'retrieve-modal-result' : ''}`} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div><p className="eyebrow">取件</p><h2>{result ? '文件已找到' : '输入取件码'}</h2></div>
+          <button className="ghost-icon modal-close" aria-label="关闭取件窗口" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          {!result ? (
+            <>
+              <p className="modal-intro">输入分享者发给你的 4-6 位取件码，开始下载文件。</p>
+              <input className="code-input" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === 'Enter') onFind() }} placeholder="例如 QK7P" autoFocus />
+              <div className="retrieve-hint"><ShieldCheck size={15} /> 取件无需登录</div>
+            </>
+          ) : (
+            <>
+              <p className="modal-intro">{result.requiresPassword ? '这个分享已开启提取密码，验证后即可查看文件。' : `${share.files.length} 个文件 · ${formatExpiry(share.expiresAt)}`}</p>
+              {result.requiresPassword && <input className="modal-inline-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') verify() }} placeholder="请输入提取密码" />}
+              {result.requiresPassword && <button className="secondary-button verify-button" onClick={verify}>验证密码</button>}
+              {share.files.length > 0 && (
+                <div className="public-files compact">
+                  {share.files.map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) && !result.requiresPassword ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={downloadBusy || result.requiresPassword} />)}
+                </div>
+              )}
+              {!result.requiresPassword && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> {share.files.length > 1 ? '下载全部文件' : '下载文件'}</button>}
+              <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+              {error && <p className="public-message">{error}</p>}
+              {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+            </>
+          )}
+        </div>
+        {!result && <div className="modal-footer retrieve-footer"><button className="primary-button" onClick={() => onFind()}><KeyRound size={16} /> 查找文件</button></div>}
+      </div>
+    </div>
+  )
 }
 
 function SettingsModal({ settings, setSettings, onClose, onSave }) {
@@ -1610,12 +1857,33 @@ const RECORD_STATUS_FILTERS = [
   ['expired', '已过期/已截止/已关闭'],
 ]
 
-function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, onRefresh, onOpen, onManage, onCloseManaged, onReopenManaged }) {
+const RECORD_VIEW_MODES = [
+  ['records', '收发记录'],
+  ['files', '文件管理'],
+]
+
+const FILE_CATEGORY_FILTERS = [
+  ['all', '全部类型'],
+  ['image', '图片'],
+  ['document', '文档'],
+  ['video', '视频'],
+  ['audio', '音频'],
+  ['archive', '压缩包'],
+  ['collection', '收集任务'],
+  ['mixed', '混合文件'],
+  ['other', '其他'],
+]
+
+function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRename, onDestroyCollection, onClear, onRefresh, onOpen, onManage, onCloseManaged, onReopenManaged }) {
+  const [viewMode, setViewMode] = useState('records')
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [fileQuery, setFileQuery] = useState('')
+  const [fileCategory, setFileCategory] = useState('all')
+  const [expiringOnly, setExpiringOnly] = useState(false)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [openMenu, setOpenMenu] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -1626,13 +1894,22 @@ function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, 
     && matchesRecordDate(record, dateFilter, dateFrom, dateTo)
     && matchesRecordStatus(record, statusFilter)
   ))
-  const visibleIds = filteredRecords.map((record) => record.id)
+  const fileItems = managedFileItemsFromRecords(normalizedRecords)
+  const filteredFileItems = fileItems.filter((item) => (
+    matchesManagedFileSearch(item, fileQuery)
+    && matchesManagedFileCategory(item, fileCategory)
+    && (!expiringOnly || item.expiringSoon)
+  ))
+  const expiringItems = fileItems.filter((item) => item.expiringSoon)
+  const visibleIds = Array.from(new Set((viewMode === 'files' ? filteredFileItems.map((item) => item.record.id) : filteredRecords.map((record) => record.id))))
   const selectedVisibleCount = visibleIds.filter((id) => selectedIds.has(id)).length
-  const allVisibleSelected = filteredRecords.length > 0 && selectedVisibleCount === filteredRecords.length
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
   const recordCounts = RECORD_SCOPE_TABS.reduce((acc, tab) => {
     acc[tab.key] = tab.key === 'all' ? normalizedRecords.length : normalizedRecords.filter((record) => record.scope === tab.key).length
     return acc
   }, {})
+  const managedFileCount = fileItems.reduce((sum, item) => sum + item.fileCount, 0)
+  const managedTotalSize = fileItems.reduce((sum, item) => sum + item.size, 0)
 
   useEffect(() => {
     handleRefresh({ silent: true }).catch(() => {})
@@ -1641,7 +1918,7 @@ function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, 
   useEffect(() => {
     setSelectedIds(new Set())
     setOpenMenu(null)
-  }, [scopeFilter, dateFilter, dateFrom, dateTo, statusFilter])
+  }, [viewMode, scopeFilter, dateFilter, dateFrom, dateTo, statusFilter, fileQuery, fileCategory, expiringOnly])
 
   useEffect(() => {
     const liveIds = new Set(normalizedRecords.map((record) => record.id))
@@ -1710,126 +1987,243 @@ function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, 
     setDateTo('')
     setStatusFilter('all')
   }
+  const hasFileFilters = Boolean(fileQuery.trim()) || fileCategory !== 'all' || expiringOnly
+  const resetFileFilters = () => {
+    setFileQuery('')
+    setFileCategory('all')
+    setExpiringOnly(false)
+  }
+
+  const requestRename = (record) => {
+    if (!onRename) return
+    const nextName = window.prompt('请输入新的显示名称', recordDisplayName(record))
+    if (nextName !== null) onRename(record.id, nextName)
+  }
+
+  const renderRecordMenu = (record) => {
+    const link = recordLink(record)
+    const copyTarget = recordCopyTarget(record)
+    const statusGroup = recordStatusGroup(record)
+    const reopenableCollection = canReopenCollection(record)
+    return (
+      <div className="record-menu row-menu" onClick={(event) => event.stopPropagation()}>
+        <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
+        <button disabled={!link} onClick={runMenuAction(() => onOpen(record))}><ExternalLink size={14} /> {recordOpenLabel(record)}</button>
+        <button disabled={!onRename} onClick={runMenuAction(() => requestRename(record))}><PencilLine size={14} /> 重命名显示名称</button>
+        {record.scope === 'my_sent' && (
+          <>
+            <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
+            <button className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
+          </>
+        )}
+        {record.scope === 'my_collections' && (
+          <>
+            <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理收集设置</button>
+            {record.status === '已关闭' && reopenableCollection ? (
+              <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启收集任务</button>
+            ) : statusGroup === 'expired' ? (
+              <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><CalendarDays size={14} /> 延长后开启</button>
+            ) : (
+              <button className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭收集任务</button>
+            )}
+            <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onDestroyCollection(record))}><Trash2 size={14} /> 销毁收集任务</button>
+          </>
+        )}
+        <button className="danger" onClick={runMenuAction(() => onDelete(record.id))}><Trash2 size={14} /> {user?.id ? '删除记录' : '删除本机记录'}</button>
+      </div>
+    )
+  }
 
   return (
     <section className="workspace-page records-page">
       <div className="workspace-heading records-heading">
         <div>
           <p className="eyebrow"><span className="eyebrow-dot" /> 你的临时空间</p>
-          <h1>收发记录</h1>
-          <p>按发送、接收、收集和提交归档最近活动。</p>
+          <h1>{viewMode === 'files' ? '文件管理中心' : '收发记录'}</h1>
+          <p>按发送、接收、收集和提交归档最近活动，登录后同步到账号。</p>
         </div>
       </div>
 
-      <div className="record-scope-tabs" role="tablist" aria-label="记录分类">
-        {RECORD_SCOPE_TABS.map((tab) => (
-          <button key={tab.key} role="tab" aria-selected={scopeFilter === tab.key} className={scopeFilter === tab.key ? 'active' : ''} onClick={() => setScopeFilter(tab.key)}>
-            <span>{tab.label}</span>
-            <strong>{recordCounts[tab.key] || 0}</strong>
+      <div className="records-mode-tabs" role="tablist" aria-label="记录视图">
+        {RECORD_VIEW_MODES.map(([key, label]) => (
+          <button key={key} role="tab" aria-selected={viewMode === key} className={viewMode === key ? 'active' : ''} onClick={() => setViewMode(key)}>
+            <span>{label}</span>
+            <strong>{key === 'files' ? fileItems.length : normalizedRecords.length}</strong>
           </button>
         ))}
       </div>
 
-      <div className="records-filter-panel">
-        <div className="records-filter-row">
-          <label className="record-filter-field">
-            <span>日期</span>
-            <select value={dateFilter} onChange={(event) => setDateFilter(event.target.value)}>
-              {RECORD_DATE_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>
-          {dateFilter === 'range' && (
-            <div className="record-filter-field record-date-field">
-              <span>日期范围</span>
-              <div className="record-date-range">
-                <DatePicker value={dateFrom} onChange={setDateFrom} ariaLabel="开始日期" placeholder="开始日期" />
-                <DatePicker value={dateTo} onChange={setDateTo} ariaLabel="结束日期" placeholder="结束日期" />
+      {viewMode === 'records' ? (
+        <>
+          <div className="record-scope-tabs" role="tablist" aria-label="记录分类">
+            {RECORD_SCOPE_TABS.map((tab) => (
+              <button key={tab.key} role="tab" aria-selected={scopeFilter === tab.key} className={scopeFilter === tab.key ? 'active' : ''} onClick={() => setScopeFilter(tab.key)}>
+                <span>{tab.label}</span>
+                <strong>{recordCounts[tab.key] || 0}</strong>
+              </button>
+            ))}
+          </div>
+
+          <div className="records-filter-panel">
+            <div className="records-filter-row">
+              <label className="record-filter-field">
+                <span>日期</span>
+                <select value={dateFilter} onChange={(event) => setDateFilter(event.target.value)}>
+                  {RECORD_DATE_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>
+              {dateFilter === 'range' && (
+                <div className="record-filter-field record-date-field">
+                  <span>日期范围</span>
+                  <div className="record-date-range">
+                    <DatePicker value={dateFrom} onChange={setDateFrom} ariaLabel="开始日期" placeholder="开始日期" />
+                    <DatePicker value={dateTo} onChange={setDateTo} ariaLabel="结束日期" placeholder="结束日期" />
+                  </div>
+                </div>
+              )}
+              <label className="record-filter-field">
+                <span>状态</span>
+                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                  {RECORD_STATUS_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>
+              <div className="record-filter-actions">
+                <button className="secondary-button filter-reset-button" onClick={resetRecordFilters} disabled={!hasRecordFilters}><RotateCcw size={15} /> 重置</button>
+                <button className="secondary-button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</button>
               </div>
+            </div>
+            <div className="records-bulk-row">
+              <label className="record-select-all">
+                <input type="checkbox" checked={allVisibleSelected} disabled={!visibleIds.length} onChange={toggleVisibleSelection} />
+                <span>已选 {selectedIds.size} 条 · 当前筛选 {filteredRecords.length} 条</span>
+              </label>
+              <div className="record-bulk-actions">
+                <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
+                <button className="secondary-button" disabled={!normalizedRecords.length} onClick={() => { onClear(); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空全部</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="records-list enhanced-records-list">
+            {filteredRecords.length ? filteredRecords.map((record) => {
+              const Icon = recordIconForScope(record.scope)
+              const statusGroup = recordStatusGroup(record)
+              const selected = selectedIds.has(record.id)
+              return (
+                <div className={`record-row record-row-enhanced ${selected ? 'selected' : ''}`} key={record.id}>
+                  <label className="record-check" aria-label={`选择 ${recordDisplayName(record)}`}>
+                    <input type="checkbox" checked={selected} onChange={() => toggleRecord(record.id)} />
+                  </label>
+                  <span className={`record-icon ${record.scope}`}><Icon size={17} /></span>
+                  <div className="record-main">
+                    <div className="record-title-line">
+                      <strong>{recordDisplayName(record)}</strong>
+                      <span className="scope-pill">{recordScopeLabel(record.scope)}</span>
+                    </div>
+                    <span>{record.meta || recordDetail(record)}</span>
+                  </div>
+                  <span className="record-expiry">{recordExpiryLabel(record)}</span>
+                  <span className={`record-type ${statusGroup}`}>{recordDisplayStatus(record)}</span>
+                  <span className="record-code">{record.code || '-'}</span>
+                  <div className="menu-wrap row-menu-wrap">
+                    <button className="ghost-icon" aria-label={`更多操作：${recordDisplayName(record)}`} onClick={(event) => toggleMenu(record.id, event)}><MoreHorizontal size={17} /></button>
+                    {openMenu === record.id && renderRecordMenu(record)}
+                  </div>
+                </div>
+              )
+            }) : (
+              <div className="empty-manage records-empty"><History size={25} /><span>没有符合当前筛选的记录</span></div>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="file-center-stats">
+            <div><span>管理项目</span><strong>{fileItems.length}</strong></div>
+            <div><span>文件数</span><strong>{managedFileCount}</strong></div>
+            <div><span>总大小</span><strong>{managedTotalSize ? formatBytes(managedTotalSize) : '-'}</strong></div>
+            <div><span>即将过期</span><strong>{expiringItems.length}</strong></div>
+          </div>
+
+          {expiringItems.length > 0 && (
+            <div className="file-expiry-alert">
+              <Clock3 size={18} />
+              <div><strong>{expiringItems.length} 个项目将在 3 天内过期</strong><span>可进入管理设置延期、关闭或清理记录。</span></div>
+              <button className="secondary-button" onClick={() => setExpiringOnly(true)}>查看即将过期</button>
             </div>
           )}
-          <label className="record-filter-field">
-            <span>状态</span>
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-              {RECORD_STATUS_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>
-          <div className="record-filter-actions">
-            <button className="secondary-button filter-reset-button" onClick={resetRecordFilters} disabled={!hasRecordFilters}><RotateCcw size={15} /> 重置</button>
-            <button className="secondary-button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</button>
-          </div>
-        </div>
-        <div className="records-bulk-row">
-          <label className="record-select-all">
-            <input type="checkbox" checked={allVisibleSelected} disabled={!filteredRecords.length} onChange={toggleVisibleSelection} />
-            <span>已选 {selectedIds.size} 条 · 当前筛选 {filteredRecords.length} 条</span>
-          </label>
-          <div className="record-bulk-actions">
-            <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
-            <button className="secondary-button" disabled={!normalizedRecords.length} onClick={() => { onClear(); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空全部</button>
-          </div>
-        </div>
-      </div>
 
-      <div className="records-list enhanced-records-list">
-        {filteredRecords.length ? filteredRecords.map((record) => {
-          const Icon = recordIconForScope(record.scope)
-          const link = recordLink(record)
-          const copyTarget = recordCopyTarget(record)
-          const statusGroup = recordStatusGroup(record)
-          const reopenableCollection = canReopenCollection(record)
-          const selected = selectedIds.has(record.id)
-          return (
-            <div className={`record-row record-row-enhanced ${selected ? 'selected' : ''}`} key={record.id}>
-              <label className="record-check" aria-label={`选择 ${record.name}`}>
-                <input type="checkbox" checked={selected} onChange={() => toggleRecord(record.id)} />
-              </label>
-              <span className={`record-icon ${record.scope}`}><Icon size={17} /></span>
-              <div className="record-main">
-                <div className="record-title-line">
-                  <strong>{record.name}</strong>
-                  <span className="scope-pill">{recordScopeLabel(record.scope)}</span>
+          <div className="records-filter-panel file-center-filter">
+            <div className="records-filter-row">
+              <label className="record-filter-field file-search-field">
+                <span>搜索</span>
+                <div className="record-search-box">
+                  <Search size={15} />
+                  <input value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="文件名 / 取件码 / 提交人" />
                 </div>
-                <span>{record.meta || recordDetail(record)}</span>
-              </div>
-              <span className="record-expiry">{recordExpiryLabel(record)}</span>
-              <span className={`record-type ${statusGroup}`}>{recordDisplayStatus(record)}</span>
-              <span className="record-code">{record.code || '-'}</span>
-              <div className="menu-wrap row-menu-wrap">
-                <button className="ghost-icon" aria-label={`更多操作：${record.name}`} onClick={(event) => toggleMenu(record.id, event)}><MoreHorizontal size={17} /></button>
-                {openMenu === record.id && (
-                  <div className="record-menu row-menu" onClick={(event) => event.stopPropagation()}>
-                    <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
-                    <button disabled={!link} onClick={runMenuAction(() => onOpen(record))}><ExternalLink size={14} /> {recordOpenLabel(record)}</button>
-                    {record.scope === 'my_sent' && (
-                      <>
-                        <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
-                        <button className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
-                      </>
-                    )}
-                    {record.scope === 'my_collections' && (
-                      <>
-                        <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理收集设置</button>
-                        {record.status === '已关闭' && reopenableCollection ? (
-                          <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启收集任务</button>
-                        ) : statusGroup === 'expired' ? (
-                          <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><CalendarDays size={14} /> 延长后开启</button>
-                        ) : (
-                          <button className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭收集任务</button>
-                        )}
-                        <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onDestroyCollection(record))}><Trash2 size={14} /> 销毁收集任务</button>
-                      </>
-                    )}
-                    <button className="danger" onClick={runMenuAction(() => onDelete(record.id))}><Trash2 size={14} /> 删除本机记录</button>
-                  </div>
-                )}
+              </label>
+              <label className="record-filter-field">
+                <span>分类</span>
+                <select value={fileCategory} onChange={(event) => setFileCategory(event.target.value)}>
+                  {FILE_CATEGORY_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>
+              <label className="record-toggle-field">
+                <input type="checkbox" checked={expiringOnly} onChange={(event) => setExpiringOnly(event.target.checked)} />
+                <span>只看即将过期</span>
+              </label>
+              <div className="record-filter-actions">
+                <button className="secondary-button filter-reset-button" onClick={resetFileFilters} disabled={!hasFileFilters}><RotateCcw size={15} /> 重置</button>
+                <button className="secondary-button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</button>
               </div>
             </div>
-          )
-        }) : (
-          <div className="empty-manage records-empty"><History size={25} /><span>没有符合当前筛选的记录</span></div>
-        )}
-      </div>
-      <div className="records-footnote"><History size={16} /> 游客记录仅保留在当前设备，登录后可跨设备同步。</div>
+            <div className="records-bulk-row">
+              <label className="record-select-all">
+                <input type="checkbox" checked={allVisibleSelected} disabled={!visibleIds.length} onChange={toggleVisibleSelection} />
+                <span>已选 {selectedIds.size} 项 · 当前筛选 {filteredFileItems.length} 项</span>
+              </label>
+              <div className="record-bulk-actions">
+                <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
+                <button className="secondary-button" disabled={!normalizedRecords.length} onClick={() => { onClear(); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空全部</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="records-list enhanced-records-list file-center-list">
+            {filteredFileItems.length ? filteredFileItems.map((item) => {
+              const record = item.record
+              const Icon = fileCategoryIcon(item.category)
+              const selected = selectedIds.has(record.id)
+              return (
+                <div className={`record-row record-row-enhanced file-center-row ${selected ? 'selected' : ''}`} key={item.id}>
+                  <label className="record-check" aria-label={`选择 ${item.name}`}>
+                    <input type="checkbox" checked={selected} onChange={() => toggleRecord(record.id)} />
+                  </label>
+                  <span className={`record-icon file-category-${item.category}`}><Icon size={17} /></span>
+                  <div className="record-main">
+                    <div className="record-title-line">
+                      <strong>{item.name}</strong>
+                      <span className="scope-pill">{item.categoryLabel}</span>
+                      <span className="scope-pill muted">{recordScopeLabel(record.scope)}</span>
+                    </div>
+                    <span>{item.detail}</span>
+                  </div>
+                  <span className="record-expiry">{recordExpiryLabel(record)}</span>
+                  <span className={`record-type ${item.statusGroup}`}>{recordDisplayStatus(record)}</span>
+                  <span className="record-code">{item.size ? formatBytes(item.size) : `${item.fileCount || 1} 项`}</span>
+                  <div className="menu-wrap row-menu-wrap">
+                    <button className="ghost-icon" aria-label={`更多操作：${item.name}`} onClick={(event) => toggleMenu(item.id, event)}><MoreHorizontal size={17} /></button>
+                    {openMenu === item.id && renderRecordMenu(record)}
+                  </div>
+                </div>
+              )
+            }) : (
+              <div className="empty-manage records-empty"><HardDrive size={25} /><span>没有符合当前筛选的文件项目</span></div>
+            )}
+          </div>
+        </>
+      )}
+      <div className="records-footnote"><HardDrive size={16} /> {syncing ? '账号记录同步中...' : user?.id ? '已登录，记录会同步到账号并可跨设备查看。' : '游客记录仅保留在当前设备，登录后可跨设备同步。'}</div>
     </section>
   )
 }
@@ -2149,8 +2543,38 @@ function UserAvatar({ user, overrideSrc = '' }) {
 }
 function FeatureOrb({ icon: Icon, value, label, tone }) { return <div className={`feature-orb ${tone}`}><span className="orb-icon"><Icon size={21} /></span><strong>{value}</strong><span>{label}</span></div> }
 function ValueItem({ icon: Icon, title, detail }) { return <div className="value-item"><span className="value-icon"><Icon size={18} /></span><div><strong>{title}</strong><span>{detail}</span></div></div> }
-function FileRow({ file, onRemove }) { const Icon = fileIcon(file.name); return <div className="file-row"><span className="file-type"><Icon size={18} /></span><div className="file-info"><strong>{file.name}</strong><span>{formatBytes(file.size)}</span></div>{onRemove && <button className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={onRemove}><X size={16} /></button>}</div> }
-function toFileItems(incoming) { return Array.from(incoming || []).map((file, index) => ({ id: `${file.name}-${file.lastModified}-${index}`, file, name: file.name, size: file.size, relativePath: file.webkitRelativePath || file.name })) }
+function FileRow({ file, onRemove, onPreview, onDownload, downloadDisabled = false }) {
+  const Icon = fileIcon(file.name)
+  return (
+    <div className="file-row">
+      <span className="file-type"><Icon size={18} /></span>
+      <div className="file-info"><strong>{file.name}</strong><span>{formatBytes(file.size)}</span></div>
+      {onPreview && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={onPreview}><Eye size={16} /></button>}
+      {onDownload && <button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={onDownload} disabled={downloadDisabled}><Download size={16} /></button>}
+      {onRemove && <button className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={onRemove}><X size={16} /></button>}
+    </div>
+  )
+}
+function toFileItems(incoming) { return Array.from(incoming || []).map((file, index) => ({ id: `${file.name}-${file.lastModified}-${index}`, file, name: file.name, size: file.size, mimeType: file.type || 'application/octet-stream', relativePath: file.webkitRelativePath || file.name })) }
+function compactRecordFiles(files = []) {
+  if (!Array.isArray(files)) return []
+  return files.map((file, index) => ({
+    name: String(file?.name || `文件 ${index + 1}`).trim(),
+    relativePath: String(file?.relativePath || file?.webkitRelativePath || file?.name || `文件 ${index + 1}`).trim(),
+    size: Number(file?.size || 0),
+    mimeType: String(file?.mimeType || file?.type || file?.file?.type || '').trim(),
+  })).filter((file) => file.name)
+}
+
+function compactRecordSubmissions(submissions = []) {
+  if (!Array.isArray(submissions)) return []
+  return submissions.map((submission) => ({
+    id: String(submission?.id || '').trim(),
+    participantName: String(submission?.participantName || '').trim(),
+    submittedAt: submission?.submittedAt || '',
+    files: compactRecordFiles(submission?.files),
+  })).filter((submission) => submission.id || submission.files.length)
+}
 const RECORD_STORAGE_KEY = 'kunqiong-records'
 const MAX_LOCAL_RECORDS = 100
 const EXPIRING_SOON_MS = 3 * 86400000
@@ -2173,6 +2597,36 @@ function saveLocalRecord(record, currentRecords) {
   return writeRecords(upsertRecords(currentRecords || readRecords(), [record]))
 }
 
+async function fetchCloudRecords() {
+  const data = await apiRequest('/api/account/records')
+  return normalizeRecords(data.records || [])
+}
+
+async function replaceCloudRecords(records) {
+  return apiRequest('/api/account/records', {
+    method: 'PUT',
+    body: JSON.stringify({ records: normalizeRecords(records) }),
+  })
+}
+
+async function upsertCloudRecords(records) {
+  return apiRequest('/api/account/records', {
+    method: 'POST',
+    body: JSON.stringify({ records: normalizeRecords(records) }),
+  })
+}
+
+async function deleteCloudRecords(ids) {
+  return apiRequest('/api/account/records', {
+    method: 'DELETE',
+    body: JSON.stringify({ ids }),
+  })
+}
+
+async function clearCloudRecords() {
+  return apiRequest('/api/account/records', { method: 'DELETE' })
+}
+
 function upsertRecords(currentRecords, incomingRecords) {
   const merged = new Map()
   normalizeRecords(currentRecords).forEach((record) => merged.set(record.id, record))
@@ -2187,10 +2641,14 @@ function mergeRecord(existing, incoming) {
   const merged = { ...existing, ...incoming }
   merged.createdAt = existing.createdAt || incoming.createdAt
   merged.updatedAt = incoming.updatedAt || existing.updatedAt || new Date().toISOString()
+  if (!incoming.alias && existing.alias) merged.alias = existing.alias
   if ((!incoming.name || incoming.name === '文件分享') && existing.name) merged.name = existing.name
   if (!incoming.meta && existing.meta) merged.meta = existing.meta
   if (!incoming.fileCount && existing.fileCount) merged.fileCount = existing.fileCount
   if (!incoming.totalSize && existing.totalSize) merged.totalSize = existing.totalSize
+  if (!incoming.submissionCount && existing.submissionCount) merged.submissionCount = existing.submissionCount
+  if ((!incoming.files || !incoming.files.length) && existing.files?.length) merged.files = existing.files
+  if ((!incoming.submissions || !incoming.submissions.length) && existing.submissions?.length) merged.submissions = existing.submissions
   return merged
 }
 
@@ -2208,6 +2666,10 @@ function normalizeRecord(record = {}) {
   const now = new Date().toISOString()
   const scope = normalizeRecordScope(record.scope, record.type)
   const kind = record.kind || (scope === 'my_collections' || scope === 'collect_from_me' ? 'collection' : 'share')
+  const files = compactRecordFiles(record.files)
+  const submissions = compactRecordSubmissions(record.submissions)
+  const submissionFiles = submissions.flatMap((submission) => submission.files || [])
+  const allFiles = files.length ? files : submissionFiles
   const shareId = record.shareId || getShareToken(record.shareUrl)
   const manageToken = record.manageToken || getManageToken(record.manageUrl)
   const collectionToken = record.collectionToken || getCollectionToken(record.publicUrl || record.shareUrl)
@@ -2225,6 +2687,7 @@ function normalizeRecord(record = {}) {
     kind,
     type: record.type || legacyTypeForScope(scope),
     name: record.name || (kind === 'collection' ? '收集任务' : '文件分享'),
+    alias: record.alias || '',
     code: record.code || (kind === 'collection' ? (scope === 'collect_from_me' ? '提交入口' : '收集任务') : ''),
     shareId,
     manageToken,
@@ -2233,6 +2696,10 @@ function normalizeRecord(record = {}) {
     publicUrl,
     expiresAt,
     deadline,
+    files,
+    submissions,
+    fileCount: Number(record.fileCount || allFiles.length || 0),
+    totalSize: Number(record.totalSize || totalFileSize(allFiles) || 0),
     createdAt,
     updatedAt: record.updatedAt || record.lastSeenAt || createdAt,
   }
@@ -2317,8 +2784,8 @@ function canReopenCollection(collection = {}) {
 }
 
 function createShareRecord(share, scope = 'my_sent') {
-  const files = Array.isArray(share?.files) ? share.files : []
-  const totalSize = files.reduce((sum, file) => sum + Number(file.size || 0), 0)
+  const files = compactRecordFiles(share?.files)
+  const totalSize = totalFileSize(files)
   const fileLabel = files.length ? `${files.length} 个文件` : '文件未解锁'
   const recipientLabel = share?.deliveryRecipients?.length ? ` · 通知 ${share.deliveryRecipients.length} 人` : ''
   const now = new Date().toISOString()
@@ -2340,6 +2807,7 @@ function createShareRecord(share, scope = 'my_sent') {
     downloadCount: share?.downloadCount,
     fileCount: files.length,
     totalSize,
+    files,
     createdAt: scope === 'sent_to_me' ? now : share?.createdAt || now,
     updatedAt: now,
   })
@@ -2348,6 +2816,10 @@ function createShareRecord(share, scope = 'my_sent') {
 function createCollectionRecord(collection, scope = 'my_collections', extra = {}) {
   const now = new Date().toISOString()
   const submissionCount = Number(collection?.submissionCount ?? collection?.submissions?.length ?? extra.submissionCount ?? 0)
+  const submissions = compactRecordSubmissions(collection?.submissions)
+  const extraFiles = compactRecordFiles(extra.files)
+  const files = extraFiles.length ? extraFiles : submissions.flatMap((submission) => submission.files || [])
+  const totalSize = totalFileSize(files)
   const submittedAt = extra.submittedAt || collection?.submittedAt || ''
   const participantName = extra.participantName || collection?.participantName || ''
   const activityAt = scope === 'my_collections' ? collection?.createdAt || now : submittedAt || extra.createdAt || now
@@ -2371,6 +2843,10 @@ function createCollectionRecord(collection, scope = 'my_collections', extra = {}
     allowedTypes: collection?.allowedTypes || [],
     maxFileSizeMb: collection?.maxFileSizeMb,
     submissionCount,
+    fileCount: files.length,
+    totalSize,
+    files,
+    submissions,
     participantName,
     submittedAt,
     createdAt: activityAt,
@@ -2501,6 +2977,100 @@ function recordDetail(record) {
   const size = Number(record.totalSize || 0)
   const count = Number(record.fileCount || 0)
   return `${count ? `${count} 个文件` : '文件分享'}${size ? ` · ${formatBytes(size)}` : ''} · ${recordAgeLabel(record.createdAt)}`
+}
+
+function recordDisplayName(record) {
+  return String(record.alias || record.name || (record.kind === 'collection' ? '收集任务' : '文件分享')).trim()
+}
+
+function managedFileItemsFromRecords(records) {
+  return normalizeRecords(records).map((record) => {
+    const files = recordManagedFiles(record)
+    const categories = managedFileCategories(record, files)
+    const category = record.kind === 'collection' ? 'collection' : categories.length === 1 ? categories[0] : categories.length > 1 ? 'mixed' : 'other'
+    const fileCount = Number(record.fileCount || files.length || (record.kind === 'collection' ? record.submissionCount : 1) || 1)
+    const size = files.length ? totalFileSize(files) : Number(record.totalSize || 0)
+    const participants = record.submissions?.map((submission) => submission.participantName).filter(Boolean) || []
+    const fileNames = files.map((file) => `${file.name} ${file.relativePath || ''}`)
+    return {
+      id: `file-center:${record.id}`,
+      record,
+      name: recordDisplayName(record),
+      category,
+      categories,
+      categoryLabel: fileCategoryLabel(category),
+      fileCount,
+      size,
+      statusGroup: recordStatusGroup(record),
+      expiringSoon: isRecordExpiringSoon(record),
+      detail: managedFileDetail(record, fileCount, size),
+      searchText: [
+        recordDisplayName(record),
+        record.name,
+        record.alias,
+        record.code,
+        record.meta,
+        record.participantName,
+        recordScopeLabel(record.scope),
+        ...participants,
+        ...fileNames,
+      ].filter(Boolean).join(' ').toLowerCase(),
+    }
+  })
+}
+
+function recordManagedFiles(record) {
+  const files = compactRecordFiles(record.files)
+  if (files.length) return files
+  return compactRecordSubmissions(record.submissions).flatMap((submission) => submission.files || [])
+}
+
+function managedFileCategories(record, files) {
+  if (record.kind === 'collection') return ['collection']
+  const categories = Array.from(new Set(files.map(fileCategoryFromFile).filter(Boolean)))
+  return categories.length ? categories : ['other']
+}
+
+function managedFileDetail(record, fileCount, size) {
+  const sizeLabel = size ? ` · ${formatBytes(size)}` : ''
+  const updatedLabel = ` · 更新 ${formatShortDate(record.updatedAt || record.createdAt)}`
+  if (record.kind === 'collection') {
+    if (record.scope === 'collect_from_me') return `${fileCount || 0} 个提交文件${sizeLabel}${updatedLabel}`
+    return `${Number(record.submissionCount || 0)} 份提交 · ${fileCount || 0} 个文件${sizeLabel}${updatedLabel}`
+  }
+  const downloadLabel = record.downloadLimit ? ` · ${Number(record.downloadCount || 0)}/${record.downloadLimit} 次` : ''
+  return `${fileCount || 1} 个文件${sizeLabel}${downloadLabel}${updatedLabel}`
+}
+
+function fileCategoryFromFile(file = {}) {
+  const mimeType = String(file.mimeType || '').toLowerCase()
+  const extension = fileExtension(file.name || file.relativePath)
+  if (mimeType.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic'].includes(extension)) return 'image'
+  if (mimeType.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov', 'm4v', 'avi', 'mkv'].includes(extension)) return 'video'
+  if (mimeType.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac', 'flac', 'oga', 'ogg'].includes(extension)) return 'audio'
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(extension)) return 'archive'
+  if (['pdf', 'doc', 'docx', 'txt', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'md'].includes(extension)) return 'document'
+  return 'other'
+}
+
+function fileCategoryLabel(category) {
+  return FILE_CATEGORY_FILTERS.find(([value]) => value === category)?.[1] || '其他'
+}
+
+function fileCategoryIcon(category) {
+  if (category === 'archive') return FileArchive
+  if (category === 'document') return FileText
+  if (category === 'collection') return Inbox
+  return FileCheck2
+}
+
+function matchesManagedFileSearch(item, query) {
+  const terms = String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean)
+  return !terms.length || terms.every((term) => item.searchText.includes(term))
+}
+
+function matchesManagedFileCategory(item, category) {
+  return category === 'all' || item.category === category || item.categories.includes(category)
 }
 
 function recordIconForScope(scope) {
@@ -2835,34 +3405,254 @@ function xhrRequest(url, { method = 'POST', body, onProgress }) {
   })
 }
 
-async function downloadShare(share, password, setError) {
-  try {
-    const response = await fetch(share.downloadUrl, { headers: password ? { 'x-share-password': password } : {} })
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}))
-      throw new Error(data.message || '下载失败')
+function useDownloadTask() {
+  const [downloadTask, setDownloadTask] = useState(createDownloadState())
+  const activeRef = useRef(false)
+  const retryConfigRef = useRef(null)
+  const retryCountRef = useRef(0)
+
+  const startDownload = async (config, options = {}) => {
+    if (!config || activeRef.current) return
+    activeRef.current = true
+    retryConfigRef.current = config
+    retryCountRef.current = options.retry ? retryCountRef.current + 1 : 0
+    const retryCount = retryCountRef.current
+    setDownloadTask({ ...createDownloadState(), status: 'preparing', label: config.label, filename: config.filename, totalBytes: config.totalBytes || 0, retryCount, retryConfig: config })
+    try {
+      await downloadBinaryWithProgress(config, (patch) => {
+        setDownloadTask((current) => ({ ...current, ...patch, retryConfig: config, retryCount }))
+      })
+      setDownloadTask((current) => ({ ...current, status: 'complete', progress: 100, etaSeconds: 0, error: '', retryConfig: config, retryCount }))
+    } catch (error) {
+      setDownloadTask((current) => ({ ...current, status: 'failed', error: error.message || '下载失败', retryConfig: config, retryCount }))
+    } finally {
+      activeRef.current = false
     }
-    const blob = await response.blob()
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = share.files.length === 1 ? share.files[0].name : '鲲穹文件包.zip'
-    link.click()
-    URL.revokeObjectURL(url)
-  } catch (error) { setError(error.message) }
+  }
+
+  const retryDownload = () => {
+    const config = retryConfigRef.current || downloadTask.retryConfig
+    if (config) startDownload(config, { retry: true })
+  }
+
+  return { downloadTask, startDownload, retryDownload, downloadBusy: isDownloadBusy(downloadTask) }
 }
 
-async function downloadSubmission(submission, collection) {
-  if (submission.files.length === 1) {
-    downloadSubmissionFile(submission, 0, collection)
+function createDownloadState() {
+  return {
+    status: 'idle',
+    label: '',
+    filename: '',
+    progress: 0,
+    loadedBytes: 0,
+    totalBytes: 0,
+    speedBps: 0,
+    etaSeconds: null,
+    canResume: false,
+    isEstimated: false,
+    retryCount: 0,
+    retryConfig: null,
+    error: '',
+  }
+}
+
+function isDownloadBusy(task) {
+  return ['preparing', 'downloading', 'saving'].includes(task?.status)
+}
+
+function downloadStatusText(task) {
+  if (task.status === 'preparing') return '准备下载'
+  if (task.status === 'saving') return '正在保存'
+  if (task.status === 'complete') return '下载完成'
+  if (task.status === 'failed') return '下载失败'
+  return task.label || '正在下载'
+}
+
+async function downloadBinaryWithProgress(config, onProgress) {
+  const startedAt = Date.now()
+  onProgress({ status: 'preparing', label: config.label, filename: config.filename, totalBytes: config.totalBytes || 0, loadedBytes: 0, progress: 0, error: '' })
+  const response = await fetch(config.url, { headers: config.headers || {} })
+  if (!response.ok) throw await downloadResponseError(response)
+
+  const filename = config.filename || filenameFromContentDisposition(response.headers.get('content-disposition')) || '下载文件'
+  const contentLength = Number(response.headers.get('content-length') || 0)
+  const estimatedSize = Number(response.headers.get('x-download-total-size') || config.totalBytes || 0)
+  const totalBytes = contentLength || estimatedSize
+  const isEstimated = !contentLength && estimatedSize > 0
+  const canResume = (response.headers.get('x-download-resume') || '').includes('range') || (response.headers.get('accept-ranges') || '').toLowerCase() === 'bytes'
+  const contentType = response.headers.get('content-type') || 'application/octet-stream'
+
+  if (!response.body) {
+    const blob = await response.blob()
+    saveBlob(blob, filename)
+    onProgress({ status: 'saving', filename, loadedBytes: blob.size, totalBytes: blob.size || totalBytes, progress: 100, speedBps: currentDownloadSpeed(startedAt, blob.size), etaSeconds: 0, canResume, isEstimated: false })
     return
   }
-  window.location.href = collection.downloadUrl
+
+  const chunks = []
+  const reader = response.body.getReader()
+  let loadedBytes = 0
+  onProgress({ status: 'downloading', filename, totalBytes, canResume, isEstimated, progress: 0 })
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    loadedBytes += value.byteLength
+    const speedBps = currentDownloadSpeed(startedAt, loadedBytes)
+    const progress = totalBytes ? Math.min(isEstimated ? 98 : 99, Math.round((loadedBytes / totalBytes) * 100)) : 0
+    const etaSeconds = totalBytes && speedBps ? Math.max(0, Math.ceil((totalBytes - loadedBytes) / speedBps)) : null
+    onProgress({ status: 'downloading', loadedBytes, totalBytes, speedBps, etaSeconds, progress, canResume, isEstimated })
+  }
+
+  const blob = new Blob(chunks, { type: contentType })
+  onProgress({ status: 'saving', filename, loadedBytes, totalBytes: totalBytes || loadedBytes, speedBps: currentDownloadSpeed(startedAt, loadedBytes), etaSeconds: 0, progress: 100, canResume, isEstimated })
+  saveBlob(blob, filename)
 }
 
-function downloadSubmissionFile(submission, fileIndex, collection) {
-  const url = `${window.location.origin}/api/collections/manage/${collection.manageToken}/submissions/${submission.id}/files/${fileIndex}/download`
-  window.location.href = url
+async function downloadResponseError(response) {
+  const text = await response.text().catch(() => '')
+  try {
+    const data = JSON.parse(text)
+    return new Error(data.message || `下载失败（${response.status}）`)
+  } catch {
+    return new Error(text || `下载失败（${response.status}）`)
+  }
+}
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function currentDownloadSpeed(startedAt, loadedBytes) {
+  const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.1)
+  return Math.round(loadedBytes / elapsedSeconds)
+}
+
+function filenameFromContentDisposition(value = '') {
+  const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try { return decodeURIComponent(encoded) } catch {}
+  }
+  return value.match(/filename="?([^";]+)"?/i)?.[1] || ''
+}
+
+function createShareDownloadConfig(share, { password = '' } = {}) {
+  const files = share.files || []
+  return {
+    url: share.downloadUrl || `${window.location.origin}/api/shares/${encodeURIComponent(share.id)}/download`,
+    filename: files.length === 1 ? files[0].name : '鲲穹文件包.zip',
+    label: files.length === 1 ? `下载 ${files[0]?.name || '文件'}` : `打包下载 ${files.length} 个文件`,
+    totalBytes: totalFileSize(files),
+    headers: password ? { 'x-share-password': password } : {},
+  }
+}
+
+function createShareFileDownloadConfig(share, file, fileIndex, { password = '' } = {}) {
+  return {
+    url: `${window.location.origin}/api/shares/${encodeURIComponent(share.id)}/files/${fileIndex}/download`,
+    filename: file.name || '下载文件',
+    label: `下载 ${file.name || '文件'}`,
+    totalBytes: Number(file.size || 0),
+    headers: password ? { 'x-share-password': password } : {},
+  }
+}
+
+function createShareFilePreviewConfig(share, file, fileIndex, options = {}) {
+  return {
+    file,
+    kind: previewKind(file),
+    url: `${window.location.origin}/api/shares/${encodeURIComponent(share.id)}/files/${fileIndex}/preview`,
+    downloadConfig: createShareFileDownloadConfig(share, file, fileIndex, options),
+  }
+}
+
+function createCollectionDownloadConfig(collection) {
+  const submissions = collection.submissions || []
+  const fileCount = submissions.reduce((sum, submission) => sum + (submission.files?.length || 0), 0)
+  return {
+    url: collection.downloadUrl || `${window.location.origin}/api/collections/manage/${encodeURIComponent(collection.manageToken)}/download`,
+    filename: `${safeDownloadName(collection.title || '收集文件')}.zip`,
+    label: `打包下载 ${submissions.length} 份提交 / ${fileCount} 个文件`,
+    totalBytes: submissions.reduce((sum, submission) => sum + totalFileSize(submission.files), 0),
+  }
+}
+
+function createSubmissionDownloadConfig(collection, submission) {
+  if (submission.files?.length === 1) return createSubmissionFileDownloadConfig(collection, submission, 0)
+  return {
+    url: `${window.location.origin}/api/collections/manage/${encodeURIComponent(collection.manageToken)}/submissions/${encodeURIComponent(submission.id)}/download`,
+    filename: `${safeDownloadName(submission.participantName || '提交文件')}.zip`,
+    label: `打包下载 ${submission.participantName || '提交文件'}`,
+    totalBytes: totalFileSize(submission.files),
+  }
+}
+
+function createSubmissionFileDownloadConfig(collection, submission, fileIndex) {
+  const file = submission.files?.[fileIndex] || {}
+  return {
+    url: `${window.location.origin}/api/collections/manage/${encodeURIComponent(collection.manageToken)}/submissions/${encodeURIComponent(submission.id)}/files/${fileIndex}/download`,
+    filename: file.name || '下载文件',
+    label: `下载 ${file.name || '文件'}`,
+    totalBytes: Number(file.size || 0),
+  }
+}
+
+function createSubmissionFilePreviewConfig(collection, submission, fileIndex) {
+  const file = submission.files?.[fileIndex] || {}
+  return {
+    file,
+    kind: previewKind(file),
+    url: `${window.location.origin}/api/collections/manage/${encodeURIComponent(collection.manageToken)}/submissions/${encodeURIComponent(submission.id)}/files/${fileIndex}/preview`,
+    downloadConfig: createSubmissionFileDownloadConfig(collection, submission, fileIndex),
+  }
+}
+
+function canPreviewFile(file) {
+  return Boolean(previewKind(file))
+}
+
+function previewKind(file = {}) {
+  const mimeType = String(file.mimeType || '').toLowerCase()
+  const extension = fileExtension(file.name || file.relativePath)
+  if (mimeType === 'application/pdf' || extension === 'pdf') return 'pdf'
+  if (mimeType.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(extension)) return 'image'
+  if (mimeType.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov', 'm4v'].includes(extension)) return 'video'
+  if (mimeType.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac', 'flac', 'oga', 'ogg'].includes(extension)) return 'audio'
+  return ''
+}
+
+function previewTypeLabel(kind) {
+  if (kind === 'pdf') return 'PDF'
+  if (kind === 'video') return '视频'
+  if (kind === 'audio') return '音频'
+  return '图片'
+}
+
+function previewSupportLabel(kind) {
+  if (kind === 'pdf') return '浏览器内嵌 PDF 预览'
+  if (kind === 'video') return '在线播放，支持拖动进度'
+  if (kind === 'audio') return '在线播放音频'
+  return '图片在线预览'
+}
+
+function fileExtension(name = '') {
+  const match = String(name).toLowerCase().match(/\.([^.\\/]+)$/)
+  return match ? match[1] : ''
+}
+
+function totalFileSize(files = []) {
+  return files.reduce((sum, file) => sum + Number(file.size || 0), 0)
+}
+
+function safeDownloadName(value) {
+  return String(value || '下载文件').replace(/[\\/:*?"<>|]+/g, '-').trim() || '下载文件'
 }
 
 function formatBytes(bytes = 0) {
