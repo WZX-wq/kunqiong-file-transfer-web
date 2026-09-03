@@ -1484,15 +1484,7 @@ function StateBlock({ title, detail }) { return <div className="state-block"><Sh
 function LoadingBlock() { return <div className="state-block"><span className="loading-dot" /><h1>正在打开</h1><p>正在检查分享状态，请稍候。</p></div> }
 function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
 function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onLogin }) {
-  const [category, setCategory] = useState('all')
   const unreadCount = messages.filter((message) => message.unread).length
-  const visibleMessages = messages.filter((message) => category === 'all' || message.category === category)
-  const categories = [
-    ['all', '全部'],
-    ['system', '系统信息'],
-    ['official', '官方消息'],
-    ['other', '他人消息'],
-  ]
 
   useEffect(() => {
     if (!open) return undefined
@@ -1512,14 +1504,11 @@ function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, on
             <div><strong>消息中心</strong><span>{unreadCount ? `${unreadCount} 条未读消息` : '没有未读消息'}</span></div>
             {user ? <button className="message-mark-all" onClick={onMarkAllRead} disabled={!unreadCount}>全部已读</button> : null}
           </div>
-          <div className="message-tabs" role="tablist" aria-label="消息分类">
-            {categories.map(([key, label]) => <button key={key} role="tab" aria-selected={category === key} className={category === key ? 'active' : ''} onClick={() => setCategory(key)}>{label}{key !== 'all' && <small>{messages.filter((message) => message.category === key && message.unread).length || ''}</small>}</button>)}
-          </div>
           {!user ? (
             <div className="message-empty"><MessageCircle size={22} /><strong>登录后查看消息</strong><span>登录后可以接收系统、官方和他人发送的消息。</span><button className="secondary-button" onClick={onLogin}><UserRound size={15} /> 前往登录</button></div>
-          ) : visibleMessages.length ? (
+          ) : messages.length ? (
             <div className="message-list">
-              {visibleMessages.map((message) => (
+              {messages.map((message) => (
                 <button key={message.id} className={`message-item ${message.unread ? 'unread' : ''}`} onClick={() => onMarkRead(message.id)}>
                   <span className={`message-item-icon ${message.category}`}><MessageIcon category={message.category} /></span>
                   <span className="message-item-content"><strong>{message.title}</strong><span>{message.body}</span><small>{formatMessageTime(message.createdAt)}</small></span>
