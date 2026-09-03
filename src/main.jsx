@@ -77,6 +77,7 @@ const fileIcon = (name = '') => {
 
 function App() {
   const route = window.location.pathname
+  if (route.startsWith('/share/manage/')) return <ShareManagePage token={route.split('/')[3]} />
   if (route.startsWith('/share/')) return <SharePage token={route.split('/')[2]} />
   if (route.startsWith('/collect/manage/')) return <CollectionManagePage token={route.split('/')[3]} />
   if (route.startsWith('/collect/')) return <CollectionSubmitPage token={route.split('/')[2]} />
@@ -102,6 +103,7 @@ function WorkspaceApp() {
   const [collectionResult, setCollectionResult] = useState(null)
   const [collectionManageData, setCollectionManageData] = useState(null)
   const [collectionManageLoading, setCollectionManageLoading] = useState(false)
+  const [managementTarget, setManagementTarget] = useState(null)
   const [toast, setToast] = useState('')
   const [settings, setSettings] = useState(defaultSettings)
   const [records, setRecords] = useState(() => readRecords())
@@ -296,9 +298,10 @@ function WorkspaceApp() {
     }
     apiRequest('/api/collections', { method: 'POST', body: JSON.stringify(payload) })
       .then((data) => {
-        setCollectionResult({ ...data.collection, manageToken: data.manageToken })
+        const collection = { ...data.collection, manageToken: data.manageToken }
+        setCollectionResult(collection)
         setCollectionManageData(null)
-        saveRecord(createCollectionRecord(data.collection, 'my_collections'))
+        saveRecord(createCollectionRecord(collection, 'my_collections'))
         setToast('收集任务已创建')
       })
       .catch((error) => setToast(error.message))
@@ -333,6 +336,7 @@ function WorkspaceApp() {
     if (!collectionManageData?.manageToken) return
     const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(collectionManageData.manageToken)}`)
     setCollectionManageData(data.collection)
+    saveRecord(createCollectionRecord(data.collection, 'my_collections'))
   }
 
   const destroyCollection = async (target) => {
@@ -353,6 +357,105 @@ function WorkspaceApp() {
       setToast('收集任务已销毁')
     } catch (error) {
       setToast(error.message)
+    }
+  }
+
+  const openRecordManagement = async (record) => {
+    const normalized = normalizeRecord(record)
+    const manageToken = normalized.manageToken || getManageToken(normalized.manageUrl)
+    if (!manageToken) {
+      setToast(normalized.kind === 'share' ? '这条分享缺少管理链接，请重新生成分享' : '这条收集任务没有可用的管理链接')
+      return
+    }
+    try {
+      if (normalized.kind === 'share') {
+        const data = await apiRequest(`/api/shares/manage/${encodeURIComponent(manageToken)}`)
+        setManagementTarget({ kind: 'share', record: normalized, data: data.share })
+        return
+      }
+      const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`)
+      setManagementTarget({ kind: 'collection', record: normalized, data: data.collection })
+    } catch (error) {
+      setToast(error.message)
+    }
+  }
+
+  const saveManagedItem = async (target, payload) => {
+    const token = target?.data?.manageToken || target?.record?.manageToken || getManageToken(target?.record?.manageUrl)
+    if (!token) {
+      setToast('管理链接不可用')
+      return false
+    }
+    try {
+      if (target.kind === 'share') {
+        const data = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify(payload) })
+        const record = createShareRecord(data.share, 'my_sent')
+        saveRecord(record)
+        setManagementTarget({ kind: 'share', record, data: data.share })
+        setToast('分享设置已保存')
+        return true
+      }
+      const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify(payload) })
+      const record = createCollectionRecord(data.collection, 'my_collections')
+      saveRecord(record)
+      setCollectionManageData((current) => current?.manageToken === token ? data.collection : current)
+      setManagementTarget({ kind: 'collection', record, data: data.collection })
+      setToast('收集任务设置已保存')
+      return true
+    } catch (error) {
+      setToast(error.message)
+      return false
+    }
+  }
+
+  const closeManagedRecord = async (recordOrTarget) => {
+    const target = recordOrTarget?.record || recordOrTarget
+    const normalized = normalizeRecord(target)
+    const manageToken = recordOrTarget?.data?.manageToken || normalized.manageToken || getManageToken(normalized.manageUrl)
+    if (!manageToken) {
+      setToast('管理链接不可用')
+      return false
+    }
+    const isShare = normalized.kind === 'share'
+    const message = isShare ? '关闭后下载链接和取件码会立即失效，确定关闭这个分享吗？' : '关闭后提交者将不能继续上传，已收文件仍可在管理页查看，确定关闭这个收集任务吗？'
+    if (!window.confirm(message)) return false
+    try {
+      if (isShare) {
+        const data = await apiRequest(`/api/shares/manage/${encodeURIComponent(manageToken)}`, { method: 'DELETE' })
+        const record = createShareRecord(data.share, 'my_sent')
+        saveRecord(record)
+        setManagementTarget((current) => current?.kind === 'share' && current.data.manageToken === manageToken ? { kind: 'share', record, data: data.share } : current)
+        setToast('分享已关闭')
+        return true
+      }
+      const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`, { method: 'PATCH', body: JSON.stringify({ status: 'closed' }) })
+      const record = createCollectionRecord(data.collection, 'my_collections')
+      saveRecord(record)
+      setCollectionManageData((current) => current?.manageToken === manageToken ? data.collection : current)
+      setManagementTarget((current) => current?.kind === 'collection' && current.data.manageToken === manageToken ? { kind: 'collection', record, data: data.collection } : current)
+      setToast('收集任务已关闭')
+      return true
+    } catch (error) {
+      setToast(error.message)
+      return false
+    }
+  }
+
+  const deleteCollectionSubmission = async (collection, submissionId) => {
+    const manageToken = collection?.manageToken
+    if (!manageToken || !submissionId) return false
+    if (!window.confirm('删除后该提交记录和文件会从本机服务中移除，确定删除吗？')) return false
+    try {
+      const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}/submissions/${encodeURIComponent(submissionId)}`, { method: 'DELETE' })
+      const record = createCollectionRecord(data.collection, 'my_collections')
+      saveRecord(record)
+      setCollectionManageData(data.collection)
+      setManagementTarget((current) => current?.kind === 'collection' && current.data.manageToken === manageToken ? { kind: 'collection', record, data: data.collection } : current)
+      setToast('提交记录已删除')
+      return true
+    } catch (error) {
+      setToast(error.message)
+      return false
     }
   }
 
@@ -423,7 +526,8 @@ function WorkspaceApp() {
   }
 
   const openRecordLink = (record) => {
-    const url = record.manageUrl || record.shareUrl || record.publicUrl
+    const normalized = normalizeRecord(record)
+    const url = recordLink(normalized)
     if (!url) {
       setToast('这条记录没有可打开的链接')
       return
@@ -492,12 +596,15 @@ function WorkspaceApp() {
             onCopyQrImage={copyQrImage}
             onOpenManager={openCollectionManager}
             onDestroy={destroyCollection}
+            onManageSettings={(data) => setManagementTarget({ kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data })}
+            onCloseTask={(data) => closeManagedRecord({ kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data })}
+            onDeleteSubmission={deleteCollectionSubmission}
             onCloseManager={() => setCollectionManageData(null)}
             onRefreshManager={refreshCollectionManager}
             onRefreshRecords={refreshRecords}
           />
         )}
-        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} />}
+        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} />}
       </main>
 
       <footer className="page-footer">
@@ -507,6 +614,19 @@ function WorkspaceApp() {
 
       {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} onClose={() => setSettingsOpen(false)} onSave={() => { setSettingsOpen(false); setToast('分享设置已保存') }} />}
       {retrieveOpen && <RetrieveModal code={retrievalCode} setCode={setRetrievalCode} result={retrieveResult} onClose={closeRetrieve} onFind={lookupShare} />}
+      {managementTarget && (
+        <ManageItemModal
+          key={`${managementTarget.kind}-${managementTarget.data?.manageToken || managementTarget.record?.id || 'target'}`}
+          target={managementTarget}
+          onClose={() => setManagementTarget(null)}
+          onSave={(payload) => saveManagedItem(managementTarget, payload)}
+          onCloseTask={async () => {
+            const closed = await closeManagedRecord(managementTarget)
+            if (closed) setManagementTarget(null)
+            return closed
+          }}
+        />
+      )}
       {toast && <div className="toast"><Check size={16} /> {toast}</div>}
     </div>
   )
@@ -755,7 +875,7 @@ function DatePicker({ value, onChange, ariaLabel, placeholder = '选择日期', 
   )
 }
 
-function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onDestroy, onCloseManager, onRefreshManager, onRefreshRecords }) {
+function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onDestroy, onManageSettings, onCloseTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
   const [form, setForm] = useState(createDefaultCollectionForm)
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const collectionRecords = records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
@@ -781,7 +901,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
       {manageLoading ? (
         <div className="collection-files-card collection-loading"><span className="loading-dot" /><p>正在加载已收文件...</p></div>
       ) : manageData ? (
-        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} onDestroy={onDestroy} />
+        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} onDestroy={onDestroy} onManageSettings={onManageSettings} onCloseTask={onCloseTask} onDeleteSubmission={onDeleteSubmission} />
       ) : (
         <div className={`collect-builder ${result ? 'created' : ''}`}>
           {!result ? (
@@ -826,7 +946,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
                   <CollectionLimitInfo allowedTypes={record.allowedTypes} maxFileSizeMb={record.maxFileSizeMb} compact />
                 </div>
                 <div className="collection-history-actions">
-                  <button className="secondary-button" disabled={!recordManageUrl(record) && !record.publicUrl && !record.shareUrl} onClick={() => onOpenManager(recordManageUrl(record) || record.publicUrl || record.shareUrl)}><FolderOpen size={15} /> 查看已收文件</button>
+                  <button className="secondary-button" disabled={!recordManageUrl(record)} onClick={() => onOpenManager(recordManageUrl(record))}><FolderOpen size={15} /> 查看已收文件</button>
                   <button className="secondary-button danger-lite" disabled={!recordManageUrl(record)} onClick={() => onDestroy(record)}><Trash2 size={15} /> 销毁任务</button>
                 </div>
               </div>
@@ -879,19 +999,22 @@ function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onDes
   )
 }
 
-function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy }) {
+function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSettings, onCloseTask, onDeleteSubmission }) {
+  const isActive = data.status === 'active'
   return (
     <div className="collection-files-card">
       <div className="collection-files-header">
         <div>
           <p className="eyebrow">收集任务管理</p>
           <h2>{data.title}</h2>
-          <p>{data.submissions.length} 份提交 · {data.status === 'active' ? '进行中' : '已截止'}</p>
+          <p>{data.submissions.length} 份提交 · {collectionStatusText(data.status)}</p>
           <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
         </div>
         <div className="collection-files-actions">
           <button className="secondary-button" onClick={onClose}><ArrowLeft size={15} /> 返回任务</button>
+          <button className="secondary-button" onClick={() => onManageSettings(data)}><Settings2 size={15} /> 编辑任务</button>
           <button className="ghost-icon" aria-label="刷新已收文件" onClick={onRefresh}><RefreshCw size={17} /></button>
+          <button className="secondary-button danger-lite" disabled={!isActive} onClick={() => onCloseTask(data)}><X size={15} /> 关闭收集</button>
           <button className="secondary-button danger-lite" onClick={() => onDestroy(data)}><Trash2 size={15} /> 销毁本次任务</button>
         </div>
       </div>
@@ -901,7 +1024,10 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy }) {
             <div className="collection-submission" key={submission.id}>
               <div className="collection-submission-heading">
                 <div><strong>{submission.participantName}</strong><span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span></div>
-                <span className="submission-badge">已提交</span>
+                <div className="submission-heading-actions">
+                  <span className="submission-badge">已提交</span>
+                  <button className="submission-delete-button" onClick={() => onDeleteSubmission(data, submission.id)}><Trash2 size={14} /> 删除提交</button>
+                </div>
               </div>
               <div className="submission-files">{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><FileText size={15} /><span>{file.name}</span><small>{formatBytes(file.size)}</small><button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadSubmissionFile(submission, fileIndex, data)}><Download size={15} /></button></div>)}</div>
             </div>
@@ -936,6 +1062,81 @@ function SharePage({ token }) {
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   const share = data.share
   return <PublicShell><div className="public-card"><span className="public-icon"><Download size={24} /></span><p className="eyebrow">鲲穹临时分享</p><h1>有人给你发来了文件</h1><p className="public-copy">{share.files.length} 个文件 · {formatBytes(share.files.reduce((sum, file) => sum + file.size, 0))} · {formatExpiry(share.expiresAt)}</p>{data.requiresPassword && !share.files?.length ? <div className="public-password"><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入提取密码" /><button className="primary-button" onClick={findShare}>验证密码</button></div> : <><div className="public-files">{share.files.map((file) => <FileRow key={file.relativePath} file={file} />)}</div><button className="primary-button wide" onClick={() => downloadShare(share, password, setError)}><Download size={17} /> 下载全部文件</button></>}</div></PublicShell>
+}
+
+function ShareManagePage({ token }) {
+  const [share, setShare] = useState(null)
+  const [error, setError] = useState('')
+  const [editing, setEditing] = useState(false)
+
+  const refreshShare = async () => {
+    const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`)
+    setShare(result.share)
+    saveLocalRecord(createShareRecord(result.share, 'my_sent'))
+  }
+
+  useEffect(() => {
+    refreshShare().catch((err) => setError(err.message))
+  }, [token])
+
+  const saveShareSettings = async (payload) => {
+    try {
+      const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify(payload) })
+      setShare(result.share)
+      saveLocalRecord(createShareRecord(result.share, 'my_sent'))
+      return true
+    } catch (err) {
+      setError(err.message)
+      return false
+    }
+  }
+
+  const closeShare = async () => {
+    if (!window.confirm('关闭后下载链接和取件码会立即失效，确定关闭这个分享吗？')) return false
+    try {
+      const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'DELETE' })
+      setShare(result.share)
+      saveLocalRecord(createShareRecord(result.share, 'my_sent'))
+      return true
+    } catch (err) {
+      setError(err.message)
+      return false
+    }
+  }
+
+  if (error) return <PublicShell><StateBlock title="分享管理不可用" detail={error} /></PublicShell>
+  if (!share) return <PublicShell><LoadingBlock /></PublicShell>
+
+  const isActive = share.status === 'active'
+  const fileCount = share.files?.length || 0
+  const totalSize = share.files?.reduce((sum, file) => sum + Number(file.size || 0), 0) || 0
+  const manageTarget = { kind: 'share', record: createShareRecord(share, 'my_sent'), data: share }
+
+  return (
+    <PublicShell>
+      <div className="public-card manage-card">
+        <p className="eyebrow">分享管理</p>
+        <div className="manage-title-row">
+          <h1>{share.files?.[0]?.name || '文件分享'}</h1>
+          <div className="manage-title-actions">
+            <button className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 编辑分享</button>
+            <button className="secondary-button danger-lite" disabled={!isActive} onClick={closeShare}><X size={15} /> 关闭分享</button>
+          </div>
+        </div>
+        <p className="public-copy">{fileCount ? `${fileCount} 个文件 · ${formatBytes(totalSize)} · 状态：${shareStatusText(share.status)}` : `文件已清理 · 状态：${shareStatusText(share.status)}`}</p>
+        <div className="manage-list">
+          {fileCount ? share.files.map((file) => (
+            <div className="manage-submission" key={file.relativePath}>
+              <div><strong>{file.name}</strong><span>{file.relativePath} · {formatBytes(file.size)}</span></div>
+            </div>
+          )) : (
+            <div className="empty-manage"><FileText size={25} /><span>分享文件已关闭或清理</span></div>
+          )}
+        </div>
+      </div>
+      {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveShareSettings} onCloseTask={async () => { const closed = await closeShare(); if (closed) setEditing(false); return closed }} />}
+    </PublicShell>
+  )
 }
 
 function CollectionSubmitPage({ token }) {
@@ -1002,12 +1203,54 @@ function CollectionManagePage({ token }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [destroyed, setDestroyed] = useState(false)
+  const [editing, setEditing] = useState(false)
+
+  const saveManagedCollection = (collection) => {
+    setData(collection)
+    saveLocalRecord(createCollectionRecord(collection, 'my_collections'))
+  }
+
   useEffect(() => {
     apiRequest(`/api/collections/manage/${token}`).then((result) => {
-      setData(result.collection)
-      saveLocalRecord(createCollectionRecord(result.collection, 'my_collections'))
+      saveManagedCollection(result.collection)
     }).catch((err) => setError(err.message))
   }, [token])
+
+  const saveTaskSettings = async (payload) => {
+    try {
+      const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify(payload) })
+      saveManagedCollection(result.collection)
+      return true
+    } catch (err) {
+      setError(err.message)
+      return false
+    }
+  }
+
+  const closeTask = async () => {
+    if (!window.confirm('关闭后提交者将不能继续上传，已收文件仍可在管理页查看，确定关闭这个收集任务吗？')) return false
+    try {
+      const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify({ status: 'closed' }) })
+      saveManagedCollection(result.collection)
+      return true
+    } catch (err) {
+      setError(err.message)
+      return false
+    }
+  }
+
+  const deleteSubmission = async (submissionId) => {
+    if (!window.confirm('删除后该提交记录和文件会从本机服务中移除，确定删除吗？')) return false
+    try {
+      const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}/submissions/${encodeURIComponent(submissionId)}`, { method: 'DELETE' })
+      saveManagedCollection(result.collection)
+      return true
+    } catch (err) {
+      setError(err.message)
+      return false
+    }
+  }
+
   const destroyTask = async () => {
     if (!window.confirm('销毁后，收集链接和已提交文件都将失效，确定销毁本次任务吗？')) return
     try {
@@ -1024,12 +1267,21 @@ function CollectionManagePage({ token }) {
   if (error) return <PublicShell><StateBlock title="管理链接不可用" detail={error} /></PublicShell>
   if (destroyed) return <PublicShell><StateBlock title="收集任务已销毁" detail="收集链接和已提交文件均已失效。" /></PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
+  const isActive = data.status === 'active'
+  const manageTarget = { kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data }
   return (
     <PublicShell>
       <div className="public-card manage-card">
         <p className="eyebrow">收集任务管理</p>
-        <div className="manage-title-row"><h1>{data.title}</h1><button className="secondary-button danger-lite" onClick={destroyTask}><Trash2 size={15} /> 销毁本次任务</button></div>
-        <p className="public-copy">{data.submissions.length} 份提交 · 状态：{data.status === 'active' ? '进行中' : '已截止'}</p>
+        <div className="manage-title-row">
+          <h1>{data.title}</h1>
+          <div className="manage-title-actions">
+            <button className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 编辑任务</button>
+            <button className="secondary-button danger-lite" disabled={!isActive} onClick={closeTask}><X size={15} /> 关闭收集任务</button>
+            <button className="secondary-button danger-lite" onClick={destroyTask}><Trash2 size={15} /> 销毁本次任务</button>
+          </div>
+        </div>
+        <p className="public-copy">{data.submissions.length} 份提交 · 状态：{collectionStatusText(data.status)}</p>
         <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
         <div className="manage-list">
           {data.submissions.length ? data.submissions.map((submission) => (
@@ -1039,7 +1291,10 @@ function CollectionManagePage({ token }) {
                 <span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span>
                 <div className="manage-file-names">{submission.files.map((file, fileIndex) => <button key={`${submission.id}-${file.relativePath}`} onClick={() => downloadSubmissionFile(submission, fileIndex, data)}><FileText size={13} /> {file.name}</button>)}</div>
               </div>
-              <button className="secondary-button" onClick={() => downloadSubmission(submission, data)}><Download size={15} /> 下载</button>
+              <div className="manage-submission-actions">
+                <button className="secondary-button" onClick={() => downloadSubmission(submission, data)}><Download size={15} /> 下载</button>
+                <button className="secondary-button danger-lite" onClick={() => deleteSubmission(submission.id)}><Trash2 size={15} /> 删除提交</button>
+              </div>
             </div>
           )) : (
             <div className="empty-manage"><Inbox size={25} /><span>暂时还没有人提交文件</span></div>
@@ -1047,6 +1302,7 @@ function CollectionManagePage({ token }) {
         </div>
         {data.submissions.length > 0 && <button className="primary-button wide" onClick={() => { window.location.href = data.downloadUrl }}><Download size={16} /> 打包下载全部提交</button>}
       </div>
+      {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveTaskSettings} onCloseTask={async () => { const closed = await closeTask(); if (closed) setEditing(false); return closed }} />}
     </PublicShell>
   )
 }
@@ -1098,6 +1354,154 @@ function SettingsModal({ settings, setSettings, onClose, onSave }) {
   )
 }
 
+function ManageItemModal({ target, onClose, onSave, onCloseTask }) {
+  const isShare = target.kind === 'share'
+  const data = target.data || {}
+  const [shareForm, setShareForm] = useState(() => createShareManageForm(data))
+  const [collectionForm, setCollectionForm] = useState(() => createCollectionManageForm(data))
+  const [saving, setSaving] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  const updateShare = (patch) => setShareForm((current) => ({ ...current, ...patch }))
+  const updateCollection = (patch) => setCollectionForm((current) => ({ ...current, ...patch }))
+  const toggleAllowedType = (type) => {
+    updateCollection({
+      allowedTypes: collectionForm.allowedTypes.includes(type)
+        ? collectionForm.allowedTypes.filter((item) => item !== type)
+        : [...collectionForm.allowedTypes, type],
+    })
+  }
+
+  const submit = async () => {
+    setError('')
+    let payload
+    if (isShare) {
+      const customLimit = Number(shareForm.customDownloadLimit)
+      if (shareForm.downloadLimit === 'custom' && (!Number.isFinite(customLimit) || customLimit < 1)) {
+        setError('请填写正确的下载次数')
+        return
+      }
+      payload = {
+        expiresAt: shareForm.expiresAt || null,
+        downloadLimit: shareForm.downloadLimit === 'custom' ? String(Math.floor(customLimit)) : shareForm.downloadLimit,
+        password: shareForm.clearPassword ? '' : shareForm.password.trim(),
+        clearPassword: shareForm.clearPassword,
+      }
+    } else {
+      const title = collectionForm.title.trim()
+      if (!title) {
+        setError('请填写任务名称')
+        return
+      }
+      if (!collectionForm.deadline) {
+        setError('请选择截止日期')
+        return
+      }
+      payload = {
+        title,
+        description: collectionForm.description.trim(),
+        deadline: collectionForm.deadline,
+        allowedTypes: collectionForm.allowedTypes,
+        maxFileSizeMb: Number(collectionForm.maxFileSizeMb),
+      }
+    }
+
+    setSaving(true)
+    try {
+      const ok = await onSave(payload)
+      if (ok) {
+        onClose()
+        return
+      }
+      setSaving(false)
+    } catch {
+      setSaving(false)
+    }
+  }
+
+  const closeTask = async () => {
+    setClosing(true)
+    try {
+      const ok = await onCloseTask()
+      if (!ok) setClosing(false)
+    } catch {
+      setClosing(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal manage-modal" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div><p className="eyebrow">{isShare ? '分享管理' : '收集任务管理'}</p><h2>{isShare ? '管理分享设置' : '管理收集设置'}</h2></div>
+          <button className="ghost-icon modal-close" aria-label="关闭管理窗口" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="modal-body manage-form">
+          {isShare ? (
+            <>
+              <label className="manage-field">
+                <span>到期日期</span>
+                <DatePicker value={shareForm.expiresAt} onChange={(value) => updateShare({ expiresAt: value })} ariaLabel="分享到期日期" placeholder="永久有效" />
+              </label>
+              <div className="setting-block manage-setting-block">
+                <span>下载次数</span>
+                <div className="option-grid">{[['不限次数', 'unlimited'], ['10 次', '10'], ['1 次', '1'], ['自定义', 'custom']].map(([label, value]) => <button key={value} className={shareForm.downloadLimit === value ? 'selected' : ''} onClick={() => updateShare({ downloadLimit: value })}>{label}{shareForm.downloadLimit === value && <Check size={14} />}</button>)}</div>
+                {shareForm.downloadLimit === 'custom' && <label className="inline-setting-input"><span>最多下载次数</span><input type="number" min="1" max="9999" value={shareForm.customDownloadLimit} onChange={(event) => updateShare({ customDownloadLimit: event.target.value })} placeholder="例如：5" /></label>}
+              </div>
+              <label className="manage-field">
+                <span>提取密码</span>
+                <input className="modal-inline-input" type="password" value={shareForm.password} disabled={shareForm.clearPassword} onChange={(event) => updateShare({ password: event.target.value })} placeholder={data.requiresPassword ? '输入新密码，留空则不修改' : '可选，设置后下载前需要验证'} />
+              </label>
+              <label className="manage-check-row">
+                <input type="checkbox" checked={shareForm.clearPassword} onChange={(event) => updateShare({ clearPassword: event.target.checked, password: event.target.checked ? '' : shareForm.password })} />
+                <span>清除当前提取密码</span>
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="manage-field">
+                <span>任务名称</span>
+                <input className="modal-inline-input" value={collectionForm.title} onChange={(event) => updateCollection({ title: event.target.value })} placeholder="例如：9 月产品素材收集" />
+              </label>
+              <label className="manage-field">
+                <span>收集说明</span>
+                <textarea value={collectionForm.description} onChange={(event) => updateCollection({ description: event.target.value })} placeholder="请上传你负责的文件" />
+              </label>
+              <label className="manage-field">
+                <span>截止日期</span>
+                <DatePicker value={collectionForm.deadline} onChange={(value) => updateCollection({ deadline: value })} ariaLabel="收集任务截止日期" />
+              </label>
+              <label className="manage-field">
+                <span>文件类型</span>
+                <div className="chip-group">{['图片', '文档', '视频', '其他'].map((type) => <button key={type} className={collectionForm.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => toggleAllowedType(type)}>{type}</button>)}</div>
+              </label>
+              <label className="manage-field">
+                <span>单人大小限制</span>
+                <select value={collectionForm.maxFileSizeMb} onChange={(event) => updateCollection({ maxFileSizeMb: event.target.value })}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select>
+              </label>
+            </>
+          )}
+          {error && <p className="manage-form-error">{error}</p>}
+        </div>
+        <div className="modal-footer manage-modal-footer">
+          <button className="secondary-button danger-lite" disabled={data.status !== 'active' || closing} onClick={closeTask}><X size={15} /> {closing ? '关闭中' : isShare ? '关闭分享' : '关闭收集任务'}</button>
+          <button className="secondary-button" onClick={onClose}>取消</button>
+          <button className="primary-button" disabled={saving} onClick={submit}>{saving ? '保存中' : '保存设置'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const RECORD_SCOPE_TABS = [
   { key: 'all', label: '全部' },
   { key: 'my_sent', label: '我发送的' },
@@ -1118,10 +1522,10 @@ const RECORD_STATUS_FILTERS = [
   ['all', '全部状态'],
   ['active', '有效/进行中'],
   ['expiring', '即将过期'],
-  ['expired', '已过期/已截止'],
+  ['expired', '已过期/已截止/已关闭'],
 ]
 
-function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, onRefresh, onOpen }) {
+function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, onRefresh, onOpen, onManage, onCloseManaged }) {
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
@@ -1309,12 +1713,21 @@ function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, 
                 {openMenu === record.id && (
                   <div className="record-menu row-menu" onClick={(event) => event.stopPropagation()}>
                     <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
-                    <button disabled={!link} onClick={runMenuAction(() => onOpen(record))}><ExternalLink size={14} /> 打开链接</button>
-                    {record.scope === 'my_collections' ? (
-                      <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onDestroyCollection(record))}><Trash2 size={14} /> 销毁收集任务</button>
-                    ) : (
-                      <button className="danger" onClick={runMenuAction(() => onDelete(record.id))}><Trash2 size={14} /> 删除记录</button>
+                    <button disabled={!link} onClick={runMenuAction(() => onOpen(record))}><ExternalLink size={14} /> {recordOpenLabel(record)}</button>
+                    {record.scope === 'my_sent' && (
+                      <>
+                        <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
+                        <button className="danger" disabled={!recordManageUrl(record) || record.status === '已关闭'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
+                      </>
                     )}
+                    {record.scope === 'my_collections' && (
+                      <>
+                        <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理收集设置</button>
+                        <button className="danger" disabled={!recordManageUrl(record) || record.status === '已关闭'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭收集任务</button>
+                        <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onDestroyCollection(record))}><Trash2 size={14} /> 销毁收集任务</button>
+                      </>
+                    )}
+                    <button className="danger" onClick={runMenuAction(() => onDelete(record.id))}><Trash2 size={14} /> 删除本机记录</button>
                   </div>
                 )}
               </div>
@@ -1706,7 +2119,7 @@ function normalizeRecord(record = {}) {
   const shareId = record.shareId || getShareToken(record.shareUrl)
   const manageToken = record.manageToken || getManageToken(record.manageUrl)
   const collectionToken = record.collectionToken || getCollectionToken(record.publicUrl || record.shareUrl)
-  const manageUrl = record.manageUrl || (manageToken ? `${window.location.origin}/collect/manage/${manageToken}` : '')
+  const manageUrl = normalizedManageUrl(kind, manageToken, record.manageUrl)
   const publicUrl = record.publicUrl || record.shareUrl || (collectionToken ? `${window.location.origin}/collect/${collectionToken}` : '')
   const stableToken = kind === 'share' ? (shareId || record.code) : (scope === 'my_collections' ? (manageToken || collectionToken) : (collectionToken || manageToken))
   const id = stableToken ? `${scope}:${kind}:${stableToken}` : (record.id || `${scope}:${kind}:${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -1731,7 +2144,7 @@ function normalizeRecord(record = {}) {
     createdAt,
     updatedAt: record.updatedAt || record.lastSeenAt || createdAt,
   }
-  normalized.status = record.status || recordDisplayStatus(normalized)
+  normalized.status = normalizeRecordStatus(record.status, kind, scope) || recordDisplayStatus(normalized)
   normalized.meta = record.meta || recordDetail(normalized)
   return normalized
 }
@@ -1752,6 +2165,61 @@ function legacyTypeForScope(scope) {
   return '收集'
 }
 
+function normalizeRecordStatus(status, kind, scope) {
+  if (!status) return ''
+  if (status === 'active') return kind === 'collection' ? (scope === 'collect_from_me' ? '可提交' : '进行中') : '有效'
+  if (status === 'closed') return '已关闭'
+  if (status === 'expired') return kind === 'collection' ? '已截止' : '已过期'
+  return status
+}
+
+function normalizedManageUrl(kind, manageToken, currentUrl = '') {
+  const parts = getUrlParts(currentUrl)
+  const expectedRoot = kind === 'share' ? 'share' : 'collect'
+  if (currentUrl && parts[0] === expectedRoot && parts[1] === 'manage') return currentUrl
+  return manageToken ? `${window.location.origin}/${expectedRoot}/manage/${manageToken}` : ''
+}
+
+function createShareManageForm(share = {}) {
+  const limit = share.downloadLimit ? String(share.downloadLimit) : 'unlimited'
+  return {
+    expiresAt: toDateInputValue(share.expiresAt),
+    downloadLimit: ['unlimited', '1', '10'].includes(limit) ? limit : 'custom',
+    customDownloadLimit: share.downloadLimit ? String(share.downloadLimit) : '5',
+    password: '',
+    clearPassword: false,
+  }
+}
+
+function createCollectionManageForm(collection = {}) {
+  return {
+    title: collection.title || '',
+    description: collection.description || '',
+    deadline: toDateInputValue(collection.deadline),
+    allowedTypes: Array.isArray(collection.allowedTypes) ? collection.allowedTypes : [],
+    maxFileSizeMb: String(collection.maxFileSizeMb || 500),
+  }
+}
+
+function toDateInputValue(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return formatDateInput(date)
+}
+
+function shareStatusText(status) {
+  if (status === 'closed') return '已关闭'
+  if (status === 'expired') return '已过期'
+  return '有效'
+}
+
+function collectionStatusText(status) {
+  if (status === 'closed') return '已关闭'
+  if (status === 'expired') return '已截止'
+  return '进行中'
+}
+
 function createShareRecord(share, scope = 'my_sent') {
   const files = Array.isArray(share?.files) ? share.files : []
   const totalSize = files.reduce((sum, file) => sum + Number(file.size || 0), 0)
@@ -1766,9 +2234,11 @@ function createShareRecord(share, scope = 'my_sent') {
     name: files[0]?.name || '文件分享',
     meta: `${fileLabel}${totalSize ? ` · ${formatBytes(totalSize)}` : ''}${recipientLabel} · ${recordAgeLabel(share?.createdAt)}`,
     code: share?.code || '',
-    status: share?.status === 'active' || !share?.status ? '有效' : '已过期',
+    status: share?.status === 'closed' ? '已关闭' : share?.status === 'active' || !share?.status ? '有效' : '已过期',
     shareId: share?.id || '',
     shareUrl: share?.shareUrl || '',
+    manageUrl: share?.manageUrl || '',
+    manageToken: share?.manageToken || getManageToken(share?.manageUrl),
     expiresAt: share?.expiresAt || null,
     downloadLimit: share?.downloadLimit,
     downloadCount: share?.downloadCount,
@@ -1795,7 +2265,7 @@ function createCollectionRecord(collection, scope = 'my_collections', extra = {}
     name: collection?.title || '收集任务',
     meta: scope === 'my_collections' ? ownerMeta : submitterMeta,
     code: scope === 'my_collections' ? '收集任务' : '提交入口',
-    status: collection?.status === 'active' || !collection?.status ? (scope === 'my_collections' ? '进行中' : '可提交') : '已截止',
+    status: collection?.status === 'closed' ? '已关闭' : collection?.status === 'active' || !collection?.status ? (scope === 'my_collections' ? '进行中' : '可提交') : '已截止',
     publicUrl: collection?.publicUrl || collection?.shareUrl || '',
     shareUrl: collection?.publicUrl || collection?.shareUrl || '',
     manageUrl: collection?.manageUrl || '',
@@ -1897,7 +2367,7 @@ function recordStatusGroup(record) {
 }
 
 function isRecordExpired(record) {
-  if (['已过期', '已失效', '已截止', '已关闭'].includes(record.status)) return true
+  if (['expired', 'closed', '已过期', '已失效', '已截止', '已关闭'].includes(record.status)) return true
   const deadline = record.expiresAt || record.deadline
   return Boolean(deadline && new Date(deadline).getTime() <= Date.now())
 }
@@ -1910,7 +2380,12 @@ function isRecordExpiringSoon(record) {
 
 function recordDisplayStatus(record) {
   const group = recordStatusGroup(record)
-  if (group === 'expired') return record.status === '已失效' ? '已失效' : record.kind === 'collection' ? '已截止' : '已过期'
+  if (group === 'expired') {
+    if (record.status === 'closed') return '已关闭'
+    if (record.status === 'expired') return record.kind === 'collection' ? '已截止' : '已过期'
+    if (['已失效', '已关闭', '已过期', '已截止'].includes(record.status)) return record.status
+    return record.kind === 'collection' ? '已截止' : '已过期'
+  }
   if (group === 'expiring') return '即将过期'
   if (record.kind === 'collection') return record.scope === 'collect_from_me' ? '可提交' : '进行中'
   return '有效'
@@ -1949,14 +2424,17 @@ function recordCopyTarget(record) {
 }
 
 function recordManageUrl(record) {
-  if (record.manageUrl) return record.manageUrl
-  if (!record.manageToken) return ''
-  return `${window.location.origin}/collect/manage/${record.manageToken}`
+  return normalizedManageUrl(record.kind, record.manageToken || getManageToken(record.manageUrl), record.manageUrl)
 }
 
 function recordCopyLabel(record) {
   if (record.kind === 'share') return record.code ? '复制取件码' : '复制链接'
   return record.scope === 'my_collections' ? '复制管理链接' : '复制提交链接'
+}
+
+function recordOpenLabel(record) {
+  if (record.kind === 'share') return record.scope === 'my_sent' ? '打开分享链接' : '打开文件链接'
+  return record.scope === 'my_collections' ? '打开管理页' : '打开提交入口'
 }
 
 function recordExpiryLabel(record) {
@@ -2194,7 +2672,7 @@ function markRecordUnavailable(record, message = '') {
   if (!/过期|失效|不存在|用完|关闭|截止|不可用/.test(message)) return record
   return {
     ...record,
-    status: record.kind === 'collection' ? '已截止' : '已失效',
+    status: message.includes('关闭') ? '已关闭' : record.kind === 'collection' ? '已截止' : '已失效',
     updatedAt: new Date().toISOString(),
   }
 }

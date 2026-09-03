@@ -27,12 +27,14 @@ const configuredCallbackUrls = splitConfigValues(process.env.KUNQIONG_AUTH_CALLB
 const configuredAppUrl = process.env.KUNQIONG_APP_URL || ''
 const AUTH_COOKIE_NAME = 'kunqiong_session'
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
+let metadataNeedsPersist = false
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
   fs.mkdirSync(directory, { recursive: true })
 }
 
 const metadata = normalizeMetadata(loadMetadata())
+if (metadataNeedsPersist) persistMetadata()
 const uploadSessions = new Map()
 const oauthStates = new Map()
 const upload = multer({
@@ -150,7 +152,7 @@ app.post('/api/shares', upload.array('files', MAX_FILES), async (req, res, next)
     })
 
     const share = await createShareFromTempFiles(files, readShareOptions(req.body), req)
-    res.status(201).json({ share: publicShare(share, req) })
+    res.status(201).json({ share: publicShare(share, req, true, true) })
   } catch (error) {
     cleanupUploadedFiles(req.files)
     next(error)
@@ -253,7 +255,7 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
     const share = await createShareFromTempFiles(mergedFiles, session.options, req)
     uploadSessions.delete(session.id)
     removeDirectory(session.directory)
-    res.status(201).json({ share: publicShare(share, req) })
+    res.status(201).json({ share: publicShare(share, req, true, true) })
   } catch (error) {
     next(error)
   }
@@ -282,6 +284,42 @@ app.get('/api/shares/token/:token', (req, res) => {
   const access = validateShare(share, undefined, { allowMissingPassword: true })
   if (!access.ok) return res.status(access.status).json({ message: access.message })
   res.json({ share: publicShare(share, req, !share.passwordHash), requiresPassword: Boolean(share.passwordHash) })
+})
+
+app.get('/api/shares/manage/:manageToken', (req, res) => {
+  const share = findShareByManageToken(req.params.manageToken)
+  if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
+  res.json({ share: publicShare(share, req, true, true) })
+})
+
+app.patch('/api/shares/manage/:manageToken', async (req, res, next) => {
+  try {
+    const share = findShareByManageToken(req.params.manageToken)
+    if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
+    applyShareUpdate(share, req.body || {})
+    share.updatedAt = new Date().toISOString()
+    if (share.status === 'active' && !fs.existsSync(path.join(filesRoot, share.id))) {
+      return res.status(410).json({ message: '分享文件已清理，无法恢复为有效状态' })
+    }
+    persistMetadata()
+    res.json({ share: publicShare(share, req, true, true) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/shares/manage/:manageToken', (req, res, next) => {
+  try {
+    const share = findShareByManageToken(req.params.manageToken)
+    if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
+    share.status = 'closed'
+    share.updatedAt = new Date().toISOString()
+    removeDirectory(path.join(filesRoot, share.id))
+    persistMetadata()
+    res.json({ share: publicShare(share, req, false, true) })
+  } catch (error) {
+    next(error)
+  }
 })
 
 app.get('/api/shares/:token/download', async (req, res, next) => {
@@ -320,15 +358,15 @@ app.post('/api/collections', async (req, res, next) => {
     if (!title) return res.status(400).json({ message: '请填写任务名称' })
     const token = createToken(10)
     const manageToken = createToken(18)
-    const deadline = req.body.deadline ? new Date(req.body.deadline) : new Date(Date.now() + 7 * 86400000)
-    if (Number.isNaN(deadline.getTime())) return res.status(400).json({ message: '截止时间格式不正确' })
+    const deadline = normalizeExpiryInput(req.body.deadline || new Date(Date.now() + 7 * 86400000).toISOString(), '截止时间')
+    if (!deadline) return res.status(400).json({ message: '截止时间格式不正确' })
     const task = {
       id: token,
       token,
       manageToken,
       title,
       description: String(req.body.description || '请上传你负责的文件'),
-      deadline: deadline.toISOString(),
+      deadline,
       allowedTypes: Array.isArray(req.body.allowedTypes) ? req.body.allowedTypes : [],
       maxFileSizeMb: Number(req.body.maxFileSizeMb || 500),
       createdAt: new Date().toISOString(),
@@ -338,7 +376,7 @@ app.post('/api/collections', async (req, res, next) => {
     task.qrDataUrl = await QRCode.toDataURL(`${getOrigin(req)}/collect/${token}`, { width: 180, margin: 1 })
     metadata.collections.push(task)
     persistMetadata()
-    res.status(201).json({ collection: publicCollection(task, req), manageToken })
+    res.status(201).json({ collection: publicCollection(task, req, true), manageToken })
   } catch (error) {
     next(error)
   }
@@ -404,6 +442,19 @@ app.get('/api/collections/manage/:manageToken', (req, res) => {
   res.json({ collection: managerCollection(task, req) })
 })
 
+app.patch('/api/collections/manage/:manageToken', (req, res, next) => {
+  try {
+    const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
+    if (!task) return res.status(404).json({ message: '管理链接不存在' })
+    applyCollectionUpdate(task, req.body || {})
+    task.updatedAt = new Date().toISOString()
+    persistMetadata()
+    res.json({ collection: managerCollection(task, req) })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.delete('/api/collections/manage/:manageToken', (req, res, next) => {
   try {
     const index = metadata.collections.findIndex((item) => item.manageToken === req.params.manageToken)
@@ -412,6 +463,22 @@ app.delete('/api/collections/manage/:manageToken', (req, res, next) => {
     removeDirectory(path.join(collectionsRoot, task.id))
     persistMetadata()
     res.json({ ok: true })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/collections/manage/:manageToken/submissions/:submissionId', (req, res, next) => {
+  try {
+    const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
+    if (!task) return res.status(404).json({ message: '管理链接不存在' })
+    const submissionIndex = task.submissions.findIndex((item) => item.id === req.params.submissionId)
+    if (submissionIndex < 0) return res.status(404).json({ message: '提交记录不存在' })
+    const [submission] = task.submissions.splice(submissionIndex, 1)
+    removeDirectory(path.join(collectionsRoot, task.id, submission.id))
+    task.updatedAt = new Date().toISOString()
+    persistMetadata()
+    res.json({ collection: managerCollection(task, req) })
   } catch (error) {
     next(error)
   }
@@ -460,6 +527,7 @@ if (fs.existsSync(distRoot)) {
 
 app.use((error, _req, res, _next) => {
   console.error(error)
+  if (error.status) return res.status(error.status).json({ message: error.message || '请求处理失败' })
   if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: '文件超过 5 GB 限制' })
   if (error.code === 'LIMIT_FILE_COUNT') return res.status(413).json({ message: `单次最多上传 ${MAX_FILES} 个文件` })
   res.status(500).json({ message: '服务器处理失败，请稍后重试' })
@@ -482,10 +550,28 @@ function loadMetadata() {
 }
 
 function normalizeMetadata(value = {}) {
+  const shares = Array.isArray(value.shares) ? value.shares : []
+  for (const share of shares) {
+    if (!share.manageToken) {
+      share.manageToken = createToken(18)
+      metadataNeedsPersist = true
+    }
+  }
+  const collections = Array.isArray(value.collections) ? value.collections : []
+  for (const task of collections) {
+    if (!task.manageToken) {
+      task.manageToken = createToken(18)
+      metadataNeedsPersist = true
+    }
+    if (!Array.isArray(task.submissions)) {
+      task.submissions = []
+      metadataNeedsPersist = true
+    }
+  }
   return {
     ...value,
-    shares: Array.isArray(value.shares) ? value.shares : [],
-    collections: Array.isArray(value.collections) ? value.collections : [],
+    shares,
+    collections,
     sessions: Array.isArray(value.sessions) ? value.sessions : [],
   }
 }
@@ -524,8 +610,8 @@ function cleanupExpired() {
   if (changed) persistMetadata()
 }
 
-function publicShare(share, req, includeFiles = true) {
-  return {
+function publicShare(share, req, includeFiles = true, includeManage = false) {
+  const payload = {
     id: share.id,
     code: share.code,
     files: includeFiles ? share.files.map(({ storedName, ...file }) => file) : [],
@@ -542,10 +628,15 @@ function publicShare(share, req, includeFiles = true) {
     notificationLog: share.notificationLog || [],
     status: share.status,
   }
+  if (includeManage) {
+    payload.manageToken = share.manageToken
+    payload.manageUrl = `${getOrigin(req)}/share/manage/${share.manageToken}`
+  }
+  return payload
 }
 
-function publicCollection(task, req) {
-  return {
+function publicCollection(task, req, includeManage = false) {
+  const payload = {
     id: task.id,
     token: task.token,
     title: task.title,
@@ -556,15 +647,18 @@ function publicCollection(task, req) {
     status: task.status,
     submissionCount: task.submissions.length,
     publicUrl: `${getOrigin(req)}/collect/${task.token}`,
-    manageUrl: `${getOrigin(req)}/collect/manage/${task.manageToken}`,
     qrDataUrl: task.qrDataUrl,
   }
+  if (includeManage) {
+    payload.manageToken = task.manageToken
+    payload.manageUrl = `${getOrigin(req)}/collect/manage/${task.manageToken}`
+  }
+  return payload
 }
 
 function managerCollection(task, req) {
   return {
-    ...publicCollection(task, req),
-    manageToken: task.manageToken,
+    ...publicCollection(task, req, true),
     submissions: task.submissions.map(publicSubmission),
     downloadUrl: `${getOrigin(req)}/api/collections/manage/${task.manageToken}/download`,
   }
@@ -797,6 +891,7 @@ async function createShareFromTempFiles(tempFiles, options, req) {
   const downloadLimit = normalizeDownloadLimit(options.downloadLimit)
   const share = {
     id: shareToken,
+    manageToken: createToken(18),
     code: createCode(options.codeLength),
     files,
     createdAt: new Date().toISOString(),
@@ -829,6 +924,87 @@ function normalizeDownloadLimit(value) {
   if (!value || value === 'unlimited') return null
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null
+}
+
+function findShareByManageToken(manageToken) {
+  return metadata.shares.find((share) => share.manageToken === String(manageToken || ''))
+}
+
+function applyShareUpdate(share, body = {}) {
+  if (Object.prototype.hasOwnProperty.call(body, 'expiresAt')) {
+    share.expiresAt = normalizeExpiryInput(body.expiresAt, '分享有效期')
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'downloadLimit')) {
+    share.downloadLimit = normalizeDownloadLimit(body.downloadLimit)
+  }
+  if (body.clearPassword) {
+    share.passwordHash = null
+  } else if (Object.prototype.hasOwnProperty.call(body, 'password') && String(body.password || '').trim()) {
+    share.passwordHash = hashSecret(String(body.password).trim())
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+    const status = String(body.status || '').trim()
+    if (!['active', 'closed'].includes(status)) throw httpError(400, '分享状态不支持')
+    share.status = status
+    if (status === 'closed') removeDirectory(path.join(filesRoot, share.id))
+  }
+}
+
+function applyCollectionUpdate(task, body = {}) {
+  if (Object.prototype.hasOwnProperty.call(body, 'title')) {
+    const title = String(body.title || '').trim()
+    if (!title) throw httpError(400, '请填写任务名称')
+    task.title = title
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'description')) {
+    task.description = String(body.description || '').trim() || '请上传你负责的文件'
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'deadline')) {
+    const deadline = normalizeExpiryInput(body.deadline, '截止时间')
+    if (!deadline) throw httpError(400, '截止时间格式不正确')
+    task.deadline = deadline
+    if (task.status === 'expired' && new Date(task.deadline).getTime() > Date.now()) {
+      task.status = 'active'
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'allowedTypes')) {
+    const allowed = Array.isArray(body.allowedTypes) ? body.allowedTypes.map(String).filter((type) => ['图片', '文档', '视频', '其他'].includes(type)) : []
+    task.allowedTypes = Array.from(new Set(allowed))
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'maxFileSizeMb')) {
+    const maxFileSizeMb = Number(body.maxFileSizeMb)
+    if (!Number.isFinite(maxFileSizeMb) || maxFileSizeMb <= 0) throw httpError(400, '单人大小限制不正确')
+    task.maxFileSizeMb = Math.floor(maxFileSizeMb)
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+    const status = String(body.status || '').trim()
+    if (!['active', 'closed'].includes(status)) throw httpError(400, '收集任务状态不支持')
+    if (status === 'active' && new Date(task.deadline).getTime() <= Date.now()) {
+      throw httpError(400, '截止时间已过，请先延长截止时间')
+    }
+    task.status = status
+  }
+}
+
+function normalizeExpiryInput(value, label) {
+  if (value === null || value === 'permanent' || value === 'unlimited') return null
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  let date
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [year, month, day] = raw.split('-').map(Number)
+    date = new Date(year, month - 1, day, 23, 59, 59, 999)
+  } else {
+    date = new Date(raw)
+  }
+  if (Number.isNaN(date.getTime())) throw httpError(400, `${label}格式不正确`)
+  return date.toISOString()
+}
+
+function httpError(status, message) {
+  const error = new Error(message)
+  error.status = status
+  return error
 }
 
 function parseRecipients(value) {
