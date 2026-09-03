@@ -441,6 +441,32 @@ function WorkspaceApp() {
     }
   }
 
+  const reopenManagedRecord = async (recordOrTarget, patch = {}) => {
+    const target = recordOrTarget?.record || recordOrTarget
+    const normalized = normalizeRecord(target)
+    const manageToken = recordOrTarget?.data?.manageToken || normalized.manageToken || getManageToken(normalized.manageUrl)
+    if (normalized.kind === 'share') {
+      setToast('分享关闭后文件已清理，不能重新开启')
+      return false
+    }
+    if (!manageToken) {
+      setToast('管理链接不可用')
+      return false
+    }
+    try {
+      const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`, { method: 'PATCH', body: JSON.stringify({ ...patch, status: 'active' }) })
+      const record = createCollectionRecord(data.collection, 'my_collections')
+      saveRecord(record)
+      setCollectionManageData((current) => current?.manageToken === manageToken ? data.collection : current)
+      setManagementTarget((current) => current?.kind === 'collection' && current.data.manageToken === manageToken ? { kind: 'collection', record, data: data.collection } : current)
+      setToast('收集任务已重新开启')
+      return true
+    } catch (error) {
+      setToast(error.message)
+      return false
+    }
+  }
+
   const deleteCollectionSubmission = async (collection, submissionId) => {
     const manageToken = collection?.manageToken
     if (!manageToken || !submissionId) return false
@@ -598,13 +624,14 @@ function WorkspaceApp() {
             onDestroy={destroyCollection}
             onManageSettings={(data) => setManagementTarget({ kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data })}
             onCloseTask={(data) => closeManagedRecord({ kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data })}
+            onReopenTask={(data) => reopenManagedRecord({ kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data })}
             onDeleteSubmission={deleteCollectionSubmission}
             onCloseManager={() => setCollectionManageData(null)}
             onRefreshManager={refreshCollectionManager}
             onRefreshRecords={refreshRecords}
           />
         )}
-        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} />}
+        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} onCopy={copyValue} onDelete={deleteRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} />}
       </main>
 
       <footer className="page-footer">
@@ -625,6 +652,7 @@ function WorkspaceApp() {
             if (closed) setManagementTarget(null)
             return closed
           }}
+          onReopenTask={(payload) => reopenManagedRecord(managementTarget, payload)}
         />
       )}
       {toast && <div className="toast"><Check size={16} /> {toast}</div>}
@@ -875,7 +903,7 @@ function DatePicker({ value, onChange, ariaLabel, placeholder = '选择日期', 
   )
 }
 
-function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onDestroy, onManageSettings, onCloseTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
+function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onDestroy, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
   const [form, setForm] = useState(createDefaultCollectionForm)
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const collectionRecords = records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
@@ -901,7 +929,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
       {manageLoading ? (
         <div className="collection-files-card collection-loading"><span className="loading-dot" /><p>正在加载已收文件...</p></div>
       ) : manageData ? (
-        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} onDestroy={onDestroy} onManageSettings={onManageSettings} onCloseTask={onCloseTask} onDeleteSubmission={onDeleteSubmission} />
+        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} onDestroy={onDestroy} onManageSettings={onManageSettings} onCloseTask={onCloseTask} onReopenTask={onReopenTask} onDeleteSubmission={onDeleteSubmission} />
       ) : (
         <div className={`collect-builder ${result ? 'created' : ''}`}>
           {!result ? (
@@ -999,7 +1027,7 @@ function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onDes
   )
 }
 
-function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSettings, onCloseTask, onDeleteSubmission }) {
+function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission }) {
   const isActive = data.status === 'active'
   return (
     <div className="collection-files-card">
@@ -1014,7 +1042,13 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSet
           <button className="secondary-button" onClick={onClose}><ArrowLeft size={15} /> 返回任务</button>
           <button className="secondary-button" onClick={() => onManageSettings(data)}><Settings2 size={15} /> 编辑任务</button>
           <button className="ghost-icon" aria-label="刷新已收文件" onClick={onRefresh}><RefreshCw size={17} /></button>
-          <button className="secondary-button danger-lite" disabled={!isActive} onClick={() => onCloseTask(data)}><X size={15} /> 关闭收集</button>
+          {isActive ? (
+            <button className="secondary-button danger-lite" onClick={() => onCloseTask(data)}><X size={15} /> 关闭收集</button>
+          ) : canReopenCollection(data) ? (
+            <button className="secondary-button" onClick={() => onReopenTask(data)}><RefreshCw size={15} /> 重新开启</button>
+          ) : (
+            <button className="secondary-button" onClick={() => onManageSettings(data)}><CalendarDays size={15} /> 延长后开启</button>
+          )}
           <button className="secondary-button danger-lite" onClick={() => onDestroy(data)}><Trash2 size={15} /> 销毁本次任务</button>
         </div>
       </div>
@@ -1204,8 +1238,10 @@ function CollectionManagePage({ token }) {
   const [error, setError] = useState('')
   const [destroyed, setDestroyed] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [actionError, setActionError] = useState('')
 
   const saveManagedCollection = (collection) => {
+    setActionError('')
     setData(collection)
     saveLocalRecord(createCollectionRecord(collection, 'my_collections'))
   }
@@ -1222,7 +1258,7 @@ function CollectionManagePage({ token }) {
       saveManagedCollection(result.collection)
       return true
     } catch (err) {
-      setError(err.message)
+      setActionError(err.message)
       return false
     }
   }
@@ -1234,7 +1270,18 @@ function CollectionManagePage({ token }) {
       saveManagedCollection(result.collection)
       return true
     } catch (err) {
-      setError(err.message)
+      setActionError(err.message)
+      return false
+    }
+  }
+
+  const reopenTask = async (patch = {}) => {
+    try {
+      const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify({ ...patch, status: 'active' }) })
+      saveManagedCollection(result.collection)
+      return true
+    } catch (err) {
+      setActionError(err.message)
       return false
     }
   }
@@ -1246,7 +1293,7 @@ function CollectionManagePage({ token }) {
       saveManagedCollection(result.collection)
       return true
     } catch (err) {
-      setError(err.message)
+      setActionError(err.message)
       return false
     }
   }
@@ -1261,7 +1308,7 @@ function CollectionManagePage({ token }) {
       }))
       setDestroyed(true)
     } catch (err) {
-      setError(err.message)
+      setActionError(err.message)
     }
   }
   if (error) return <PublicShell><StateBlock title="管理链接不可用" detail={error} /></PublicShell>
@@ -1277,11 +1324,18 @@ function CollectionManagePage({ token }) {
           <h1>{data.title}</h1>
           <div className="manage-title-actions">
             <button className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 编辑任务</button>
-            <button className="secondary-button danger-lite" disabled={!isActive} onClick={closeTask}><X size={15} /> 关闭收集任务</button>
+            {isActive ? (
+              <button className="secondary-button danger-lite" onClick={closeTask}><X size={15} /> 关闭收集任务</button>
+            ) : canReopenCollection(data) ? (
+              <button className="secondary-button" onClick={() => reopenTask()}><RefreshCw size={15} /> 重新开启任务</button>
+            ) : (
+              <button className="secondary-button" onClick={() => setEditing(true)}><CalendarDays size={15} /> 延长后开启</button>
+            )}
             <button className="secondary-button danger-lite" onClick={destroyTask}><Trash2 size={15} /> 销毁本次任务</button>
           </div>
         </div>
         <p className="public-copy">{data.submissions.length} 份提交 · 状态：{collectionStatusText(data.status)}</p>
+        {actionError && <p className="public-message">{actionError}</p>}
         <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
         <div className="manage-list">
           {data.submissions.length ? data.submissions.map((submission) => (
@@ -1302,7 +1356,7 @@ function CollectionManagePage({ token }) {
         </div>
         {data.submissions.length > 0 && <button className="primary-button wide" onClick={() => { window.location.href = data.downloadUrl }}><Download size={16} /> 打包下载全部提交</button>}
       </div>
-      {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveTaskSettings} onCloseTask={async () => { const closed = await closeTask(); if (closed) setEditing(false); return closed }} />}
+      {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveTaskSettings} onCloseTask={async () => { const closed = await closeTask(); if (closed) setEditing(false); return closed }} onReopenTask={async (payload) => { const reopened = await reopenTask(payload); if (reopened) setEditing(false); return reopened }} />}
     </PublicShell>
   )
 }
@@ -1354,13 +1408,14 @@ function SettingsModal({ settings, setSettings, onClose, onSave }) {
   )
 }
 
-function ManageItemModal({ target, onClose, onSave, onCloseTask }) {
+function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask }) {
   const isShare = target.kind === 'share'
   const data = target.data || {}
   const [shareForm, setShareForm] = useState(() => createShareManageForm(data))
   const [collectionForm, setCollectionForm] = useState(() => createCollectionManageForm(data))
   const [saving, setSaving] = useState(false)
   const [closing, setClosing] = useState(false)
+  const [reopening, setReopening] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -1381,6 +1436,29 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask }) {
     })
   }
 
+  const buildCollectionPayload = ({ reopeningTask = false } = {}) => {
+    const title = collectionForm.title.trim()
+    if (!title) {
+      setError('请填写任务名称')
+      return null
+    }
+    if (!collectionForm.deadline) {
+      setError('请选择截止日期')
+      return null
+    }
+    if (reopeningTask && !isDateInputStillOpen(collectionForm.deadline)) {
+      setError('请先把截止日期调整到今天或未来日期')
+      return null
+    }
+    return {
+      title,
+      description: collectionForm.description.trim(),
+      deadline: collectionForm.deadline,
+      allowedTypes: collectionForm.allowedTypes,
+      maxFileSizeMb: Number(collectionForm.maxFileSizeMb),
+    }
+  }
+
   const submit = async () => {
     setError('')
     let payload
@@ -1397,22 +1475,8 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask }) {
         clearPassword: shareForm.clearPassword,
       }
     } else {
-      const title = collectionForm.title.trim()
-      if (!title) {
-        setError('请填写任务名称')
-        return
-      }
-      if (!collectionForm.deadline) {
-        setError('请选择截止日期')
-        return
-      }
-      payload = {
-        title,
-        description: collectionForm.description.trim(),
-        deadline: collectionForm.deadline,
-        allowedTypes: collectionForm.allowedTypes,
-        maxFileSizeMb: Number(collectionForm.maxFileSizeMb),
-      }
+      payload = buildCollectionPayload()
+      if (!payload) return
     }
 
     setSaving(true)
@@ -1435,6 +1499,23 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask }) {
       if (!ok) setClosing(false)
     } catch {
       setClosing(false)
+    }
+  }
+
+  const reopenTask = async () => {
+    setError('')
+    const payload = buildCollectionPayload({ reopeningTask: true })
+    if (!payload) return
+    setReopening(true)
+    try {
+      const ok = await onReopenTask?.(payload)
+      if (ok) {
+        onClose()
+        return
+      }
+      setReopening(false)
+    } catch {
+      setReopening(false)
     }
   }
 
@@ -1493,7 +1574,11 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask }) {
           {error && <p className="manage-form-error">{error}</p>}
         </div>
         <div className="modal-footer manage-modal-footer">
-          <button className="secondary-button danger-lite" disabled={data.status !== 'active' || closing} onClick={closeTask}><X size={15} /> {closing ? '关闭中' : isShare ? '关闭分享' : '关闭收集任务'}</button>
+          {isShare || data.status === 'active' ? (
+            <button className="secondary-button danger-lite" disabled={data.status !== 'active' || closing} onClick={closeTask}><X size={15} /> {closing ? '关闭中' : isShare ? '关闭分享' : '关闭收集任务'}</button>
+          ) : (
+            <button className="secondary-button reopen-button" disabled={reopening} onClick={reopenTask}><RefreshCw className={reopening ? 'spinning' : ''} size={15} /> {reopening ? '开启中' : '重新开启收集任务'}</button>
+          )}
           <button className="secondary-button" onClick={onClose}>取消</button>
           <button className="primary-button" disabled={saving} onClick={submit}>{saving ? '保存中' : '保存设置'}</button>
         </div>
@@ -1525,7 +1610,7 @@ const RECORD_STATUS_FILTERS = [
   ['expired', '已过期/已截止/已关闭'],
 ]
 
-function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, onRefresh, onOpen, onManage, onCloseManaged }) {
+function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, onRefresh, onOpen, onManage, onCloseManaged, onReopenManaged }) {
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
@@ -1691,6 +1776,7 @@ function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, 
           const link = recordLink(record)
           const copyTarget = recordCopyTarget(record)
           const statusGroup = recordStatusGroup(record)
+          const reopenableCollection = canReopenCollection(record)
           const selected = selectedIds.has(record.id)
           return (
             <div className={`record-row record-row-enhanced ${selected ? 'selected' : ''}`} key={record.id}>
@@ -1717,13 +1803,19 @@ function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, 
                     {record.scope === 'my_sent' && (
                       <>
                         <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
-                        <button className="danger" disabled={!recordManageUrl(record) || record.status === '已关闭'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
+                        <button className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
                       </>
                     )}
                     {record.scope === 'my_collections' && (
                       <>
                         <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理收集设置</button>
-                        <button className="danger" disabled={!recordManageUrl(record) || record.status === '已关闭'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭收集任务</button>
+                        {record.status === '已关闭' && reopenableCollection ? (
+                          <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启收集任务</button>
+                        ) : statusGroup === 'expired' ? (
+                          <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><CalendarDays size={14} /> 延长后开启</button>
+                        ) : (
+                          <button className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭收集任务</button>
+                        )}
                         <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onDestroyCollection(record))}><Trash2 size={14} /> 销毁收集任务</button>
                       </>
                     )}
@@ -2220,6 +2312,10 @@ function collectionStatusText(status) {
   return '进行中'
 }
 
+function canReopenCollection(collection = {}) {
+  return collection.status !== 'active' && Boolean(collection.deadline && new Date(collection.deadline).getTime() > Date.now())
+}
+
 function createShareRecord(share, scope = 'my_sent') {
   const files = Array.isArray(share?.files) ? share.files : []
   const totalSize = files.reduce((sum, file) => sum + Number(file.size || 0), 0)
@@ -2338,6 +2434,12 @@ function parseLocalDate(value) {
   if (![year, month, day].every(Number.isFinite)) return null
   const date = new Date(year, month - 1, day)
   return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null
+}
+
+function isDateInputStillOpen(value) {
+  const date = parseLocalDate(value)
+  if (!date) return false
+  return addLocalDays(date, 1).getTime() > Date.now()
 }
 
 function startOfMonth(date) {

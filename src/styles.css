@@ -459,7 +459,7 @@ h1, h2, p { margin-top: 0; }
 .manage-check-row input { width: 15px; height: 15px; accent-color: var(--accent); }
 .manage-form-error { margin: 0; color: #b45d51; font-size: 12px; }
 .manage-modal-footer { align-items: center; flex-wrap: wrap; }
-.manage-modal-footer .danger-lite { margin-right: auto; }
+.manage-modal-footer .danger-lite, .manage-modal-footer .reopen-button { margin-right: auto; }
 .retrieve-modal-result .modal-body { padding-bottom: 27px; }
 .modal-intro { color: #829991; font-size: 13px; line-height: 1.7; }
 .setting-block { margin-bottom: 23px; }
@@ -624,7 +624,7 @@ h1, h2, p { margin-top: 0; }
   .manage-title-actions .secondary-button { flex: 1 1 130px; min-height: 38px; padding: 0 10px; font-size: 11px; }
   .manage-submission { align-items: stretch; flex-direction: column; }
   .manage-submission-actions { justify-content: flex-start !important; flex-wrap: wrap; }
-  .manage-modal-footer .danger-lite { width: 100%; margin-right: 0; }
+  .manage-modal-footer .danger-lite, .manage-modal-footer .reopen-button { width: 100%; margin-right: 0; }
   .collection-history-row { align-items: flex-start; flex-wrap: wrap; }
   .collection-history-actions { width: calc(100% - 48px); margin-left: 48px; }
   .collection-history-actions .secondary-button { flex: 1; }
