@@ -4,9 +4,11 @@ import {
   ArrowRight,
   ArrowLeft,
   Bell,
+  CalendarDays,
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Clock3,
   Cloud,
@@ -670,6 +672,89 @@ function CollectionLimitInfo({ allowedTypes, maxFileSizeMb, compact = false }) {
   )
 }
 
+function DatePicker({ value, onChange, ariaLabel, placeholder = '选择日期', className = '' }) {
+  const pickerRef = useRef(null)
+  const [open, setOpen] = useState(false)
+  const [viewDate, setViewDate] = useState(() => startOfMonth(parseLocalDate(value) || new Date()))
+
+  useEffect(() => {
+    if (value) setViewDate(startOfMonth(parseLocalDate(value) || new Date()))
+  }, [value])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const handleOutsideClick = (event) => {
+      if (!pickerRef.current?.contains(event.target)) setOpen(false)
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('click', handleOutsideClick)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('click', handleOutsideClick)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  const monthStart = startOfMonth(viewDate)
+  const leadingDays = (monthStart.getDay() + 6) % 7
+  const calendarDays = Array.from({ length: 42 }, (_, index) => {
+    const day = index - leadingDays + 1
+    return new Date(monthStart.getFullYear(), monthStart.getMonth(), day)
+  })
+  const todayValue = formatDateInput(new Date())
+  const monthLabel = `${monthStart.getFullYear()}年${monthStart.getMonth() + 1}月`
+
+  const chooseDate = (date) => {
+    onChange(formatDateInput(date))
+    setOpen(false)
+  }
+
+  const setToday = () => chooseDate(new Date())
+  const clearDate = () => {
+    onChange('')
+    setOpen(false)
+  }
+
+  return (
+    <div className={`date-picker ${className}`} ref={pickerRef}>
+      <button type="button" className={`date-picker-trigger ${open ? 'open' : ''}`} aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <CalendarDays size={15} />
+        <span className={value ? '' : 'placeholder'}>{value ? formatDateInputDisplay(value) : placeholder}</span>
+        <ChevronDown size={15} />
+      </button>
+      {open && (
+        <div className="date-picker-popover" role="dialog" aria-label={`${ariaLabel}日期选择`}>
+          <div className="date-picker-header">
+            <button type="button" className="date-picker-nav" aria-label="上个月" title="上个月" onClick={() => setViewDate((current) => addMonths(current, -1))}><ChevronLeft size={16} /></button>
+            <strong>{monthLabel}</strong>
+            <button type="button" className="date-picker-nav" aria-label="下个月" title="下个月" onClick={() => setViewDate((current) => addMonths(current, 1))}><ChevronRight size={16} /></button>
+          </div>
+          <div className="date-picker-weekdays">{['一', '二', '三', '四', '五', '六', '日'].map((day) => <span key={day}>{day}</span>)}</div>
+          <div className="date-picker-grid">
+            {calendarDays.map((date) => {
+              const dateValue = formatDateInput(date)
+              const isCurrentMonth = date.getMonth() === monthStart.getMonth()
+              const isSelected = dateValue === value
+              const isToday = dateValue === todayValue
+              return (
+                <button type="button" key={dateValue} className={`date-picker-day ${isCurrentMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''}`} onClick={() => chooseDate(date)}>
+                  {date.getDate()}
+                </button>
+              )
+            })}
+          </div>
+          <div className="date-picker-footer">
+            <button type="button" onClick={clearDate} disabled={!value}>清除</button>
+            <button type="button" onClick={setToday}>今天</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onDestroy, onCloseManager, onRefreshManager, onRefreshRecords }) {
   const [form, setForm] = useState(createDefaultCollectionForm)
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
@@ -714,7 +799,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
               <div className="builder-form">
                 <label>任务名称<input value={form.title} onChange={(event) => update('title', event.target.value)} placeholder="例如：9 月产品素材收集" /></label>
                 <label>收集说明<input value={form.description} onChange={(event) => update('description', event.target.value)} placeholder="例如：请上传你负责的图片、文档或视频素材" /></label>
-                <label>截止时间<input type="date" value={form.deadline} onChange={(event) => update('deadline', event.target.value)} /></label>
+                <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} ariaLabel="截止时间" /></label>
                 <label>文件类型<div className="chip-group">{['图片', '文档', '视频', '其他'].map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', form.allowedTypes.includes(type) ? form.allowedTypes.filter((item) => item !== type) : [...form.allowedTypes, type])}>{type}</button>)}</div></label>
                 <label>单人大小限制<select value={form.maxFileSizeMb} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select></label>
                 <button className="primary-button wide" onClick={() => onCreate(form)}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
@@ -1168,8 +1253,8 @@ function RecordsView({ records, onCopy, onDelete, onDestroyCollection, onClear, 
             <div className="record-filter-field record-date-field">
               <span>日期范围</span>
               <div className="record-date-range">
-                <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} aria-label="开始日期" />
-                <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} aria-label="结束日期" />
+                <DatePicker value={dateFrom} onChange={setDateFrom} ariaLabel="开始日期" placeholder="开始日期" />
+                <DatePicker value={dateTo} onChange={setDateTo} ariaLabel="结束日期" placeholder="结束日期" />
               </div>
             </div>
           )}
@@ -1783,6 +1868,26 @@ function parseLocalDate(value) {
   if (![year, month, day].every(Number.isFinite)) return null
   const date = new Date(year, month - 1, day)
   return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null
+}
+
+function startOfMonth(date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1)
+}
+
+function addMonths(date, months) {
+  return new Date(date.getFullYear(), date.getMonth() + months, 1)
+}
+
+function formatDateInput(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatDateInputDisplay(value) {
+  const date = parseLocalDate(value)
+  return date ? `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}` : value
 }
 
 function recordStatusGroup(record) {
