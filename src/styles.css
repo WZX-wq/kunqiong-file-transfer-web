@@ -500,6 +500,17 @@ h1, h2, p { margin-top: 0; }
 .preview-error span { color: #9bada7; font-size: 12px; line-height: 1.6; }
 .preview-modal-footer { align-items: center; justify-content: space-between; }
 .preview-modal-footer > span { min-width: 0; overflow: hidden; color: #8ca39c; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.rename-backdrop { z-index: 9; align-items: center; justify-items: center; }
+.rename-modal { width: min(480px, calc(100vw - 40px)); overflow: hidden; }
+.rename-modal-header { align-items: flex-start; }
+.rename-modal-body { display: flex; flex-direction: column; gap: 16px; }
+.rename-summary { display: flex; align-items: center; gap: 12px; padding: 12px; background: #f6faf9; border: 1px solid #e2eeea; border-radius: 10px; }
+.rename-summary .record-icon { flex: none; }
+.rename-summary div { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.rename-summary strong { overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.rename-summary span:not(.record-icon) { overflow: hidden; color: #8ca39c; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.rename-helper { margin: -3px 0 0; color: #8ca39c; font-size: 11px; line-height: 1.7; }
+.rename-modal-footer { align-items: center; }
 .modal-header { display: flex; justify-content: space-between; gap: 20px; padding: 26px 27px 20px; border-bottom: 1px solid #edf2f0; }
 .modal-header h2 { margin: 0; color: var(--ink); font-size: 20px; }
 .modal-close { width: 34px; height: 34px; margin: -5px -7px 0 0; color: #8da49e; }
@@ -754,6 +765,11 @@ h1, h2, p { margin-top: 0; }
   .preview-frame { height: 62vh; }
   .preview-modal-footer { align-items: stretch; flex-direction: column; }
   .preview-modal-footer .secondary-button { width: 100%; }
+  .rename-backdrop { padding: 14px; }
+  .rename-modal { width: 100%; }
+  .rename-modal-body { padding: 20px 18px; }
+  .rename-modal-footer { align-items: stretch; flex-direction: column-reverse; }
+  .rename-modal-footer button { width: 100%; }
   .manage-file-chip, .manage-file-chip button:not(.manage-file-icon) { max-width: 100%; }
 }
 

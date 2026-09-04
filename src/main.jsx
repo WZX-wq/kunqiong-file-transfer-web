@@ -1843,6 +1843,58 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask })
   )
 }
 
+function RenameRecordModal({ record, onClose, onSave }) {
+  const inputRef = useRef(null)
+  const [name, setName] = useState(() => recordDisplayName(record))
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    inputRef.current?.focus()
+    inputRef.current?.select()
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  const submit = () => {
+    const nextName = name.trim()
+    if (!nextName) {
+      setError('显示名称不能为空')
+      return
+    }
+    onSave(nextName)
+  }
+
+  return (
+    <div className="modal-backdrop rename-backdrop" onMouseDown={onClose}>
+      <div className="modal rename-modal" role="dialog" aria-modal="true" aria-labelledby="rename-record-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header rename-modal-header">
+          <div><p className="eyebrow">文件管理</p><h2 id="rename-record-title">重命名显示名称</h2></div>
+          <button className="ghost-icon modal-close" aria-label="关闭重命名窗口" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="modal-body rename-modal-body">
+          <div className="rename-summary">
+            <span className={`record-icon ${record.scope}`}><PencilLine size={17} /></span>
+            <div><strong>{recordDisplayName(record)}</strong><span>{recordScopeLabel(record.scope)} · {recordExpiryLabel(record)}</span></div>
+          </div>
+          <label className="manage-field">
+            <span>新的显示名称</span>
+            <input ref={inputRef} className="modal-inline-input" value={name} maxLength={80} onChange={(event) => { setName(event.target.value); setError('') }} onKeyDown={(event) => { if (event.key === 'Enter') submit() }} placeholder="请输入新的显示名称" />
+          </label>
+          <p className="rename-helper">仅修改文件管理中心和收发记录中的显示名称，不改动已上传文件本身。</p>
+          {error && <p className="manage-form-error">{error}</p>}
+        </div>
+        <div className="modal-footer rename-modal-footer">
+          <button className="secondary-button" onClick={onClose}>取消</button>
+          <button className="primary-button" onClick={submit}><Check size={15} /> 保存名称</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const RECORD_SCOPE_TABS = [
   { key: 'all', label: '全部' },
   { key: 'my_sent', label: '我发送的' },
@@ -1895,6 +1947,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
   const [expiringOnly, setExpiringOnly] = useState(false)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [openMenu, setOpenMenu] = useState(null)
+  const [renameTarget, setRenameTarget] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
 
   const normalizedRecords = records.map(normalizeRecord)
@@ -2005,8 +2058,13 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
 
   const requestRename = (record) => {
     if (!onRename) return
-    const nextName = window.prompt('请输入新的显示名称', recordDisplayName(record))
-    if (nextName !== null) onRename(record.id, nextName)
+    setRenameTarget(normalizeRecord(record))
+  }
+
+  const saveRename = (nextName) => {
+    if (!renameTarget || !onRename) return
+    onRename(renameTarget.id, nextName)
+    setRenameTarget(null)
   }
 
   const renderRecordMenu = (record) => {
@@ -2232,6 +2290,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
           </div>
         </>
       )}
+      {renameTarget && <RenameRecordModal record={renameTarget} onClose={() => setRenameTarget(null)} onSave={saveRename} />}
       <div className="records-footnote"><HardDrive size={16} /> {syncing ? '账号记录同步中...' : user?.id ? '已登录，记录会同步到账号并可跨设备查看。' : '游客记录仅保留在当前设备，登录后可跨设备同步。'}</div>
     </section>
   )
