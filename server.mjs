@@ -30,10 +30,29 @@ const SHARE_ACCESS_COOKIE_PREFIX = 'kunqiong_share_access_'
 const SHARE_ACCESS_TTL_SECONDS = 15 * 60
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 const MAX_ACCOUNT_RECORDS = 200
+const MAX_ACCOUNT_MESSAGES = 120
 const MAX_RECORD_FILES = 120
 const MAX_RECORD_SUBMISSIONS = 80
+const VERIFICATION_CODE_TTL_MS = 10 * 60 * 1000
+const MAX_VERIFICATION_CODES = 120
+const ACCOUNT_TOTAL_STORAGE_BYTES = 20 * 1024 * 1024 * 1024
+const ACCOUNT_SINGLE_FILE_BYTES = MAX_FILE_SIZE
 const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections', 'collect_from_me'])
 const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
+const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
+const DEFAULT_NOTIFICATION_SETTINGS = {
+  inApp: true,
+  email: false,
+  incomingShare: true,
+  shareExpiring: true,
+  shareDownloaded: true,
+  collectionExpiring: true,
+  collectionSubmitted: true,
+}
+const DEFAULT_ACCOUNT_MESSAGES = [
+  { id: 'system-welcome', category: 'system', eventType: 'welcome', title: '欢迎使用鲲穹文件传输', body: '你的账户已连接，可以开始发送和收集文件。' },
+  { id: 'official-update', category: 'official', eventType: 'official', title: '鲲穹服务通知', body: '站内消息、账号容量和账号绑定已接入当前账户。' },
+]
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 let metadataNeedsPersist = false
 
@@ -84,7 +103,7 @@ app.get('/api/auth/login', (req, res) => {
 
 app.get('/api/auth/me', (req, res) => {
   const session = authSessionFromRequest(req)
-  res.json({ user: session ? publicUser(session.user) : null })
+  res.json({ user: session ? publicAccountUser(session.user) : null })
 })
 
 app.patch('/api/auth/profile', (req, res) => {
@@ -113,8 +132,53 @@ app.patch('/api/auth/profile', (req, res) => {
       avatarSource: avatar ? 'custom' : '',
     }
   }
+  const user = upsertAccountUser(session.user)
+  syncAccountUserSessions(user)
   persistMetadata()
-  res.json({ user: publicUser(session.user) })
+  res.json({ user: publicAccountUser(user) })
+})
+
+app.post('/api/auth/code', (req, res) => {
+  try {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    const target = normalizeContactTarget(req.body?.target)
+    if (!target) return res.status(400).json({ message: '请输入正确的邮箱或手机号' })
+    const debugCode = createVerificationCode(target, 'bind')
+    res.status(201).json({
+      ok: true,
+      channel: target.type === 'email' ? 'email' : 'sms',
+      expiresIn: Math.floor(VERIFICATION_CODE_TTL_MS / 1000),
+      debugCode,
+      message: target.type === 'email' ? '演示绑定验证码已生成，邮件通道接入后会自动发送。' : '演示绑定验证码已生成，短信通道接入后会自动发送。',
+    })
+  } catch (error) {
+    res.status(error.status || 500).json({ message: error.message || '验证码生成失败' })
+  }
+})
+
+app.post('/api/account/bind', (req, res) => {
+  try {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    const target = normalizeContactTarget(req.body?.target)
+    if (!target) return res.status(400).json({ message: '请输入正确的邮箱或手机号' })
+    verifyAuthCode(target, req.body?.code, 'bind')
+    const existingUser = findAccountUserByTarget(target)
+    if (existingUser && existingUser.id !== session.user.id) {
+      return res.status(409).json({ message: target.type === 'email' ? '该邮箱已绑定其他账号' : '该手机号已绑定其他账号' })
+    }
+    const user = upsertAccountUser({
+      ...session.user,
+      [target.type]: target.value,
+      loginMethods: mergeLoginMethods(session.user.loginMethods, [boundMethodForTargetType(target.type)]),
+    })
+    syncAccountUserSessions(user)
+    persistMetadata()
+    res.json({ user: publicAccountUser(user) })
+  } catch (error) {
+    res.status(error.status || 500).json({ message: error.message || '账号绑定失败' })
+  }
 })
 
 app.post('/api/auth/logout', (req, res) => {
@@ -164,6 +228,57 @@ app.delete('/api/account/records', (req, res) => {
   }
   persistMetadata()
   res.json({ records: metadata.records[key] })
+})
+
+app.get('/api/account/messages', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  res.json({ messages: accountMessagesForUser(session.user.id), settings: accountNotificationSettingsForUser(session.user.id) })
+})
+
+app.patch('/api/account/messages', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const key = accountRecordOwnerKey(session.user.id)
+  metadata.messages[key] = accountMessagesForUser(session.user.id).map((message) => ({ ...message, unread: false }))
+  persistMetadata()
+  res.json({ messages: metadata.messages[key] })
+})
+
+app.patch('/api/account/messages/:messageId', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const messages = accountMessagesForUser(session.user.id)
+  const message = messages.find((item) => item.id === req.params.messageId)
+  if (!message) return res.status(404).json({ message: '消息不存在' })
+  message.unread = false
+  message.readAt = new Date().toISOString()
+  persistMetadata()
+  res.json({ message, messages })
+})
+
+app.delete('/api/account/messages/:messageId', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const key = accountRecordOwnerKey(session.user.id)
+  metadata.messages[key] = accountMessagesForUser(session.user.id).filter((message) => message.id !== req.params.messageId)
+  persistMetadata()
+  res.json({ messages: metadata.messages[key] })
+})
+
+app.get('/api/account/notification-settings', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  res.json({ settings: accountNotificationSettingsForUser(session.user.id) })
+})
+
+app.put('/api/account/notification-settings', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const key = accountRecordOwnerKey(session.user.id)
+  metadata.notificationSettings[key] = normalizeNotificationSettings(req.body?.settings)
+  persistMetadata()
+  res.json({ settings: metadata.notificationSettings[key] })
 })
 
 app.get('/auth/callback', async (req, res) => {
@@ -428,6 +543,7 @@ app.get('/api/shares/:token/files/:fileIndex/preview', (req, res, next) => {
 
 app.post('/api/collections', async (req, res, next) => {
   try {
+    const ownerSession = authSessionFromRequest(req)
     const title = String(req.body.title || '').trim()
     if (!title) return res.status(400).json({ message: '请填写任务名称' })
     const token = createToken(10)
@@ -444,6 +560,7 @@ app.post('/api/collections', async (req, res, next) => {
       allowedTypes: Array.isArray(req.body.allowedTypes) ? req.body.allowedTypes : [],
       maxFileSizeMb: Number(req.body.maxFileSizeMb || 500),
       createdAt: new Date().toISOString(),
+      ownerUserId: ownerSession?.user?.id || '',
       status: 'active',
       submissions: [],
     }
@@ -502,6 +619,7 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
     })
     const submission = { id: submissionId, participantName, submittedAt: new Date().toISOString(), files }
     task.submissions.push(submission)
+    addCollectionSubmissionMessage(task, submission, req)
     persistMetadata()
     res.status(201).json({ submission: publicSubmission(submission) })
   } catch (error) {
@@ -641,7 +759,7 @@ function loadMetadata() {
   try {
     return JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
   } catch {
-    return { shares: [], collections: [], sessions: [], records: {} }
+    return { shares: [], collections: [], sessions: [], records: {}, users: {}, messages: {}, notificationSettings: {}, verificationCodes: [] }
   }
 }
 
@@ -664,12 +782,18 @@ function normalizeMetadata(value = {}) {
       metadataNeedsPersist = true
     }
   }
+  const sessions = Array.isArray(value.sessions) ? value.sessions.filter((session) => session?.id && session?.user) : []
+  const users = normalizeAccountUserStore(value.users, sessions)
   return {
     ...value,
     shares,
     collections,
-    sessions: Array.isArray(value.sessions) ? value.sessions : [],
+    sessions,
     records: normalizeAccountRecordStore(value.records),
+    users,
+    messages: normalizeAccountMessageStore(value.messages),
+    notificationSettings: normalizeNotificationSettingsStore(value.notificationSettings),
+    verificationCodes: normalizeVerificationCodes(value.verificationCodes),
   }
 }
 
@@ -681,6 +805,7 @@ function cleanupExpired() {
   const now = Date.now()
   let changed = false
   for (const share of metadata.shares) {
+    if (maybeNotifyExpiringShare(share, now)) changed = true
     if (share.status === 'active' && share.expiresAt && new Date(share.expiresAt).getTime() <= now) {
       share.status = 'expired'
       changed = true
@@ -688,6 +813,7 @@ function cleanupExpired() {
     }
   }
   for (const task of metadata.collections) {
+    if (maybeNotifyExpiringCollection(task, now)) changed = true
     if (task.status === 'active' && new Date(task.deadline).getTime() <= now) {
       task.status = 'expired'
       changed = true
@@ -799,6 +925,7 @@ function registerShareDownload(share, res) {
     counted = true
     share.downloadCount += 1
     share.updatedAt = new Date().toISOString()
+    addShareDownloadedMessage(share)
     persistMetadata()
   })
 }
@@ -927,17 +1054,440 @@ function contentDisposition(type, filename) {
 function publicUser(user = {}) {
   const avatarSource = String(user.avatarSource || '')
   const providerAvatar = user.providerAvatar || (!avatarSource ? user.avatar : null) || null
+  const provider = String(user.provider || user.login_provider || user.oauth_provider || user.channel || user.source || '').trim()
+  const email = normalizeEmailValue(user.email || user.mail)
+  const phone = normalizePhoneValue(user.phone || user.mobile)
+  const username = trimRecordString(user.username || user.name || user.login || email || phone, 80)
   return {
-    id: String(user.id || ''),
-    username: String(user.username || ''),
-    nickname: String(user.nickname || user.username || '鲲穹用户'),
-    email: String(user.email || ''),
-    phone: String(user.phone || ''),
+    id: trimRecordString(user.id || user.userId || user.user_id || user.openid || user.open_id || user.unionid || user.sub || email || phone, 120),
+    username,
+    nickname: trimRecordString(user.nickname || user.displayName || user.display_name || username || '鲲穹用户', 80),
+    email,
+    phone,
     avatar: user.avatar || null,
     avatarSource,
     providerAvatar,
-    provider: String(user.provider || user.login_provider || user.oauth_provider || user.channel || user.source || ''),
+    provider,
+    loginMethods: mergeLoginMethods(user.loginMethods, provider ? ['oauth'] : []),
+    createdAt: normalizeRecordDate(user.createdAt),
+    updatedAt: normalizeRecordDate(user.updatedAt),
   }
+}
+
+function publicAccountUser(user = {}) {
+  const stored = accountUserById(user.id) || normalizeAccountUser(user) || publicUser(user)
+  return {
+    ...publicUser(stored),
+    capacity: accountUsageForUser(stored.id),
+    benefits: accountBenefitsForUser(stored),
+    notificationSettings: accountNotificationSettingsForUser(stored.id),
+  }
+}
+
+function normalizeAccountUserStore(value = {}, sessions = []) {
+  const store = {}
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const user of Object.values(value)) {
+      const normalized = normalizeAccountUser(user)
+      if (normalized?.id) store[normalized.id] = mergeAccountUser(store[normalized.id], normalized)
+    }
+  }
+  for (const session of sessions) {
+    const normalized = normalizeAccountUser(session.user)
+    if (!normalized?.id) continue
+    store[normalized.id] = mergeAccountUser(store[normalized.id], normalized)
+    session.user = publicUser(store[normalized.id])
+  }
+  return store
+}
+
+function normalizeAccountUser(user = {}) {
+  const base = publicUser(user)
+  const contactTarget = base.email
+    ? { type: 'email', value: base.email }
+    : base.phone
+      ? { type: 'phone', value: base.phone }
+      : null
+  const id = base.id || (contactTarget ? accountUserIdForTarget(contactTarget) : '')
+  if (!id) return null
+  const now = new Date().toISOString()
+  return {
+    ...base,
+    id,
+    loginMethods: mergeLoginMethods(base.loginMethods, user.loginMethods),
+    createdAt: normalizeRecordDate(user.createdAt) || now,
+    updatedAt: normalizeRecordDate(user.updatedAt) || now,
+  }
+}
+
+function mergeAccountUser(existing = null, incoming = {}) {
+  if (!existing) return normalizeAccountUser(incoming)
+  const normalized = normalizeAccountUser(incoming)
+  if (!normalized) return existing
+  return {
+    ...existing,
+    ...normalized,
+    nickname: normalized.nickname || existing.nickname,
+    email: normalized.email || existing.email,
+    phone: normalized.phone || existing.phone,
+    avatar: normalized.avatar || existing.avatar,
+    avatarSource: normalized.avatarSource || existing.avatarSource,
+    providerAvatar: normalized.providerAvatar || existing.providerAvatar,
+    provider: normalized.provider || existing.provider,
+    loginMethods: mergeLoginMethods(existing.loginMethods, normalized.loginMethods),
+    createdAt: existing.createdAt || normalized.createdAt,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function upsertAccountUser(user = {}) {
+  const normalized = normalizeAccountUser(user)
+  if (!normalized?.id) return publicUser(user)
+  if (!metadata.users || typeof metadata.users !== 'object' || Array.isArray(metadata.users)) metadata.users = {}
+  metadata.users[normalized.id] = mergeAccountUser(metadata.users[normalized.id], normalized)
+  return metadata.users[normalized.id]
+}
+
+function accountUserById(userId) {
+  const key = accountRecordOwnerKey(userId)
+  return key && metadata.users && typeof metadata.users === 'object' ? metadata.users[key] || null : null
+}
+
+function syncAccountUserSessions(user = {}) {
+  if (!user.id) return
+  const sessionUser = publicUser(user)
+  for (const session of metadata.sessions) {
+    if (session.user?.id === user.id) session.user = sessionUser
+  }
+}
+
+function normalizeEmailValue(value) {
+  const email = trimRecordString(value, 160).toLowerCase()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
+}
+
+function normalizePhoneValue(value) {
+  const digits = String(value || '').replace(/[^\d]/g, '')
+  return digits.length >= 6 && digits.length <= 20 ? digits : ''
+}
+
+function normalizeContactTarget(value) {
+  const raw = trimRecordString(value, 160)
+  if (!raw) return null
+  const email = normalizeEmailValue(raw)
+  if (email) return { type: 'email', value: email, label: email }
+  const phone = normalizePhoneValue(raw)
+  if (phone) return { type: 'phone', value: phone, label: phone }
+  return null
+}
+
+function accountUserIdForTarget(target) {
+  return `contact_${target.type}_${hashSecret(target.value).slice(0, 18)}`
+}
+
+function findAccountUserByTarget(target) {
+  if (!target) return null
+  const users = Object.values(metadata.users || {})
+  return users.find((user) => target.type === 'email' ? normalizeEmailValue(user.email) === target.value : normalizePhoneValue(user.phone) === target.value) || null
+}
+
+function boundMethodForTargetType(type) {
+  return type === 'email' ? 'email_bound' : 'phone_bound'
+}
+
+function mergeLoginMethods(...groups) {
+  return Array.from(new Set(groups.flatMap((group) => Array.isArray(group) ? group : group ? [group] : []).map((item) => trimRecordString(item, 40)).filter(Boolean)))
+}
+
+function normalizeVerificationScene() {
+  return 'bind'
+}
+
+function normalizeVerificationCodes(value = []) {
+  if (!Array.isArray(value)) return []
+  const now = Date.now()
+  return value.map((item) => ({
+    id: trimRecordString(item?.id, 80) || createToken(10),
+    type: item?.type === 'phone' ? 'phone' : 'email',
+    target: trimRecordString(item?.target, 160),
+    scene: normalizeVerificationScene(item?.scene),
+    codeHash: trimRecordString(item?.codeHash, 80),
+    createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
+    expiresAt: normalizeRecordDate(item?.expiresAt),
+  })).filter((item) => item.target && item.codeHash && item.expiresAt && new Date(item.expiresAt).getTime() > now).slice(0, MAX_VERIFICATION_CODES)
+}
+
+function cleanupVerificationCodes() {
+  const next = normalizeVerificationCodes(metadata.verificationCodes)
+  if (next.length !== (metadata.verificationCodes || []).length) {
+    metadata.verificationCodes = next
+    persistMetadata()
+  }
+}
+
+function createVerificationCode(target, scene) {
+  cleanupVerificationCodes()
+  const code = String(crypto.randomInt(100000, 1000000))
+  const now = new Date()
+  metadata.verificationCodes = normalizeVerificationCodes(metadata.verificationCodes)
+    .filter((item) => !(item.type === target.type && item.target === target.value && item.scene === scene))
+  metadata.verificationCodes.unshift({
+    id: createToken(10),
+    type: target.type,
+    target: target.value,
+    scene,
+    codeHash: hashSecret(code),
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + VERIFICATION_CODE_TTL_MS).toISOString(),
+  })
+  metadata.verificationCodes = metadata.verificationCodes.slice(0, MAX_VERIFICATION_CODES)
+  persistMetadata()
+  return code
+}
+
+function verifyAuthCode(target, value, scene) {
+  cleanupVerificationCodes()
+  const codeHash = hashSecret(trimRecordString(value, 12))
+  const index = metadata.verificationCodes.findIndex((item) => item.type === target.type && item.target === target.value && item.scene === scene && item.codeHash === codeHash)
+  if (index < 0) throw httpError(400, '验证码不正确或已过期')
+  metadata.verificationCodes.splice(index, 1)
+  persistMetadata()
+}
+
+function accountUsageForUser(userId) {
+  const key = accountRecordOwnerKey(userId)
+  const ownedShares = metadata.shares.filter((share) => share.ownerUserId === key && share.status === 'active')
+  const ownedCollections = metadata.collections.filter((task) => task.ownerUserId === key && !task.cleanedAt)
+  const shareBytes = ownedShares.reduce((sum, share) => sum + fileListSize(share.files), 0)
+  const collectionBytes = ownedCollections.reduce((sum, task) => sum + task.submissions.reduce((inner, submission) => inner + fileListSize(submission.files), 0), 0)
+  const usedBytes = shareBytes + collectionBytes
+  const fileCount = ownedShares.reduce((sum, share) => sum + (share.files?.length || 0), 0)
+    + ownedCollections.reduce((sum, task) => sum + task.submissions.reduce((inner, submission) => inner + (submission.files?.length || 0), 0), 0)
+  return {
+    usedBytes,
+    totalBytes: ACCOUNT_TOTAL_STORAGE_BYTES,
+    remainingBytes: Math.max(ACCOUNT_TOTAL_STORAGE_BYTES - usedBytes, 0),
+    usageRatio: ACCOUNT_TOTAL_STORAGE_BYTES ? Math.min(1, usedBytes / ACCOUNT_TOTAL_STORAGE_BYTES) : 0,
+    shareBytes,
+    collectionBytes,
+    shareCount: ownedShares.length,
+    collectionCount: ownedCollections.length,
+    fileCount,
+    singleFileLimitBytes: ACCOUNT_SINGLE_FILE_BYTES,
+  }
+}
+
+function accountBenefitsForUser() {
+  return [
+    { label: '鲲穹登录', detail: '继续使用官方统一登录完成账号认证', enabled: true },
+    { label: '跨设备记录', detail: '收发记录和文件中心跟随账号同步', enabled: true },
+    { label: '站内消息', detail: '分享、下载和收集动态进入消息中心', enabled: true },
+    { label: '账号绑定', detail: '可绑定邮箱或手机号用于消息匹配', enabled: true },
+    { label: '账号容量', detail: '当前基础权益 20 GB 临时空间', enabled: true },
+    { label: '永久保存', detail: '会员权益，当前版本暂未开放', enabled: false },
+  ]
+}
+
+function fileListSize(files = []) {
+  return Array.isArray(files) ? files.reduce((sum, file) => sum + Number(file?.size || 0), 0) : 0
+}
+
+function normalizeNotificationSettingsStore(value = {}) {
+  const store = {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return store
+  for (const [userId, settings] of Object.entries(value)) {
+    const key = accountRecordOwnerKey(userId)
+    if (key) store[key] = normalizeNotificationSettings(settings)
+  }
+  return store
+}
+
+function normalizeNotificationSettings(settings = {}) {
+  const next = { ...DEFAULT_NOTIFICATION_SETTINGS }
+  if (settings && typeof settings === 'object' && !Array.isArray(settings)) {
+    for (const key of Object.keys(DEFAULT_NOTIFICATION_SETTINGS)) {
+      if (Object.prototype.hasOwnProperty.call(settings, key)) next[key] = Boolean(settings[key])
+    }
+  }
+  return next
+}
+
+function accountNotificationSettingsForUser(userId) {
+  const key = accountRecordOwnerKey(userId)
+  if (!key) return normalizeNotificationSettings()
+  if (!metadata.notificationSettings || typeof metadata.notificationSettings !== 'object' || Array.isArray(metadata.notificationSettings)) metadata.notificationSettings = {}
+  if (!metadata.notificationSettings[key]) metadata.notificationSettings[key] = normalizeNotificationSettings()
+  return metadata.notificationSettings[key]
+}
+
+function normalizeAccountMessageStore(value = {}) {
+  const store = {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return store
+  for (const [userId, messages] of Object.entries(value)) {
+    const key = accountRecordOwnerKey(userId)
+    if (key) store[key] = normalizeAccountMessages(messages)
+  }
+  return store
+}
+
+function normalizeAccountMessages(messages = []) {
+  if (!Array.isArray(messages)) return []
+  const deduped = new Map()
+  messages.map(normalizeAccountMessage).filter(Boolean).forEach((message) => {
+    deduped.set(message.id, { ...deduped.get(message.id), ...message })
+  })
+  return Array.from(deduped.values()).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).slice(0, MAX_ACCOUNT_MESSAGES)
+}
+
+function normalizeAccountMessage(message = {}) {
+  if (!message || typeof message !== 'object') return null
+  const title = trimRecordString(message.title, 80)
+  const body = trimRecordString(message.body, 280)
+  if (!title && !body) return null
+  const createdAt = normalizeRecordDate(message.createdAt) || new Date().toISOString()
+  const category = ACCOUNT_MESSAGE_CATEGORIES.has(message.category) ? message.category : 'system'
+  return {
+    id: trimRecordString(message.id, 120) || createToken(12),
+    category,
+    eventType: trimRecordString(message.eventType, 40),
+    title: title || '鲲穹消息',
+    body,
+    createdAt,
+    unread: message.unread !== false,
+    readAt: normalizeRecordDate(message.readAt),
+    actionUrl: trimRecordString(message.actionUrl, 400),
+  }
+}
+
+function accountMessagesForUser(userId) {
+  const key = accountRecordOwnerKey(userId)
+  if (!key) return []
+  if (!metadata.messages || typeof metadata.messages !== 'object' || Array.isArray(metadata.messages)) metadata.messages = {}
+  const current = normalizeAccountMessages(metadata.messages[key])
+  const currentIds = new Set(current.map((message) => message.id))
+  const defaults = DEFAULT_ACCOUNT_MESSAGES
+    .filter((message) => !currentIds.has(message.id))
+    .map((message, index) => normalizeAccountMessage({ ...message, createdAt: new Date(Date.now() - (index + 1) * 1000).toISOString() }))
+  metadata.messages[key] = normalizeAccountMessages([...defaults, ...current])
+  return metadata.messages[key]
+}
+
+function addAccountMessage(userId, message = {}, { respectSettings = true } = {}) {
+  const key = accountRecordOwnerKey(userId)
+  if (!key) return null
+  if (respectSettings && !shouldDeliverAccountMessage(key, message.eventType)) return null
+  const normalized = normalizeAccountMessage({ ...message, id: message.id || createToken(12), createdAt: message.createdAt || new Date().toISOString(), unread: true })
+  if (!normalized) return null
+  metadata.messages[key] = normalizeAccountMessages([normalized, ...accountMessagesForUser(key)])
+  return normalized
+}
+
+function shouldDeliverAccountMessage(userId, eventType) {
+  const settings = accountNotificationSettingsForUser(userId)
+  if (!settings.inApp) return false
+  return !eventType || !Object.prototype.hasOwnProperty.call(settings, eventType) || settings[eventType] !== false
+}
+
+function findUsersByRecipient(recipient) {
+  const raw = trimRecordString(recipient, 160).toLowerCase()
+  if (!raw) return []
+  const target = normalizeContactTarget(raw)
+  return Object.values(metadata.users || {}).filter((user) => {
+    if (target?.type === 'email' && normalizeEmailValue(user.email) === target.value) return true
+    if (target?.type === 'phone' && normalizePhoneValue(user.phone) === target.value) return true
+    return [user.id, user.username, user.nickname].some((value) => trimRecordString(value, 160).toLowerCase() === raw)
+  })
+}
+
+function notifyShareRecipients(share, req, ownerUser = null) {
+  const recipients = Array.isArray(share.deliveryRecipients) ? share.deliveryRecipients : []
+  const ownerName = displayAccountName(ownerUser)
+  const title = share.files?.[0]?.name || '文件分享'
+  return recipients.map((recipient) => {
+    const matchedUsers = findUsersByRecipient(recipient)
+    const deliveredUserIds = []
+    for (const user of matchedUsers) {
+      const delivered = addAccountMessage(user.id, {
+        category: 'other',
+        eventType: 'incomingShare',
+        title: '你收到一个文件分享',
+        body: `${ownerName} 给你发送了 ${share.files.length} 个文件，取件码 ${share.code}。`,
+        actionUrl: `/share/${share.id}`,
+      })
+      if (delivered) deliveredUserIds.push(user.id)
+    }
+    const target = normalizeContactTarget(recipient)
+    const pendingStatus = target?.type === 'phone' ? '短信通道未配置' : target?.type === 'email' ? '邮件通道未配置' : '未匹配账号'
+    return {
+      recipient,
+      status: deliveredUserIds.length ? '站内已发送' : matchedUsers.length ? '站内通知已关闭' : pendingStatus,
+      channel: deliveredUserIds.length ? 'in-app' : target?.type || 'unknown',
+      sentAt: new Date().toISOString(),
+      deliveredUserIds,
+      title,
+      shareUrl: `${getOrigin(req)}/share/${share.id}`,
+    }
+  })
+}
+
+function addShareDownloadedMessage(share) {
+  if (!share.ownerUserId) return null
+  return addAccountMessage(share.ownerUserId, {
+    category: 'system',
+    eventType: 'shareDownloaded',
+    title: '你发送的文件已被下载',
+    body: `${share.files?.[0]?.name || '文件分享'} 已产生第 ${share.downloadCount} 次下载。`,
+    actionUrl: `/share/manage/${share.manageToken}`,
+  })
+}
+
+function addCollectionSubmissionMessage(task, submission, req) {
+  if (!task.ownerUserId) return null
+  return addAccountMessage(task.ownerUserId, {
+    category: 'other',
+    eventType: 'collectionSubmitted',
+    title: '收集任务收到新提交',
+    body: `${submission.participantName || '提交者'} 向「${task.title}」提交了 ${submission.files.length} 个文件。`,
+    actionUrl: `${getOrigin(req)}/collect/manage/${task.manageToken}`,
+  })
+}
+
+function maybeNotifyExpiringShare(share, now) {
+  if (!share.ownerUserId || share.status !== 'active' || !share.expiresAt) return false
+  if (share.notificationFlags?.shareExpiring) return false
+  const expiresAt = new Date(share.expiresAt).getTime()
+  if (!Number.isFinite(expiresAt) || expiresAt <= now || expiresAt - now > 3 * 86400000) return false
+  const message = addAccountMessage(share.ownerUserId, {
+    category: 'system',
+    eventType: 'shareExpiring',
+    title: '文件分享即将过期',
+    body: `${share.files?.[0]?.name || '文件分享'} 将在 ${new Date(share.expiresAt).toLocaleString('zh-CN')} 过期。`,
+    actionUrl: `/share/manage/${share.manageToken}`,
+  })
+  if (!message) return false
+  share.notificationFlags = { ...(share.notificationFlags || {}), shareExpiring: true }
+  return true
+}
+
+function maybeNotifyExpiringCollection(task, now) {
+  if (!task.ownerUserId || task.status !== 'active' || !task.deadline) return false
+  if (task.notificationFlags?.collectionExpiring) return false
+  const deadline = new Date(task.deadline).getTime()
+  if (!Number.isFinite(deadline) || deadline <= now || deadline - now > 3 * 86400000) return false
+  const message = addAccountMessage(task.ownerUserId, {
+    category: 'system',
+    eventType: 'collectionExpiring',
+    title: '收集任务即将截止',
+    body: `「${task.title}」将在 ${new Date(task.deadline).toLocaleString('zh-CN')} 截止。`,
+    actionUrl: `/collect/manage/${task.manageToken}`,
+  })
+  if (!message) return false
+  task.notificationFlags = { ...(task.notificationFlags || {}), collectionExpiring: true }
+  return true
+}
+
+function displayAccountName(user = {}) {
+  return trimRecordString(user?.nickname || user?.username || user?.email || user?.phone, 80) || '对方'
 }
 
 function requireAuthSession(req, res) {
@@ -1162,13 +1712,17 @@ function createAuthSession(tokenData) {
   cleanupExpiredAuthSessions()
   const now = new Date()
   const expiresIn = Math.max(60, Number(tokenData.expires_in || 3600))
+  const user = upsertAccountUser({
+    ...(tokenData.user || {}),
+    loginMethods: mergeLoginMethods(tokenData.user?.loginMethods, ['oauth']),
+  })
   const session = {
     id: createToken(40),
     accessToken: tokenData.access_token,
     tokenType: tokenData.token_type || 'Bearer',
     expiresAt: new Date(now.getTime() + expiresIn * 1000).toISOString(),
     createdAt: now.toISOString(),
-    user: publicUser(tokenData.user),
+    user: publicUser(user),
   }
   metadata.sessions.push(session)
   persistMetadata()
@@ -1184,6 +1738,8 @@ function authSessionFromRequest(req) {
     removeAuthSession(sessionId)
     return null
   }
+  const storedUser = accountUserById(session.user?.id)
+  if (storedUser) session.user = publicUser(storedUser)
   return session
 }
 
@@ -1316,6 +1872,7 @@ function publicSubmission(submission) {
 }
 
 async function createShareFromTempFiles(tempFiles, options, req) {
+  const ownerSession = authSessionFromRequest(req)
   const shareToken = createToken(10)
   const shareDirectory = path.join(filesRoot, shareToken)
   fs.mkdirSync(shareDirectory, { recursive: true })
@@ -1344,11 +1901,13 @@ async function createShareFromTempFiles(tempFiles, options, req) {
     downloadCount: 0,
     passwordHash: options.password ? hashSecret(options.password) : null,
     deliveryRecipients: options.recipients,
-    notificationLog: options.recipients.map((recipient) => ({ recipient, status: '模拟已通知', sentAt: new Date().toISOString() })),
+    notificationLog: [],
+    ownerUserId: ownerSession?.user?.id || '',
     status: 'active',
   }
   const shareUrl = `${getOrigin(req)}/share/${shareToken}`
   share.qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
+  share.notificationLog = notifyShareRecipients(share, req, ownerSession?.user)
   metadata.shares.push(share)
   persistMetadata()
   return share

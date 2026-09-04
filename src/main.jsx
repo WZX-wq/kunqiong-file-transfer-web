@@ -117,7 +117,7 @@ function WorkspaceApp() {
   const [authLoading, setAuthLoading] = useState(true)
   const [authMenuOpen, setAuthMenuOpen] = useState(false)
   const [messageOpen, setMessageOpen] = useState(false)
-  const [messages, setMessages] = useState(() => readMessages(null))
+  const [messages, setMessages] = useState([])
 
   const refreshAuthUser = async () => {
     setAuthLoading(true)
@@ -159,6 +159,25 @@ function WorkspaceApp() {
     action().catch((error) => setToast(`账号记录同步失败：${error.message}`))
   }
 
+  const refreshMessages = async (user = authUser, { silent = true } = {}) => {
+    if (!user?.id) {
+      setMessages([])
+      return []
+    }
+    try {
+      const data = await fetchCloudMessages()
+      const nextMessages = normalizeMessages(data.messages || [])
+      setMessages(nextMessages)
+      if (data.settings) {
+        setAuthUser((current) => current?.id === user.id ? { ...current, notificationSettings: normalizeNoticeSettings(data.settings) } : current)
+      }
+      return nextMessages
+    } catch (error) {
+      if (!silent) setToast(`消息同步失败：${error.message}`)
+      return []
+    }
+  }
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const loginStatus = params.get('login')
@@ -192,12 +211,13 @@ function WorkspaceApp() {
   }, [authMenuOpen])
 
   useEffect(() => {
-    setMessages(readMessages(authUser))
     if (!authUser?.id) {
+      setMessages([])
       recordSyncUserRef.current = ''
       setRecords(readRecords())
       return
     }
+    refreshMessages(authUser).catch((error) => setToast(`消息同步失败：${error.message}`))
     if (recordSyncUserRef.current === authUser.id) return
     recordSyncUserRef.current = authUser.id
     syncAccountRecords({ silent: true }).catch((error) => setToast(`账号记录同步失败：${error.message}`))
@@ -249,7 +269,11 @@ function WorkspaceApp() {
       uploadRef.current = createUploadSessionState()
       setUploadState(createUploadState())
       saveRecord(createShareRecord(data.share, 'my_sent'))
-      setToast(data.share.deliveryRecipients?.length ? '文件已上传，模拟通知已生成' : '文件已上传，分享信息已生成')
+      if (authUser?.id) {
+        refreshAuthUser().catch(() => {})
+        refreshMessages(authUser).catch(() => {})
+      }
+      setToast(data.share.deliveryRecipients?.length ? '文件已上传，通知状态已更新' : '文件已上传，分享信息已生成')
     } catch (error) {
       if (error.name === 'UploadPausedError') {
         setUploadState((current) => ({ ...current, status: 'paused', phase: '已暂停，可继续上传', error: '' }))
@@ -319,12 +343,34 @@ function WorkspaceApp() {
     return data.user
   }
 
-  const updateMessages = (updater) => {
-    setMessages((current) => {
-      const next = typeof updater === 'function' ? updater(current) : updater
-      writeMessages(authUser, next)
-      return next
-    })
+  const markMessageRead = async (message) => {
+    if (!authUser?.id || !message?.id) return
+    setMessages((current) => current.map((item) => item.id === message.id ? { ...item, unread: false } : item))
+    try {
+      const data = await markCloudMessageRead(message.id)
+      setMessages(normalizeMessages(data.messages || []))
+      openMessageAction(message.actionUrl)
+    } catch (error) {
+      setToast(`消息更新失败：${error.message}`)
+      refreshMessages(authUser).catch(() => {})
+    }
+  }
+
+  const markAllMessagesRead = async () => {
+    if (!authUser?.id) return
+    setMessages((current) => current.map((message) => ({ ...message, unread: false })))
+    try {
+      const data = await markAllCloudMessagesRead()
+      setMessages(normalizeMessages(data.messages || []))
+    } catch (error) {
+      setToast(`消息更新失败：${error.message}`)
+      refreshMessages(authUser).catch(() => {})
+    }
+  }
+
+  const updateAccountUser = (user) => {
+    setAuthUser(user || null)
+    if (user?.id) refreshMessages(user).catch(() => {})
   }
 
   const saveRecord = (record) => {
@@ -360,6 +406,7 @@ function WorkspaceApp() {
         setCollectionResult(collection)
         setCollectionManageData(null)
         saveRecord(createCollectionRecord(collection, 'my_collections'))
+        if (authUser?.id) refreshAuthUser().catch(() => {})
         setToast('收集任务已创建')
       })
       .catch((error) => setToast(error.message))
@@ -658,7 +705,7 @@ function WorkspaceApp() {
           <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
         </nav>
         <div className="topbar-actions">
-          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); setMessageOpen((current) => !current) }} onClose={() => setMessageOpen(false)} onMarkRead={(id) => updateMessages((current) => current.map((message) => message.id === id ? { ...message, unread: false } : message))} onMarkAllRead={() => updateMessages((current) => current.map((message) => ({ ...message, unread: false })))} onLogin={startLogin} />
+          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); setMessageOpen((current) => !current) }} onClose={() => setMessageOpen(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onLogin={startLogin} />
           <button className="merchant-button" onClick={() => setToast('企业版将在后续版本开放')}><Sparkles size={15} /> 企业版</button>
           <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
           <button className="mobile-menu" aria-label="打开菜单"><Menu size={20} /></button>
@@ -666,7 +713,7 @@ function WorkspaceApp() {
       </header>
 
       <main className="page-content">
-        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(window.location.pathname)} onLogin={startLogin} onLogout={logout} onBack={() => { window.location.href = '/' }} onSaveProfile={saveProfile} />}
+        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(window.location.pathname)} onLogin={startLogin} onLogout={logout} onBack={() => { window.location.href = '/' }} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} />}
         {!isSettingsRoute && activeView === 'send' && (
           <SendView
             files={files}
@@ -873,9 +920,7 @@ function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }) {
           <span>{result.shareUrl}</span>
           <button onClick={() => onCopy(result.shareUrl)} aria-label="复制分享链接"><Copy size={15} /></button>
         </div>
-        {result.deliveryRecipients?.length > 0 && (
-          <div className="notification-list"><Mail size={14} /><span>已生成模拟通知：{result.deliveryRecipients.join('、')}</span></div>
-        )}
+        {result.deliveryRecipients?.length > 0 && <ShareNotificationStatus result={result} />}
         <div className="result-actions">
           <button className="secondary-button" onClick={onReset}>继续发送</button>
           <button className="primary-button" onClick={() => onCopy(`${result.shareUrl} · 取件码 ${result.code}`)}><Link2 size={15} /> 分享信息</button>
@@ -894,6 +939,22 @@ function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }) {
         />
       )}
     </>
+  )
+}
+
+function ShareNotificationStatus({ result }) {
+  const logs = Array.isArray(result.notificationLog) ? result.notificationLog : []
+  const delivered = logs.filter((item) => item.status === '站内已发送').length
+  const externalPending = logs.filter((item) => /通道未配置/.test(item.status || '')).length
+  const skipped = Math.max(logs.length - delivered - externalPending, 0)
+  const summary = logs.length
+    ? `${delivered ? `${delivered} 个站内送达` : '暂无站内送达'}${externalPending ? `，${externalPending} 个等待外部通知通道` : ''}${skipped ? `，${skipped} 个未投递` : ''}`
+    : `已记录 ${result.deliveryRecipients.length} 个通知对象`
+  return (
+    <div className="notification-list share-notification-status">
+      <Mail size={14} />
+      <span>{summary}</span>
+    </div>
   )
 }
 
@@ -2326,11 +2387,13 @@ function settingsSectionForPath(pathname = '') {
   return SETTINGS_NAV_ITEMS.some((item) => item.key === section) ? section : 'profile'
 }
 
-function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile }) {
+function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile, onUpdateUser }) {
   const [nickname, setNickname] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
   const [noticeSettings, setNoticeSettings] = useState(DEFAULT_NOTICE_SETTINGS)
+  const [noticeError, setNoticeError] = useState('')
+  const [bindingType, setBindingType] = useState('')
   const [avatarPreview, setAvatarPreview] = useState('')
   const [avatarError, setAvatarError] = useState('')
   const [savingAvatar, setSavingAvatar] = useState(false)
@@ -2339,15 +2402,26 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
   useEffect(() => {
     if (!user?.id) return
     setNickname(user.nickname || user.username || '')
-    setNoticeSettings(readNoticeSettings(user))
+    setNoticeSettings(normalizeNoticeSettings(user.notificationSettings))
+    setNoticeError('')
     setAvatarPreview('')
     setAvatarError('')
-  }, [user?.id])
+  }, [user?.id, user?.notificationSettings])
 
   const updateNoticeSetting = (key) => {
+    setNoticeError('')
     setNoticeSettings((current) => {
       const next = { ...current, [key]: !current[key] }
-      writeNoticeSettings(user, next)
+      saveCloudNoticeSettings(next)
+        .then((data) => {
+          const saved = normalizeNoticeSettings(data.settings)
+          setNoticeSettings(saved)
+          onUpdateUser?.({ ...user, notificationSettings: saved })
+        })
+        .catch((error) => {
+          setNoticeError(error.message || '通知设置保存失败')
+          setNoticeSettings(current)
+        })
       return next
     })
   }
@@ -2468,6 +2542,8 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
                 <SettingsInfoRow label="登录账号" value={user.username || user.id || '未设置'} />
                 <SettingsInfoRow label="邮箱" value={user.email || '未绑定'} />
                 <SettingsInfoRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定'} />
+                <AccountCapacityCard user={user} />
+                <AccountBenefits benefits={user.benefits} />
               </div>
             </>
           )}
@@ -2477,8 +2553,8 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
               <SettingsPanelHeader eyebrow="账户设置" title="账号与安全" detail="查看当前登录账户和会话安全状态。" onBack={onBack} />
               <div className="settings-list">
                 <SettingsActionRow label="鲲穹账号" value={user.username || user.id || '未设置'} detail={user.id ? `账号 ID：${user.id}` : ''} />
-                <SettingsActionRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定手机号'} action="登录中心管理" disabled />
-                <SettingsActionRow label="邮箱" value={user.email || '未绑定邮箱'} action="登录中心管理" disabled />
+                <SettingsActionRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定手机号'} action={user.phone ? '更换绑定' : '绑定手机号'} onAction={() => setBindingType('phone')} />
+                <SettingsActionRow label="邮箱" value={user.email || '未绑定邮箱'} action={user.email ? '更换绑定' : '绑定邮箱'} onAction={() => setBindingType('email')} />
                 <SettingsActionRow label="登录密码" value="由统一登录中心管理" action="重新登录" onAction={onLogin} />
                 <SettingsActionRow label="当前会话" value="此设备已安全登录" action="退出登录" onAction={onLogout} />
                 <SettingsActionRow label="注销账户" value="账户注销请前往统一登录中心操作" action="暂未开放" disabled />
@@ -2503,10 +2579,22 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
                 <NoticeToggle label="我创建的收集任务即将截止" checked={noticeSettings.collectionExpiring} onChange={() => updateNoticeSetting('collectionExpiring')} />
                 <NoticeToggle label="我创建的收集任务有人提交" checked={noticeSettings.collectionSubmitted} onChange={() => updateNoticeSetting('collectionSubmitted')} />
               </div>
+              {noticeError && <p className="settings-form-error settings-notice-error">{noticeError}</p>}
             </>
           )}
         </div>
       </div>
+      {bindingType && (
+        <AccountBindModal
+          type={bindingType}
+          currentValue={bindingType === 'email' ? user.email : user.phone}
+          onClose={() => setBindingType('')}
+          onComplete={(nextUser) => {
+            onUpdateUser?.(nextUser)
+            setBindingType('')
+          }}
+        />
+      )}
     </section>
   )
 }
@@ -2519,6 +2607,41 @@ function SettingsInfoRow({ label, value }) {
   return <div className="settings-info-row"><strong>{label}</strong><span>{value}</span></div>
 }
 
+function AccountCapacityCard({ user }) {
+  const capacity = user?.capacity || {}
+  const usedBytes = Number(capacity.usedBytes || 0)
+  const totalBytes = Number(capacity.totalBytes || 0)
+  const ratio = totalBytes ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0
+  return (
+    <div className="account-capacity-card">
+      <div>
+        <span>账号容量</span>
+        <strong>{usedBytes ? formatBytes(usedBytes) : '0 KB'} / {totalBytes ? formatBytes(totalBytes) : '不限容量'}</strong>
+      </div>
+      <div className="capacity-bar" aria-label={`容量已使用 ${ratio}%`}><span style={{ width: `${ratio}%` }} /></div>
+      <div className="capacity-meta">
+        <span>{capacity.shareCount || 0} 个分享</span>
+        <span>{capacity.collectionCount || 0} 个收集任务</span>
+        <span>{capacity.fileCount || 0} 个文件</span>
+      </div>
+    </div>
+  )
+}
+
+function AccountBenefits({ benefits = [] }) {
+  if (!benefits.length) return null
+  return (
+    <div className="account-benefits">
+      {benefits.map((benefit) => (
+        <div className={benefit.enabled ? '' : 'disabled'} key={benefit.label}>
+          <CheckCircle2 size={15} />
+          <span><strong>{benefit.label}</strong><small>{benefit.detail}</small></span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function SettingsActionRow({ label, value, detail, action, onAction, disabled = false }) {
   return (
     <div className="settings-action-row">
@@ -2528,6 +2651,94 @@ function SettingsActionRow({ label, value, detail, action, onAction, disabled = 
   )
 }
 
+function AccountBindModal({ type, currentValue, onClose, onComplete }) {
+  const isEmail = type === 'email'
+  const label = isEmail ? '邮箱' : '手机号'
+  const [target, setTarget] = useState(currentValue || '')
+  const [code, setCode] = useState('')
+  const [debugCode, setDebugCode] = useState('')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const [sending, setSending] = useState(false)
+  const [binding, setBinding] = useState(false)
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  const sendCode = async () => {
+    if (!target.trim()) {
+      setError(`请输入要绑定的${label}`)
+      return
+    }
+    setSending(true)
+    setError('')
+    setMessage('')
+    try {
+      const data = await requestAccountBindCode(target.trim())
+      setDebugCode(data.debugCode || '')
+      setMessage(data.message || '绑定验证码已生成')
+    } catch (err) {
+      setError(err.message || '验证码发送失败')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const submit = async (event) => {
+    event.preventDefault()
+    if (!target.trim() || !code.trim()) {
+      setError(`请输入${label}和验证码`)
+      return
+    }
+    setBinding(true)
+    setError('')
+    try {
+      const data = await bindAccountTarget(target.trim(), code.trim())
+      onComplete(data.user)
+    } catch (err) {
+      setError(err.message || '绑定失败')
+    } finally {
+      setBinding(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop account-bind-backdrop" onMouseDown={onClose}>
+      <form className="modal account-bind-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div><p className="eyebrow">账号绑定</p><h2>绑定{label}</h2></div>
+          <button className="ghost-icon modal-close" type="button" aria-label="关闭绑定窗口" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="modal-body account-bind-body">
+          <p className="modal-intro">登录仍使用鲲穹官方账号；绑定{label}后，可用于站内消息匹配和后续邮件/短信通知。</p>
+          <label className="settings-input-field">
+            <span>{label}</span>
+            <input value={target} onChange={(event) => { setTarget(event.target.value); setError('') }} placeholder={isEmail ? 'name@example.com' : '请输入手机号'} />
+          </label>
+          <div className="account-bind-code-row">
+            <label className="settings-input-field">
+              <span>验证码</span>
+              <input value={code} maxLength={6} onChange={(event) => { setCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setError('') }} placeholder="6 位验证码" />
+            </label>
+            <button className="secondary-button" type="button" onClick={sendCode} disabled={sending}>{sending ? '生成中' : '获取验证码'}</button>
+          </div>
+          {debugCode && <div className="account-bind-debug"><KeyRound size={14} /> 演示验证码：<strong>{debugCode}</strong></div>}
+          {message && <p className="account-bind-message">{message}</p>}
+          {error && <p className="settings-form-error account-bind-error">{error}</p>}
+        </div>
+        <div className="modal-footer">
+          <button className="secondary-button" type="button" onClick={onClose}>取消</button>
+          <button className="primary-button" type="submit" disabled={binding}>{binding ? '绑定中' : '确认绑定'}</button>
+        </div>
+      </form>
+    </div>
+  )
+}
 function NoticeToggle({ label, detail, checked, onChange }) {
   return (
     <div className="settings-notice-row">
@@ -2570,7 +2781,7 @@ function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, on
           ) : messages.length ? (
             <div className="message-list">
               {messages.map((message) => (
-                <button key={message.id} className={`message-item ${message.unread ? 'unread' : ''}`} onClick={() => onMarkRead(message.id)}>
+                <button key={message.id} className={`message-item ${message.unread ? 'unread' : ''}`} onClick={() => onMarkRead(message)}>
                   <span className={`message-item-icon ${message.category}`}><MessageIcon category={message.category} /></span>
                   <span className="message-item-content"><strong>{message.title}</strong><span>{message.body}</span><small>{formatMessageTime(message.createdAt)}</small></span>
                   {message.unread && <i className="message-item-dot" />}
@@ -2702,6 +2913,39 @@ async function deleteCloudRecords(ids) {
 
 async function clearCloudRecords() {
   return apiRequest('/api/account/records', { method: 'DELETE' })
+}
+
+async function fetchCloudMessages() {
+  return apiRequest('/api/account/messages')
+}
+
+async function markCloudMessageRead(id) {
+  return apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'PATCH' })
+}
+
+async function markAllCloudMessagesRead() {
+  return apiRequest('/api/account/messages', { method: 'PATCH' })
+}
+
+async function saveCloudNoticeSettings(settings) {
+  return apiRequest('/api/account/notification-settings', {
+    method: 'PUT',
+    body: JSON.stringify({ settings: normalizeNoticeSettings(settings) }),
+  })
+}
+
+async function requestAccountBindCode(target) {
+  return apiRequest('/api/auth/code', {
+    method: 'POST',
+    body: JSON.stringify({ target, scene: 'bind' }),
+  })
+}
+
+async function bindAccountTarget(target, code) {
+  return apiRequest('/api/account/bind', {
+    method: 'POST',
+    body: JSON.stringify({ target, code }),
+  })
 }
 
 function upsertRecords(currentRecords, incomingRecords) {
@@ -3164,6 +3408,15 @@ function recordScopeLabel(scope) {
 function recordLink(record) {
   if (record.scope === 'my_collections') return recordManageUrl(record) || record.publicUrl || record.shareUrl
   return record.shareUrl || record.publicUrl || record.manageUrl
+}
+
+function openMessageAction(value) {
+  if (!value) return
+  try {
+    const url = new URL(value, window.location.origin)
+    if (url.origin !== window.location.origin) return
+    window.open(`${url.pathname}${url.search}${url.hash}`, '_blank', 'noopener,noreferrer')
+  } catch {}
 }
 
 function recordCopyTarget(record) {
@@ -3760,35 +4013,28 @@ function formatDuration(seconds) {
 function formatExpiry(value) { return value ? `有效期至 ${new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '永久有效' }
 function formatDate(value) { return new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 function defaultDeadline(days) { return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10) }
-const NOTICE_STORAGE_KEY = 'kunqiong-notice-settings'
-const MESSAGE_STORAGE_KEY = 'kunqiong-messages'
-const DEFAULT_MESSAGES = [
-  { id: 'system-welcome', category: 'system', title: '欢迎使用鲲穹文件传输', body: '你的账户已连接，可以开始发送和收集文件。', unread: true },
-  { id: 'official-update', category: 'official', title: '鲲穹服务通知', body: '设置中心已上线，消息和账户信息可以在这里统一管理。', unread: true },
-]
-function noticeStorageKey(user = {}) { return `${NOTICE_STORAGE_KEY}:${user.id || user.username || user.email || 'account'}` }
-function readNoticeSettings(user) {
-  try {
-    return { ...DEFAULT_NOTICE_SETTINGS, ...JSON.parse(window.localStorage.getItem(noticeStorageKey(user)) || '{}') }
-  } catch {
-    return DEFAULT_NOTICE_SETTINGS
+function normalizeNoticeSettings(settings = {}) {
+  const next = { ...DEFAULT_NOTICE_SETTINGS }
+  if (settings && typeof settings === 'object') {
+    Object.keys(DEFAULT_NOTICE_SETTINGS).forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(settings, key)) next[key] = Boolean(settings[key])
+    })
   }
+  return next
 }
-function writeNoticeSettings(user, settings) {
-  window.localStorage.setItem(noticeStorageKey(user), JSON.stringify(settings))
-}
-function messageStorageKey(user = {}) { return `${MESSAGE_STORAGE_KEY}:${user.id || user.username || user.email || 'guest'}` }
-function readMessages(user) {
-  if (!user?.id && !user?.username && !user?.email) return []
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(messageStorageKey(user)) || 'null')
-    return Array.isArray(stored) ? stored : DEFAULT_MESSAGES.map((message) => ({ ...message, createdAt: new Date().toISOString() }))
-  } catch {
-    return DEFAULT_MESSAGES.map((message) => ({ ...message, createdAt: new Date().toISOString() }))
-  }
-}
-function writeMessages(user, messages) {
-  window.localStorage.setItem(messageStorageKey(user), JSON.stringify(messages))
+
+function normalizeMessages(messages = []) {
+  if (!Array.isArray(messages)) return []
+  return messages.map((message) => ({
+    id: String(message?.id || `${Date.now()}-${Math.random()}`),
+    category: ['system', 'official', 'other'].includes(message?.category) ? message.category : 'system',
+    title: String(message?.title || '鲲穹消息'),
+    body: String(message?.body || ''),
+    createdAt: message?.createdAt || new Date().toISOString(),
+    unread: message?.unread !== false,
+    actionUrl: String(message?.actionUrl || ''),
+    eventType: String(message?.eventType || ''),
+  })).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
 }
 function formatMessageTime(value) {
   if (!value) return '刚刚'
