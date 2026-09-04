@@ -34,6 +34,7 @@ const MAX_RECORD_FILES = 120
 const MAX_RECORD_SUBMISSIONS = 80
 const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections', 'collect_from_me'])
 const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 let metadataNeedsPersist = false
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
@@ -62,7 +63,7 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.get('/api/auth/login', (req, res) => {
-  const returnTo = safeReturnUrl(req.query.return_to, req)
+  let returnTo = safeReturnUrl(req.query.return_to, req)
   if (!isOAuthConfigured()) {
     return res.redirect(appendAuthResult(returnTo, 'failed', '登录服务未配置'))
   }
@@ -70,6 +71,7 @@ app.get('/api/auth/login', (req, res) => {
   cleanupOAuthStates()
   const state = createToken(32)
   const redirectUri = authRedirectUri(req)
+  returnTo = alignReturnUrlWithAuthHost(returnTo, redirectUri)
   oauthStates.set(state, { redirectUri, returnTo, createdAt: Date.now() })
 
   const loginUrl = new URL(oauthAuthorizeUrl)
@@ -1234,6 +1236,22 @@ function safeReturnUrl(value, req) {
   } catch {
     return fallback
   }
+}
+
+function alignReturnUrlWithAuthHost(returnTo, redirectUri) {
+  try {
+    const target = new URL(returnTo)
+    const callback = new URL(redirectUri)
+    if (isLoopbackHost(target.hostname) && isLoopbackHost(callback.hostname) && target.hostname !== callback.hostname) {
+      target.hostname = callback.hostname
+      return target.toString()
+    }
+  } catch {}
+  return returnTo
+}
+
+function isLoopbackHost(hostname) {
+  return LOOPBACK_HOSTS.has(String(hostname || '').toLowerCase().replace(/^\[|\]$/g, ''))
 }
 
 function appendAuthResult(value, status, message = '') {

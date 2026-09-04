@@ -123,9 +123,12 @@ function WorkspaceApp() {
     setAuthLoading(true)
     try {
       const data = await apiRequest('/api/auth/me')
-      setAuthUser(data.user || null)
+      const user = data.user || null
+      setAuthUser(user)
+      return user
     } catch {
       setAuthUser(null)
+      return null
     } finally {
       setAuthLoading(false)
     }
@@ -159,14 +162,20 @@ function WorkspaceApp() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const loginStatus = params.get('login')
+    const loginMessage = params.get('message') || ''
     if (loginStatus) {
-      setToast(loginStatus === 'success' ? '登录成功' : params.get('message') || '登录失败')
       params.delete('login')
       params.delete('message')
       const query = params.toString()
       window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
     }
-    refreshAuthUser()
+    refreshAuthUser().then((user) => {
+      if (loginStatus === 'success') {
+        setToast(user ? '登录成功' : '登录回调完成，但会话未生效，请使用同一地址重新登录')
+      } else if (loginStatus) {
+        setToast(loginMessage || '登录失败')
+      }
+    })
   }, [])
 
   useEffect(() => {
@@ -3384,7 +3393,8 @@ function recordAgeLabel(createdAt) {
 }
 
 async function apiRequest(url, options = {}) {
-  const response = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options })
+  const { headers = {}, ...fetchOptions } = options
+  const response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'Content-Type': 'application/json', ...headers } })
   const data = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(data.message || '请求失败')
   return data
@@ -3471,7 +3481,7 @@ function downloadStatusText(task) {
 async function downloadBinaryWithProgress(config, onProgress) {
   const startedAt = Date.now()
   onProgress({ status: 'preparing', label: config.label, filename: config.filename, totalBytes: config.totalBytes || 0, loadedBytes: 0, progress: 0, error: '' })
-  const response = await fetch(config.url, { headers: config.headers || {} })
+  const response = await fetch(config.url, { credentials: 'include', headers: config.headers || {} })
   if (!response.ok) throw await downloadResponseError(response)
 
   const filename = config.filename || filenameFromContentDisposition(response.headers.get('content-disposition')) || '下载文件'
