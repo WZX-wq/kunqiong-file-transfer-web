@@ -1947,6 +1947,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
   const [expiringOnly, setExpiringOnly] = useState(false)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [openMenu, setOpenMenu] = useState(null)
+  const [menuPlacement, setMenuPlacement] = useState('down')
   const [renameTarget, setRenameTarget] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -1980,6 +1981,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
   useEffect(() => {
     setSelectedIds(new Set())
     setOpenMenu(null)
+    setMenuPlacement('down')
   }, [viewMode, scopeFilter, dateFilter, dateFrom, dateTo, statusFilter, fileQuery, fileCategory, expiringOnly])
 
   useEffect(() => {
@@ -2008,6 +2010,13 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
 
   const toggleMenu = (menuId, event) => {
     event.stopPropagation()
+    if (openMenu !== menuId) {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const estimatedMenuHeight = 286
+      const spaceBelow = window.innerHeight - rect.bottom
+      const spaceAbove = rect.top
+      setMenuPlacement(spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow ? 'up' : 'down')
+    }
     setOpenMenu((current) => (current === menuId ? null : menuId))
   }
 
@@ -2073,7 +2082,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
     const statusGroup = recordStatusGroup(record)
     const reopenableCollection = canReopenCollection(record)
     return (
-      <div className="record-menu row-menu" onClick={(event) => event.stopPropagation()}>
+      <div className={`record-menu row-menu ${menuPlacement === 'up' ? 'menu-up' : ''}`} onClick={(event) => event.stopPropagation()}>
         <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
         <button disabled={!link} onClick={runMenuAction(() => onOpen(record))}><ExternalLink size={14} /> {recordOpenLabel(record)}</button>
         <button disabled={!onRename} onClick={runMenuAction(() => requestRename(record))}><PencilLine size={14} /> 重命名显示名称</button>
