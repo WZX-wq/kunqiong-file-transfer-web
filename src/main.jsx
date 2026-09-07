@@ -1056,11 +1056,12 @@ function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }) {
 
 function ShareNotificationStatus({ result }) {
   const logs = Array.isArray(result.notificationLog) ? result.notificationLog : []
-  const delivered = logs.filter((item) => item.status === '站内已发送').length
+  const delivered = logs.filter((item) => /已发送/.test(item.status || '')).length
   const externalPending = logs.filter((item) => /通道未配置/.test(item.status || '')).length
-  const skipped = Math.max(logs.length - delivered - externalPending, 0)
+  const failed = logs.filter((item) => /发送失败/.test(item.status || '')).length
+  const skipped = Math.max(logs.length - delivered - externalPending - failed, 0)
   const summary = logs.length
-    ? `${delivered ? `${delivered} 个站内送达` : '暂无站内送达'}${externalPending ? `，${externalPending} 个等待外部通知通道` : ''}${skipped ? `，${skipped} 个未投递` : ''}`
+    ? `${delivered ? `${delivered} 个通知已发送` : '暂无通知送达'}${externalPending ? `，${externalPending} 个等待邮件通道配置` : ''}${failed ? `，${failed} 个邮件投递失败` : ''}${skipped ? `，${skipped} 个未投递` : ''}`
     : `已记录 ${result.deliveryRecipients.length} 个通知对象`
   return (
     <div className="notification-list share-notification-status">

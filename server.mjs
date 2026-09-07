@@ -6,6 +6,7 @@ import express from 'express'
 import multer from 'multer'
 import archiver from 'archiver'
 import QRCode from 'qrcode'
+import nodemailer from 'nodemailer'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 loadEnvFile(path.join(__dirname, '.env'))
@@ -25,6 +26,13 @@ const oauthClientId = process.env.KUNQIONG_OAUTH_CLIENT_ID || 'app_d1fbbfc18f790
 const oauthClientSecret = process.env.KUNQIONG_OAUTH_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || ''
 const configuredCallbackUrls = splitConfigValues(process.env.KUNQIONG_AUTH_CALLBACK_URL)
 const configuredAppUrl = process.env.KUNQIONG_APP_URL || ''
+const smtpHost = String(process.env.KUNQIONG_SMTP_HOST || '').trim()
+const smtpPort = Number(process.env.KUNQIONG_SMTP_PORT || 465)
+const smtpSecure = parseBooleanEnv(process.env.KUNQIONG_SMTP_SECURE, smtpPort === 465)
+const smtpUser = String(process.env.KUNQIONG_SMTP_USER || '').trim()
+const smtpPassword = String(process.env.KUNQIONG_SMTP_PASSWORD || '')
+const smtpFrom = String(process.env.KUNQIONG_SMTP_FROM || smtpUser).trim()
+const smtpFromName = String(process.env.KUNQIONG_SMTP_FROM_NAME || '鲲穹文件传输').trim()
 const AUTH_COOKIE_NAME = 'kunqiong_session'
 const SHARE_ACCESS_COOKIE_PREFIX = 'kunqiong_share_access_'
 const SHARE_ACCESS_TTL_SECONDS = 15 * 60
@@ -71,6 +79,7 @@ const DEFAULT_ACCOUNT_MESSAGES = [
 ]
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 let metadataNeedsPersist = false
+let emailTransporter = null
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
   fs.mkdirSync(directory, { recursive: true })
@@ -2114,11 +2123,11 @@ function findUsersByRecipient(recipient) {
   })
 }
 
-function notifyShareRecipients(share, req, ownerUser = null) {
+async function notifyShareRecipients(share, req, ownerUser = null) {
   const recipients = Array.isArray(share.deliveryRecipients) ? share.deliveryRecipients : []
   const ownerName = displayAccountName(ownerUser)
   const title = share.files?.[0]?.name || '文件分享'
-  return recipients.map((recipient) => {
+  return Promise.all(recipients.map(async (recipient) => {
     const matchedUsers = findUsersByRecipient(recipient)
     const deliveredUserIds = []
     for (const user of matchedUsers) {
@@ -2132,17 +2141,100 @@ function notifyShareRecipients(share, req, ownerUser = null) {
       if (delivered) deliveredUserIds.push(user.id)
     }
     const target = normalizeContactTarget(recipient)
-    const pendingStatus = target?.type === 'phone' ? '短信通道未配置' : target?.type === 'email' ? '邮件通道未配置' : '未匹配账号'
+    const statusParts = []
+    if (deliveredUserIds.length) statusParts.push('站内已发送')
+    let emailSent = false
+    if (target?.type === 'email') {
+      if (!isSmtpConfigured()) {
+        statusParts.push('邮件通道未配置')
+      } else {
+        try {
+          await sendShareEmail({ recipient: target.value, share, req, ownerName, title })
+          emailSent = true
+          statusParts.push('邮件已发送')
+        } catch (error) {
+          console.error(`邮件投递失败（${target.value}）：`, error.message || error)
+          statusParts.push('邮件发送失败')
+        }
+      }
+    } else if (target?.type === 'phone' && !deliveredUserIds.length) {
+      statusParts.push('短信通道未配置')
+    }
+    if (!statusParts.length) statusParts.push('未匹配账号')
     return {
       recipient,
-      status: deliveredUserIds.length ? '站内已发送' : matchedUsers.length ? '站内通知已关闭' : pendingStatus,
-      channel: deliveredUserIds.length ? 'in-app' : target?.type || 'unknown',
+      status: statusParts.join('，'),
+      channel: emailSent ? 'email' : deliveredUserIds.length ? 'in-app' : target?.type || 'unknown',
       sentAt: new Date().toISOString(),
       deliveredUserIds,
       title,
       shareUrl: `${getOrigin(req)}/share/${share.id}`,
     }
+  }))
+}
+
+function isSmtpConfigured() {
+  return Boolean(smtpHost && Number.isInteger(smtpPort) && smtpPort > 0 && smtpPort <= 65535 && smtpUser && smtpPassword && smtpFrom)
+}
+
+function getEmailTransporter() {
+  if (!isSmtpConfigured()) return null
+  if (!emailTransporter) {
+    emailTransporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
+      auth: { user: smtpUser, pass: smtpPassword },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
+    })
+  }
+  return emailTransporter
+}
+
+async function sendShareEmail({ recipient, share, req, ownerName, title }) {
+  const transporter = getEmailTransporter()
+  if (!transporter) throw new Error('SMTP 邮件服务未配置')
+  const shareInfo = publicShare(share, req, false, false)
+  const shareUrl = shareInfo.enterpriseUrl || shareInfo.shareUrl
+  const expiryText = share.expiresAt ? new Date(share.expiresAt).toLocaleString('zh-CN') : '永久有效'
+  const qrAttachment = qrDataUrlAttachment(share.qrDataUrl)
+  return transporter.sendMail({
+    from: { name: smtpFromName || '鲲穹文件传输', address: smtpFrom },
+    to: recipient,
+    subject: `你收到一个文件分享：${title}`,
+    text: `${ownerName} 通过鲲穹文件传输向你发送了 ${share.files.length} 个文件。\n\n打开链接：${shareUrl}\n取件码：${share.code}\n有效期：${expiryText}\n${share.passwordHash ? '该分享还需要输入提取密码。' : ''}`,
+    html: buildShareEmailHtml({ share, shareUrl, ownerName, title, expiryText, hasQr: Boolean(qrAttachment) }),
+    attachments: qrAttachment ? [qrAttachment] : undefined,
   })
+}
+
+function buildShareEmailHtml({ share, shareUrl, ownerName, title, expiryText, hasQr }) {
+  const passwordHint = share.passwordHash ? '<p style="color:#9a6d23;">该分享还需要输入提取密码。</p>' : ''
+  const qr = hasQr ? '<img src="cid:kunqiong-share-qr" alt="分享二维码" width="180" height="180" style="display:block;width:180px;height:180px;margin:20px auto 0;border:1px solid #e1ece8;" />' : ''
+  return `<div style="margin:0;padding:32px 16px;background:#f4f8f6;font-family:Arial,'Microsoft YaHei',sans-serif;color:#29443d;">
+    <div style="max-width:560px;margin:0 auto;padding:28px;background:#ffffff;border:1px solid #dfeae6;border-radius:10px;">
+      <p style="margin:0 0 8px;color:#168b73;font-size:12px;font-weight:bold;letter-spacing:1px;">鲲穹文件传输</p>
+      <h2 style="margin:0 0 16px;font-size:22px;">你收到一个文件分享</h2>
+      <p style="line-height:1.7;">${escapeHtml(ownerName)} 向你发送了 <strong>${share.files.length}</strong> 个文件：${escapeHtml(title)}</p>
+      <p style="margin:20px 0 8px;color:#718982;font-size:13px;">打开链接</p>
+      <p style="margin:0;word-break:break-all;"><a href="${escapeHtml(shareUrl)}" style="color:#168b73;">${escapeHtml(shareUrl)}</a></p>
+      <div style="margin-top:18px;padding:14px;background:#f1f8f5;border:1px solid #d6ebe3;border-radius:8px;">
+        <span style="color:#718982;font-size:12px;">取件码</span>
+        <strong style="display:block;margin-top:5px;color:#168b73;font-size:24px;letter-spacing:3px;">${escapeHtml(share.code)}</strong>
+      </div>
+      <p style="color:#718982;font-size:12px;">有效期：${escapeHtml(expiryText)}</p>
+      ${passwordHint}
+      ${qr}
+    </div>
+  </div>`
+}
+
+function qrDataUrlAttachment(value) {
+  const match = /^data:image\/png;base64,([a-z0-9+/=]+)$/i.exec(String(value || ''))
+  if (!match) return null
+  return { filename: 'kunqiong-share-qr.png', content: Buffer.from(match[1], 'base64'), cid: 'kunqiong-share-qr' }
 }
 
 function addShareDownloadedMessage(share) {
@@ -2629,7 +2721,7 @@ async function createShareFromTempFiles(tempFiles, options, req) {
   }
   const shareUrl = `${getOrigin(req)}/share/${shareToken}`
   share.qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
-  share.notificationLog = notifyShareRecipients(share, req, ownerSession?.user)
+  share.notificationLog = await notifyShareRecipients(share, req, ownerSession?.user)
   metadata.shares.push(share)
   persistMetadata()
   return share
@@ -2811,6 +2903,20 @@ function firstValue(value) {
 
 function splitConfigValues(value = '') {
   return String(value).split(',').map((item) => item.trim()).filter(Boolean)
+}
+
+function parseBooleanEnv(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase())
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }
 
 function createToken(length) {
