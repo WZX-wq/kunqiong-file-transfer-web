@@ -3,7 +3,9 @@ import { createRoot } from 'react-dom/client'
 import {
   ArrowRight,
   ArrowLeft,
+  BarChart3,
   Bell,
+  Building2,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -43,10 +45,16 @@ import {
   ShieldCheck,
   Sparkles,
   HardDrive,
+  ListChecks,
   PencilLine,
   Trash2,
   UploadCloud,
   UserRound,
+  UserPlus,
+  Users,
+  Database,
+  SlidersHorizontal,
+  Crown,
   X,
   Zap,
 } from 'lucide-react'
@@ -82,6 +90,13 @@ const fileIcon = (name = '') => {
 
 function App() {
   const route = window.location.pathname
+  if (route.startsWith('/admin')) return <AdminPage />
+  if (route.startsWith('/workspace')) return <WorkspacePage />
+  if (route.startsWith('/e/')) {
+    const parts = route.split('/').filter(Boolean)
+    if (parts[2] === 'share' && parts[3]) return <SharePage token={parts[3]} enterpriseSlug={parts[1]} />
+    if (parts[2] === 'collect' && parts[3]) return <CollectionSubmitPage token={parts[3]} enterpriseSlug={parts[1]} />
+  }
   if (route.startsWith('/share/manage/')) return <ShareManagePage token={route.split('/')[3]} />
   if (route.startsWith('/share/')) return <SharePage token={route.split('/')[2]} />
   if (route.startsWith('/collect/manage/')) return <CollectionManagePage token={route.split('/')[3]} />
@@ -800,14 +815,15 @@ function WorkspaceApp() {
         </nav>
         <div className="topbar-actions">
           <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); setMessageOpen((current) => !current) }} onClose={() => setMessageOpen(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onLogin={startLogin} />
-          <button className="merchant-button" onClick={() => setToast('企业版将在后续版本开放')}><Sparkles size={15} /> 企业版</button>
+          {authUser?.isAdmin && <button className="merchant-button" onClick={() => { window.location.href = '/admin' }}><ShieldCheck size={15} /> 后台管理</button>}
+          <button className="merchant-button" onClick={() => { window.location.href = '/workspace' }}><Sparkles size={15} /> 会员与企业版</button>
           <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
           <button className="mobile-menu" aria-label="打开菜单"><Menu size={20} /></button>
         </div>
       </header>
 
       <main className="page-content">
-        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} />}
+        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} onOpenWorkspace={() => { window.location.href = '/workspace' }} />}
         {!isSettingsRoute && activeView === 'send' && (
           <SendView
             files={files}
@@ -864,7 +880,7 @@ function WorkspaceApp() {
         <div><button onClick={() => setToast('帮助中心将在正式版开放')}>帮助中心</button><button onClick={() => setToast('服务协议将在正式版开放')}>服务协议</button><button onClick={() => setToast('隐私政策将在正式版开放')}>隐私政策</button></div>
       </footer>
 
-      {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} onClose={() => setSettingsOpen(false)} onSave={() => { setSettingsOpen(false); setToast('分享设置已保存') }} />}
+      {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} user={authUser} onClose={() => setSettingsOpen(false)} onSave={() => { setSettingsOpen(false); setToast('分享设置已保存') }} />}
       {retrieveOpen && <RetrieveModal code={retrievalCode} setCode={setRetrievalCode} result={retrieveResult} onClose={closeRetrieve} onFind={lookupShare} />}
       {managementTarget && (
         <ManageItemModal
@@ -1015,6 +1031,7 @@ function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }) {
           <span>{result.shareUrl}</span>
           <button onClick={() => onCopy(result.shareUrl)} aria-label="复制分享链接"><Copy size={15} /></button>
         </div>
+        {result.enterpriseUrl && <div className="share-link enterprise-link"><Building2 size={15} /><span>{result.enterpriseUrl}</span><button onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制企业专属链接"><Copy size={15} /></button></div>}
         {result.deliveryRecipients?.length > 0 && <ShareNotificationStatus result={result} />}
         <div className="result-actions">
           <button className="secondary-button" onClick={onReset}>继续发送</button>
@@ -1350,6 +1367,7 @@ function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onDes
         <p>分享下面的链接，参与者即可匿名提交文件。</p>
         <CollectionLimitInfo allowedTypes={result.allowedTypes} maxFileSizeMb={result.maxFileSizeMb} />
         <div className="collection-share"><Link2 size={16} /><strong>{result.publicUrl}</strong><button onClick={() => onCopy(result.publicUrl)} aria-label="复制收集链接"><Copy size={15} /></button></div>
+        {result.enterpriseUrl && <div className="collection-share enterprise-link"><Building2 size={16} /><strong>{result.enterpriseUrl}</strong><button onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制企业专属链接"><Copy size={15} /></button></div>}
         {result.qrDataUrl && (
           <button className="qr-trigger" onClick={() => setQrOpen(true)} aria-label="打开收集二维码">
             <img className="collection-qr" src={result.qrDataUrl} alt="收集二维码" />
@@ -1449,7 +1467,7 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSet
   )
 }
 
-function SharePage({ token }) {
+function SharePage({ token, enterpriseSlug = '' }) {
   const [data, setData] = useState(null)
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -1457,11 +1475,12 @@ function SharePage({ token }) {
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
   useEffect(() => {
-    apiRequest(`/api/shares/token/${token}`).then((result) => {
+    const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
+    apiRequest(`/api/shares/token/${token}${query}`).then((result) => {
       setData(result)
       saveLocalRecord(createShareRecord(result.share, 'sent_to_me'))
     }).catch((err) => setError(err.message))
-  }, [token])
+  }, [token, enterpriseSlug])
   const findShare = async () => {
     try {
       const result = await apiRequest(`/api/shares/lookup/${data.share.code}`, { method: 'POST', body: JSON.stringify({ password }) })
@@ -1587,7 +1606,7 @@ function ShareManagePage({ token }) {
   )
 }
 
-function CollectionSubmitPage({ token }) {
+function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const inputRef = useRef(null)
   const [collection, setCollection] = useState(null)
   const [files, setFiles] = useState([])
@@ -1596,11 +1615,12 @@ function CollectionSubmitPage({ token }) {
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   useEffect(() => {
-    apiRequest(`/api/collections/${token}`).then((data) => {
+    const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
+    apiRequest(`/api/collections/${token}${query}`).then((data) => {
       setCollection(data.collection)
       saveLocalRecord(createCollectionRecord(data.collection, 'collect_from_me'))
     }).catch((err) => setMessage(err.message))
-  }, [token])
+  }, [token, enterpriseSlug])
   const submit = () => {
     const participantName = name.trim()
     if (!participantName || !files.length) { setMessage('请填写提交人名称并选择文件'); return }
@@ -1899,7 +1919,12 @@ function RetrieveModal({ code, setCode, result, onClose, onFind }) {
   )
 }
 
-function SettingsModal({ settings, setSettings, onClose, onSave }) {
+function SettingsModal({ settings, setSettings, user, onClose, onSave }) {
+  const canUsePermanent = Boolean(user?.plan?.permanent)
+  const updateExpiry = (label, value) => {
+    if (value === '0' && !canUsePermanent) return
+    setSettings({ ...settings, expiry: label, expiryDays: value })
+  }
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
@@ -1910,7 +1935,8 @@ function SettingsModal({ settings, setSettings, onClose, onSave }) {
         <div className="modal-body">
           <div className="setting-block">
             <span>分享有效期</span>
-            <div className="option-grid">{[['1 天', '1'], ['3 天', '3'], ['7 天', '7'], ['永久', '0']].map(([label, value]) => <button key={value} className={settings.expiryDays === value ? 'selected' : ''} onClick={() => setSettings({ ...settings, expiry: label, expiryDays: value })}>{label}{settings.expiryDays === value && <Check size={14} />}</button>)}</div>
+            <div className="option-grid">{[['1 天', '1'], ['3 天', '3'], ['7 天', '7'], ['永久', '0']].map(([label, value]) => <button key={value} disabled={value === '0' && !canUsePermanent} className={settings.expiryDays === value ? 'selected' : ''} onClick={() => updateExpiry(label, value)} title={value === '0' && !canUsePermanent ? '会员版或更高权益可用' : ''}>{label}{settings.expiryDays === value && <Check size={14} />}</button>)}</div>
+            {!canUsePermanent && <small className="setting-hint">永久保存需要会员版或更高权益，当前会按普通有效期创建。</small>}
           </div>
           <div className="setting-block">
             <span>下载次数</span>
@@ -2594,7 +2620,7 @@ function settingsSectionForPath(pathname = '') {
   return SETTINGS_NAV_ITEMS.some((item) => item.key === section) ? section : 'profile'
 }
 
-function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile, onUpdateUser, onNavigateSection }) {
+function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile, onUpdateUser, onNavigateSection, onOpenWorkspace }) {
   const [nickname, setNickname] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
@@ -2750,6 +2776,7 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
                 <SettingsInfoRow label="邮箱" value={user.email || '未绑定'} />
                 <SettingsInfoRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定'} />
                 <AccountCapacityCard user={user} />
+                <button className="workspace-entry-button" onClick={onOpenWorkspace}><Building2 size={15} /> 查看会员与团队空间 <ChevronRight size={15} /></button>
                 <AccountBenefits benefits={user.benefits} />
               </div>
             </>
@@ -2804,6 +2831,265 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
       )}
     </section>
   )
+}
+
+function WorkspacePage() {
+  const [user, setUser] = useState(null)
+  const [workspace, setWorkspace] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [teamName, setTeamName] = useState('')
+  const [memberTarget, setMemberTarget] = useState('')
+  const [saving, setSaving] = useState(false)
+  const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
+
+  const load = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const auth = await apiRequest('/api/auth/me')
+      if (!auth.user) {
+        setUser(null)
+        setWorkspace(null)
+        return
+      }
+      setUser(auth.user)
+      setWorkspace(await apiRequest('/api/account/workspace'))
+    } catch (err) {
+      setError(err.message || '团队空间加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const login = () => {
+    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`
+    window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
+  }
+
+  const createTeam = async (event) => {
+    event.preventDefault()
+    if (!teamName.trim()) return
+    if (!workspace?.plan?.team) {
+      setError('团队空间需要团队版或企业版权益')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      setWorkspace(await apiRequest('/api/account/workspace', { method: 'POST', body: JSON.stringify({ name: teamName.trim() }) }))
+      setTeamName('')
+      setMessage('团队空间已创建')
+    } catch (err) {
+      setError(err.message || '团队空间创建失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const inviteMember = async (event) => {
+    event.preventDefault()
+    if (!memberTarget.trim()) return
+    if (!workspace?.plan?.team) {
+      setError('成员管理需要团队版或企业版权益')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      setWorkspace(await apiRequest('/api/account/workspace/members', { method: 'POST', body: JSON.stringify({ target: memberTarget.trim() }) }))
+      setMemberTarget('')
+      setMessage('成员邀请已记录')
+    } catch (err) {
+      setError(err.message || '成员邀请失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const removeMember = async (member) => {
+    const confirmed = await requestConfirm({
+      title: '移除团队成员',
+      detail: `确定从团队空间移除 ${member.displayName || member.email || '该成员'} 吗？`,
+      confirmText: '移除成员',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    try {
+      setError('')
+      setWorkspace(await apiRequest(`/api/account/workspace/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' }))
+      setMessage('成员已移除')
+    } catch (err) {
+      setError(err.message || '成员移除失败')
+    }
+  }
+
+  if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开团队空间</h1><p>正在读取账号权益和团队数据。</p></div></PublicShell>
+  if (!user) {
+    return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和企业专属链接会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
+  }
+  const plan = workspace?.plan || {}
+  const capacity = workspace?.capacity || {}
+  const organization = workspace?.organization
+  const hasTeamPlan = Boolean(plan.team)
+  const canManageTeam = Boolean(hasTeamPlan && workspace?.canManage)
+  const ratio = capacity.totalBytes ? Math.round((capacity.usedBytes / capacity.totalBytes) * 100) : 0
+  return (
+    <PublicShell>
+      <section className="workspace-page">
+        <div className="public-card workspace-hero">
+          <div><p className="eyebrow">会员与企业版</p><h1>{plan.label || '基础版'}空间</h1><p>容量、永久保存和团队协作能力由当前账号权益统一管理。</p></div>
+          <button className="secondary-button" onClick={() => { window.location.href = '/settings/profile' }}><ArrowLeft size={15} /> 返回账户设置</button>
+        </div>
+        <div className="workspace-grid">
+          <div className="workspace-main">
+            <div className="public-card workspace-section">
+              <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {plan.label || '基础版'}</h2></div><span className="workspace-status">{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
+              <div className="workspace-capacity"><div><span>已使用空间</span><strong>{formatBytes(capacity.usedBytes || 0)} / {formatBytes(capacity.totalBytes || 0)}</strong></div><div className="capacity-bar"><span style={{ width: `${ratio}%` }} /></div><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务 · {capacity.fileCount || 0} 个文件</small></div>
+              <div className="plan-comparison">{(workspace?.plans || []).map((item) => <div className={item.id === plan.id ? 'current' : ''} key={item.id}><strong>{item.label}</strong><span>{formatBytes(item.totalBytes)}</span><small>{item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</small></div>)}</div>
+            </div>
+            <div className="public-card workspace-section">
+              <div className="workspace-section-heading"><div><p className="eyebrow">团队空间</p><h2><Users size={18} /> {organization?.name || '创建团队空间'}</h2></div>{organization ? <span className="workspace-status">{organization.members.length} 位成员</span> : <span className="workspace-status muted">{canManageTeam ? '可创建' : '需团队版'}</span>}</div>
+              {!organization ? (
+                hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>后台把账号权益调整为团队版或企业版后，可创建团队、邀请成员并生成企业专属链接。</span></div></div>
+              ) : (
+                <>
+                  <div className="workspace-link-row"><Link2 size={15} /><span>企业专属标识</span><code>{organization.slug}</code><button className="copy-button" onClick={() => { navigator.clipboard?.writeText(organization.slug); setMessage('企业标识已复制') }}><Copy size={14} /> 复制</button></div>
+                  {!canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
+                  <form className="workspace-inline-form" onSubmit={inviteMember}><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="输入成员邮箱、手机号或鲲穹账号" disabled={!canManageTeam} /><button className="secondary-button" disabled={saving || !memberTarget.trim() || !canManageTeam}><UserPlus size={15} /> 邀请成员</button></form>
+                  <div className="workspace-members">{organization.members.map((member) => <div className="workspace-member" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName}</strong><span>{member.email || member.phone || member.userId || '待接受邀请'} · {member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</span></div>{canManageTeam && member.canRemove && <button className="ghost-icon" aria-label={`移除${member.displayName}`} onClick={() => removeMember(member)}><X size={16} /></button>}</div>)}</div>
+                </>
+              )}
+            </div>
+          </div>
+          <aside className="workspace-side"><div className="public-card workspace-side-card"><ShieldCheck size={22} /><strong>企业专属链接</strong><p>团队版或企业版创建的分享，会自动生成带团队标识的专属入口。</p><span>/e/{organization?.slug || 'your-team'}/share/...</span></div><div className="public-card workspace-side-card"><ListChecks size={22} /><strong>当前状态</strong><p>{canManageTeam ? '团队协作功能已启用。' : '升级到团队版后可管理成员和企业入口。'}</p><button className="secondary-button" onClick={() => setMessage('会员升级需接入鲲穹订单系统后开放')}>查看升级方式</button></div></aside>
+        </div>
+        {message && <p className="workspace-message">{message}</p>}
+        {error && <p className="public-message">{error}</p>}
+      </section>
+      <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
+    </PublicShell>
+  )
+}
+
+function AdminPage() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [tab, setTab] = useState('dashboard')
+  const [savingConfig, setSavingConfig] = useState(false)
+  const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
+
+  const load = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      setData(await apiRequest('/api/admin/overview'))
+    } catch (err) {
+      setError(err.message || '后台数据加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  const login = () => {
+    const returnTo = `${window.location.origin}${window.location.pathname}`
+    window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
+  }
+  const removeResource = async (resource) => {
+    const confirmed = await requestConfirm({
+      title: '删除文件资源',
+      detail: `将删除“${resource.name}”及其服务器文件，操作不可恢复。`,
+      confirmText: '删除资源',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    try {
+      setError('')
+      const result = await apiRequest(`/api/admin/resources/${resource.kind}/${encodeURIComponent(resource.id)}`, { method: 'DELETE' })
+      setData(result.overview)
+    } catch (err) {
+      setError(err.message || '资源删除失败')
+    }
+  }
+  const updateUser = async (user, patch) => {
+    try {
+      setError('')
+      const result = await apiRequest(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
+      setData((current) => ({ ...current, users: current.users.map((item) => item.id === user.id ? result.user : item) }))
+    } catch (err) {
+      setError(err.message || '用户更新失败')
+    }
+  }
+  const saveConfig = async (event) => {
+    event.preventDefault()
+    setSavingConfig(true)
+    try {
+      const form = new FormData(event.currentTarget)
+      setError('')
+      const result = await apiRequest('/api/admin/config', { method: 'PATCH', body: JSON.stringify({ maxShareDays: form.get('maxShareDays'), auditLogRetentionDays: form.get('auditLogRetentionDays'), orphanGraceHours: form.get('orphanGraceHours'), maintenanceMode: form.get('maintenanceMode') === 'on' }) })
+      setData((current) => ({ ...current, config: result.config }))
+    } catch (err) {
+      setError(err.message || '系统配置保存失败')
+    } finally {
+      setSavingConfig(false)
+    }
+  }
+  const runCleanup = async () => {
+    try {
+      setError('')
+      const result = await apiRequest('/api/admin/cleanup', { method: 'POST' })
+      setData(result.overview)
+    } catch (err) {
+      setError(err.message || '清理失败')
+    }
+  }
+  const approveResource = async (resource) => {
+    try {
+      setError('')
+      const result = await apiRequest(`/api/admin/resources/${resource.kind}/${encodeURIComponent(resource.id)}/review`, { method: 'PATCH' })
+      setData(result.overview)
+    } catch (err) {
+      setError(err.message || '审核处理失败')
+    }
+  }
+
+  if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开后台</h1><p>正在检查管理员权限。</p></div></PublicShell>
+  if (error && !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p>{/登录/.test(error) && <button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button>}<a className="secondary-button" href="/">返回首页</a></div></PublicShell>
+  if (!data) return null
+  const stats = data.stats || {}
+  const dashboardCards = [['用户', stats.users || 0, Users], ['分享', stats.shares || 0, Link2], ['收集任务', stats.collections || 0, Inbox], ['资源文件', stats.files || 0, Database], ['占用空间', formatBytes(stats.totalBytes || 0), HardDrive], ['待审核', stats.reviewResources || 0, ShieldCheck]]
+  return (
+    <PublicShell>
+      <section className="admin-page">
+        <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、文件资源、安全日志和运行配置。</p></div><div><button className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</button><button className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</button></div></div>
+        <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['users', '用户管理', Users], ['resources', '文件资源', Database], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button className={tab === key ? 'active' : ''} key={key} onClick={() => setTab(key)}><Icon size={16} /> {label}</button>)}</nav>
+        {error && <p className="public-message">{error}</p>}
+        {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot review" /> 待审核资源 <strong>{stats.reviewResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span></div></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">最近事件</p><h2>访问审计</h2></div></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 5).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
+        {tab === 'users' && <AdminUsers users={data.users} onUpdate={updateUser} />}
+        {tab === 'resources' && <AdminResources resources={data.resources} onDelete={removeResource} onApprove={approveResource} />}
+        {tab === 'security' && <AdminLogs logs={data.auditLogs} />}
+        {tab === 'config' && <form className="public-card admin-panel admin-config-form" onSubmit={saveConfig}><div className="admin-panel-heading"><div><p className="eyebrow">运行参数</p><h2>系统配置</h2></div></div><label className="manage-field"><span>普通分享最长有效期（天）</span><input name="maxShareDays" type="number" min="1" max="365" defaultValue={data.config.maxShareDays} /></label><label className="manage-field"><span>审计日志保留（天）</span><input name="auditLogRetentionDays" type="number" min="1" max="3650" defaultValue={data.config.auditLogRetentionDays} /></label><label className="manage-field"><span>孤立目录宽限（小时）</span><input name="orphanGraceHours" type="number" min="1" max="720" defaultValue={data.config.orphanGraceHours} /></label><label className="switch-row"><div><strong>维护模式</strong><span>开启后会阻止非管理员创建分享、收集任务或提交文件。</span></div><input name="maintenanceMode" type="checkbox" defaultChecked={data.config.maintenanceMode} /></label><button className="primary-button" disabled={savingConfig}><SlidersHorizontal size={15} /> {savingConfig ? '保存中' : '保存配置'}</button></form>}
+      </section>
+      <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
+    </PublicShell>
+  )
+}
+
+function AdminUsers({ users = [], onUpdate }) {
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">账号与权益</p><h2>用户管理</h2></div></div><div className="admin-table">{users.length ? users.map((user) => <div className="admin-table-row" key={user.id}><div><strong>{user.nickname || user.username || user.id}</strong><span>{user.email || user.phone || user.id}</span></div><select value={user.planId} onChange={(event) => onUpdate(user, { planId: event.target.value })}><option value="free">基础版</option><option value="member">会员版</option><option value="team">团队版</option><option value="enterprise">企业版</option></select><button className={user.status === 'disabled' ? 'secondary-button' : 'secondary-button danger-lite'} onClick={() => onUpdate(user, { status: user.status === 'disabled' ? 'active' : 'disabled' })}>{user.status === 'disabled' ? '启用' : '禁用'}</button><small>{user.planLabel} · {formatBytes(user.usageBytes || 0)}</small></div>) : <div className="empty-manage"><Users size={25} /><span>暂无登录用户</span></div>}</div></div>
+}
+
+function AdminResources({ resources = [], onDelete, onApprove }) {
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">文件与任务</p><h2>文件资源管理</h2></div></div><div className="admin-table">{resources.length ? resources.map((resource) => <div className="admin-table-row" key={`${resource.kind}-${resource.id}`}><div><strong>{resource.name}</strong><span>{resource.kind === 'share' ? '文件分享' : '收集任务'} · {formatDate(resource.createdAt)}</span></div><span className={`admin-review ${resource.reviewStatus === '待审核' ? 'review' : resource.reviewStatus === '已拦截' ? 'blocked' : ''}`}>{resource.reviewStatus}</span><small>{resource.fileCount} 个文件 · {formatBytes(resource.totalSize)}</small>{resource.reviewStatus === '待审核' && <button className="secondary-button" onClick={() => onApprove(resource)}><Check size={14} /> 通过</button>}<button className="secondary-button danger-lite" onClick={() => onDelete(resource)}><Trash2 size={14} /> 删除</button></div>) : <div className="empty-manage"><Database size={25} /><span>暂无文件资源</span></div>}</div></div>
+}
+
+function AdminLogs({ logs = [] }) {
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">安全与访问</p><h2>审计日志</h2></div></div><div className="admin-log-list admin-log-list-large">{logs.length ? logs.map((item) => <div key={item.id}><span><strong>{item.type === 'security' ? '安全拦截' : item.type === 'admin' ? '管理员操作' : '访问'}</strong> {item.action}</span><small>{formatDate(item.createdAt)} · 状态 {item.status || '-'} · IP 摘要 {item.ip || '-'}</small></div>) : <div className="empty-manage"><ShieldCheck size={25} /><span>暂无日志</span></div>}</div></div>
 }
 
 function SettingsPanelHeader({ eyebrow, title, detail, onBack }) {

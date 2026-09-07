@@ -29,17 +29,33 @@ const AUTH_COOKIE_NAME = 'kunqiong_session'
 const SHARE_ACCESS_COOKIE_PREFIX = 'kunqiong_share_access_'
 const SHARE_ACCESS_TTL_SECONDS = 15 * 60
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
+const UPLOAD_SESSION_TTL_MS = 12 * 60 * 60 * 1000
 const MAX_ACCOUNT_RECORDS = 200
 const MAX_ACCOUNT_MESSAGES = 120
 const MAX_RECORD_FILES = 120
 const MAX_RECORD_SUBMISSIONS = 80
 const VERIFICATION_CODE_TTL_MS = 10 * 60 * 1000
 const MAX_VERIFICATION_CODES = 120
-const ACCOUNT_TOTAL_STORAGE_BYTES = 20 * 1024 * 1024 * 1024
 const ACCOUNT_SINGLE_FILE_BYTES = MAX_FILE_SIZE
 const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections', 'collect_from_me'])
 const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
+const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
+const BLOCKED_FILE_EXTENSIONS = new Set(['.ade', '.adp', '.app', '.application', '.apk', '.appx', '.bat', '.cmd', '.com', '.cpl', '.dll', '.dmg', '.exe', '.gadget', '.hta', '.ins', '.iso', '.jar', '.js', '.jse', '.lnk', '.msi', '.msp', '.mst', '.ps1', '.reg', '.scr', '.sh', '.sys', '.vb', '.vbe', '.vbs', '.vxd', '.wsc', '.wsf', '.wsh'])
+const REVIEW_FILE_EXTENSIONS = new Set(['.docm', '.dotm', '.xlsm', '.xltm', '.pptm', '.ppam', '.potm'])
+const MAX_AUDIT_LOGS = 5000
+const DEFAULT_SYSTEM_CONFIG = {
+  maintenanceMode: false,
+  maxShareDays: 30,
+  auditLogRetentionDays: 90,
+  orphanGraceHours: 24,
+}
+const ACCOUNT_PLANS = {
+  free: { id: 'free', label: '基础版', totalBytes: 20 * 1024 * 1024 * 1024, permanent: false, team: false },
+  member: { id: 'member', label: '会员版', totalBytes: 100 * 1024 * 1024 * 1024, permanent: true, team: false },
+  team: { id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, permanent: true, team: true },
+  enterprise: { id: 'enterprise', label: '企业版', totalBytes: 2 * 1024 * 1024 * 1024 * 1024, permanent: true, team: true },
+}
 const DEFAULT_NOTIFICATION_SETTINGS = {
   inApp: true,
   email: false,
@@ -74,6 +90,21 @@ app.set('trust proxy', true)
 app.use(express.json({ limit: '1mb' }))
 app.use((req, res, next) => {
   res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  res.setHeader('X-Frame-Options', 'DENY')
+  const startedAt = Date.now()
+  res.on('finish', () => {
+    if (req.path === '/api/health' || (!req.path.startsWith('/api/') && !req.path.startsWith('/auth/'))) return
+    recordAuditLog({
+      type: 'access',
+      action: `${req.method} ${sanitizeAuditPath(req.path)}`,
+      status: res.statusCode,
+      durationMs: Date.now() - startedAt,
+      userId: authSessionFromRequest(req)?.user?.id || '',
+      ip: requestIp(req),
+    })
+  })
   next()
 })
 
@@ -281,6 +312,164 @@ app.put('/api/account/notification-settings', (req, res) => {
   res.json({ settings: metadata.notificationSettings[key] })
 })
 
+app.get('/api/account/workspace', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  res.json(accountWorkspacePayload(session.user))
+})
+
+app.post('/api/account/workspace', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  if (!accountEffectivePlanForUser(session.user).team) return res.status(403).json({ message: '团队空间需要团队版或企业版权益' })
+  if (accountOrganizationForUser(session.user.id)) return res.status(409).json({ message: '你已经加入一个团队空间' })
+  const name = trimRecordString(req.body?.name, 80)
+  if (!name) return res.status(400).json({ message: '请填写团队名称' })
+  const organization = createOrganization(session.user, name)
+  persistMetadata()
+  res.status(201).json(accountWorkspacePayload(session.user))
+})
+
+app.patch('/api/account/workspace', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const organization = accountOrganizationForUser(session.user.id)
+  if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
+  if (organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以修改团队空间' })
+  const name = trimRecordString(req.body?.name, 80)
+  if (!name) return res.status(400).json({ message: '请填写团队名称' })
+  organization.name = name
+  organization.updatedAt = new Date().toISOString()
+  persistMetadata()
+  res.json(accountWorkspacePayload(session.user))
+})
+
+app.post('/api/account/workspace/members', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  if (!accountEffectivePlanForUser(session.user).team) return res.status(403).json({ message: '成员管理需要团队版或企业版权益' })
+  const organization = accountOrganizationForUser(session.user.id)
+  if (!organization) return res.status(404).json({ message: '请先创建团队空间' })
+  if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以管理成员' })
+  const target = normalizeContactTarget(req.body?.target)
+  const userId = trimRecordString(req.body?.userId, 120)
+  const matchedUser = userId ? accountUserById(userId) : findAccountUserByTarget(target)
+  const memberKey = matchedUser?.id || userId || target?.value
+  if (!memberKey) return res.status(400).json({ message: '请输入成员账号、邮箱或手机号' })
+  if (organization.members.some((member) => member.userId === memberKey || (member.email && target?.type === 'email' && member.email === target.value))) {
+    return res.status(409).json({ message: '该成员已在团队空间中' })
+  }
+  const member = {
+    id: createToken(12),
+    userId: matchedUser?.id || '',
+    email: matchedUser?.email || (target?.type === 'email' ? target.value : ''),
+    phone: matchedUser?.phone || (target?.type === 'phone' ? target.value : ''),
+    displayName: displayAccountName(matchedUser || { username: memberKey }),
+    role: 'member',
+    status: matchedUser ? 'active' : 'invited',
+    joinedAt: matchedUser ? new Date().toISOString() : null,
+    invitedAt: new Date().toISOString(),
+  }
+  organization.members.push(member)
+  persistMetadata()
+  res.status(201).json(accountWorkspacePayload(session.user))
+})
+
+app.delete('/api/account/workspace/members/:memberId', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  if (!accountEffectivePlanForUser(session.user).team) return res.status(403).json({ message: '成员管理需要团队版或企业版权益' })
+  const organization = accountOrganizationForUser(session.user.id)
+  if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
+  if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以管理成员' })
+  const index = organization.members.findIndex((member) => member.id === req.params.memberId)
+  if (index < 0) return res.status(404).json({ message: '团队成员不存在' })
+  if (organization.members[index].userId === organization.ownerUserId) return res.status(400).json({ message: '团队所有者不能移除' })
+  organization.members.splice(index, 1)
+  organization.updatedAt = new Date().toISOString()
+  persistMetadata()
+  res.json(accountWorkspacePayload(session.user))
+})
+
+app.get('/api/admin/overview', (req, res) => {
+  const session = requireAdminSession(req, res)
+  if (!session) return
+  res.json(buildAdminOverview())
+})
+
+app.post('/api/admin/cleanup', (req, res) => {
+  const session = requireAdminSession(req, res)
+  if (!session) return
+  const result = runMaintenanceCleanup()
+  recordAuditLog({ type: 'admin', action: '手动执行存储清理', userId: session.user.id, details: result })
+  res.json({ ...result, overview: buildAdminOverview() })
+})
+
+app.patch('/api/admin/config', (req, res) => {
+  const session = requireAdminSession(req, res)
+  if (!session) return
+  metadata.systemConfig = normalizeSystemConfig({ ...metadata.systemConfig, ...req.body })
+  persistMetadata()
+  recordAuditLog({ type: 'admin', action: '更新系统配置', userId: session.user.id, details: metadata.systemConfig })
+  res.json({ config: metadata.systemConfig })
+})
+
+app.patch('/api/admin/users/:userId', (req, res) => {
+  const session = requireAdminSession(req, res)
+  if (!session) return
+  const user = accountUserById(req.params.userId)
+  if (!user) return res.status(404).json({ message: '用户不存在' })
+  const status = req.body?.status ? String(req.body.status) : user.status || 'active'
+  const planId = normalizePlanId(req.body?.planId || user.planId)
+  if (!['active', 'disabled'].includes(status)) return res.status(400).json({ message: '用户状态不支持' })
+  if (user.id === session.user.id && status === 'disabled') return res.status(400).json({ message: '不能禁用当前管理员账号' })
+  user.status = status
+  user.planId = planId
+  user.updatedAt = new Date().toISOString()
+  if (status === 'disabled') {
+    metadata.sessions = metadata.sessions.filter((item) => item.user?.id !== user.id)
+  }
+  syncAccountUserSessions(user)
+  persistMetadata()
+  recordAuditLog({ type: 'admin', action: '更新用户状态或权益', userId: session.user.id, targetId: user.id, details: { status, planId } })
+  res.json({ user: adminUserSummary(user) })
+})
+
+app.delete('/api/admin/resources/:kind/:id', (req, res) => {
+  const session = requireAdminSession(req, res)
+  if (!session) return
+  const kind = String(req.params.kind)
+  const id = String(req.params.id)
+  if (kind === 'share') {
+    const index = metadata.shares.findIndex((item) => item.id === id)
+    if (index < 0) return res.status(404).json({ message: '分享资源不存在' })
+    const [share] = metadata.shares.splice(index, 1)
+    removeDirectory(path.join(filesRoot, share.id))
+  } else if (kind === 'collection') {
+    const index = metadata.collections.findIndex((item) => item.id === id || item.token === id || item.manageToken === id)
+    if (index < 0) return res.status(404).json({ message: '收集资源不存在' })
+    const [collection] = metadata.collections.splice(index, 1)
+    removeDirectory(path.join(collectionsRoot, collection.id))
+  } else {
+    return res.status(400).json({ message: '资源类型不支持' })
+  }
+  persistMetadata()
+  recordAuditLog({ type: 'admin', action: '删除文件资源', userId: session.user.id, targetId: id, details: { kind } })
+  res.json({ ok: true, overview: buildAdminOverview() })
+})
+
+app.patch('/api/admin/resources/:kind/:id/review', (req, res) => {
+  const session = requireAdminSession(req, res)
+  if (!session) return
+  const resource = findAdminResource(req.params.kind, req.params.id)
+  if (!resource) return res.status(404).json({ message: '文件资源不存在' })
+  markResourceReviewStatus(resource.kind, resource.item, 'approved')
+  resource.item.updatedAt = new Date().toISOString()
+  persistMetadata()
+  recordAuditLog({ type: 'admin', action: '通过文件资源审核', userId: session.user.id, targetId: resource.id, details: { kind: resource.kind } })
+  res.json({ ok: true, overview: buildAdminOverview() })
+})
+
 app.get('/auth/callback', async (req, res) => {
   const code = firstValue(req.query.code)
   const state = firstValue(req.query.state)
@@ -302,8 +491,10 @@ app.get('/auth/callback', async (req, res) => {
 
 app.post('/api/shares', upload.array('files', MAX_FILES), async (req, res, next) => {
   try {
+    assertServiceWritable(req)
     const uploadedFiles = req.files || []
     if (!uploadedFiles.length) return res.status(400).json({ message: '至少选择一个文件' })
+    assertSafeUploadFiles(uploadedFiles)
 
     const relativePaths = parseJson(req.body.relativePaths, [])
     const files = uploadedFiles.map((file, index) => {
@@ -317,7 +508,8 @@ app.post('/api/shares', upload.array('files', MAX_FILES), async (req, res, next)
       }
     })
 
-    const share = await createShareFromTempFiles(files, readShareOptions(req.body), req)
+    const ownerSession = authSessionFromRequest(req)
+    const share = await createShareFromTempFiles(files, readShareOptions(req.body, ownerSession?.user), req)
     res.status(201).json({ share: publicShare(share, req, true, true) })
   } catch (error) {
     cleanupUploadedFiles(req.files)
@@ -326,6 +518,7 @@ app.post('/api/shares', upload.array('files', MAX_FILES), async (req, res, next)
 })
 
 app.post('/api/upload-sessions', (req, res) => {
+  assertServiceWritable(req)
   const files = Array.isArray(req.body.files) ? req.body.files : []
   if (!files.length) return res.status(400).json({ message: '至少选择一个文件' })
   if (files.length > MAX_FILES) return res.status(413).json({ message: `单次最多上传 ${MAX_FILES} 个文件` })
@@ -339,6 +532,9 @@ app.post('/api/upload-sessions', (req, res) => {
   }))
   const invalid = normalizedFiles.find((file) => file.size > MAX_FILE_SIZE)
   if (invalid) return res.status(413).json({ message: `${invalid.name} 超过 5 GB 限制` })
+  assertSafeUploadFiles(normalizedFiles)
+  const ownerSession = authSessionFromRequest(req)
+  assertAccountCapacity(ownerSession?.user, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
 
   const sessionId = createToken(18)
   const sessionDirectory = path.join(tempRoot, 'upload-sessions', sessionId)
@@ -346,7 +542,7 @@ app.post('/api/upload-sessions', (req, res) => {
   const session = {
     id: sessionId,
     files: normalizedFiles,
-    options: readShareOptions(req.body),
+    options: readShareOptions(req.body, ownerSession?.user),
     directory: sessionDirectory,
     createdAt: new Date().toISOString(),
   }
@@ -364,7 +560,7 @@ app.post('/api/upload-sessions/:sessionId/chunks', upload.single('chunk'), (req,
     const fileIndex = Number(req.body.fileIndex)
     const chunkIndex = Number(req.body.chunkIndex)
     const totalChunks = Number(req.body.totalChunks)
-    if (!Number.isInteger(fileIndex) || !Number.isInteger(chunkIndex) || !Number.isInteger(totalChunks)) {
+    if (!Number.isInteger(fileIndex) || !Number.isInteger(chunkIndex) || !Number.isInteger(totalChunks) || fileIndex < 0 || fileIndex >= session.files.length || chunkIndex < 0 || totalChunks < 1 || chunkIndex >= totalChunks) {
       cleanupUploadedFiles(req.file ? [req.file] : [])
       return res.status(400).json({ message: '分片参数不完整' })
     }
@@ -372,6 +568,10 @@ app.post('/api/upload-sessions/:sessionId/chunks', upload.single('chunk'), (req,
     if (!file || !req.file) {
       cleanupUploadedFiles(req.file ? [req.file] : [])
       return res.status(400).json({ message: '分片文件不存在' })
+    }
+    if (file.totalChunks && file.totalChunks !== totalChunks) {
+      cleanupUploadedFiles(req.file ? [req.file] : [])
+      return res.status(409).json({ message: '分片总数发生变化，请重新开始上传' })
     }
     const chunksDirectory = path.join(session.directory, String(fileIndex))
     fs.mkdirSync(chunksDirectory, { recursive: true })
@@ -410,6 +610,9 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
       } finally {
         fs.closeSync(output)
       }
+      if (fs.statSync(mergedPath).size !== file.size) {
+        throw httpError(400, `${file.name} 文件大小校验失败，请重新上传`)
+      }
       return {
         name: file.name,
         relativePath: file.relativePath,
@@ -418,6 +621,7 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
         tempPath: mergedPath,
       }
     })
+    assertSafeUploadFiles(mergedFiles)
     const share = await createShareFromTempFiles(mergedFiles, session.options, req)
     uploadSessions.delete(session.id)
     removeDirectory(session.directory)
@@ -448,6 +652,7 @@ app.post('/api/shares/lookup/:code', (req, res) => {
 app.get('/api/shares/token/:token', (req, res) => {
   const share = metadata.shares.find((item) => item.id === req.params.token)
   if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
+  if (!validateEnterpriseSlug(share, req.query.organization)) return res.status(404).json({ message: '企业专属链接无效' })
   const access = validateShare(share, undefined, { allowMissingPassword: true })
   if (!access.ok) return res.status(access.status).json({ message: access.message })
   res.json({ share: publicShare(share, req, !share.passwordHash), requiresPassword: Boolean(share.passwordHash) })
@@ -463,7 +668,7 @@ app.patch('/api/shares/manage/:manageToken', async (req, res, next) => {
   try {
     const share = findShareByManageToken(req.params.manageToken)
     if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
-    applyShareUpdate(share, req.body || {})
+    applyShareUpdate(share, req.body || {}, accountUserById(share.ownerUserId))
     share.updatedAt = new Date().toISOString()
     if (share.status === 'active' && !fs.existsSync(path.join(filesRoot, share.id))) {
       return res.status(410).json({ message: '分享文件已清理，无法恢复为有效状态' })
@@ -493,13 +698,14 @@ app.get('/api/shares/:token/download', async (req, res, next) => {
   try {
     const share = metadata.shares.find((item) => item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
+    enforceDownloadOrigin(req)
     const access = validateShare(share, req.get('x-share-password'))
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     registerShareDownload(share, res)
     const shareDirectory = path.join(filesRoot, share.id)
     if (share.files.length === 1) {
       const file = share.files[0]
-      sendDownloadFile(res, next, path.join(shareDirectory, file.storedName), file)
+      sendDownloadFile(req, res, next, path.join(shareDirectory, file.storedName), file)
       return
     }
     await streamZip(res, next, '鲲穹文件包.zip', share.files.map((file) => ({
@@ -516,12 +722,13 @@ app.get('/api/shares/:token/files/:fileIndex/download', (req, res, next) => {
   try {
     const share = metadata.shares.find((item) => item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
+    enforceDownloadOrigin(req)
     const access = validateShare(share, req.get('x-share-password'))
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     const file = share.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
     registerShareDownload(share, res)
-    sendDownloadFile(res, next, path.join(filesRoot, share.id, file.storedName), file)
+    sendDownloadFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
   } catch (error) {
     next(error)
   }
@@ -531,6 +738,7 @@ app.get('/api/shares/:token/files/:fileIndex/preview', (req, res, next) => {
   try {
     const share = metadata.shares.find((item) => item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
+    enforceDownloadOrigin(req)
     const access = validateShareRequest(share, req)
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     const file = share.files[Number(req.params.fileIndex)]
@@ -543,6 +751,7 @@ app.get('/api/shares/:token/files/:fileIndex/preview', (req, res, next) => {
 
 app.post('/api/collections', async (req, res, next) => {
   try {
+    assertServiceWritable(req)
     const ownerSession = authSessionFromRequest(req)
     const title = String(req.body.title || '').trim()
     if (!title) return res.status(400).json({ message: '请填写任务名称' })
@@ -577,6 +786,7 @@ app.get('/api/collections/:token', async (req, res, next) => {
   try {
     const task = metadata.collections.find((item) => item.token === req.params.token)
     if (!task) return res.status(404).json({ message: '收集任务不存在' })
+    if (!validateEnterpriseSlug(task, req.query.organization)) return res.status(404).json({ message: '企业专属链接无效' })
     const access = validateCollection(task)
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     if (await ensureCollectionQrDataUrl(task, req)) persistMetadata()
@@ -588,6 +798,7 @@ app.get('/api/collections/:token', async (req, res, next) => {
 
 app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES), (req, res, next) => {
   try {
+    assertServiceWritable(req)
     const task = metadata.collections.find((item) => item.token === req.params.token)
     if (!task) {
       cleanupUploadedFiles(req.files)
@@ -607,11 +818,13 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
     if (!uploadedFiles.length) {
       return res.status(400).json({ message: '至少选择一个文件' })
     }
+    assertSafeUploadFiles(uploadedFiles)
     const invalidFile = uploadedFiles.find((file) => file.size > task.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.originalname, task.allowedTypes))
     if (invalidFile) {
       cleanupUploadedFiles(uploadedFiles)
       return res.status(413).json({ message: `${invalidFile.originalname} 不符合当前收集任务的文件限制` })
     }
+    assertAccountCapacity(accountUserById(task.ownerUserId), uploadedFiles.reduce((sum, file) => sum + file.size, 0))
     const submissionId = createToken(12)
     const submissionDirectory = path.join(collectionsRoot, task.id, submissionId)
     fs.mkdirSync(submissionDirectory, { recursive: true })
@@ -620,7 +833,7 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
       const relativePath = safeRelativePath(relativePaths[index] || file.originalname)
       const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
       fs.renameSync(file.path, path.join(submissionDirectory, storedName))
-      return { name: file.originalname, relativePath, storedName, size: file.size, mimeType: file.mimetype || 'application/octet-stream' }
+      return { name: file.originalname, relativePath, storedName, size: file.size, mimeType: file.mimetype || 'application/octet-stream', reviewStatus: file.reviewStatus || 'approved' }
     })
     const submission = { id: submissionId, participantName, submittedAt: new Date().toISOString(), files }
     task.submissions.push(submission)
@@ -689,8 +902,10 @@ app.delete('/api/collections/manage/:manageToken/submissions/:submissionId', (re
 
 app.get('/api/collections/manage/:manageToken/download', async (req, res, next) => {
   try {
+    enforceDownloadOrigin(req)
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
     if (!task) return res.status(404).json({ message: '管理链接不存在' })
+    assertFilesDownloadable(task.submissions.flatMap((submission) => submission.files || []))
     const entries = collectionZipEntries(task)
     if (!entries.length) return res.status(404).json({ message: '暂无可下载的提交文件' })
     await streamZip(res, next, `${task.title || '收集文件'}.zip`, entries)
@@ -701,10 +916,12 @@ app.get('/api/collections/manage/:manageToken/download', async (req, res, next) 
 
 app.get('/api/collections/manage/:manageToken/submissions/:submissionId/download', async (req, res, next) => {
   try {
+    enforceDownloadOrigin(req)
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
     if (!task) return res.status(404).json({ message: '管理链接不存在' })
     const submission = task.submissions.find((item) => item.id === req.params.submissionId)
     if (!submission) return res.status(404).json({ message: '提交记录不存在' })
+    assertFilesDownloadable(submission.files || [])
     const entries = collectionZipEntries(task, submission)
     if (!entries.length) return res.status(404).json({ message: '暂无可下载的提交文件' })
     await streamZip(res, next, `${submission.participantName || '提交文件'}.zip`, entries)
@@ -715,12 +932,14 @@ app.get('/api/collections/manage/:manageToken/submissions/:submissionId/download
 
 app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/download', (req, res, next) => {
   try {
+    enforceDownloadOrigin(req)
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
     if (!task) return res.status(404).json({ message: '管理链接不存在' })
     const submission = task.submissions.find((item) => item.id === req.params.submissionId)
     const file = submission?.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
-    sendDownloadFile(res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
+    assertFilesDownloadable([file])
+    sendDownloadFile(req, res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
   } catch (error) {
     next(error)
   }
@@ -728,11 +947,13 @@ app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:f
 
 app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/preview', (req, res, next) => {
   try {
+    enforceDownloadOrigin(req)
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
     if (!task) return res.status(404).json({ message: '管理链接不存在' })
     const submission = task.submissions.find((item) => item.id === req.params.submissionId)
     const file = submission?.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
+    assertFilesDownloadable([file])
     sendPreviewFile(res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
   } catch (error) {
     next(error)
@@ -762,15 +983,19 @@ const server = app.listen(serverPort, '0.0.0.0', () => {
   console.log(`鲲穹服务 listening on http://localhost:${serverPort}`)
 })
 
-const cleanupTimer = setInterval(cleanupExpired, 60 * 1000)
+const cleanupTimer = setInterval(() => {
+  cleanupExpired()
+  cleanupUploadSessions()
+}, 60 * 1000)
 cleanupTimer.unref()
 cleanupExpired()
+cleanupUploadSessions()
 
 function loadMetadata() {
   try {
     return JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
   } catch {
-    return { shares: [], collections: [], sessions: [], records: {}, users: {}, messages: {}, notificationSettings: {}, verificationCodes: [] }
+    return { shares: [], collections: [], sessions: [], records: {}, users: {}, messages: {}, notificationSettings: {}, verificationCodes: [], auditLogs: [], organizations: [], systemConfig: DEFAULT_SYSTEM_CONFIG }
   }
 }
 
@@ -805,11 +1030,359 @@ function normalizeMetadata(value = {}) {
     messages: normalizeAccountMessageStore(value.messages),
     notificationSettings: normalizeNotificationSettingsStore(value.notificationSettings),
     verificationCodes: normalizeVerificationCodes(value.verificationCodes),
+    auditLogs: normalizeAuditLogs(value.auditLogs),
+    organizations: normalizeOrganizations(value.organizations),
+    systemConfig: normalizeSystemConfig(value.systemConfig),
   }
 }
 
 function persistMetadata() {
   fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf8')
+}
+
+function normalizeSystemConfig(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const maxShareDays = Number(source.maxShareDays)
+  const auditLogRetentionDays = Number(source.auditLogRetentionDays)
+  const orphanGraceHours = Number(source.orphanGraceHours)
+  return {
+    maintenanceMode: Boolean(source.maintenanceMode),
+    maxShareDays: Number.isFinite(maxShareDays) ? Math.min(365, Math.max(1, Math.floor(maxShareDays))) : DEFAULT_SYSTEM_CONFIG.maxShareDays,
+    auditLogRetentionDays: Number.isFinite(auditLogRetentionDays) ? Math.min(3650, Math.max(1, Math.floor(auditLogRetentionDays))) : DEFAULT_SYSTEM_CONFIG.auditLogRetentionDays,
+    orphanGraceHours: Number.isFinite(orphanGraceHours) ? Math.min(720, Math.max(1, Math.floor(orphanGraceHours))) : DEFAULT_SYSTEM_CONFIG.orphanGraceHours,
+  }
+}
+
+function normalizeAuditLogs(value = []) {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => ({
+    id: trimRecordString(item?.id, 80) || createToken(10),
+    type: trimRecordString(item?.type, 30) || 'access',
+    action: trimRecordString(item?.action, 180),
+    status: normalizeNonNegativeInteger(item?.status),
+    durationMs: normalizeNonNegativeInteger(item?.durationMs),
+    userId: trimRecordString(item?.userId, 120),
+    targetId: trimRecordString(item?.targetId, 160),
+    ip: trimRecordString(item?.ip, 80),
+    details: item?.details && typeof item.details === 'object' ? item.details : {},
+    createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
+  })).filter((item) => item.action).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, MAX_AUDIT_LOGS)
+}
+
+function normalizeOrganizations(value = []) {
+  const source = Array.isArray(value)
+    ? Object.fromEntries(value.map((item) => [item?.id, item]))
+    : value && typeof value === 'object' ? value : {}
+  const organizations = {}
+  for (const item of Object.values(source)) {
+    if (!item?.id) continue
+    const members = Array.isArray(item.members) ? item.members.map((member) => ({
+      id: trimRecordString(member?.id, 80) || createToken(10),
+      userId: trimRecordString(member?.userId, 120),
+      email: normalizeEmailValue(member?.email),
+      phone: normalizePhoneValue(member?.phone),
+      displayName: trimRecordString(member?.displayName, 80) || '团队成员',
+      role: member?.role === 'owner' ? 'owner' : 'member',
+      status: member?.status === 'invited' ? 'invited' : 'active',
+      joinedAt: normalizeRecordDate(member?.joinedAt),
+      invitedAt: normalizeRecordDate(member?.invitedAt),
+    })) : []
+    organizations[item.id] = {
+      id: trimRecordString(item.id, 80),
+      slug: trimRecordString(item.slug, 80) || `team-${createToken(6)}`,
+      name: trimRecordString(item.name, 80) || '未命名团队',
+      ownerUserId: trimRecordString(item.ownerUserId, 120),
+      createdAt: normalizeRecordDate(item.createdAt) || new Date().toISOString(),
+      updatedAt: normalizeRecordDate(item.updatedAt) || new Date().toISOString(),
+      members,
+    }
+  }
+  return organizations
+}
+
+function recordAuditLog(entry = {}) {
+  if (!metadata.auditLogs) metadata.auditLogs = []
+  metadata.auditLogs.unshift({
+    id: createToken(12),
+    type: trimRecordString(entry.type, 30) || 'access',
+    action: trimRecordString(entry.action, 180),
+    status: normalizeNonNegativeInteger(entry.status),
+    durationMs: normalizeNonNegativeInteger(entry.durationMs),
+    userId: trimRecordString(entry.userId, 120),
+    targetId: trimRecordString(entry.targetId, 160),
+    ip: trimRecordString(entry.ip, 80),
+    details: entry.details && typeof entry.details === 'object' ? entry.details : {},
+    createdAt: new Date().toISOString(),
+  })
+  metadata.auditLogs = normalizeAuditLogs(metadata.auditLogs)
+  persistMetadata()
+}
+
+function requestIp(req) {
+  const raw = firstHeader(req.get('x-forwarded-for')) || req.socket?.remoteAddress || ''
+  return hashSecret(raw).slice(0, 16)
+}
+
+function sanitizeAuditPath(value = '') {
+  return String(value)
+    .replace(/\/manage\/[^/]+/g, '/manage/[token]')
+    .replace(/\/(shares|collections|upload-sessions)\/[^/]+/g, '/$1/[token]')
+    .replace(/\/(share|collect)\/[^/]+/g, '/$1/[token]')
+}
+
+function normalizePlanId(value) {
+  const id = String(value || '').trim().toLowerCase()
+  return Object.prototype.hasOwnProperty.call(ACCOUNT_PLANS, id) ? id : 'free'
+}
+
+function accountPlanForUser(user = {}) {
+  return ACCOUNT_PLANS[normalizePlanId(user.planId)] || ACCOUNT_PLANS.free
+}
+
+function accountEffectivePlanForUser(user = {}) {
+  const userId = typeof user === 'string' ? user : user?.id
+  const organization = accountOrganizationForUser(userId)
+  if (organization && organization.ownerUserId !== userId) {
+    return accountPlanForUser(accountUserById(organization.ownerUserId) || {})
+  }
+  return accountPlanForUser(typeof user === 'string' ? accountUserById(user) || {} : user)
+}
+
+function isAdminUser(user = {}) {
+  return Boolean(user?.id && ADMIN_USER_IDS.has(String(user.id)))
+}
+
+function requireAdminSession(req, res) {
+  const session = authSessionFromRequest(req)
+  if (!session) {
+    res.status(401).json({ message: '请先登录管理员账号' })
+    return null
+  }
+  if (!isAdminUser(session.user)) {
+    res.status(403).json({ message: '当前账号没有后台管理权限' })
+    return null
+  }
+  return session
+}
+
+function assertServiceWritable(req) {
+  if (!normalizeSystemConfig(metadata.systemConfig).maintenanceMode) return
+  if (isAdminUser(authSessionFromRequest(req)?.user)) return
+  throw httpError(503, '系统维护中，暂时不能创建或提交文件')
+}
+
+function publicOrganization(organization, viewerId = '') {
+  if (!organization) return null
+  return {
+    id: organization.id,
+    slug: organization.slug,
+    name: organization.name,
+    ownerUserId: organization.ownerUserId,
+    createdAt: organization.createdAt,
+    updatedAt: organization.updatedAt,
+    members: organization.members.map((member) => ({
+      ...member,
+      canRemove: member.userId !== organization.ownerUserId && organization.ownerUserId === viewerId,
+    })),
+  }
+}
+
+function accountOrganizationForUser(userId) {
+  const key = String(userId || '')
+  if (!key) return null
+  return Object.values(metadata.organizations || {}).find((organization) => organization.ownerUserId === key || organization.members.some((member) => member.userId === key)) || null
+}
+
+function isOrganizationManager(organization, userId) {
+  return organization?.ownerUserId === userId
+}
+
+function enterpriseOrganizationForUser(userId) {
+  const organization = accountOrganizationForUser(userId)
+  if (!organization || !accountEffectivePlanForUser(organization.ownerUserId).team) return null
+  return organization
+}
+
+function createOrganization(user, name) {
+  const id = createToken(12)
+  const organization = {
+    id,
+    slug: `team-${createToken(6)}`,
+    name,
+    ownerUserId: user.id,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    members: [{
+      id: createToken(12),
+      userId: user.id,
+      email: normalizeEmailValue(user.email),
+      phone: normalizePhoneValue(user.phone),
+      displayName: displayAccountName(user),
+      role: 'owner',
+      status: 'active',
+      joinedAt: new Date().toISOString(),
+      invitedAt: null,
+    }],
+  }
+  metadata.organizations[id] = organization
+  const account = accountUserById(user.id) || user
+  account.organizationId = id
+  account.organizationRole = 'owner'
+  account.updatedAt = new Date().toISOString()
+  upsertAccountUser(account)
+  syncAccountUserSessions(account)
+  return organization
+}
+
+function accountWorkspacePayload(user) {
+  const stored = accountUserById(user.id) || user
+  const organization = accountOrganizationForUser(user.id)
+  return {
+    plan: accountEffectivePlanForUser(stored),
+    plans: Object.values(ACCOUNT_PLANS),
+    capacity: accountUsageForUser(user.id),
+    organization: publicOrganization(organization, user.id),
+    canManage: Boolean(organization && isOrganizationManager(organization, user.id)),
+  }
+}
+
+function adminUserSummary(user) {
+  const plan = accountEffectivePlanForUser(user)
+  const usage = accountUsageForUser(user.id)
+  const organization = accountOrganizationForUser(user.id)
+  return {
+    id: user.id,
+    username: user.username,
+    nickname: user.nickname,
+    email: user.email,
+    phone: user.phone,
+    status: user.status || 'active',
+    planId: plan.id,
+    planLabel: plan.label,
+    organizationName: organization?.name || '',
+    usageBytes: usage.usedBytes,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  }
+}
+
+function adminResourceSummary(kind, item) {
+  const files = kind === 'share'
+    ? item.files || []
+    : (item.submissions || []).flatMap((submission) => submission.files || [])
+  const reviewStatus = files.some((file) => file.reviewStatus === 'blocked')
+    ? '已拦截'
+    : files.some((file) => file.reviewStatus === 'review')
+      ? '待审核'
+      : '正常'
+  return {
+    id: item.id || item.token,
+    kind,
+    name: kind === 'share' ? (files[0]?.name || '文件分享') : (item.title || '收集任务'),
+    ownerUserId: item.ownerUserId || '',
+    status: item.status || 'active',
+    fileCount: files.length,
+    totalSize: fileListSize(files),
+    createdAt: item.createdAt,
+    expiresAt: kind === 'share' ? item.expiresAt : item.deadline,
+    reviewStatus,
+  }
+}
+
+function findAdminResource(kind, id) {
+  const resourceKind = String(kind)
+  const resourceId = String(id || '')
+  if (resourceKind === 'share') {
+    const item = metadata.shares.find((share) => share.id === resourceId || share.manageToken === resourceId)
+    return item ? { kind: 'share', id: item.id, item } : null
+  }
+  if (resourceKind === 'collection') {
+    const item = metadata.collections.find((task) => task.id === resourceId || task.token === resourceId || task.manageToken === resourceId)
+    return item ? { kind: 'collection', id: item.id || item.token, item } : null
+  }
+  return null
+}
+
+function markResourceReviewStatus(kind, item, status) {
+  const files = kind === 'share'
+    ? item.files || []
+    : (item.submissions || []).flatMap((submission) => submission.files || [])
+  for (const file of files) {
+    file.reviewStatus = status
+  }
+}
+
+function buildAdminOverview() {
+  const users = Object.values(metadata.users || {}).map(adminUserSummary).sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())
+  const resources = [
+    ...metadata.shares.map((item) => adminResourceSummary('share', item)),
+    ...metadata.collections.map((item) => adminResourceSummary('collection', item)),
+  ].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+  const totalBytes = resources.reduce((sum, item) => sum + item.totalSize, 0)
+  return {
+    stats: {
+      users: users.length,
+      activeUsers: users.filter((user) => user.status !== 'disabled').length,
+      shares: metadata.shares.length,
+      collections: metadata.collections.length,
+      files: resources.reduce((sum, item) => sum + item.fileCount, 0),
+      totalBytes,
+      activeResources: resources.filter((item) => item.status === 'active').length,
+      reviewResources: resources.filter((item) => item.reviewStatus === '待审核').length,
+    },
+    users: users.slice(0, 200),
+    resources: resources.slice(0, 200),
+    auditLogs: normalizeAuditLogs(metadata.auditLogs).slice(0, 100),
+    config: normalizeSystemConfig(metadata.systemConfig),
+    plans: Object.values(ACCOUNT_PLANS),
+  }
+}
+
+function cleanupStorageOrphans() {
+  const graceMs = normalizeSystemConfig(metadata.systemConfig).orphanGraceHours * 3600000
+  const cutoff = Date.now() - graceMs
+  const validShareIds = new Set(metadata.shares.map((item) => item.id))
+  const validCollectionIds = new Set(metadata.collections.map((item) => item.id))
+  const removed = { shares: 0, collections: 0 }
+  for (const entry of safeDirectoryEntries(filesRoot)) {
+    const target = path.join(filesRoot, entry)
+    if (!validShareIds.has(entry) && fs.statSync(target).mtimeMs < cutoff) {
+      removeDirectory(target)
+      removed.shares += 1
+    }
+  }
+  for (const entry of safeDirectoryEntries(collectionsRoot)) {
+    const target = path.join(collectionsRoot, entry)
+    if (!validCollectionIds.has(entry) && fs.statSync(target).mtimeMs < cutoff) {
+      removeDirectory(target)
+      removed.collections += 1
+    }
+  }
+  return removed
+}
+
+function safeDirectoryEntries(directory) {
+  try {
+    return fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+  } catch {
+    return []
+  }
+}
+
+function runMaintenanceCleanup() {
+  const before = { shares: metadata.shares.length, collections: metadata.collections.length, auditLogs: metadata.auditLogs.length }
+  cleanupExpired()
+  const orphaned = cleanupStorageOrphans()
+  const retentionMs = normalizeSystemConfig(metadata.systemConfig).auditLogRetentionDays * 86400000
+  const cutoff = Date.now() - retentionMs
+  metadata.auditLogs = normalizeAuditLogs(metadata.auditLogs).filter((item) => new Date(item.createdAt).getTime() >= cutoff)
+  persistMetadata()
+  return {
+    expiredShares: Math.max(0, before.shares - metadata.shares.length),
+    expiredCollections: Math.max(0, before.collections - metadata.collections.length),
+    orphaned,
+    removedAuditLogs: Math.max(0, before.auditLogs - metadata.auditLogs.length),
+  }
 }
 
 function cleanupExpired() {
@@ -844,7 +1417,17 @@ function cleanupExpired() {
   if (changed) persistMetadata()
 }
 
+function cleanupUploadSessions() {
+  const cutoff = Date.now() - UPLOAD_SESSION_TTL_MS
+  for (const [sessionId, session] of uploadSessions.entries()) {
+    if (new Date(session.createdAt).getTime() > cutoff) continue
+    uploadSessions.delete(sessionId)
+    removeDirectory(session.directory)
+  }
+}
+
 function publicShare(share, req, includeFiles = true, includeManage = false) {
+  const organization = share.ownerUserId ? enterpriseOrganizationForUser(share.ownerUserId) : null
   const payload = {
     id: share.id,
     code: share.code,
@@ -857,6 +1440,7 @@ function publicShare(share, req, includeFiles = true, includeManage = false) {
     shareUrl: `${getOrigin(req)}/share/${share.id}`,
     downloadUrl: `${getOrigin(req)}/api/shares/${share.id}/download`,
     qrDataUrl: share.qrDataUrl,
+    enterpriseUrl: organization ? `${getOrigin(req)}/e/${organization.slug}/share/${share.id}` : '',
     requiresPassword: Boolean(share.passwordHash),
     deliveryRecipients: share.deliveryRecipients || [],
     notificationLog: share.notificationLog || [],
@@ -870,6 +1454,7 @@ function publicShare(share, req, includeFiles = true, includeManage = false) {
 }
 
 function publicCollection(task, req, includeManage = false) {
+  const organization = task.ownerUserId ? enterpriseOrganizationForUser(task.ownerUserId) : null
   const payload = {
     id: task.id,
     token: task.token,
@@ -882,12 +1467,19 @@ function publicCollection(task, req, includeManage = false) {
     submissionCount: task.submissions.length,
     publicUrl: `${getOrigin(req)}/collect/${task.token}`,
     qrDataUrl: task.qrDataUrl,
+    enterpriseUrl: organization ? `${getOrigin(req)}/e/${organization.slug}/collect/${task.token}` : '',
   }
   if (includeManage) {
     payload.manageToken = task.manageToken
     payload.manageUrl = `${getOrigin(req)}/collect/manage/${task.manageToken}`
   }
   return payload
+}
+
+function validateEnterpriseSlug(item, slug) {
+  if (!slug) return true
+  const organization = item?.ownerUserId ? enterpriseOrganizationForUser(item.ownerUserId) : null
+  return Boolean(organization && organization.slug === String(slug))
 }
 
 async function ensureCollectionQrDataUrl(task, req) {
@@ -909,6 +1501,54 @@ function validateShareRequest(share, req, options = {}) {
     ...options,
     hasAccessCookie: hasShareAccessCookie(req, share),
   })
+}
+
+function fileSafetyVerdict(file = {}) {
+  const name = String(file.originalname || file.name || file.relativePath || '').trim()
+  const extension = path.extname(name).toLowerCase()
+  if (BLOCKED_FILE_EXTENSIONS.has(extension)) {
+    return { status: 'blocked', message: `出于安全原因，暂不支持上传 ${extension} 文件` }
+  }
+  if (REVIEW_FILE_EXTENSIONS.has(extension)) {
+    return { status: 'review', message: `${extension} 文件将进入人工审核队列` }
+  }
+  return { status: 'approved', message: '' }
+}
+
+function assertFilesDownloadable(files = []) {
+  if (files.some((file) => file?.reviewStatus === 'blocked')) {
+    throw httpError(403, '文件已被安全策略拦截，无法下载或预览')
+  }
+  if (files.some((file) => file?.reviewStatus === 'review')) {
+    throw httpError(423, '文件正在安全审核，审核通过后才可下载或预览')
+  }
+}
+
+function assertSafeUploadFiles(files = []) {
+  for (const file of files) {
+    const verdict = fileSafetyVerdict(file)
+    if (verdict.status === 'blocked') {
+      recordAuditLog({ type: 'security', action: '拦截高风险文件', targetId: file.originalname || file.name, details: { extension: path.extname(file.originalname || file.name || '').toLowerCase() } })
+      throw httpError(415, verdict.message)
+    }
+    file.reviewStatus = verdict.status
+  }
+}
+
+function enforceDownloadOrigin(req) {
+  const requestOrigin = getRequestOrigin(req)
+  const allowedOrigins = new Set([requestOrigin, configuredAppUrl, 'http://localhost:4173', 'http://127.0.0.1:4173', ...configuredCallbackUrls].filter(Boolean).map((value) => {
+    try { return new URL(value).origin } catch { return '' }
+  }).filter(Boolean))
+  for (const header of [req.get('origin'), req.get('referer')]) {
+    if (!header) continue
+    try {
+      if (!allowedOrigins.has(new URL(header).origin)) throw httpError(403, '下载来源不受信任，请从鲲穹页面发起下载')
+    } catch (error) {
+      if (error.status) throw error
+      throw httpError(403, '下载来源不受信任，请从鲲穹页面发起下载')
+    }
+  }
 }
 
 function setShareAccessCookie(res, req, share) {
@@ -964,7 +1604,7 @@ function sendPreviewFile(res, next, filePath, file) {
   })
 }
 
-function sendDownloadFile(res, next, filePath, file) {
+function sendDownloadFile(req, res, next, filePath, file) {
   if (!fs.existsSync(filePath)) return res.status(410).json({ message: '文件已清理，无法下载' })
   const stat = fs.statSync(filePath)
   res.setHeader('Accept-Ranges', 'bytes')
@@ -972,11 +1612,29 @@ function sendDownloadFile(res, next, filePath, file) {
   res.setHeader('X-Download-Resume', 'range')
   res.setHeader('X-Download-Total-Size', String(stat.size))
   if (file.mimeType) res.type(file.mimeType)
-  res.download(filePath, file.name || path.basename(filePath), (error) => {
-    if (!error) return
-    if (!res.headersSent) next(error)
-    else console.error(error)
-  })
+  res.setHeader('Content-Disposition', contentDisposition('attachment', file.name || path.basename(filePath)))
+  const range = req.get('range')
+  if (!range) {
+    res.setHeader('Content-Length', String(stat.size))
+    fs.createReadStream(filePath).on('error', next).pipe(res)
+    return
+  }
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
+  if (!match || (match[1] === '' && match[2] === '')) {
+    res.setHeader('Content-Range', `bytes */${stat.size}`)
+    return res.status(416).end()
+  }
+  let start = match[1] === '' ? Math.max(0, stat.size - Number(match[2])) : Number(match[1])
+  let end = match[2] === '' ? stat.size - 1 : Number(match[2])
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= stat.size) {
+    res.setHeader('Content-Range', `bytes */${stat.size}`)
+    return res.status(416).end()
+  }
+  end = Math.min(end, stat.size - 1)
+  res.status(206)
+  res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`)
+  res.setHeader('Content-Length', String(end - start + 1))
+  fs.createReadStream(filePath, { start, end }).on('error', next).pipe(res)
 }
 
 async function streamZip(res, next, filename, entries) {
@@ -1025,7 +1683,7 @@ function previewKind(file = {}) {
   const contentType = fileContentType(file)
   const extension = path.extname(file.name || file.relativePath || '').toLowerCase()
   if (contentType === 'application/pdf' || extension === '.pdf') return 'pdf'
-  if (contentType.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].includes(extension)) return 'image'
+  if ((contentType.startsWith('image/') && contentType !== 'image/svg+xml') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(extension)) return 'image'
   if (contentType.startsWith('video/') || ['.mp4', '.webm', '.ogv', '.mov', '.m4v'].includes(extension)) return 'video'
   if (contentType.startsWith('audio/') || ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.oga', '.ogg'].includes(extension)) return 'audio'
   return ''
@@ -1086,6 +1744,10 @@ function publicUser(user = {}) {
     providerAvatar,
     provider,
     loginMethods: mergeLoginMethods(user.loginMethods, provider ? ['oauth'] : []),
+    planId: user.planId || null,
+    organizationId: trimRecordString(user.organizationId, 80),
+    organizationRole: user.organizationRole === 'owner' ? 'owner' : user.organizationRole === 'member' ? 'member' : '',
+    status: user.status === 'disabled' ? 'disabled' : 'active',
     createdAt: normalizeRecordDate(user.createdAt),
     updatedAt: normalizeRecordDate(user.updatedAt),
   }
@@ -1097,6 +1759,9 @@ function publicAccountUser(user = {}) {
     ...publicUser(stored),
     capacity: accountUsageForUser(stored.id),
     benefits: accountBenefitsForUser(stored),
+    plan: accountEffectivePlanForUser(stored),
+    isAdmin: isAdminUser(stored),
+    organization: publicOrganization(accountOrganizationForUser(stored.id), stored.id),
     notificationSettings: accountNotificationSettingsForUser(stored.id),
   }
 }
@@ -1132,6 +1797,10 @@ function normalizeAccountUser(user = {}) {
     ...base,
     id,
     loginMethods: mergeLoginMethods(base.loginMethods, user.loginMethods),
+    planId: normalizePlanId(user.planId || base.planId || 'free'),
+    organizationId: trimRecordString(user.organizationId || base.organizationId, 80),
+    organizationRole: user.organizationRole === 'owner' || user.organizationRole === 'member' ? user.organizationRole : '',
+    status: user.status === 'disabled' ? 'disabled' : 'active',
     createdAt: normalizeRecordDate(user.createdAt) || now,
     updatedAt: normalizeRecordDate(user.updatedAt) || now,
   }
@@ -1152,6 +1821,10 @@ function mergeAccountUser(existing = null, incoming = {}) {
     providerAvatar: normalized.providerAvatar || existing.providerAvatar,
     provider: normalized.provider || existing.provider,
     loginMethods: mergeLoginMethods(existing.loginMethods, normalized.loginMethods),
+    planId: existing.planId || normalized.planId || 'free',
+    organizationId: normalized.organizationId || existing.organizationId,
+    organizationRole: normalized.organizationRole || existing.organizationRole,
+    status: existing.status === 'disabled' ? 'disabled' : normalized.status || existing.status || 'active',
     createdAt: existing.createdAt || normalized.createdAt,
     updatedAt: new Date().toISOString(),
   }
@@ -1273,8 +1946,15 @@ function verifyAuthCode(target, value, scene) {
 
 function accountUsageForUser(userId) {
   const key = accountRecordOwnerKey(userId)
-  const ownedShares = metadata.shares.filter((share) => share.ownerUserId === key && share.status === 'active')
-  const ownedCollections = metadata.collections.filter((task) => task.ownerUserId === key && !task.cleanedAt)
+  const user = accountUserById(key) || {}
+  const organization = accountOrganizationForUser(key)
+  const memberIds = organization
+    ? new Set(organization.members.map((member) => member.userId).filter(Boolean))
+    : new Set([key])
+  memberIds.add(organization?.ownerUserId || key)
+  const plan = accountEffectivePlanForUser(user)
+  const ownedShares = metadata.shares.filter((share) => memberIds.has(share.ownerUserId) && share.status === 'active')
+  const ownedCollections = metadata.collections.filter((task) => memberIds.has(task.ownerUserId) && !task.cleanedAt)
   const shareBytes = ownedShares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const collectionBytes = ownedCollections.reduce((sum, task) => sum + task.submissions.reduce((inner, submission) => inner + fileListSize(submission.files), 0), 0)
   const usedBytes = shareBytes + collectionBytes
@@ -1282,9 +1962,9 @@ function accountUsageForUser(userId) {
     + ownedCollections.reduce((sum, task) => sum + task.submissions.reduce((inner, submission) => inner + (submission.files?.length || 0), 0), 0)
   return {
     usedBytes,
-    totalBytes: ACCOUNT_TOTAL_STORAGE_BYTES,
-    remainingBytes: Math.max(ACCOUNT_TOTAL_STORAGE_BYTES - usedBytes, 0),
-    usageRatio: ACCOUNT_TOTAL_STORAGE_BYTES ? Math.min(1, usedBytes / ACCOUNT_TOTAL_STORAGE_BYTES) : 0,
+    totalBytes: plan.totalBytes,
+    remainingBytes: Math.max(plan.totalBytes - usedBytes, 0),
+    usageRatio: plan.totalBytes ? Math.min(1, usedBytes / plan.totalBytes) : 0,
     shareBytes,
     collectionBytes,
     shareCount: ownedShares.length,
@@ -1294,14 +1974,32 @@ function accountUsageForUser(userId) {
   }
 }
 
-function accountBenefitsForUser() {
+function assertAccountCapacity(user, incomingBytes) {
+  if (!user?.id) return
+  const usage = accountUsageForUser(user.id)
+  if (usage.usedBytes + Number(incomingBytes || 0) > usage.totalBytes) {
+    throw httpError(507, `账号容量不足，当前${accountPlanForUser(user).label}剩余 ${formatByteSize(usage.remainingBytes)}`)
+  }
+}
+
+function formatByteSize(bytes) {
+  const value = Number(bytes || 0)
+  if (value >= 1024 ** 4) return `${(value / 1024 ** 4).toFixed(1)} TB`
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`
+  return `${Math.max(0, Math.round(value / 1024))} KB`
+}
+
+function accountBenefitsForUser(user = {}) {
+  const plan = accountEffectivePlanForUser(user)
   return [
     { label: '鲲穹登录', detail: '继续使用官方统一登录完成账号认证', enabled: true },
     { label: '跨设备记录', detail: '收发记录和文件中心跟随账号同步', enabled: true },
     { label: '站内消息', detail: '分享、下载和收集动态进入消息中心', enabled: true },
     { label: '账号绑定', detail: '可绑定邮箱或手机号用于消息匹配', enabled: true },
-    { label: '账号容量', detail: '当前基础权益 20 GB 临时空间', enabled: true },
-    { label: '永久保存', detail: '会员权益，当前版本暂未开放', enabled: false },
+    { label: '账号容量', detail: `${plan.label}提供 ${formatByteSize(plan.totalBytes)} 空间`, enabled: true },
+    { label: '永久保存', detail: plan.permanent ? '当前权益支持永久保存分享' : '升级会员后可开启永久保存', enabled: plan.permanent },
+    { label: '团队空间', detail: plan.team ? '可创建团队空间并管理成员' : '团队空间需要团队版或企业版', enabled: plan.team },
   ]
 }
 
@@ -1755,6 +2453,10 @@ function authSessionFromRequest(req) {
     removeAuthSession(sessionId)
     return null
   }
+  if (accountUserById(session.user?.id)?.status === 'disabled') {
+    removeAuthSession(sessionId)
+    return null
+  }
   const storedUser = accountUserById(session.user?.id)
   if (storedUser) session.user = publicUser(storedUser)
   return session
@@ -1890,6 +2592,8 @@ function publicSubmission(submission) {
 
 async function createShareFromTempFiles(tempFiles, options, req) {
   const ownerSession = authSessionFromRequest(req)
+  const totalSize = tempFiles.reduce((sum, file) => sum + Number(file.size || 0), 0)
+  assertAccountCapacity(ownerSession?.user, totalSize)
   const shareToken = createToken(10)
   const shareDirectory = path.join(filesRoot, shareToken)
   fs.mkdirSync(shareDirectory, { recursive: true })
@@ -1903,6 +2607,7 @@ async function createShareFromTempFiles(tempFiles, options, req) {
       storedName,
       size: Number(file.size || 0),
       mimeType: file.mimeType || 'application/octet-stream',
+      reviewStatus: file.reviewStatus || fileSafetyVerdict(file).status,
     }
   })
   const expiryDays = String(options.expiryDays || '3')
@@ -1930,9 +2635,14 @@ async function createShareFromTempFiles(tempFiles, options, req) {
   return share
 }
 
-function readShareOptions(body = {}) {
+function readShareOptions(body = {}, user = null) {
+  const requestedExpiryDays = String(body.expiryDays || '3')
+  const maxShareDays = normalizeSystemConfig(metadata.systemConfig).maxShareDays
+  if (requestedExpiryDays === '0' && !accountEffectivePlanForUser(user || {}).permanent) {
+    throw httpError(403, '永久保存需要会员版或更高权益')
+  }
   return {
-    expiryDays: String(body.expiryDays || '3'),
+    expiryDays: requestedExpiryDays === '0' ? '0' : String(Math.min(maxShareDays, Math.max(1, Number(requestedExpiryDays) || 3))),
     downloadLimit: String(body.downloadLimit || 'unlimited'),
     password: String(body.password || ''),
     codeLength: Number(body.codeLength || 4),
@@ -1950,9 +2660,16 @@ function findShareByManageToken(manageToken) {
   return metadata.shares.find((share) => share.manageToken === String(manageToken || ''))
 }
 
-function applyShareUpdate(share, body = {}) {
+function applyShareUpdate(share, body = {}, ownerUser = null) {
   if (Object.prototype.hasOwnProperty.call(body, 'expiresAt')) {
-    share.expiresAt = normalizeExpiryInput(body.expiresAt, '分享有效期')
+    const expiresAt = normalizeExpiryInput(body.expiresAt, '分享有效期')
+    const plan = accountEffectivePlanForUser(ownerUser || {})
+    if (!expiresAt && !plan.permanent) throw httpError(403, '永久保存需要会员版或更高权益')
+    if (expiresAt && !plan.permanent) {
+      const maxDate = Date.now() + normalizeSystemConfig(metadata.systemConfig).maxShareDays * 86400000
+      if (new Date(expiresAt).getTime() > maxDate) throw httpError(400, '当前权益不能超过系统设置的最长有效期')
+    }
+    share.expiresAt = expiresAt
   }
   if (Object.prototype.hasOwnProperty.call(body, 'downloadLimit')) {
     share.downloadLimit = normalizeDownloadLimit(body.downloadLimit)
@@ -2049,6 +2766,12 @@ function validateShare(share, password, { allowMissingPassword = false, hasAcces
   }
   if (share.downloadLimit && share.downloadCount >= share.downloadLimit) {
     return { ok: false, status: 410, message: '下载次数已用完' }
+  }
+  if (share.files?.some((file) => file.reviewStatus === 'blocked')) {
+    return { ok: false, status: 403, message: '文件已被安全策略拦截，无法访问' }
+  }
+  if (share.files?.some((file) => file.reviewStatus === 'review')) {
+    return { ok: false, status: 423, message: '文件正在安全审核，审核通过后才可访问' }
   }
   if (hasAccessCookie && share.passwordHash) return { ok: true }
   if (allowMissingPassword && share.passwordHash && !password) return { ok: true }
