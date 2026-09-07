@@ -573,12 +573,17 @@ app.post('/api/collections', async (req, res, next) => {
   }
 })
 
-app.get('/api/collections/:token', (req, res) => {
-  const task = metadata.collections.find((item) => item.token === req.params.token)
-  if (!task) return res.status(404).json({ message: '收集任务不存在' })
-  const access = validateCollection(task)
-  if (!access.ok) return res.status(access.status).json({ message: access.message })
-  res.json({ collection: publicCollection(task, req) })
+app.get('/api/collections/:token', async (req, res, next) => {
+  try {
+    const task = metadata.collections.find((item) => item.token === req.params.token)
+    if (!task) return res.status(404).json({ message: '收集任务不存在' })
+    const access = validateCollection(task)
+    if (!access.ok) return res.status(access.status).json({ message: access.message })
+    if (await ensureCollectionQrDataUrl(task, req)) persistMetadata()
+    res.json({ collection: publicCollection(task, req) })
+  } catch (error) {
+    next(error)
+  }
 })
 
 app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES), (req, res, next) => {
@@ -628,17 +633,23 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
   }
 })
 
-app.get('/api/collections/manage/:manageToken', (req, res) => {
-  const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
-  if (!task) return res.status(404).json({ message: '管理链接不存在' })
-  res.json({ collection: managerCollection(task, req) })
+app.get('/api/collections/manage/:manageToken', async (req, res, next) => {
+  try {
+    const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
+    if (!task) return res.status(404).json({ message: '管理链接不存在' })
+    if (await ensureCollectionQrDataUrl(task, req)) persistMetadata()
+    res.json({ collection: managerCollection(task, req) })
+  } catch (error) {
+    next(error)
+  }
 })
 
-app.patch('/api/collections/manage/:manageToken', (req, res, next) => {
+app.patch('/api/collections/manage/:manageToken', async (req, res, next) => {
   try {
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
     if (!task) return res.status(404).json({ message: '管理链接不存在' })
     applyCollectionUpdate(task, req.body || {})
+    await ensureCollectionQrDataUrl(task, req)
     task.updatedAt = new Date().toISOString()
     persistMetadata()
     res.json({ collection: managerCollection(task, req) })
@@ -877,6 +888,12 @@ function publicCollection(task, req, includeManage = false) {
     payload.manageUrl = `${getOrigin(req)}/collect/manage/${task.manageToken}`
   }
   return payload
+}
+
+async function ensureCollectionQrDataUrl(task, req) {
+  if (!task || task.qrDataUrl) return false
+  task.qrDataUrl = await QRCode.toDataURL(`${getOrigin(req)}/collect/${task.token}`, { width: 180, margin: 1 })
+  return true
 }
 
 function managerCollection(task, req) {

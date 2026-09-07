@@ -34,6 +34,7 @@ import {
   MoreHorizontal,
   Pause,
   Play,
+  QrCode,
   Search,
   RefreshCw,
   RotateCcw,
@@ -88,12 +89,43 @@ function App() {
   return <WorkspaceApp />
 }
 
+function useConfirmDialog() {
+  const [confirmState, setConfirmState] = useState(null)
+  const resolverRef = useRef(null)
+
+  useEffect(() => () => {
+    if (resolverRef.current) resolverRef.current(false)
+  }, [])
+
+  const requestConfirm = (options = {}) => new Promise((resolve) => {
+    resolverRef.current = resolve
+    setConfirmState({
+      eyebrow: '操作确认',
+      confirmText: '确定',
+      cancelText: '取消',
+      tone: 'default',
+      ...options,
+    })
+  })
+
+  const settleConfirm = (confirmed) => {
+    const resolve = resolverRef.current
+    resolverRef.current = null
+    setConfirmState(null)
+    resolve?.(confirmed)
+  }
+
+  return { confirmState, requestConfirm, settleConfirm }
+}
+
 function WorkspaceApp() {
-  const isSettingsRoute = window.location.pathname.startsWith('/settings')
+  const [routePath, setRoutePath] = useState(() => window.location.pathname)
+  const isSettingsRoute = routePath.startsWith('/settings')
   const inputRef = useRef(null)
   const folderInputRef = useRef(null)
   const uploadRef = useRef(createUploadSessionState())
   const recordSyncUserRef = useRef('')
+  const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
   const [activeView, setActiveView] = useState(() => new URLSearchParams(window.location.search).get('view') || 'send')
   const [files, setFiles] = useState([])
   const [isDragging, setIsDragging] = useState(false)
@@ -118,6 +150,18 @@ function WorkspaceApp() {
   const [authMenuOpen, setAuthMenuOpen] = useState(false)
   const [messageOpen, setMessageOpen] = useState(false)
   const [messages, setMessages] = useState([])
+
+  useEffect(() => {
+    const syncRoute = () => {
+      const nextPath = window.location.pathname
+      setRoutePath(nextPath)
+      if (!nextPath.startsWith('/settings')) {
+        setActiveView(new URLSearchParams(window.location.search).get('view') || 'send')
+      }
+    }
+    window.addEventListener('popstate', syncRoute)
+    return () => window.removeEventListener('popstate', syncRoute)
+  }, [])
 
   const refreshAuthUser = async () => {
     setAuthLoading(true)
@@ -321,16 +365,24 @@ function WorkspaceApp() {
 
   const navigateMainView = (view) => {
     if (isSettingsRoute) {
-      window.location.href = view === 'send' ? '/' : `/?view=${encodeURIComponent(view)}`
+      const nextUrl = view === 'send' ? '/' : `/?view=${encodeURIComponent(view)}`
+      window.history.pushState(null, '', nextUrl)
+      setRoutePath('/')
+      setActiveView(view)
       return
     }
     setActiveView(view)
   }
 
-  const openSettings = () => {
+  const navigateSettingsSection = (path) => {
     setAuthMenuOpen(false)
     setMessageOpen(false)
-    window.location.href = '/settings/profile'
+    if (path !== routePath) window.history.pushState(null, '', path)
+    setRoutePath(path)
+  }
+
+  const openSettings = () => {
+    navigateSettingsSection('/settings/profile')
   }
 
   const saveProfile = async (profile) => {
@@ -394,6 +446,12 @@ function WorkspaceApp() {
     return next
   }
 
+  const replaceRecordEntry = (record) => {
+    const normalized = normalizeRecord(record)
+    replaceRecords((current) => [normalized, ...normalizeRecords(current).filter((item) => item.id !== normalized.id)])
+    return normalized
+  }
+
   const createCollection = (form) => {
     const payload = { ...form, title: form.title.trim(), description: form.description.trim() }
     if (!payload.title) {
@@ -429,6 +487,7 @@ function WorkspaceApp() {
       }
       const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`)
       setCollectionManageData(data.collection)
+      replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
       setActiveView('collect')
     } catch (error) {
       setToast(error.message)
@@ -441,7 +500,7 @@ function WorkspaceApp() {
     if (!collectionManageData?.manageToken) return
     const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(collectionManageData.manageToken)}`)
     setCollectionManageData(data.collection)
-    saveRecord(createCollectionRecord(data.collection, 'my_collections'))
+    replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
   }
 
   const destroyCollection = async (target) => {
@@ -450,7 +509,13 @@ function WorkspaceApp() {
       setToast('这条收集任务没有可用的管理链接')
       return
     }
-    if (!window.confirm('销毁后，收集链接和已提交文件都将失效，确定销毁本次任务吗？')) return
+    const confirmed = await requestConfirm({
+      title: '销毁收集任务',
+      detail: '销毁后，收集链接和已提交文件都将失效。确定销毁本次任务吗？',
+      confirmText: '销毁任务',
+      tone: 'danger',
+    })
+    if (!confirmed) return
     try {
       await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`, { method: 'DELETE' })
       replaceRecords((current) => current.filter((record) => {
@@ -479,7 +544,8 @@ function WorkspaceApp() {
         return
       }
       const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`)
-      setManagementTarget({ kind: 'collection', record: normalized, data: data.collection })
+      const record = replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
+      setManagementTarget({ kind: 'collection', record, data: data.collection })
     } catch (error) {
       setToast(error.message)
     }
@@ -501,8 +567,7 @@ function WorkspaceApp() {
         return true
       }
       const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify(payload) })
-      const record = createCollectionRecord(data.collection, 'my_collections')
-      saveRecord(record)
+      const record = replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
       setCollectionManageData((current) => current?.manageToken === token ? data.collection : current)
       setManagementTarget({ kind: 'collection', record, data: data.collection })
       setToast('收集任务设置已保存')
@@ -523,7 +588,13 @@ function WorkspaceApp() {
     }
     const isShare = normalized.kind === 'share'
     const message = isShare ? '关闭后下载链接和取件码会立即失效，确定关闭这个分享吗？' : '关闭后提交者将不能继续上传，已收文件仍可在管理页查看，确定关闭这个收集任务吗？'
-    if (!window.confirm(message)) return false
+    const confirmed = await requestConfirm({
+      title: isShare ? '关闭分享链接' : '关闭收集任务',
+      detail: message,
+      confirmText: isShare ? '关闭分享' : '关闭收集',
+      tone: 'danger',
+    })
+    if (!confirmed) return false
     try {
       if (isShare) {
         const data = await apiRequest(`/api/shares/manage/${encodeURIComponent(manageToken)}`, { method: 'DELETE' })
@@ -534,8 +605,7 @@ function WorkspaceApp() {
         return true
       }
       const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`, { method: 'PATCH', body: JSON.stringify({ status: 'closed' }) })
-      const record = createCollectionRecord(data.collection, 'my_collections')
-      saveRecord(record)
+      const record = replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
       setCollectionManageData((current) => current?.manageToken === manageToken ? data.collection : current)
       setManagementTarget((current) => current?.kind === 'collection' && current.data.manageToken === manageToken ? { kind: 'collection', record, data: data.collection } : current)
       setToast('收集任务已关闭')
@@ -560,8 +630,7 @@ function WorkspaceApp() {
     }
     try {
       const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`, { method: 'PATCH', body: JSON.stringify({ ...patch, status: 'active' }) })
-      const record = createCollectionRecord(data.collection, 'my_collections')
-      saveRecord(record)
+      const record = replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
       setCollectionManageData((current) => current?.manageToken === manageToken ? data.collection : current)
       setManagementTarget((current) => current?.kind === 'collection' && current.data.manageToken === manageToken ? { kind: 'collection', record, data: data.collection } : current)
       setToast('收集任务已重新开启')
@@ -575,11 +644,16 @@ function WorkspaceApp() {
   const deleteCollectionSubmission = async (collection, submissionId) => {
     const manageToken = collection?.manageToken
     if (!manageToken || !submissionId) return false
-    if (!window.confirm('删除后该提交记录和文件会从本机服务中移除，确定删除吗？')) return false
+    const confirmed = await requestConfirm({
+      title: '删除提交记录',
+      detail: '删除后该提交记录和文件会从本机服务中移除。确定删除吗？',
+      confirmText: '删除提交',
+      tone: 'danger',
+    })
+    if (!confirmed) return false
     try {
       const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}/submissions/${encodeURIComponent(submissionId)}`, { method: 'DELETE' })
-      const record = createCollectionRecord(data.collection, 'my_collections')
-      saveRecord(record)
+      const record = replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
       setCollectionManageData(data.collection)
       setManagementTarget((current) => current?.kind === 'collection' && current.data.manageToken === manageToken ? { kind: 'collection', record, data: data.collection } : current)
       setToast('提交记录已删除')
@@ -650,15 +724,35 @@ function WorkspaceApp() {
     setToast(authUser?.id ? '账号记录已清空' : '本机记录已清空')
   }
 
-  const renameRecord = (recordId, nextName) => {
+  const renameRecord = async (recordOrId, nextName) => {
     const alias = String(nextName || '').trim()
     if (!alias) {
       setToast('显示名称不能为空')
       return
     }
+    const targetRecord = typeof recordOrId === 'object'
+      ? normalizeRecord(recordOrId)
+      : records.map(normalizeRecord).find((record) => record.id === recordOrId)
+    const manageToken = targetRecord?.manageToken || getManageToken(targetRecord?.manageUrl)
+    if (targetRecord?.kind === 'collection' && targetRecord.scope === 'my_collections' && manageToken) {
+      try {
+        const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ title: alias }),
+        })
+        const record = replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
+        setCollectionManageData((current) => current?.manageToken === manageToken ? data.collection : current)
+        setManagementTarget((current) => current?.kind === 'collection' && current.data.manageToken === manageToken ? { kind: 'collection', record, data: data.collection } : current)
+        setToast('收集任务名称已更新')
+        return
+      } catch (error) {
+        setToast(error.message || '收集任务名称更新失败')
+        return
+      }
+    }
     replaceRecords((current) => current.map((record) => {
       const normalized = normalizeRecord(record)
-      return normalized.id === recordId ? { ...normalized, alias, updatedAt: new Date().toISOString() } : normalized
+      return normalized.id === (targetRecord?.id || recordOrId) ? { ...normalized, alias, updatedAt: new Date().toISOString() } : normalized
     }))
     setToast('显示名称已更新')
   }
@@ -713,7 +807,7 @@ function WorkspaceApp() {
       </header>
 
       <main className="page-content">
-        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(window.location.pathname)} onLogin={startLogin} onLogout={logout} onBack={() => { window.location.href = '/' }} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} />}
+        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} />}
         {!isSettingsRoute && activeView === 'send' && (
           <SendView
             files={files}
@@ -786,6 +880,7 @@ function WorkspaceApp() {
           onReopenTask={(payload) => reopenManagedRecord(managementTarget, payload)}
         />
       )}
+      <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
       {toast && <div className="toast"><Check size={16} /> {toast}</div>}
     </div>
   )
@@ -986,6 +1081,34 @@ function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, onCopyIm
   )
 }
 
+function ConfirmModal({ state, onCancel, onConfirm }) {
+  useEffect(() => {
+    if (!state) return undefined
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onCancel()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [state, onCancel])
+
+  if (!state) return null
+
+  return (
+    <div className="modal-backdrop confirm-backdrop" onMouseDown={onCancel}>
+      <div className={`modal confirm-modal ${state.tone === 'danger' ? 'danger' : ''}`} role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="confirm-modal-icon"><ShieldCheck size={20} /></div>
+        <p className="eyebrow">{state.eyebrow || '操作确认'}</p>
+        <h2>{state.title || '确认操作'}</h2>
+        {state.detail && <p>{state.detail}</p>}
+        <div className="modal-footer confirm-modal-footer">
+          <button className="secondary-button" onClick={onCancel}>{state.cancelText || '取消'}</button>
+          <button className={`primary-button ${state.tone === 'danger' ? 'danger-button' : ''}`} onClick={onConfirm}>{state.confirmText || '确定'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function FilePreviewModal({ preview, onClose, onDownload, downloadDisabled = false }) {
   const [error, setError] = useState('')
 
@@ -1157,7 +1280,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
       {manageLoading ? (
         <div className="collection-files-card collection-loading"><span className="loading-dot" /><p>正在加载已收文件...</p></div>
       ) : manageData ? (
-        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} onDestroy={onDestroy} onManageSettings={onManageSettings} onCloseTask={onCloseTask} onReopenTask={onReopenTask} onDeleteSubmission={onDeleteSubmission} />
+        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} onDestroy={onDestroy} onManageSettings={onManageSettings} onCloseTask={onCloseTask} onReopenTask={onReopenTask} onDeleteSubmission={onDeleteSubmission} onCopy={onCopy} onCopyQrImage={onCopyQrImage} />
       ) : (
         <div className={`collect-builder ${result ? 'created' : ''}`}>
           {!result ? (
@@ -1255,10 +1378,11 @@ function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onDes
   )
 }
 
-function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission }) {
+function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCopy, onCopyQrImage }) {
   const isActive = data.status === 'active'
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
+  const [qrOpen, setQrOpen] = useState(false)
   const downloadAll = () => startDownload(createCollectionDownloadConfig(data))
   const downloadSubmissionItem = (submission) => startDownload(createSubmissionDownloadConfig(data, submission))
   const downloadFile = (submission, fileIndex) => startDownload(createSubmissionFileDownloadConfig(data, submission, fileIndex))
@@ -1274,6 +1398,8 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSet
         </div>
         <div className="collection-files-actions">
           <button className="secondary-button" onClick={onClose}><ArrowLeft size={15} /> 返回任务</button>
+          <button className="secondary-button" disabled={!data.publicUrl} onClick={() => onCopy?.(data.publicUrl)}><Link2 size={15} /> 复制提交链接</button>
+          <button className="secondary-button" disabled={!data.qrDataUrl} onClick={() => setQrOpen(true)}><QrCode size={15} /> 查看二维码</button>
           <button className="secondary-button" onClick={() => onManageSettings(data)}><Settings2 size={15} /> 编辑任务</button>
           <button className="ghost-icon" aria-label="刷新已收文件" onClick={onRefresh}><RefreshCw size={17} /></button>
           {isActive ? (
@@ -1308,6 +1434,17 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSet
       {data.submissions.length > 0 && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
       <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
       {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+      {qrOpen && (
+        <QrPreviewModal
+          title="收集二维码"
+          detail={data.title || '提交链接'}
+          qrDataUrl={data.qrDataUrl}
+          targetUrl={data.publicUrl}
+          onClose={() => setQrOpen(false)}
+          onCopyImage={() => onCopyQrImage?.(data.qrDataUrl, data.publicUrl)}
+          onCopyLink={() => onCopy?.(data.publicUrl)}
+        />
+      )}
     </div>
   )
 }
@@ -1371,6 +1508,7 @@ function ShareManagePage({ token }) {
   const [share, setShare] = useState(null)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState(false)
+  const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
 
   const refreshShare = async () => {
     const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`)
@@ -1395,7 +1533,13 @@ function ShareManagePage({ token }) {
   }
 
   const closeShare = async () => {
-    if (!window.confirm('关闭后下载链接和取件码会立即失效，确定关闭这个分享吗？')) return false
+    const confirmed = await requestConfirm({
+      title: '关闭分享链接',
+      detail: '关闭后下载链接和取件码会立即失效。确定关闭这个分享吗？',
+      confirmText: '关闭分享',
+      tone: 'danger',
+    })
+    if (!confirmed) return false
     try {
       const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'DELETE' })
       setShare(result.share)
@@ -1438,6 +1582,7 @@ function ShareManagePage({ token }) {
         </div>
       </div>
       {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveShareSettings} onCloseTask={async () => { const closed = await closeShare(); if (closed) setEditing(false); return closed }} />}
+      <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
   )
 }
@@ -1508,13 +1653,17 @@ function CollectionManagePage({ token }) {
   const [destroyed, setDestroyed] = useState(false)
   const [editing, setEditing] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [actionMessage, setActionMessage] = useState('')
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
+  const [qrOpen, setQrOpen] = useState(false)
+  const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
 
   const saveManagedCollection = (collection) => {
     setActionError('')
+    setActionMessage('')
     setData(collection)
-    saveLocalRecord(createCollectionRecord(collection, 'my_collections'))
+    saveAuthoritativeLocalRecord(createCollectionRecord(collection, 'my_collections'))
   }
 
   useEffect(() => {
@@ -1535,7 +1684,13 @@ function CollectionManagePage({ token }) {
   }
 
   const closeTask = async () => {
-    if (!window.confirm('关闭后提交者将不能继续上传，已收文件仍可在管理页查看，确定关闭这个收集任务吗？')) return false
+    const confirmed = await requestConfirm({
+      title: '关闭收集任务',
+      detail: '关闭后提交者将不能继续上传，已收文件仍可在管理页查看。确定关闭这个收集任务吗？',
+      confirmText: '关闭收集',
+      tone: 'danger',
+    })
+    if (!confirmed) return false
     try {
       const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify({ status: 'closed' }) })
       saveManagedCollection(result.collection)
@@ -1558,7 +1713,13 @@ function CollectionManagePage({ token }) {
   }
 
   const deleteSubmission = async (submissionId) => {
-    if (!window.confirm('删除后该提交记录和文件会从本机服务中移除，确定删除吗？')) return false
+    const confirmed = await requestConfirm({
+      title: '删除提交记录',
+      detail: '删除后该提交记录和文件会从本机服务中移除。确定删除吗？',
+      confirmText: '删除提交',
+      tone: 'danger',
+    })
+    if (!confirmed) return false
     try {
       const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}/submissions/${encodeURIComponent(submissionId)}`, { method: 'DELETE' })
       saveManagedCollection(result.collection)
@@ -1570,7 +1731,13 @@ function CollectionManagePage({ token }) {
   }
 
   const destroyTask = async () => {
-    if (!window.confirm('销毁后，收集链接和已提交文件都将失效，确定销毁本次任务吗？')) return
+    const confirmed = await requestConfirm({
+      title: '销毁收集任务',
+      detail: '销毁后，收集链接和已提交文件都将失效。确定销毁本次任务吗？',
+      confirmText: '销毁任务',
+      tone: 'danger',
+    })
+    if (!confirmed) return
     try {
       await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'DELETE' })
       writeRecords(readRecords().filter((record) => {
@@ -1580,6 +1747,29 @@ function CollectionManagePage({ token }) {
       setDestroyed(true)
     } catch (err) {
       setActionError(err.message)
+    }
+  }
+  const copyPublicValue = async (value) => {
+    setActionError('')
+    setActionMessage('')
+    try {
+      await navigator.clipboard.writeText(value)
+      setActionMessage('已复制到剪贴板')
+    } catch {
+      setActionError('当前浏览器不支持自动复制，请手动复制链接')
+    }
+  }
+  const copyPublicQrImage = async (dataUrl, fallbackText) => {
+    setActionError('')
+    setActionMessage('')
+    try {
+      if (!navigator.clipboard?.write || typeof window.ClipboardItem === 'undefined') throw new Error('copy-image-not-supported')
+      const response = await fetch(dataUrl)
+      const blob = await response.blob()
+      await navigator.clipboard.write([new window.ClipboardItem({ [blob.type || 'image/png']: blob })])
+      setActionMessage('二维码图片已复制')
+    } catch {
+      await copyPublicValue(fallbackText || dataUrl)
     }
   }
   const downloadAll = () => startDownload(createCollectionDownloadConfig(data))
@@ -1598,6 +1788,8 @@ function CollectionManagePage({ token }) {
         <div className="manage-title-row">
           <h1>{data.title}</h1>
           <div className="manage-title-actions">
+            <button className="secondary-button" disabled={!data.publicUrl} onClick={() => copyPublicValue(data.publicUrl)}><Link2 size={15} /> 复制提交链接</button>
+            <button className="secondary-button" disabled={!data.qrDataUrl} onClick={() => setQrOpen(true)}><QrCode size={15} /> 查看二维码</button>
             <button className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 编辑任务</button>
             {isActive ? (
               <button className="secondary-button danger-lite" onClick={closeTask}><X size={15} /> 关闭收集任务</button>
@@ -1610,6 +1802,7 @@ function CollectionManagePage({ token }) {
           </div>
         </div>
         <p className="public-copy">{data.submissions.length} 份提交 · 状态：{collectionStatusText(data.status)}</p>
+        {actionMessage && <p className="public-message success">{actionMessage}</p>}
         {actionError && <p className="public-message">{actionError}</p>}
         <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
         <div className="manage-list">
@@ -1634,6 +1827,18 @@ function CollectionManagePage({ token }) {
         {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       </div>
       {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveTaskSettings} onCloseTask={async () => { const closed = await closeTask(); if (closed) setEditing(false); return closed }} onReopenTask={async (payload) => { const reopened = await reopenTask(payload); if (reopened) setEditing(false); return reopened }} />}
+      {qrOpen && (
+        <QrPreviewModal
+          title="收集二维码"
+          detail={data.title || '提交链接'}
+          qrDataUrl={data.qrDataUrl}
+          targetUrl={data.publicUrl}
+          onClose={() => setQrOpen(false)}
+          onCopyImage={() => copyPublicQrImage(data.qrDataUrl, data.publicUrl)}
+          onCopyLink={() => copyPublicValue(data.publicUrl)}
+        />
+      )}
+      <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
   )
 }
@@ -1908,6 +2113,7 @@ function RenameRecordModal({ record, onClose, onSave }) {
   const inputRef = useRef(null)
   const [name, setName] = useState(() => recordDisplayName(record))
   const [error, setError] = useState('')
+  const syncsCollectionTitle = record.kind === 'collection' && record.scope === 'my_collections' && Boolean(record.manageToken || getManageToken(record.manageUrl))
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -1932,7 +2138,7 @@ function RenameRecordModal({ record, onClose, onSave }) {
     <div className="modal-backdrop rename-backdrop" onMouseDown={onClose}>
       <div className="modal rename-modal" role="dialog" aria-modal="true" aria-labelledby="rename-record-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header rename-modal-header">
-          <div><p className="eyebrow">文件管理</p><h2 id="rename-record-title">重命名显示名称</h2></div>
+          <div><p className="eyebrow">文件管理</p><h2 id="rename-record-title">{syncsCollectionTitle ? '重命名收集任务' : '重命名显示名称'}</h2></div>
           <button className="ghost-icon modal-close" aria-label="关闭重命名窗口" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="modal-body rename-modal-body">
@@ -1941,10 +2147,10 @@ function RenameRecordModal({ record, onClose, onSave }) {
             <div><strong>{recordDisplayName(record)}</strong><span>{recordScopeLabel(record.scope)} · {recordExpiryLabel(record)}</span></div>
           </div>
           <label className="manage-field">
-            <span>新的显示名称</span>
-            <input ref={inputRef} className="modal-inline-input" value={name} maxLength={80} onChange={(event) => { setName(event.target.value); setError('') }} onKeyDown={(event) => { if (event.key === 'Enter') submit() }} placeholder="请输入新的显示名称" />
+            <span>{syncsCollectionTitle ? '新的任务名称' : '新的显示名称'}</span>
+            <input ref={inputRef} className="modal-inline-input" value={name} maxLength={80} onChange={(event) => { setName(event.target.value); setError('') }} onKeyDown={(event) => { if (event.key === 'Enter') submit() }} placeholder={syncsCollectionTitle ? '请输入新的任务名称' : '请输入新的显示名称'} />
           </label>
-          <p className="rename-helper">仅修改文件管理中心和收发记录中的显示名称，不改动已上传文件本身。</p>
+          <p className="rename-helper">{syncsCollectionTitle ? '会同步修改收集任务名称，管理页和提交入口都会显示新名称。' : '仅修改文件管理中心和收发记录中的显示名称，不改动已上传文件本身。'}</p>
           {error && <p className="manage-form-error">{error}</p>}
         </div>
         <div className="modal-footer rename-modal-footer">
@@ -2073,7 +2279,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
     event.stopPropagation()
     if (openMenu !== menuId) {
       const rect = event.currentTarget.getBoundingClientRect()
-      const estimatedMenuHeight = 286
+      const estimatedMenuHeight = 324
       const spaceBelow = window.innerHeight - rect.bottom
       const spaceAbove = rect.top
       setMenuPlacement(spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow ? 'up' : 'down')
@@ -2133,7 +2339,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
 
   const saveRename = (nextName) => {
     if (!renameTarget || !onRename) return
-    onRename(renameTarget.id, nextName)
+    onRename(renameTarget, nextName)
     setRenameTarget(null)
   }
 
@@ -2155,6 +2361,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
         )}
         {record.scope === 'my_collections' && (
           <>
+            <button disabled={!record.publicUrl && !record.shareUrl} onClick={runMenuAction(() => onCopy(record.publicUrl || record.shareUrl))}><Link2 size={14} /> 复制提交链接</button>
             <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理收集设置</button>
             {record.status === '已关闭' && reopenableCollection ? (
               <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启收集任务</button>
@@ -2387,7 +2594,7 @@ function settingsSectionForPath(pathname = '') {
   return SETTINGS_NAV_ITEMS.some((item) => item.key === section) ? section : 'profile'
 }
 
-function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile, onUpdateUser }) {
+function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile, onUpdateUser, onNavigateSection }) {
   const [nickname, setNickname] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
@@ -2507,7 +2714,7 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
           </div>
           <nav className="settings-nav" aria-label="账户设置">
             {SETTINGS_NAV_ITEMS.map(({ key, label, icon: Icon, path }) => (
-              <button key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => { window.location.href = path }}>
+              <button key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => { if (section !== key) onNavigateSection?.(path) }}>
                 <Icon size={17} />
                 <span>{label}</span>
                 <ChevronRight size={15} />
@@ -2883,6 +3090,12 @@ function writeRecords(records) {
 
 function saveLocalRecord(record, currentRecords) {
   return writeRecords(upsertRecords(currentRecords || readRecords(), [record]))
+}
+
+function saveAuthoritativeLocalRecord(record, currentRecords) {
+  const normalized = normalizeRecord(record)
+  const existing = normalizeRecords(currentRecords || readRecords()).filter((item) => item.id !== normalized.id)
+  return writeRecords([normalized, ...existing])
 }
 
 async function fetchCloudRecords() {
