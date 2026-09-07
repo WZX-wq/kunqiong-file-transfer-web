@@ -9,6 +9,7 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  XCircle,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -897,9 +898,34 @@ function WorkspaceApp() {
         />
       )}
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
-      {toast && <div className="toast"><Check size={16} /> {toast}</div>}
+      {toast && <Toast message={toast} />}
     </div>
   )
+}
+
+function Toast({ message }) {
+  const tone = feedbackTone(message)
+  const Icon = tone === 'error' ? XCircle : CheckCircle2
+  return (
+    <div className={`toast ${tone}`} role={tone === 'error' ? 'alert' : 'status'} aria-live={tone === 'error' ? 'assertive' : 'polite'}>
+      <span className="toast-icon"><Icon size={18} /></span>
+      <span>{message}</span>
+    </div>
+  )
+}
+
+function FeedbackMessage({ message, tone = 'error' }) {
+  const Icon = tone === 'success' ? CheckCircle2 : XCircle
+  return (
+    <p className={`public-message feedback-message ${tone}`} role={tone === 'error' ? 'alert' : 'status'}>
+      <Icon size={16} />
+      <span>{message}</span>
+    </p>
+  )
+}
+
+function feedbackTone(message = '') {
+  return /失败|错误|无效|不可用|不能|无法|不能为空|不足|过期|不正确|未配置|未生效|拒绝|异常|请先|未登录|未投递|不存在|已失效|没有可|不支持|通道|需接入|暂不|暂无|暂未|尚未/.test(String(message)) ? 'error' : 'success'
 }
 
 function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve }) {
@@ -1517,7 +1543,7 @@ function SharePage({ token, enterpriseSlug = '' }) {
             <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
           </>
         )}
-        {actionError && <p className="public-message">{actionError}</p>}
+        {actionError && <FeedbackMessage message={actionError} tone="error" />}
         {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       </div>
     </PublicShell>
@@ -1658,7 +1684,7 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
             {files.length > 0 && <div className="public-files">{files.map((file) => <FileRow key={file.id} file={file} onRemove={() => setFiles((current) => current.filter((item) => item.id !== file.id))} />)}</div>}
             {submitting && <div className="progress-wrap"><div className="progress-label"><span>正在提交...</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
             <button className="primary-button wide" onClick={submit} disabled={submitting}><UploadCloud size={17} /> {submitting ? '提交中...' : '提交文件'}</button>
-            {message && <p className={`public-message ${message.includes('成功') ? 'success' : ''}`}>{message}</p>}
+            {message && <FeedbackMessage message={message} tone={feedbackTone(message)} />}
           </>
         ) : (
           <StateBlock title="无法打开收集任务" detail={message || '正在加载任务'} />
@@ -1823,8 +1849,8 @@ function CollectionManagePage({ token }) {
           </div>
         </div>
         <p className="public-copy">{data.submissions.length} 份提交 · 状态：{collectionStatusText(data.status)}</p>
-        {actionMessage && <p className="public-message success">{actionMessage}</p>}
-        {actionError && <p className="public-message">{actionError}</p>}
+        {actionMessage && <FeedbackMessage message={actionMessage} tone="success" />}
+        {actionError && <FeedbackMessage message={actionError} tone="error" />}
         <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
         <div className="manage-list">
           {data.submissions.length ? data.submissions.map((submission) => (
@@ -2968,8 +2994,8 @@ function WorkspacePage() {
           </div>
           <aside className="workspace-side"><div className="public-card workspace-side-card"><ShieldCheck size={22} /><strong>企业专属链接</strong><p>团队版或企业版创建的分享，会自动生成带团队标识的专属入口。</p><span>/e/{organization?.slug || 'your-team'}/share/...</span></div><div className="public-card workspace-side-card"><ListChecks size={22} /><strong>当前状态</strong><p>{canManageTeam ? '团队协作功能已启用。' : '升级到团队版后可管理成员和企业入口。'}</p><button className="secondary-button" onClick={() => setMessage('会员升级需接入鲲穹订单系统后开放')}>查看升级方式</button></div></aside>
         </div>
-        {message && <p className="workspace-message">{message}</p>}
-        {error && <p className="public-message">{error}</p>}
+        {message && <FeedbackMessage message={message} tone={feedbackTone(message)} />}
+        {error && <FeedbackMessage message={error} tone="error" />}
       </section>
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
