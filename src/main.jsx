@@ -87,6 +87,99 @@ const createDefaultCollectionForm = () => ({
   maxFileSizeMb: 500,
 })
 
+const FOOTER_CONTENT = {
+  help: {
+    eyebrow: '使用帮助',
+    title: '帮助中心',
+    sections: [
+      {
+        title: '发送文件',
+        items: [
+          '在“发文件”页面选择文件或文件夹，也可以直接拖拽到上传区域。',
+          '上传完成后系统会生成取件码、分享链接和二维码，对方无需注册即可提取。',
+          '单次最多 100 个文件，单文件最大 5 GB；大文件会自动分片上传，异常中断后可重试。',
+        ],
+      },
+      {
+        title: '收集文件',
+        items: [
+          '通过“收集文件”创建收集任务，设置截止日期、允许类型和单文件大小限制。',
+          '提交人打开收集链接后上传文件，文件会进入你的收集记录和管理页。',
+          '如需停止收集，可在收发记录或管理窗口中关闭任务，后续也可以重新开启。',
+        ],
+      },
+      {
+        title: '账号与记录',
+        items: [
+          '登录后，收发记录、容量使用和基础账号资料会同步到当前鲲穹账号。',
+          '游客模式下的记录仅保存在当前浏览器，清理浏览器数据后可能无法恢复。',
+          '如果遇到上传、下载或登录异常，请刷新页面后重试，并确认服务端地址配置正确。',
+        ],
+      },
+    ],
+  },
+  terms: {
+    eyebrow: '平台规则',
+    title: '服务协议',
+    sections: [
+      {
+        title: '服务范围',
+        items: [
+          '鲲穹文件传输提供临时文件发送、取件码分享、文件收集、记录管理和基础账号同步能力。',
+          '本服务用于合法、合规的文件传输场景，不承诺作为长期备份、归档或容灾存储使用。',
+          '部分高级能力可能需要会员版、团队版或企业版权益，具体以页面展示和实际配置为准。',
+        ],
+      },
+      {
+        title: '用户义务',
+        items: [
+          '你应确保上传、分享和收集的文件拥有合法权利，不侵犯他人知识产权、隐私权或其他合法权益。',
+          '禁止上传违法违规、恶意程序、钓鱼欺诈、侵害他人权益或破坏服务安全稳定的内容。',
+          '你需要妥善保管取件码、管理链接和账号登录状态，由泄露导致的访问风险由分享者自行承担。',
+        ],
+      },
+      {
+        title: '服务限制',
+        items: [
+          '平台可能根据容量、文件大小、有效期、安全审核或系统维护需要限制、暂停或清理相关文件。',
+          '因不可抗力、网络故障、第三方服务异常或用户配置错误导致的服务中断，平台会尽力恢复但不承担超出法律规定的责任。',
+          '继续使用本服务即表示你理解并接受当前协议内容；正式商业版本上线后可能更新协议条款。',
+        ],
+      },
+    ],
+  },
+  privacy: {
+    eyebrow: '数据保护',
+    title: '隐私政策',
+    sections: [
+      {
+        title: '我们处理的信息',
+        items: [
+          '为完成文件传输，我们会处理上传文件、文件名、大小、类型、分享设置、取件码、收集任务和提交记录。',
+          '登录后会保存账号标识、昵称、头像、邮箱或手机号等必要账户资料，以及容量和消息通知设置。',
+          '系统可能记录访问时间、IP、接口路径和操作结果，用于安全审计、故障排查和服务稳定性维护。',
+        ],
+      },
+      {
+        title: '使用与保存',
+        items: [
+          '文件默认按你设置的有效期保存，到期或被删除后会进入清理流程；会员或团队能力以实际权益为准。',
+          '头像等个人资料仅用于账户展示；自定义头像优先显示，恢复后会回到第三方登录头像或默认头像。',
+          '未配置 SMTP 等第三方通道时，邮件通知只做本地记录，不会向外部邮箱发送真实邮件。',
+        ],
+      },
+      {
+        title: '安全与控制',
+        items: [
+          '我们通过登录会话、管理链接、提取密码、文件类型限制和访问校验降低误访问和滥用风险。',
+          '你可以删除分享、关闭收集任务、恢复登录头像或退出登录，以管理自己的内容和账户状态。',
+          '如部署到测试或正式服务器，请妥善配置访问域名、回调地址、管理员账号和邮件服务参数。',
+        ],
+      },
+    ],
+  },
+}
+
 const fileIcon = (name = '') => {
   if (/\.(zip|rar|7z|tar|gz)$/i.test(name)) return FileArchive
   if (/\.(pdf|doc|docx|txt|xls|xlsx|ppt|pptx)$/i.test(name)) return FileText
@@ -170,6 +263,7 @@ function WorkspaceApp() {
   const [authMenuOpen, setAuthMenuOpen] = useState(false)
   const [messageOpen, setMessageOpen] = useState(false)
   const [messages, setMessages] = useState([])
+  const [footerContentKey, setFooterContentKey] = useState('')
 
   useEffect(() => {
     const syncRoute = () => {
@@ -881,11 +975,12 @@ function WorkspaceApp() {
 
       <footer className="page-footer">
         <span>鲲穹文件传输 · 临时传输，轻装上阵</span>
-        <div><button onClick={() => setToast('帮助中心将在正式版开放')}>帮助中心</button><button onClick={() => setToast('服务协议将在正式版开放')}>服务协议</button><button onClick={() => setToast('隐私政策将在正式版开放')}>隐私政策</button></div>
+        <div><button onClick={() => setFooterContentKey('help')}>帮助中心</button><button onClick={() => setFooterContentKey('terms')}>服务协议</button><button onClick={() => setFooterContentKey('privacy')}>隐私政策</button></div>
       </footer>
 
       {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} user={authUser} onClose={() => setSettingsOpen(false)} onSave={() => { setSettingsOpen(false); setToast('分享设置已保存') }} />}
       {retrieveOpen && <RetrieveModal code={retrievalCode} setCode={setRetrievalCode} result={retrieveResult} onClose={closeRetrieve} onFind={lookupShare} />}
+      {footerContentKey && <ContentModal content={FOOTER_CONTENT[footerContentKey]} onClose={() => setFooterContentKey('')} />}
       {managementTarget && (
         <ManageItemModal
           key={`${managementTarget.kind}-${managementTarget.data?.manageToken || managementTarget.record?.id || 'target'}`}
@@ -1151,6 +1246,40 @@ function ConfirmModal({ state, onCancel, onConfirm }) {
         <div className="modal-footer confirm-modal-footer">
           <button className="secondary-button" onClick={onCancel}>{state.cancelText || '取消'}</button>
           <button className={`primary-button ${state.tone === 'danger' ? 'danger-button' : ''}`} onClick={onConfirm}>{state.confirmText || '确定'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ContentModal({ content, onClose }) {
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  if (!content) return null
+
+  return (
+    <div className="modal-backdrop content-backdrop" onMouseDown={onClose}>
+      <div className="modal content-modal" role="dialog" aria-modal="true" aria-labelledby="content-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header content-modal-header">
+          <div><p className="eyebrow">{content.eyebrow}</p><h2 id="content-modal-title">{content.title}</h2></div>
+          <button className="ghost-icon modal-close" aria-label={`关闭${content.title}`} onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="modal-body content-modal-body">
+          {content.sections.map((section) => (
+            <section className="content-section" key={section.title}>
+              <h3>{section.title}</h3>
+              <ul>{section.items.map((item) => <li key={item}>{item}</li>)}</ul>
+            </section>
+          ))}
+        </div>
+        <div className="modal-footer">
+          <button className="primary-button" onClick={onClose}>我知道了</button>
         </div>
       </div>
     </div>
@@ -4792,29 +4921,33 @@ function formatMessageTime(value) {
 }
 function resizeAvatarFile(file) {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(new Error('头像读取失败，请重试'))
-    reader.onload = () => {
-      const image = new Image()
-      image.onerror = () => reject(new Error('头像图片无法读取'))
-      image.onload = () => {
-        const maxSize = 512
-        const scale = Math.min(1, maxSize / Math.max(image.width, image.height))
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.max(1, Math.round(image.width * scale))
-        canvas.height = Math.max(1, Math.round(image.height * scale))
-        const context = canvas.getContext('2d')
-        context.drawImage(image, 0, 0, canvas.width, canvas.height)
-        const dataUrl = canvas.toDataURL('image/webp', 0.86)
-        if (dataUrl.length > 580000) {
-          reject(new Error('头像压缩后仍然过大，请选择更小的图片'))
-          return
-        }
-        resolve(dataUrl)
-      }
-      image.src = reader.result
+    const image = new Image()
+    const objectUrl = URL.createObjectURL(file)
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('头像图片无法读取'))
     }
-    reader.readAsDataURL(file)
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      const maxSize = 512
+      const scale = Math.min(1, maxSize / Math.max(image.width, image.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(image.width * scale))
+      canvas.height = Math.max(1, Math.round(image.height * scale))
+      const context = canvas.getContext('2d')
+      if (!context) {
+        reject(new Error('当前浏览器不支持头像压缩'))
+        return
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      const dataUrl = canvas.toDataURL('image/webp', 0.86)
+      if (dataUrl.length > 580000) {
+        reject(new Error('头像压缩后仍然过大，请选择更小的图片'))
+        return
+      }
+      resolve(dataUrl)
+    }
+    image.src = objectUrl
   })
 }
 function userAvatarSource(user = {}) {

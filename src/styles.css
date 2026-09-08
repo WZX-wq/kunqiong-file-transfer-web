@@ -526,6 +526,15 @@ h1, h2, p { margin-top: 0; }
 .confirm-modal-footer { margin: 22px -26px -26px; align-items: center; }
 .danger-button { background: #b45d51; box-shadow: 0 12px 24px rgba(180, 93, 81, .18); }
 .danger-button:hover { background: #9d4d42; box-shadow: 0 14px 28px rgba(180, 93, 81, .22); }
+.content-backdrop { z-index: 10; }
+.content-modal { width: min(680px, calc(100vw - 40px)); max-height: min(82vh, 760px); display: flex; flex-direction: column; overflow: hidden; }
+.content-modal-header h2 { letter-spacing: -0.02em; }
+.content-modal-body { flex: 1; overflow: auto; padding: 8px 28px 4px; }
+.content-section { padding: 18px 0; border-bottom: 1px solid #edf3f0; }
+.content-section:last-child { border-bottom: 0; }
+.content-section h3 { margin: 0 0 10px; color: var(--ink); font-size: 15px; }
+.content-section ul { display: flex; flex-direction: column; gap: 8px; margin: 0; padding-left: 18px; color: #668178; font-size: 13px; line-height: 1.7; }
+.content-section li::marker { color: var(--accent); }
 .preview-backdrop { z-index: 7; }
 .preview-modal { width: min(920px, calc(100vw - 40px)); overflow: hidden; }
 .preview-modal.pdf, .preview-modal.video, .preview-modal.document, .preview-modal.spreadsheet, .preview-modal.presentation { width: min(1040px, calc(100vw - 40px)); }

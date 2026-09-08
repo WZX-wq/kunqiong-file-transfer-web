@@ -32,6 +32,18 @@ npm run dev
 http://localhost:4173/
 ```
 
+## 测试服务器部署
+
+在测试服务器上建议使用同源部署，前端构建产物由 Node 服务直接托管：
+
+```bash
+npm ci
+npm run build
+npm start
+```
+
+默认服务端口是 `8045`，浏览器访问 `http://服务器IP:8045/`。部署前复制 `.env.example` 为 `.env`，把 `KUNQIONG_APP_URL` 和 `KUNQIONG_AUTH_CALLBACK_URL` 改成测试服务器 IP 或正式域名；SMTP 相关参数可以先留空，邮件通知会保留为本地记录。
+
 ## 局域网内给别人看
 
 如果对方和启动项目的电脑连接在同一个 Wi-Fi 或局域网：

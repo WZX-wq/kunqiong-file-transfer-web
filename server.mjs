@@ -79,6 +79,7 @@ const DEFAULT_ACCOUNT_MESSAGES = [
   { id: 'official-update', category: 'official', eventType: 'official', title: '鲲穹服务通知', body: '站内消息、账号容量和账号绑定已接入当前账户。' },
 ]
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
+const serverHost = process.env.HOST || process.env.KUNQIONG_HOST || '0.0.0.0'
 let metadataNeedsPersist = false
 let emailTransporter = null
 
@@ -120,7 +121,9 @@ function looksLikeMojibake(value = '') {
 app.set('trust proxy', true)
 app.use(express.json({ limit: '1mb' }))
 app.use((req, res, next) => {
-  res.setHeader('Cache-Control', 'no-store')
+  if (req.path.startsWith('/api/') || req.path.startsWith('/auth/')) {
+    res.setHeader('Cache-Control', 'no-store')
+  }
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
   res.setHeader('X-Frame-Options', 'DENY')
@@ -998,8 +1001,17 @@ app.use('/api', (_req, res) => {
 })
 
 if (fs.existsSync(distRoot)) {
-  app.use(express.static(distRoot))
+  app.use(express.static(distRoot, {
+    maxAge: '7d',
+    immutable: true,
+    setHeaders(res, filePath) {
+      if (path.basename(filePath) === 'index.html') {
+        res.setHeader('Cache-Control', 'no-cache')
+      }
+    },
+  }))
   app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache')
     res.sendFile(path.join(distRoot, 'index.html'))
   })
 }
@@ -1012,8 +1024,8 @@ app.use((error, _req, res, _next) => {
   res.status(500).json({ message: '服务器处理失败，请稍后重试' })
 })
 
-const server = app.listen(serverPort, '0.0.0.0', () => {
-  console.log(`鲲穹服务 listening on http://localhost:${serverPort}`)
+const server = app.listen(serverPort, serverHost, () => {
+  console.log(`鲲穹服务 listening on http://${serverHost === '0.0.0.0' ? 'localhost' : serverHost}:${serverPort}`)
 })
 
 const cleanupTimer = setInterval(() => {
@@ -1857,15 +1869,27 @@ function mergeAccountUser(existing = null, incoming = {}) {
   if (!existing) return normalizeAccountUser(incoming)
   const normalized = normalizeAccountUser(incoming)
   if (!normalized) return existing
+  const avatarSourceExplicit = Object.prototype.hasOwnProperty.call(incoming, 'avatarSource')
+  const nextProviderAvatar = normalized.providerAvatar || (!normalized.avatarSource && normalized.avatar) || existing.providerAvatar || null
+  const nextAvatarSource = normalized.avatarSource === 'custom'
+    ? 'custom'
+    : avatarSourceExplicit
+      ? ''
+      : existing.avatarSource || ''
+  const nextAvatar = nextAvatarSource === 'custom'
+    ? normalized.avatarSource === 'custom'
+      ? normalized.avatar || existing.avatar || null
+      : existing.avatar || null
+    : nextProviderAvatar
   return {
     ...existing,
     ...normalized,
     nickname: normalized.nickname || existing.nickname,
     email: normalized.email || existing.email,
     phone: normalized.phone || existing.phone,
-    avatar: normalized.avatar || existing.avatar,
-    avatarSource: normalized.avatarSource || existing.avatarSource,
-    providerAvatar: normalized.providerAvatar || existing.providerAvatar,
+    avatar: nextAvatar,
+    avatarSource: nextAvatarSource,
+    providerAvatar: nextProviderAvatar,
     provider: normalized.provider || existing.provider,
     loginMethods: mergeLoginMethods(existing.loginMethods, normalized.loginMethods),
     planId: existing.planId || normalized.planId || 'free',
