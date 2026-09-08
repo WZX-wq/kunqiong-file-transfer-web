@@ -17,6 +17,7 @@ const filesRoot = path.join(storageRoot, 'files')
 const collectionsRoot = path.join(storageRoot, 'collections')
 const distRoot = path.join(__dirname, 'dist')
 const metadataPath = path.join(storageRoot, 'metadata.json')
+const shareEmailTemplatePath = path.join(__dirname, 'email-templates', 'share-notification.html')
 const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
 const MAX_FILES = 100
 const serverPort = Number(process.env.PORT || process.env.KUNQIONG_PORT || 8045)
@@ -94,6 +95,27 @@ const upload = multer({
   limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE },
 })
 const app = express()
+
+function normalizeUploadedFileNames(req, res, next) {
+  if (Array.isArray(req.files)) {
+    req.files.forEach((file) => {
+      file.originalname = normalizeUploadFileName(file.originalname)
+    })
+  }
+  next()
+}
+
+function normalizeUploadFileName(value = '') {
+  const raw = String(value || '').trim()
+  if (!raw) return raw
+  const decoded = Buffer.from(raw, 'latin1').toString('utf8')
+  if (decoded && decoded !== raw && !decoded.includes('\uFFFD') && looksLikeMojibake(raw)) return decoded
+  return raw
+}
+
+function looksLikeMojibake(value = '') {
+  return /(?:Ã|Â|Ä|Å|Æ|Ç|È|É|Ê|Ë|Ì|Í|Î|Ï|Ð|Ñ|Ò|Ó|Ô|Õ|Ö|Ø|Ù|Ú|Û|Ü|Ý|Þ|ß|à|á|â|ã|ä|å|æ|ç|è|é|ê|ë|ì|í|î|ï|ð|ñ|ò|ó|ô|õ|ö|ø|ù|ú|û|ü|ý|þ|ÿ)/.test(String(value))
+}
 
 app.set('trust proxy', true)
 app.use(express.json({ limit: '1mb' }))
@@ -498,7 +520,7 @@ app.get('/auth/callback', async (req, res) => {
   }
 })
 
-app.post('/api/shares', upload.array('files', MAX_FILES), async (req, res, next) => {
+app.post('/api/shares', upload.array('files', MAX_FILES), normalizeUploadedFileNames, async (req, res, next) => {
   try {
     assertServiceWritable(req)
     const uploadedFiles = req.files || []
@@ -533,8 +555,8 @@ app.post('/api/upload-sessions', (req, res) => {
   if (files.length > MAX_FILES) return res.status(413).json({ message: `单次最多上传 ${MAX_FILES} 个文件` })
 
   const normalizedFiles = files.map((file, index) => ({
-    name: String(file.name || `文件 ${index + 1}`),
-    relativePath: safeRelativePath(file.relativePath || file.name || `文件 ${index + 1}`),
+    name: normalizeUploadFileName(file.name || `文件 ${index + 1}`),
+    relativePath: safeRelativePath(normalizeUploadFileName(file.relativePath || file.name || `文件 ${index + 1}`)),
     size: Number(file.size || 0),
     mimeType: String(file.mimeType || 'application/octet-stream'),
     chunks: new Set(),
@@ -664,7 +686,9 @@ app.get('/api/shares/token/:token', (req, res) => {
   if (!validateEnterpriseSlug(share, req.query.organization)) return res.status(404).json({ message: '企业专属链接无效' })
   const access = validateShare(share, undefined, { allowMissingPassword: true })
   if (!access.ok) return res.status(access.status).json({ message: access.message })
-  res.json({ share: publicShare(share, req, !share.passwordHash), requiresPassword: Boolean(share.passwordHash) })
+  const viewer = authSessionFromRequest(req)?.user
+  const includeManage = Boolean(viewer?.id && share.ownerUserId && viewer.id === share.ownerUserId)
+  res.json({ share: publicShare(share, req, !share.passwordHash, includeManage), requiresPassword: Boolean(share.passwordHash) })
 })
 
 app.get('/api/shares/manage/:manageToken', (req, res) => {
@@ -805,7 +829,7 @@ app.get('/api/collections/:token', async (req, res, next) => {
   }
 })
 
-app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES), (req, res, next) => {
+app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES), normalizeUploadedFileNames, (req, res, next) => {
   try {
     assertServiceWritable(req)
     const task = metadata.collections.find((item) => item.token === req.params.token)
@@ -1440,7 +1464,7 @@ function publicShare(share, req, includeFiles = true, includeManage = false) {
   const payload = {
     id: share.id,
     code: share.code,
-    files: includeFiles ? share.files.map(({ storedName, ...file }) => file) : [],
+    files: includeFiles ? share.files.map(publicFile) : [],
     createdAt: share.createdAt,
     expiresAt: share.expiresAt,
     downloadLimit: share.downloadLimit,
@@ -1464,6 +1488,7 @@ function publicShare(share, req, includeFiles = true, includeManage = false) {
 
 function publicCollection(task, req, includeManage = false) {
   const organization = task.ownerUserId ? enterpriseOrganizationForUser(task.ownerUserId) : null
+  const status = currentCollectionStatus(task)
   const payload = {
     id: task.id,
     token: task.token,
@@ -1472,7 +1497,7 @@ function publicCollection(task, req, includeManage = false) {
     deadline: task.deadline,
     allowedTypes: task.allowedTypes,
     maxFileSizeMb: task.maxFileSizeMb,
-    status: task.status,
+    status,
     submissionCount: task.submissions.length,
     publicUrl: `${getOrigin(req)}/collect/${task.token}`,
     qrDataUrl: task.qrDataUrl,
@@ -1483,6 +1508,11 @@ function publicCollection(task, req, includeManage = false) {
     payload.manageUrl = `${getOrigin(req)}/collect/manage/${task.manageToken}`
   }
   return payload
+}
+
+function currentCollectionStatus(task = {}) {
+  if (task.status === 'active' && task.deadline && new Date(task.deadline).getTime() <= Date.now()) return 'expired'
+  return task.status || 'active'
 }
 
 function validateEnterpriseSlug(item, slug) {
@@ -1602,7 +1632,7 @@ function sendPreviewFile(res, next, filePath, file) {
   if (!fs.existsSync(filePath)) return res.status(410).json({ message: '文件已清理，无法预览' })
   const stat = fs.statSync(filePath)
   res.setHeader('Accept-Ranges', 'bytes')
-  res.setHeader('Content-Disposition', contentDisposition('inline', file.name || path.basename(filePath)))
+  res.setHeader('Content-Disposition', contentDisposition('inline', normalizeUploadFileName(file.name || path.basename(filePath))))
   res.setHeader('X-Preview-Type', kind)
   res.setHeader('X-Preview-File-Size', String(stat.size))
   res.type(fileContentType(file))
@@ -1621,7 +1651,7 @@ function sendDownloadFile(req, res, next, filePath, file) {
   res.setHeader('X-Download-Resume', 'range')
   res.setHeader('X-Download-Total-Size', String(stat.size))
   if (file.mimeType) res.type(file.mimeType)
-  res.setHeader('Content-Disposition', contentDisposition('attachment', file.name || path.basename(filePath)))
+  res.setHeader('Content-Disposition', contentDisposition('attachment', normalizeUploadFileName(file.name || path.basename(filePath))))
   const range = req.get('range')
   if (!range) {
     res.setHeader('Content-Length', String(stat.size))
@@ -1695,6 +1725,9 @@ function previewKind(file = {}) {
   if ((contentType.startsWith('image/') && contentType !== 'image/svg+xml') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(extension)) return 'image'
   if (contentType.startsWith('video/') || ['.mp4', '.webm', '.ogv', '.mov', '.m4v'].includes(extension)) return 'video'
   if (contentType.startsWith('audio/') || ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.oga', '.ogg'].includes(extension)) return 'audio'
+  if (contentType.includes('wordprocessingml') || extension === '.docx') return 'document'
+  if (contentType.includes('spreadsheetml') || ['.xlsx', '.xls', '.csv'].includes(extension)) return 'spreadsheet'
+  if (contentType.includes('presentationml') || extension === '.pptx') return 'presentation'
   return ''
 }
 
@@ -1705,6 +1738,8 @@ function fileContentType(file = {}) {
   const mimeTypes = {
     '.aac': 'audio/aac',
     '.bmp': 'image/bmp',
+    '.csv': 'text/csv',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     '.flac': 'audio/flac',
     '.gif': 'image/gif',
     '.jpeg': 'image/jpeg',
@@ -1719,10 +1754,13 @@ function fileContentType(file = {}) {
     '.ogv': 'video/ogg',
     '.pdf': 'application/pdf',
     '.png': 'image/png',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     '.svg': 'image/svg+xml',
     '.wav': 'audio/wav',
     '.webm': 'video/webm',
     '.webp': 'image/webp',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   }
   return mimeTypes[extension] || 'application/octet-stream'
 }
@@ -2213,22 +2251,16 @@ async function sendShareEmail({ recipient, share, req, ownerName, title }) {
 function buildShareEmailHtml({ share, shareUrl, ownerName, title, expiryText, hasQr }) {
   const passwordHint = share.passwordHash ? '<p style="color:#9a6d23;">该分享还需要输入提取密码。</p>' : ''
   const qr = hasQr ? '<img src="cid:kunqiong-share-qr" alt="分享二维码" width="180" height="180" style="display:block;width:180px;height:180px;margin:20px auto 0;border:1px solid #e1ece8;" />' : ''
-  return `<div style="margin:0;padding:32px 16px;background:#f4f8f6;font-family:Arial,'Microsoft YaHei',sans-serif;color:#29443d;">
-    <div style="max-width:560px;margin:0 auto;padding:28px;background:#ffffff;border:1px solid #dfeae6;border-radius:10px;">
-      <p style="margin:0 0 8px;color:#168b73;font-size:12px;font-weight:bold;letter-spacing:1px;">鲲穹文件传输</p>
-      <h2 style="margin:0 0 16px;font-size:22px;">你收到一个文件分享</h2>
-      <p style="line-height:1.7;">${escapeHtml(ownerName)} 向你发送了 <strong>${share.files.length}</strong> 个文件：${escapeHtml(title)}</p>
-      <p style="margin:20px 0 8px;color:#718982;font-size:13px;">打开链接</p>
-      <p style="margin:0;word-break:break-all;"><a href="${escapeHtml(shareUrl)}" style="color:#168b73;">${escapeHtml(shareUrl)}</a></p>
-      <div style="margin-top:18px;padding:14px;background:#f1f8f5;border:1px solid #d6ebe3;border-radius:8px;">
-        <span style="color:#718982;font-size:12px;">取件码</span>
-        <strong style="display:block;margin-top:5px;color:#168b73;font-size:24px;letter-spacing:3px;">${escapeHtml(share.code)}</strong>
-      </div>
-      <p style="color:#718982;font-size:12px;">有效期：${escapeHtml(expiryText)}</p>
-      ${passwordHint}
-      ${qr}
-    </div>
-  </div>`
+  const template = fs.readFileSync(shareEmailTemplatePath, 'utf8')
+  return template
+    .replaceAll('{{OWNER_NAME}}', escapeHtml(ownerName))
+    .replaceAll('{{FILE_COUNT}}', String(share.files.length))
+    .replaceAll('{{TITLE}}', escapeHtml(title))
+    .replaceAll('{{SHARE_URL}}', escapeHtml(shareUrl))
+    .replaceAll('{{CODE}}', escapeHtml(share.code))
+    .replaceAll('{{EXPIRY_TEXT}}', escapeHtml(expiryText))
+    .replaceAll('{{PASSWORD_HINT}}', passwordHint)
+    .replaceAll('{{QR_IMAGE}}', qr)
 }
 
 function qrDataUrlAttachment(value) {
@@ -2396,6 +2428,10 @@ function mergeAccountRecord(existing, incoming) {
   const merged = { ...existing, ...incoming }
   merged.createdAt = existing.createdAt || incoming.createdAt
   merged.updatedAt = incoming.updatedAt || existing.updatedAt || merged.createdAt
+  if (!incoming.shareId && existing.shareId) merged.shareId = existing.shareId
+  if (!incoming.shareUrl && existing.shareUrl) merged.shareUrl = existing.shareUrl
+  if (!incoming.manageToken && existing.manageToken) merged.manageToken = existing.manageToken
+  if (!incoming.manageUrl && existing.manageUrl) merged.manageUrl = existing.manageUrl
   if (!incoming.alias && existing.alias) merged.alias = existing.alias
   if ((!incoming.name || incoming.name === '文件分享' || incoming.name === '收集任务') && existing.name) merged.name = existing.name
   if (!incoming.meta && existing.meta) merged.meta = existing.meta
@@ -2678,7 +2714,16 @@ function publicSubmission(submission) {
     id: submission.id,
     participantName: submission.participantName,
     submittedAt: submission.submittedAt,
-    files: submission.files.map(({ storedName, ...file }) => file),
+    files: submission.files.map(publicFile),
+  }
+}
+
+function publicFile(file = {}) {
+  const { storedName, ...safeFile } = file
+  return {
+    ...safeFile,
+    name: normalizeUploadFileName(safeFile.name || safeFile.relativePath || storedName || ''),
+    relativePath: safeRelativePath(normalizeUploadFileName(safeFile.relativePath || safeFile.name || storedName || '')),
   }
 }
 

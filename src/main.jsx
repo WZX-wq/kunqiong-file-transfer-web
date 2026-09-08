@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import mammoth from 'mammoth'
+import * as XLSX from 'xlsx'
+import { PPTXViewer } from 'pptxviewjs'
+import QRCode from 'qrcode'
 import {
   ArrowRight,
   ArrowLeft,
@@ -298,7 +302,7 @@ function WorkspaceApp() {
     }
     setFiles((current) => {
       const merged = [...current, ...nextFiles]
-      if (merged.length > MAX_FILES) setToast(`本次测试单次最多上传 ${MAX_FILES} 个文件，已保留前 ${MAX_FILES} 个`)
+      if (merged.length > MAX_FILES) setToast(`单次最多选择 ${MAX_FILES} 个文件，已保留前 ${MAX_FILES} 个`)
       return merged.slice(0, MAX_FILES)
     })
     setShareResult(null)
@@ -863,7 +867,6 @@ function WorkspaceApp() {
             onCopy={copyValue}
             onCopyQrImage={copyQrImage}
             onOpenManager={openCollectionManager}
-            onDestroy={destroyCollection}
             onManageSettings={(data) => setManagementTarget({ kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data })}
             onCloseTask={(data) => closeManagedRecord({ kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data })}
             onReopenTask={(data) => reopenManagedRecord({ kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data })}
@@ -873,7 +876,7 @@ function WorkspaceApp() {
             onRefreshRecords={refreshRecords}
           />
         )}
-        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onDelete={deleteRecord} onRename={renameRecord} onDestroyCollection={destroyCollection} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} />}
+        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} />}
       </main>
 
       <footer className="page-footer">
@@ -1004,6 +1007,7 @@ function DownloadProgressPanel({ task, onRetry }) {
   if (!task || task.status === 'idle') return null
   const busy = ['preparing', 'downloading', 'saving'].includes(task.status)
   const statusText = downloadStatusText(task)
+  const remainingText = task.status === 'complete' ? '已完成' : formatDuration(task.etaSeconds)
   const progress = task.totalBytes ? Math.min(100, Math.max(0, task.progress || 0)) : task.status === 'complete' ? 100 : task.progress || 0
   const trackWidth = task.totalBytes || task.status === 'complete' ? progress : busy ? 18 : 0
   return (
@@ -1013,7 +1017,7 @@ function DownloadProgressPanel({ task, onRetry }) {
       <div className="upload-metrics">
         <span>已下 {formatBytes(task.loadedBytes)}{task.totalBytes ? ` / ${formatBytes(task.totalBytes)}` : ''}</span>
         <span>速度 {task.speedBps ? `${formatBytes(task.speedBps)}/s` : '计算中'}</span>
-        <span>剩余 {formatDuration(task.etaSeconds)}</span>
+        <span>{task.status === 'complete' ? '状态' : '剩余'} {remainingText}</span>
       </div>
       {task.filename && <small>文件：{task.filename}</small>}
       {task.canResume && <small>单文件服务端已开启 Range，可被浏览器用于断点续传。</small>}
@@ -1189,6 +1193,31 @@ function FilePreviewModal({ preview, onClose, onDownload, downloadDisabled = fal
   )
 }
 
+function RecordPreviewChooser({ previews, onClose, onSelect }) {
+  return (
+    <div className="modal-backdrop preview-backdrop" onMouseDown={onClose}>
+      <div className="modal record-preview-chooser" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">文件预览</p>
+            <h2>选择要预览的文件</h2>
+          </div>
+          <button className="ghost-icon modal-close" aria-label="关闭文件选择" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="record-preview-options">
+          {previews.map((preview) => (
+            <button type="button" className="record-preview-option" key={preview.key} onClick={() => onSelect(preview)}>
+              <span className="record-preview-option-icon"><FileText size={17} /></span>
+              <span><strong>{preview.file.name}</strong><small>{previewTypeLabel(preview.kind)} · {formatBytes(preview.file.size)}</small></span>
+              <ChevronRight size={16} />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function renderPreviewContent(preview, onError) {
   const title = preview.file?.name || '文件预览'
   if (preview.kind === 'image') return <img className="preview-image" src={preview.url} alt={title} onError={onError} />
@@ -1203,7 +1232,94 @@ function renderPreviewContent(preview, onError) {
       </div>
     )
   }
+  if (preview.kind === 'document' || preview.kind === 'spreadsheet' || preview.kind === 'presentation') {
+    return <OfficePreview preview={preview} onError={onError} />
+  }
   return <div className="preview-error"><FileText size={28} /><strong>暂不支持预览</strong><span>请下载后查看这个文件。</span></div>
+}
+
+function OfficePreview({ preview }) {
+  const [state, setState] = useState({ status: 'loading', html: '', workbook: null, sheets: [], error: '' })
+  const canvasRef = useRef(null)
+  const viewerRef = useRef(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const loadPreview = async () => {
+      try {
+        const response = await fetch(preview.url, { credentials: 'include' })
+        if (!response.ok) throw new Error(`预览请求失败（${response.status}）`)
+        const buffer = await response.arrayBuffer()
+        if (cancelled) return
+        if (preview.kind === 'document') {
+          const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
+          if (!result.value.trim()) throw new Error('文档没有可显示的正文内容')
+          if (!cancelled) setState({ status: 'ready', html: result.value, workbook: null, sheets: [], error: '' })
+          return
+        }
+        if (preview.kind === 'spreadsheet') {
+          const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
+          const sheets = workbook.SheetNames.map((name) => ({
+            name,
+            html: spreadsheetSheetHtml(workbook.Sheets[name]),
+          }))
+          if (!sheets.length) throw new Error('表格中没有可显示的工作表')
+          if (!cancelled) setState({ status: 'ready', html: '', workbook, sheets, error: '' })
+          return
+        }
+        if (preview.kind === 'presentation') {
+          if (!canvasRef.current) throw new Error('演示文稿画布初始化失败')
+          const viewer = new PPTXViewer({ canvas: canvasRef.current })
+          viewerRef.current = viewer
+          await viewer.loadFile(buffer)
+          await viewer.render()
+          if (!cancelled) setState({ status: 'ready', html: '', workbook: null, sheets: [], error: '' })
+        }
+      } catch (error) {
+        if (!cancelled) setState({ status: 'error', html: '', workbook: null, sheets: [], error: error.message || '文件解析失败' })
+      }
+    }
+    loadPreview()
+    return () => {
+      cancelled = true
+      viewerRef.current?.destroy?.()
+      viewerRef.current = null
+    }
+  }, [preview.url, preview.kind])
+
+  if (preview.kind === 'presentation') {
+    return (
+      <div className="presentation-preview">
+        <canvas ref={canvasRef} />
+        {state.status === 'loading' && <div className="office-preview-overlay"><span className="loading-dot" /><strong>正在生成预览</strong><span>文件只在当前浏览器中解析，不会自动下载。</span></div>}
+        {state.status === 'error' && <div className="office-preview-overlay preview-error"><FileText size={28} /><strong>预览加载失败</strong><span>{state.error}</span></div>}
+      </div>
+    )
+  }
+  if (state.status === 'loading') return <div className="office-preview-loading"><span className="loading-dot" /><strong>正在生成预览</strong><span>文件只在当前浏览器中解析，不会自动下载。</span></div>
+  if (state.status === 'error') return <div className="preview-error"><FileText size={28} /><strong>预览加载失败</strong><span>{state.error}</span></div>
+  if (preview.kind === 'document') return <article className="document-preview" dangerouslySetInnerHTML={{ __html: state.html }} />
+  if (preview.kind === 'spreadsheet') {
+    return (
+      <div className="spreadsheet-preview">
+        <div className="spreadsheet-tabs">{state.sheets.map((sheet, index) => <span className={index === 0 ? 'active' : ''} key={sheet.name}>{sheet.name}</span>)}</div>
+        {state.sheets.map((sheet, index) => <div className="spreadsheet-sheet" key={sheet.name} style={{ display: index === 0 ? 'block' : 'none' }} dangerouslySetInnerHTML={{ __html: sheet.html }} />)}
+      </div>
+    )
+  }
+  return null
+}
+
+function spreadsheetSheetHtml(sheet) {
+  if (!sheet || typeof sheet !== 'object') return '<div class="spreadsheet-empty">此工作表为空</div>'
+  try {
+    const range = sheet['!ref']
+    if (!range) return '<div class="spreadsheet-empty">此工作表为空</div>'
+    return XLSX.utils.sheet_to_html(sheet, { editable: false, header: '', footer: '' })
+  } catch (error) {
+    console.warn('表格工作表渲染失败', error)
+    return '<div class="spreadsheet-empty">此工作表无法预览，请下载文件查看。</div>'
+  }
 }
 
 function CollectionLimitInfo({ allowedTypes, maxFileSizeMb, compact = false }) {
@@ -1298,7 +1414,7 @@ function DatePicker({ value, onChange, ariaLabel, placeholder = '选择日期', 
   )
 }
 
-function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onDestroy, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
+function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
   const [form, setForm] = useState(createDefaultCollectionForm)
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const collectionRecords = records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
@@ -1324,7 +1440,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
       {manageLoading ? (
         <div className="collection-files-card collection-loading"><span className="loading-dot" /><p>正在加载已收文件...</p></div>
       ) : manageData ? (
-        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} onDestroy={onDestroy} onManageSettings={onManageSettings} onCloseTask={onCloseTask} onReopenTask={onReopenTask} onDeleteSubmission={onDeleteSubmission} onCopy={onCopy} onCopyQrImage={onCopyQrImage} />
+        <CollectionFilesPanel data={manageData} onClose={onCloseManager} onRefresh={onRefreshManager} onManageSettings={onManageSettings} onCloseTask={onCloseTask} onReopenTask={onReopenTask} onDeleteSubmission={onDeleteSubmission} onCopy={onCopy} onCopyQrImage={onCopyQrImage} />
       ) : (
         <div className={`collect-builder ${result ? 'created' : ''}`}>
           {!result ? (
@@ -1349,7 +1465,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
               </div>
             </>
           ) : (
-            <CollectionSuccess result={result} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onOpenManager={onOpenManager} onDestroy={onDestroy} onBack={backToCreate} />
+            <CollectionSuccess result={result} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onOpenManager={onOpenManager} onBack={backToCreate} />
           )}
         </div>
       )}
@@ -1370,7 +1486,6 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
                 </div>
                 <div className="collection-history-actions">
                   <button className="secondary-button" disabled={!recordManageUrl(record)} onClick={() => onOpenManager(recordManageUrl(record))}><FolderOpen size={15} /> 查看已收文件</button>
-                  <button className="secondary-button danger-lite" disabled={!recordManageUrl(record)} onClick={() => onDestroy(record)}><Trash2 size={15} /> 销毁任务</button>
                 </div>
               </div>
             ))}
@@ -1382,7 +1497,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
   )
 }
 
-function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onDestroy, onBack }) {
+function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onBack }) {
   const [qrOpen, setQrOpen] = useState(false)
 
   return (
@@ -1404,7 +1519,6 @@ function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onDes
         <div className="result-actions">
           <button className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回创建</button>
           <button className="secondary-button" onClick={() => onOpenManager(result.manageUrl)}><FolderOpen size={15} /> 查看已收文件</button>
-          <button className="secondary-button danger-lite" onClick={() => onDestroy(result)}><Trash2 size={15} /> 销毁本次任务</button>
           <button className="primary-button" onClick={() => onCopy(result.manageUrl)}><KeyRound size={15} /> 复制管理链接</button>
         </div>
       </div>
@@ -1423,7 +1537,7 @@ function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onDes
   )
 }
 
-function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCopy, onCopyQrImage }) {
+function CollectionFilesPanel({ data, onClose, onRefresh, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCopy, onCopyQrImage }) {
   const isActive = data.status === 'active'
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
@@ -1438,7 +1552,7 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSet
         <div>
           <p className="eyebrow">收集任务管理</p>
           <h2>{data.title}</h2>
-          <p>{data.submissions.length} 份提交 · {collectionStatusText(data.status)}</p>
+          <p>{data.submissions.length} 份提交 · {collectionStatusText(data.status, data.deadline)}</p>
           <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
         </div>
         <div className="collection-files-actions">
@@ -1446,7 +1560,7 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSet
           <button className="secondary-button" disabled={!data.publicUrl} onClick={() => onCopy?.(data.publicUrl)}><Link2 size={15} /> 复制提交链接</button>
           <button className="secondary-button" disabled={!data.qrDataUrl} onClick={() => setQrOpen(true)}><QrCode size={15} /> 查看二维码</button>
           <button className="secondary-button" onClick={() => onManageSettings(data)}><Settings2 size={15} /> 编辑任务</button>
-          <button className="ghost-icon" aria-label="刷新已收文件" onClick={onRefresh}><RefreshCw size={17} /></button>
+          <button className="secondary-button collection-refresh-button" onClick={onRefresh}><RefreshCw size={15} /> 刷新</button>
           {isActive ? (
             <button className="secondary-button danger-lite" onClick={() => onCloseTask(data)}><X size={15} /> 关闭收集</button>
           ) : canReopenCollection(data) ? (
@@ -1454,7 +1568,6 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onDestroy, onManageSet
           ) : (
             <button className="secondary-button" onClick={() => onManageSettings(data)}><CalendarDays size={15} /> 延长后开启</button>
           )}
-          <button className="secondary-button danger-lite" onClick={() => onDestroy(data)}><Trash2 size={15} /> 销毁本次任务</button>
         </div>
       </div>
       {data.submissions.length ? (
@@ -1777,25 +1890,6 @@ function CollectionManagePage({ token }) {
     }
   }
 
-  const destroyTask = async () => {
-    const confirmed = await requestConfirm({
-      title: '销毁收集任务',
-      detail: '销毁后，收集链接和已提交文件都将失效。确定销毁本次任务吗？',
-      confirmText: '销毁任务',
-      tone: 'danger',
-    })
-    if (!confirmed) return
-    try {
-      await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'DELETE' })
-      writeRecords(readRecords().filter((record) => {
-        const normalized = normalizeRecord(record)
-        return !(normalized.scope === 'my_collections' && normalized.manageToken === token)
-      }))
-      setDestroyed(true)
-    } catch (err) {
-      setActionError(err.message)
-    }
-  }
   const copyPublicValue = async (value) => {
     setActionError('')
     setActionMessage('')
@@ -1845,10 +1939,9 @@ function CollectionManagePage({ token }) {
             ) : (
               <button className="secondary-button" onClick={() => setEditing(true)}><CalendarDays size={15} /> 延长后开启</button>
             )}
-            <button className="secondary-button danger-lite" onClick={destroyTask}><Trash2 size={15} /> 销毁本次任务</button>
           </div>
         </div>
-        <p className="public-copy">{data.submissions.length} 份提交 · 状态：{collectionStatusText(data.status)}</p>
+        <p className="public-copy">{data.submissions.length} 份提交 · 状态：{collectionStatusText(data.status, data.deadline)}</p>
         {actionMessage && <FeedbackMessage message={actionMessage} tone="success" />}
         {actionError && <FeedbackMessage message={actionError} tone="error" />}
         <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
@@ -2255,7 +2348,7 @@ const FILE_CATEGORY_FILTERS = [
   ['other', '其他'],
 ]
 
-function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRename, onDestroyCollection, onClear, onRefresh, onOpen, onManage, onCloseManaged, onReopenManaged }) {
+function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, onDelete, onRename, onClear, onRefresh, onOpen, onOpenCollectionManager, onManage, onCloseManaged, onReopenManaged }) {
   const [viewMode, setViewMode] = useState('records')
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
@@ -2269,7 +2362,11 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
   const [openMenu, setOpenMenu] = useState(null)
   const [menuPlacement, setMenuPlacement] = useState('down')
   const [renameTarget, setRenameTarget] = useState(null)
+  const [previewItem, setPreviewItem] = useState(null)
+  const [previewChoices, setPreviewChoices] = useState(null)
+  const [qrPreview, setQrPreview] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  const { startDownload: startRecordPreviewDownload, downloadBusy: previewDownloadBusy } = useDownloadTask()
 
   const normalizedRecords = records.map(normalizeRecord)
   const filteredRecords = normalizedRecords.filter((record) => (
@@ -2396,16 +2493,61 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
     setRenameTarget(null)
   }
 
+  const openRecordPreview = (record) => {
+    const previews = recordPreviewConfigs(record)
+    if (previews.length === 1) {
+      setPreviewItem(previews[0])
+      return
+    }
+    if (previews.length > 1) setPreviewChoices(previews)
+  }
+
+  const openCollectionQr = async (record) => {
+    const targetUrl = record.publicUrl || record.shareUrl
+    if (!targetUrl) return
+    try {
+      const qrDataUrl = await QRCode.toDataURL(targetUrl, { width: 280, margin: 1 })
+      setQrPreview({ qrDataUrl, targetUrl, title: `${recordDisplayName(record)}提交二维码` })
+    } catch {
+      onCopy?.(targetUrl)
+    }
+  }
+
+  const openShareQr = async (record) => {
+    const targetUrl = record.shareUrl || (record.shareId ? `${window.location.origin}/share/${record.shareId}` : '')
+    if (!targetUrl) return
+    try {
+      const qrDataUrl = await QRCode.toDataURL(targetUrl, { width: 280, margin: 1 })
+      setQrPreview({ qrDataUrl, targetUrl, title: `${recordDisplayName(record)}分享二维码`, detail: '扫码打开分享页面' })
+    } catch {
+      onCopy?.(targetUrl)
+    }
+  }
+
   const renderRecordMenu = (record) => {
     const link = recordLink(record)
     const copyTarget = recordCopyTarget(record)
+    const shareUrl = record.kind === 'share' ? (record.shareUrl || link) : ''
     const statusGroup = recordStatusGroup(record)
     const reopenableCollection = canReopenCollection(record)
     return (
       <div className={`record-menu row-menu ${menuPlacement === 'up' ? 'menu-up' : ''}`} onClick={(event) => event.stopPropagation()}>
         <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
-        <button disabled={!link} onClick={runMenuAction(() => onOpen(record))}><ExternalLink size={14} /> {recordOpenLabel(record)}</button>
-        <button disabled={!onRename} onClick={runMenuAction(() => requestRename(record))}><PencilLine size={14} /> 重命名显示名称</button>
+        {record.scope === 'my_sent' && record.kind === 'share' ? (
+          <>
+            <button disabled={!shareUrl} onClick={runMenuAction(() => onCopy(shareUrl))}><Link2 size={14} /> 复制分享链接</button>
+            <button disabled={!shareUrl} onClick={runMenuAction(() => openShareQr(record))}><QrCode size={14} /> 分享二维码</button>
+          </>
+        ) : (
+          <button disabled={!link} onClick={runMenuAction(() => {
+            if (record.scope === 'my_collections' && onOpenCollectionManager) {
+              onOpenCollectionManager(recordManageUrl(record))
+              return
+            }
+            onOpen(record)
+          })}><ExternalLink size={14} /> {record.scope === 'my_collections' ? '查看已收文件' : recordOpenLabel(record)}</button>
+        )}
+        <button disabled={!onRename} onClick={runMenuAction(() => requestRename(record))}><PencilLine size={14} /> 重命名</button>
         {record.scope === 'my_sent' && (
           <>
             <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
@@ -2415,6 +2557,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
         {record.scope === 'my_collections' && (
           <>
             <button disabled={!record.publicUrl && !record.shareUrl} onClick={runMenuAction(() => onCopy(record.publicUrl || record.shareUrl))}><Link2 size={14} /> 复制提交链接</button>
+            <button disabled={!record.publicUrl && !record.shareUrl} onClick={runMenuAction(() => openCollectionQr(record))}><QrCode size={14} /> 查看提交二维码</button>
             <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理收集设置</button>
             {record.status === '已关闭' && reopenableCollection ? (
               <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启收集任务</button>
@@ -2423,7 +2566,6 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
             ) : (
               <button className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭收集任务</button>
             )}
-            <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onDestroyCollection(record))}><Trash2 size={14} /> 销毁收集任务</button>
           </>
         )}
         <button className="danger" onClick={runMenuAction(() => onDelete(record.id))}><Trash2 size={14} /> {user?.id ? '删除记录' : '删除本机记录'}</button>
@@ -2523,6 +2665,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
                   <span className={`record-type ${statusGroup}`}>{recordDisplayStatus(record)}</span>
                   <span className="record-code">{record.code || '-'}</span>
                   <div className="menu-wrap row-menu-wrap">
+                    {recordPreviewConfigs(record).length > 0 && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
                     <button className="ghost-icon" aria-label={`更多操作：${recordDisplayName(record)}`} onClick={(event) => toggleMenu(record.id, event)}><MoreHorizontal size={17} /></button>
                     {openMenu === record.id && renderRecordMenu(record)}
                   </div>
@@ -2609,6 +2752,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
                   <span className={`record-type ${item.statusGroup}`}>{recordDisplayStatus(record)}</span>
                   <span className="record-code">{item.size ? formatBytes(item.size) : `${item.fileCount || 1} 项`}</span>
                   <div className="menu-wrap row-menu-wrap">
+                    {recordPreviewConfigs(record).length > 0 && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${item.name}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
                     <button className="ghost-icon" aria-label={`更多操作：${item.name}`} onClick={(event) => toggleMenu(item.id, event)}><MoreHorizontal size={17} /></button>
                     {openMenu === item.id && renderRecordMenu(record)}
                   </div>
@@ -2621,6 +2765,9 @@ function RecordsView({ records, user, syncing = false, onCopy, onDelete, onRenam
         </>
       )}
       {renameTarget && <RenameRecordModal record={renameTarget} onClose={() => setRenameTarget(null)} onSave={saveRename} />}
+      {previewChoices && <RecordPreviewChooser previews={previewChoices} onClose={() => setPreviewChoices(null)} onSelect={(preview) => { setPreviewChoices(null); setPreviewItem(preview) }} />}
+      {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startRecordPreviewDownload(previewItem.downloadConfig)} downloadDisabled={previewDownloadBusy} />}
+      {qrPreview && <QrPreviewModal title={qrPreview.title} detail={qrPreview.detail || '扫码打开提交入口'} qrDataUrl={qrPreview.qrDataUrl} targetUrl={qrPreview.targetUrl} onClose={() => setQrPreview(null)} onCopyImage={() => onCopyQrImage?.(qrPreview.qrDataUrl, qrPreview.targetUrl)} onCopyLink={() => onCopy?.(qrPreview.targetUrl)} />}
       <div className="records-footnote"><HardDrive size={16} /> {syncing ? '账号记录同步中...' : user?.id ? '已登录，记录会同步到账号并可跨设备查看。' : '游客记录仅保留在当前设备，登录后可跨设备同步。'}</div>
     </section>
   )
@@ -2869,6 +3016,7 @@ function WorkspacePage() {
   const [teamName, setTeamName] = useState('')
   const [memberTarget, setMemberTarget] = useState('')
   const [saving, setSaving] = useState(false)
+  const [selectedPlanId, setSelectedPlanId] = useState('')
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
 
   const load = async () => {
@@ -2891,6 +3039,14 @@ function WorkspacePage() {
   }
 
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (workspace?.plan?.id) setSelectedPlanId(workspace.plan.id)
+  }, [workspace?.plan?.id])
+  useEffect(() => {
+    if (!message) return undefined
+    const timer = window.setTimeout(() => setMessage(''), 3000)
+    return () => window.clearTimeout(timer)
+  }, [message])
 
   const login = () => {
     const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`
@@ -2959,29 +3115,42 @@ function WorkspacePage() {
     return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和企业专属链接会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
   }
   const plan = workspace?.plan || {}
+  const plans = workspace?.plans || []
+  const selectedPlan = plans.find((item) => item.id === selectedPlanId) || plan
   const capacity = workspace?.capacity || {}
   const organization = workspace?.organization
   const hasTeamPlan = Boolean(plan.team)
   const canManageTeam = Boolean(hasTeamPlan && workspace?.canManage)
-  const ratio = capacity.totalBytes ? Math.round((capacity.usedBytes / capacity.totalBytes) * 100) : 0
+  const selectedTotalBytes = Number(selectedPlan.totalBytes || capacity.totalBytes || 0)
+  const ratio = selectedTotalBytes ? Math.min(100, Math.round((capacity.usedBytes / selectedTotalBytes) * 100)) : 0
+  const currentPlanLabel = plan.label || '基础版'
+  const goBack = () => {
+    const referrer = document.referrer
+    const hasSameOriginReferrer = referrer && new URL(referrer, window.location.origin).origin === window.location.origin
+    if (window.history.length > 1 && hasSameOriginReferrer) {
+      window.history.back()
+      return
+    }
+    window.location.href = '/'
+  }
   return (
     <PublicShell>
       <section className="workspace-page">
-        <div className="public-card workspace-hero">
-          <div><p className="eyebrow">会员与企业版</p><h1>{plan.label || '基础版'}空间</h1><p>容量、永久保存和团队协作能力由当前账号权益统一管理。</p></div>
-          <button className="secondary-button" onClick={() => { window.location.href = '/settings/profile' }}><ArrowLeft size={15} /> 返回账户设置</button>
-        </div>
+        {(message || error) && <div className="workspace-toast"><FeedbackMessage message={message || error} tone={error ? 'error' : feedbackTone(message)} /></div>}
         <div className="workspace-grid">
-          <div className="workspace-main">
-            <div className="public-card workspace-section">
-              <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {plan.label || '基础版'}</h2></div><span className="workspace-status">{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
-              <div className="workspace-capacity"><div><span>已使用空间</span><strong>{formatBytes(capacity.usedBytes || 0)} / {formatBytes(capacity.totalBytes || 0)}</strong></div><div className="capacity-bar"><span style={{ width: `${ratio}%` }} /></div><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务 · {capacity.fileCount || 0} 个文件</small></div>
-              <div className="plan-comparison">{(workspace?.plans || []).map((item) => <div className={item.id === plan.id ? 'current' : ''} key={item.id}><strong>{item.label}</strong><span>{formatBytes(item.totalBytes)}</span><small>{item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</small></div>)}</div>
+            <div className="public-card workspace-hero">
+              <div><p className="eyebrow">会员与企业版</p><h1>{currentPlanLabel}空间</h1><p>存储空间、保存策略、团队协作能力均由账号权益统一管控。</p></div>
+              <button className="secondary-button workspace-back-button" onClick={goBack}><ArrowLeft size={15} /> 返回</button>
             </div>
-            <div className="public-card workspace-section">
-              <div className="workspace-section-heading"><div><p className="eyebrow">团队空间</p><h2><Users size={18} /> {organization?.name || '创建团队空间'}</h2></div>{organization ? <span className="workspace-status">{organization.members.length} 位成员</span> : <span className="workspace-status muted">{canManageTeam ? '可创建' : '需团队版'}</span>}</div>
+            <div className="public-card workspace-section workspace-benefits-card">
+              <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
+              <div className="workspace-capacity"><div><span>已使用空间 · {selectedPlan.label || currentPlanLabel}</span><strong>{formatBytes(capacity.usedBytes || 0)} / {formatBytes(selectedTotalBytes)}</strong></div><div className="capacity-bar" title={`已使用 ${ratio}%`} role="progressbar" aria-valuenow={ratio} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${ratio}%` }} /></div><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务 · {capacity.fileCount || 0} 个文件</small></div>
+              <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id}><strong>{item.label}</strong><span>{formatBytes(item.totalBytes)}</span><small title={item.permanent ? '永久保存文件' : '临时保存文件到期会失效'}>{item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</small></button>)}</div>
+            </div>
+            <div className="public-card workspace-section workspace-team-card">
+              <div className="workspace-section-heading"><div><p className="eyebrow">团队空间</p><h2><Users size={18} /> {organization?.name || '创建团队空间'}</h2></div>{organization ? <span className="workspace-status">{organization.members.length} 位成员</span> : <span className="workspace-status muted team-required-tag" title={canManageTeam ? '当前权益可以创建团队空间。' : '该功能需要升级团队版权限才可解锁。'}>{canManageTeam ? '可创建' : '需团队版'}</span>}</div>
               {!organization ? (
-                hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>后台把账号权益调整为团队版或企业版后，可创建团队、邀请成员并生成企业专属链接。</span></div></div>
+                hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
               ) : (
                 <>
                   <div className="workspace-link-row"><Link2 size={15} /><span>企业专属标识</span><code>{organization.slug}</code><button className="copy-button" onClick={() => { navigator.clipboard?.writeText(organization.slug); setMessage('企业标识已复制') }}><Copy size={14} /> 复制</button></div>
@@ -2991,11 +3160,9 @@ function WorkspacePage() {
                 </>
               )}
             </div>
-          </div>
-          <aside className="workspace-side"><div className="public-card workspace-side-card"><ShieldCheck size={22} /><strong>企业专属链接</strong><p>团队版或企业版创建的分享，会自动生成带团队标识的专属入口。</p><span>/e/{organization?.slug || 'your-team'}/share/...</span></div><div className="public-card workspace-side-card"><ListChecks size={22} /><strong>当前状态</strong><p>{canManageTeam ? '团队协作功能已启用。' : '升级到团队版后可管理成员和企业入口。'}</p><button className="secondary-button" onClick={() => setMessage('会员升级需接入鲲穹订单系统后开放')}>查看升级方式</button></div></aside>
+            <div className="public-card workspace-side-card workspace-link-card"><ShieldCheck size={22} /><strong>企业专属链接</strong><p>团队/企业版分享，自动生成携带团队标识的专属访问链接。</p><div className="workspace-link-row"><code>/e/{organization?.slug || 'your-team'}/share/...</code><button className="ghost-icon" aria-label="复制企业专属链接格式" title="复制企业专属链接格式" onClick={() => { navigator.clipboard?.writeText(`/e/${organization?.slug || 'your-team'}/share/...`); setMessage('企业专属链接格式已复制') }}><Copy size={15} /></button></div><div className="workspace-side-points"><span><Check size={13} /> 访问地址自动带团队标识</span><span><Check size={13} /> 可用于团队专属分享入口</span></div></div>
+            <div className="public-card workspace-side-card workspace-status-card"><ListChecks size={22} /><strong>当前状态</strong><p>{canManageTeam ? '团队协作功能已启用。' : '升级到团队版后可管理成员和企业入口。'}</p><div className="workspace-status-note">{canManageTeam ? '成员邀请和企业入口均可使用' : '升级后即可解锁完整团队能力'}</div><button className="primary-button" onClick={() => setMessage('会员升级需接入鲲穹订单系统后开放')}>查看升级方式</button></div>
         </div>
-        {message && <FeedbackMessage message={message} tone={feedbackTone(message)} />}
-        {error && <FeedbackMessage message={error} tone="error" />}
       </section>
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
@@ -3488,6 +3655,10 @@ function mergeRecord(existing, incoming) {
   const merged = { ...existing, ...incoming }
   merged.createdAt = existing.createdAt || incoming.createdAt
   merged.updatedAt = incoming.updatedAt || existing.updatedAt || new Date().toISOString()
+  if (!incoming.shareId && existing.shareId) merged.shareId = existing.shareId
+  if (!incoming.shareUrl && existing.shareUrl) merged.shareUrl = existing.shareUrl
+  if (!incoming.manageToken && existing.manageToken) merged.manageToken = existing.manageToken
+  if (!incoming.manageUrl && existing.manageUrl) merged.manageUrl = existing.manageUrl
   if (!incoming.alias && existing.alias) merged.alias = existing.alias
   if ((!incoming.name || incoming.name === '文件分享') && existing.name) merged.name = existing.name
   if (!incoming.meta && existing.meta) merged.meta = existing.meta
@@ -3620,14 +3791,14 @@ function shareStatusText(status) {
   return '有效'
 }
 
-function collectionStatusText(status) {
+function collectionStatusText(status, deadline = null) {
   if (status === 'closed') return '已关闭'
-  if (status === 'expired') return '已截止'
+  if (status === 'expired' || isPastDeadline(deadline)) return '已截止'
   return '进行中'
 }
 
 function canReopenCollection(collection = {}) {
-  return collection.status !== 'active' && Boolean(collection.deadline && new Date(collection.deadline).getTime() > Date.now())
+  return isClosedOrExpiredStatus(collection.status) && Boolean(collection.deadline && !isPastDeadline(collection.deadline))
 }
 
 function createShareRecord(share, scope = 'my_sent') {
@@ -3792,15 +3963,31 @@ function recordStatusGroup(record) {
 }
 
 function isRecordExpired(record) {
-  if (['expired', 'closed', '已过期', '已失效', '已截止', '已关闭'].includes(record.status)) return true
+  if (isClosedOrExpiredStatus(record.status)) return true
   const deadline = record.expiresAt || record.deadline
-  return Boolean(deadline && new Date(deadline).getTime() <= Date.now())
+  return isPastDeadline(deadline)
 }
 
 function isRecordExpiringSoon(record) {
+  if (isExpiringSoonStatus(record.status)) return true
   const deadline = record.expiresAt || record.deadline
   if (!deadline || isRecordExpired(record)) return false
-  return new Date(deadline).getTime() - Date.now() <= EXPIRING_SOON_MS
+  const deadlineTime = new Date(deadline).getTime()
+  return Number.isFinite(deadlineTime) && deadlineTime - Date.now() <= EXPIRING_SOON_MS
+}
+
+function isPastDeadline(value) {
+  if (!value) return false
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) && time <= Date.now()
+}
+
+function isClosedOrExpiredStatus(status) {
+  return ['expired', 'closed', '已过期', '已失效', '已截止', '已关闭'].includes(status)
+}
+
+function isExpiringSoonStatus(status) {
+  return ['expiring', '即将过期', '即将截止'].includes(status)
 }
 
 function recordDisplayStatus(record) {
@@ -3962,7 +4149,7 @@ function recordCopyLabel(record) {
 
 function recordOpenLabel(record) {
   if (record.kind === 'share') return record.scope === 'my_sent' ? '打开分享链接' : '打开文件链接'
-  return record.scope === 'my_collections' ? '打开管理页' : '打开提交入口'
+  return record.scope === 'my_collections' ? '查看已收文件' : '打开提交入口'
 }
 
 function recordExpiryLabel(record) {
@@ -4471,6 +4658,33 @@ function createSubmissionFilePreviewConfig(collection, submission, fileIndex) {
   }
 }
 
+function recordPreviewConfigs(record) {
+  if (!record) return []
+  if (record.kind === 'share') {
+    const files = compactRecordFiles(record.files)
+    const shareId = record.shareId || getShareToken(record.shareUrl || record.publicUrl)
+    if (!shareId) return []
+    return files
+      .map((file, index) => canPreviewFile(file) ? { ...createShareFilePreviewConfig({ id: shareId }, file, index), key: `share:${shareId}:${index}` } : null)
+      .filter(Boolean)
+  }
+  if (record.scope === 'my_collections') {
+    const submissions = compactRecordSubmissions(record.submissions)
+    if (!record.manageToken) return []
+    return submissions.flatMap((submission) => submission.files.map((file, index) => canPreviewFile(file) && submission.id
+      ? {
+          ...createSubmissionFilePreviewConfig({ manageToken: record.manageToken }, submission, index),
+          key: `collection:${record.manageToken}:${submission.id}:${index}`,
+        }
+      : [])).filter(Boolean)
+  }
+  return []
+}
+
+function recordPreviewConfig(record) {
+  return recordPreviewConfigs(record)[0] || null
+}
+
 function canPreviewFile(file) {
   return Boolean(previewKind(file))
 }
@@ -4482,6 +4696,9 @@ function previewKind(file = {}) {
   if (mimeType.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(extension)) return 'image'
   if (mimeType.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov', 'm4v'].includes(extension)) return 'video'
   if (mimeType.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac', 'flac', 'oga', 'ogg'].includes(extension)) return 'audio'
+  if (mimeType.includes('wordprocessingml') || extension === 'docx') return 'document'
+  if (mimeType.includes('spreadsheetml') || ['xlsx', 'xls', 'csv'].includes(extension)) return 'spreadsheet'
+  if (mimeType.includes('presentationml') || extension === 'pptx') return 'presentation'
   return ''
 }
 
@@ -4489,6 +4706,9 @@ function previewTypeLabel(kind) {
   if (kind === 'pdf') return 'PDF'
   if (kind === 'video') return '视频'
   if (kind === 'audio') return '音频'
+  if (kind === 'document') return '文档'
+  if (kind === 'spreadsheet') return '表格'
+  if (kind === 'presentation') return '演示文稿'
   return '图片'
 }
 
@@ -4496,6 +4716,9 @@ function previewSupportLabel(kind) {
   if (kind === 'pdf') return '浏览器内嵌 PDF 预览'
   if (kind === 'video') return '在线播放，支持拖动进度'
   if (kind === 'audio') return '在线播放音频'
+  if (kind === 'document') return 'DOCX 在线解析预览'
+  if (kind === 'spreadsheet') return '表格在线解析预览'
+  if (kind === 'presentation') return 'PPTX 在线渲染预览'
   return '图片在线预览'
 }
 
