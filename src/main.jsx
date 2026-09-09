@@ -805,25 +805,24 @@ function WorkspaceApp() {
 
   const copyValue = async (value) => {
     try {
-      await navigator.clipboard.writeText(value)
+      await copyTextToClipboard(value)
       setToast('已复制到剪贴板')
     } catch {
-      setToast('请手动复制分享信息')
+      setToast('自动复制失败，请手动复制分享信息')
     }
   }
 
   const copyQrImage = async (dataUrl, fallbackText) => {
     try {
-      if (!navigator.clipboard?.write || typeof window.ClipboardItem === 'undefined') {
-        throw new Error('copy-image-not-supported')
-      }
-      const response = await fetch(dataUrl)
-      const blob = await response.blob()
-      await navigator.clipboard.write([new window.ClipboardItem({ [blob.type || 'image/png']: blob })])
+      await copyImageToClipboard(dataUrl)
       setToast('二维码图片已复制')
     } catch {
-      await copyValue(fallbackText || dataUrl)
-      setToast('当前浏览器不支持直接复制图片，已复制链接')
+      try {
+        await copyTextToClipboard(fallbackText || dataUrl)
+        setToast('当前浏览器不支持直接复制图片，已复制链接')
+      } catch {
+        setToast('当前浏览器不支持自动复制，请手动复制链接')
+      }
     }
   }
 
@@ -2023,7 +2022,7 @@ function CollectionManagePage({ token }) {
     setActionError('')
     setActionMessage('')
     try {
-      await navigator.clipboard.writeText(value)
+      await copyTextToClipboard(value)
       setActionMessage('已复制到剪贴板')
     } catch {
       setActionError('当前浏览器不支持自动复制，请手动复制链接')
@@ -2033,13 +2032,15 @@ function CollectionManagePage({ token }) {
     setActionError('')
     setActionMessage('')
     try {
-      if (!navigator.clipboard?.write || typeof window.ClipboardItem === 'undefined') throw new Error('copy-image-not-supported')
-      const response = await fetch(dataUrl)
-      const blob = await response.blob()
-      await navigator.clipboard.write([new window.ClipboardItem({ [blob.type || 'image/png']: blob })])
+      await copyImageToClipboard(dataUrl)
       setActionMessage('二维码图片已复制')
     } catch {
-      await copyPublicValue(fallbackText || dataUrl)
+      try {
+        await copyTextToClipboard(fallbackText || dataUrl)
+        setActionMessage('当前浏览器不支持直接复制图片，已复制链接')
+      } catch {
+        setActionError('当前浏览器不支持自动复制，请手动复制链接')
+      }
     }
   }
   const downloadAll = () => startDownload(createCollectionDownloadConfig(data))
@@ -3282,14 +3283,14 @@ function WorkspacePage() {
                 hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
               ) : (
                 <>
-                  <div className="workspace-link-row"><Link2 size={15} /><span>企业专属标识</span><code>{organization.slug}</code><button className="copy-button" onClick={() => { navigator.clipboard?.writeText(organization.slug); setMessage('企业标识已复制') }}><Copy size={14} /> 复制</button></div>
+                  <div className="workspace-link-row"><Link2 size={15} /><span>企业专属标识</span><code>{organization.slug}</code><button className="copy-button" onClick={async () => { try { await copyTextToClipboard(organization.slug); setMessage('企业标识已复制') } catch { setError('当前浏览器不支持自动复制，请手动复制企业标识') } }}><Copy size={14} /> 复制</button></div>
                   {!canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
                   <form className="workspace-inline-form" onSubmit={inviteMember}><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="输入成员邮箱、手机号或鲲穹账号" disabled={!canManageTeam} /><button className="secondary-button" disabled={saving || !memberTarget.trim() || !canManageTeam}><UserPlus size={15} /> 邀请成员</button></form>
                   <div className="workspace-members">{organization.members.map((member) => <div className="workspace-member" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName}</strong><span>{member.email || member.phone || member.userId || '待接受邀请'} · {member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</span></div>{canManageTeam && member.canRemove && <button className="ghost-icon" aria-label={`移除${member.displayName}`} onClick={() => removeMember(member)}><X size={16} /></button>}</div>)}</div>
                 </>
               )}
             </div>
-            <div className="public-card workspace-side-card workspace-link-card"><ShieldCheck size={22} /><strong>企业专属链接</strong><p>团队/企业版分享，自动生成携带团队标识的专属访问链接。</p><div className="workspace-link-row"><code>/e/{organization?.slug || 'your-team'}/share/...</code><button className="ghost-icon" aria-label="复制企业专属链接格式" title="复制企业专属链接格式" onClick={() => { navigator.clipboard?.writeText(`/e/${organization?.slug || 'your-team'}/share/...`); setMessage('企业专属链接格式已复制') }}><Copy size={15} /></button></div><div className="workspace-side-points"><span><Check size={13} /> 访问地址自动带团队标识</span><span><Check size={13} /> 可用于团队专属分享入口</span></div></div>
+            <div className="public-card workspace-side-card workspace-link-card"><ShieldCheck size={22} /><strong>企业专属链接</strong><p>团队/企业版分享，自动生成携带团队标识的专属访问链接。</p><div className="workspace-link-row"><code>/e/{organization?.slug || 'your-team'}/share/...</code><button className="ghost-icon" aria-label="复制企业专属链接格式" title="复制企业专属链接格式" onClick={async () => { try { await copyTextToClipboard(`/e/${organization?.slug || 'your-team'}/share/...`); setMessage('企业专属链接格式已复制') } catch { setError('当前浏览器不支持自动复制，请手动复制链接格式') } }}><Copy size={15} /></button></div><div className="workspace-side-points"><span><Check size={13} /> 访问地址自动带团队标识</span><span><Check size={13} /> 可用于团队专属分享入口</span></div></div>
             <div className="public-card workspace-side-card workspace-status-card"><ListChecks size={22} /><strong>当前状态</strong><p>{canManageTeam ? '团队协作功能已启用。' : '升级到团队版后可管理成员和企业入口。'}</p><div className="workspace-status-note">{canManageTeam ? '成员邀请和企业入口均可使用' : '升级后即可解锁完整团队能力'}</div><button className="primary-button" onClick={() => setMessage('会员升级需接入鲲穹订单系统后开放')}>查看升级方式</button></div>
         </div>
       </section>
@@ -4701,6 +4702,105 @@ function saveBlob(blob, filename) {
   link.click()
   link.remove()
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function canUseImageClipboard() {
+  return Boolean(window.isSecureContext && navigator.clipboard?.write && typeof window.ClipboardItem !== 'undefined')
+}
+
+async function copyImageToClipboard(dataUrl) {
+  if (canUseImageClipboard()) {
+    const response = await fetch(dataUrl)
+    const blob = await response.blob()
+    await navigator.clipboard.write([new window.ClipboardItem({ [blob.type || 'image/png']: blob })])
+    return
+  }
+  if (copyImageWithSelection(dataUrl)) return
+  throw new Error('copy-image-not-supported')
+}
+
+function copyImageWithSelection(dataUrl) {
+  const activeElement = document.activeElement
+  const container = document.createElement('div')
+  container.contentEditable = 'true'
+  container.setAttribute('aria-hidden', 'true')
+  container.style.position = 'fixed'
+  container.style.top = '0'
+  container.style.left = '-9999px'
+  container.style.width = '220px'
+  container.style.height = '220px'
+  container.style.overflow = 'hidden'
+  container.style.opacity = '0'
+  const image = document.createElement('img')
+  image.src = dataUrl
+  image.alt = '分享二维码'
+  image.style.width = '200px'
+  image.style.height = '200px'
+  container.appendChild(image)
+  document.body.appendChild(container)
+
+  const selection = window.getSelection()
+  const range = document.createRange()
+  range.selectNodeContents(container)
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  } catch {
+    copied = false
+  }
+
+  selection?.removeAllRanges()
+  container.remove()
+  if (activeElement && typeof activeElement.focus === 'function') {
+    activeElement.focus({ preventScroll: true })
+  }
+  return copied
+}
+
+async function copyTextToClipboard(value) {
+  const text = String(value ?? '')
+  if (!text) throw new Error('copy-empty-text')
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {}
+  }
+
+  if (copyTextWithTextarea(text)) return
+  throw new Error('copy-text-not-supported')
+}
+
+function copyTextWithTextarea(text) {
+  const textarea = document.createElement('textarea')
+  const activeElement = document.activeElement
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.top = '0'
+  textarea.style.left = '-9999px'
+  textarea.style.width = '1px'
+  textarea.style.height = '1px'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  textarea.setSelectionRange(0, textarea.value.length)
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  } catch {
+    copied = false
+  }
+  textarea.remove()
+  if (activeElement && typeof activeElement.focus === 'function') {
+    activeElement.focus({ preventScroll: true })
+  }
+  return copied
 }
 
 function currentDownloadSpeed(startedAt, loadedBytes) {
