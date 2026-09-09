@@ -144,6 +144,16 @@ app.use((req, res, next) => {
   next()
 })
 
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/') || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next()
+  const origin = firstHeader(req.get('origin'))
+  if (!origin) return next()
+  if (origin !== getRequestOrigin(req)) {
+    return res.status(403).json({ message: '请求来源不受信任' })
+  }
+  next()
+})
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'kunqiong-local-api', release: releaseSha, now: new Date().toISOString() })
 })
@@ -1065,7 +1075,17 @@ function normalizeMetadata(value = {}) {
       metadataNeedsPersist = true
     }
   }
-  const sessions = Array.isArray(value.sessions) ? value.sessions.filter((session) => session?.id && session?.user) : []
+  const sessions = Array.isArray(value.sessions)
+    ? value.sessions
+      .filter((session) => session?.id && session?.user)
+      .map((session) => {
+        if (Object.prototype.hasOwnProperty.call(session, 'accessToken') || Object.prototype.hasOwnProperty.call(session, 'tokenType')) {
+          metadataNeedsPersist = true
+        }
+        const { accessToken: _accessToken, tokenType: _tokenType, ...sanitized } = session
+        return sanitized
+      })
+    : []
   const users = normalizeAccountUserStore(value.users, sessions)
   return {
     ...value,
@@ -2580,8 +2600,6 @@ function createAuthSession(tokenData) {
   })
   const session = {
     id: createToken(40),
-    accessToken: tokenData.access_token,
-    tokenType: tokenData.token_type || 'Bearer',
     expiresAt: new Date(now.getTime() + expiresIn * 1000).toISOString(),
     createdAt: now.toISOString(),
     user: publicUser(user),
@@ -2640,15 +2658,14 @@ function consumeOAuthState(state) {
 }
 
 function safeReturnUrl(value, req) {
-  const fallback = configuredAppUrl || getRequestOrigin(req)
+  const fallback = getRequestOrigin(req)
+  const requestOrigin = new URL(fallback).origin
+  const configuredOrigin = configuredAppUrl ? (() => {
+    try { return new URL(configuredAppUrl).origin } catch { return '' }
+  })() : ''
   const allowedOrigins = new Set([
-    fallback,
-    getRequestOrigin(req),
-    `http://localhost:${serverPort}`,
-    'http://localhost:4173',
-    `http://127.0.0.1:${serverPort}`,
-    'http://127.0.0.1:4173',
-    'http://43.154.197.96:8045',
+    requestOrigin,
+    configuredOrigin === requestOrigin ? configuredOrigin : '',
   ].filter(Boolean).map((item) => {
     try { return new URL(item).origin } catch { return '' }
   }).filter(Boolean))

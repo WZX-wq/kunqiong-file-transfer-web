@@ -3180,7 +3180,7 @@ function WorkspacePage() {
   }, [message])
 
   const login = () => {
-    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`
+    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`
     window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
   }
 
@@ -3322,7 +3322,7 @@ function AdminPage() {
   useEffect(() => { load() }, [])
 
   const login = () => {
-    const returnTo = `${window.location.origin}${window.location.pathname}`
+    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`
     window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
   }
   const removeResource = async (resource) => {
