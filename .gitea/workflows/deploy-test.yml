@@ -27,8 +27,9 @@ jobs:
       KUNQIONG_SMTP_FROM: ""
       KUNQIONG_SMTP_FROM_NAME: "鲲穹文件传输"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout from Gitea
+        run: |
+          git clone --depth 1 --branch main http://43.154.197.96/giteaadmin/kunqiong-file-transfer-web.git .
 
       - name: Deploy
         run: |
