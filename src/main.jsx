@@ -1765,7 +1765,7 @@ function SharePage({ token, enterpriseSlug = '' }) {
   const previewFile = (file, fileIndex) => setPreviewItem(createShareFilePreviewConfig(share, file, fileIndex, { password }))
   return (
     <PublicShell>
-      <div className="public-card">
+      <div className="public-card share-public-card">
         <span className="public-icon"><Download size={24} /></span>
         <p className="eyebrow">鲲穹临时分享</p>
         <h1>有人给你发来了文件</h1>
