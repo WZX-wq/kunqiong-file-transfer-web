@@ -3093,11 +3093,9 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
                 <SettingsActionRow label="鲲穹账号" value={user.username || user.id || '未设置'} detail={user.id ? `账号 ID：${user.id}` : ''} />
                 <SettingsActionRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定手机号'} action={user.phone ? '更换绑定' : '绑定手机号'} onAction={() => setBindingType('phone')} />
                 <SettingsActionRow label="邮箱" value={user.email || '未绑定邮箱'} action={user.email ? '更换绑定' : '绑定邮箱'} onAction={() => setBindingType('email')} />
-                <SettingsActionRow label="登录密码" value="由统一登录中心管理" action="重新登录" onAction={onLogin} />
                 <SettingsActionRow label="当前会话" value="此设备已安全登录" action="退出登录" onAction={onLogout} />
-                <SettingsActionRow label="注销账户" value="账户注销请前往统一登录中心操作" action="暂未开放" disabled />
               </div>
-              <div className="settings-notice"><ShieldCheck size={16} /><span>鲲穹不会在前端保存你的登录密码。</span></div>
+              <div className="settings-notice"><ShieldCheck size={16} /><span>账号认证由鲲穹统一登录中心完成，当前页面仅管理绑定方式和会话。</span></div>
             </>
           )}
 
