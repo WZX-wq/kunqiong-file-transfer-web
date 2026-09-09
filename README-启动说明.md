@@ -44,6 +44,8 @@ npm start
 
 默认服务端口是 `8045`，浏览器访问 `http://服务器IP:8045/`。部署前复制 `.env.example` 为 `.env`，把 `KUNQIONG_APP_URL` 和 `KUNQIONG_AUTH_CALLBACK_URL` 改成测试服务器 IP 或正式域名；SMTP 相关参数可以先留空，邮件通知会保留为本地记录。
 
+当前仓库已包含 Gitea Actions 测试部署流程：推送到 Gitea 的 `main` 分支后会由服务器 runner 自动构建并部署到测试环境，测试环境使用独立 `.env`，不会覆盖本地 `.env`。
+
 ## 局域网内给别人看
 
 如果对方和启动项目的电脑连接在同一个 Wi-Fi 或局域网：

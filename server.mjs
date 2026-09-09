@@ -27,6 +27,7 @@ const oauthClientId = process.env.KUNQIONG_OAUTH_CLIENT_ID || 'app_d1fbbfc18f790
 const oauthClientSecret = process.env.KUNQIONG_OAUTH_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || ''
 const configuredCallbackUrls = splitConfigValues(process.env.KUNQIONG_AUTH_CALLBACK_URL)
 const configuredAppUrl = process.env.KUNQIONG_APP_URL || ''
+const releaseSha = String(process.env.KUNQIONG_RELEASE_SHA || '').trim()
 const smtpHost = String(process.env.KUNQIONG_SMTP_HOST || '').trim()
 const smtpPort = Number(process.env.KUNQIONG_SMTP_PORT || 465)
 const smtpSecure = parseBooleanEnv(process.env.KUNQIONG_SMTP_SECURE, smtpPort === 465)
@@ -143,7 +144,7 @@ app.use((req, res, next) => {
 })
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'kunqiong-local-api', now: new Date().toISOString() })
+  res.json({ ok: true, service: 'kunqiong-local-api', release: releaseSha, now: new Date().toISOString() })
 })
 
 app.get('/api/auth/login', (req, res) => {

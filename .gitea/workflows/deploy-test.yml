@@ -1,0 +1,36 @@
+name: Deploy Test Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    env:
+      PORT: "8045"
+      KUNQIONG_HOST: "0.0.0.0"
+      KUNQIONG_APP_URL: "http://43.154.197.96:8045"
+      KUNQIONG_AUTH_CALLBACK_URL: "http://43.154.197.96:8045/auth/callback"
+      KUNQIONG_OAUTH_AUTHORIZE_URL: "https://login.kunqiongai.com/authorize.html"
+      KUNQIONG_OAUTH_TOKEN_URL: "https://login.kunqiongai.com/api/oauth/token"
+      KUNQIONG_OAUTH_CLIENT_ID: "app_d1fbbfc18f7908d5"
+      KUNQIONG_OAUTH_CLIENT_SECRET: "240d766ca873b659ea2f036907be7dc0"
+      KUNQIONG_ADMIN_USER_IDS: ""
+      KUNQIONG_SMTP_HOST: ""
+      KUNQIONG_SMTP_PORT: "465"
+      KUNQIONG_SMTP_SECURE: "true"
+      KUNQIONG_SMTP_USER: ""
+      KUNQIONG_SMTP_PASSWORD: ""
+      KUNQIONG_SMTP_FROM: ""
+      KUNQIONG_SMTP_FROM_NAME: "鲲穹文件传输"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy
+        run: |
+          chmod +x scripts/deploy-test.sh
+          ./scripts/deploy-test.sh
