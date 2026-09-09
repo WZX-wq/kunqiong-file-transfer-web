@@ -2,10 +2,12 @@
 set -euo pipefail
 
 APP_NAME="kunqiong-file-transfer-web"
+IMAGE_NAME="$APP_NAME:test"
 DEPLOY_DIR="${KUNQIONG_DEPLOY_DIR:-$HOME/apps/$APP_NAME}"
 RUNTIME_DIR="$DEPLOY_DIR/.runtime"
 LOG_DIR="$RUNTIME_DIR/logs"
 PID_FILE="$RUNTIME_DIR/server.pid"
+ENV_FILE="$RUNTIME_DIR/test.env"
 PORT="${PORT:-8045}"
 HOST="${KUNQIONG_HOST:-0.0.0.0}"
 RELEASE_SHA="${GITHUB_SHA:-${GITEA_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}}"
@@ -18,35 +20,10 @@ require_var() {
   fi
 }
 
-require_var KUNQIONG_APP_URL
-require_var KUNQIONG_AUTH_CALLBACK_URL
-require_var KUNQIONG_OAUTH_CLIENT_ID
-require_var KUNQIONG_OAUTH_CLIENT_SECRET
-
-npm ci
-npm run build
-
-mkdir -p "$DEPLOY_DIR" "$RUNTIME_DIR" "$LOG_DIR"
-
-if command -v rsync >/dev/null 2>&1; then
-  rsync -a --delete \
-    --exclude ".git" \
-    --exclude ".gitea" \
-    --exclude "node_modules" \
-    --exclude "storage" \
-    --exclude "*.log" \
-    ./ "$DEPLOY_DIR/"
-else
-  tar \
-    --exclude="./.git" \
-    --exclude="./.gitea" \
-    --exclude="./node_modules" \
-    --exclude="./storage" \
-    --exclude="./*.log" \
-    -cf - . | tar -xf - -C "$DEPLOY_DIR"
-fi
-
-cat > "$DEPLOY_DIR/.env" <<EOF
+write_env_file() {
+  local target="$1"
+  mkdir -p "$(dirname "$target")"
+  cat > "$target" <<EOF
 NODE_ENV=test
 PORT=$PORT
 KUNQIONG_HOST=$HOST
@@ -66,10 +43,61 @@ KUNQIONG_SMTP_FROM=${KUNQIONG_SMTP_FROM:-}
 KUNQIONG_SMTP_FROM_NAME=${KUNQIONG_SMTP_FROM_NAME:-鲲穹文件传输}
 KUNQIONG_RELEASE_SHA=$RELEASE_SHA
 EOF
+}
 
-cd "$DEPLOY_DIR"
-npm ci --omit=dev
-mkdir -p storage
+require_var KUNQIONG_APP_URL
+require_var KUNQIONG_AUTH_CALLBACK_URL
+require_var KUNQIONG_OAUTH_CLIENT_ID
+require_var KUNQIONG_OAUTH_CLIENT_SECRET
+
+mkdir -p "$DEPLOY_DIR" "$RUNTIME_DIR" "$LOG_DIR"
+write_env_file "$ENV_FILE"
+
+healthcheck_docker() {
+  for _ in $(seq 1 40); do
+    if docker exec "$APP_NAME" node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '$PORT') + '/api/health').then(async r => { if (!r.ok) process.exit(1); console.log(await r.text()) }).catch(() => process.exit(1))"; then
+      return 0
+    fi
+    sleep 1
+  done
+  docker logs --tail 100 "$APP_NAME" >&2 || true
+  return 1
+}
+
+deploy_with_docker() {
+  docker info >/dev/null 2>&1 || return 1
+  docker build -t "$IMAGE_NAME" .
+  docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
+  docker run -d \
+    --name "$APP_NAME" \
+    --restart unless-stopped \
+    -p "$PORT:$PORT" \
+    --env-file "$ENV_FILE" \
+    -v "$APP_NAME-storage:/app/storage" \
+    "$IMAGE_NAME"
+  healthcheck_docker
+}
+
+copy_to_deploy_dir() {
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete \
+      --exclude ".git" \
+      --exclude ".gitea" \
+      --exclude "node_modules" \
+      --exclude "storage" \
+      --exclude "*.log" \
+      ./ "$DEPLOY_DIR/"
+  else
+    tar \
+      --exclude="./.git" \
+      --exclude="./.gitea" \
+      --exclude="./node_modules" \
+      --exclude="./storage" \
+      --exclude="./*.log" \
+      -cf - . | tar -xf - -C "$DEPLOY_DIR"
+  fi
+  cp "$ENV_FILE" "$DEPLOY_DIR/.env"
+}
 
 stop_pid_file() {
   if [ -f "$PID_FILE" ]; then
@@ -104,31 +132,58 @@ stop_port() {
   fi
 }
 
-if command -v pm2 >/dev/null 2>&1; then
-  if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-    pm2 restart "$APP_NAME" --update-env
+healthcheck_process() {
+  for _ in $(seq 1 40); do
+    if curl -fsS "http://127.0.0.1:$PORT/api/health" >/tmp/kunqiong-health.json; then
+      cat /tmp/kunqiong-health.json
+      return 0
+    fi
+    sleep 1
+  done
+  if [ -f "$LOG_DIR/server.log" ]; then
+    tail -100 "$LOG_DIR/server.log" >&2 || true
+  fi
+  return 1
+}
+
+deploy_with_process_manager() {
+  npm ci
+  npm run build
+  copy_to_deploy_dir
+
+  cd "$DEPLOY_DIR"
+  npm ci --omit=dev
+  mkdir -p storage
+
+  if command -v pm2 >/dev/null 2>&1; then
+    if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
+      pm2 restart "$APP_NAME" --update-env
+    else
+      stop_port
+      pm2 start "$DEPLOY_DIR/server.mjs" --name "$APP_NAME" --interpreter node --cwd "$DEPLOY_DIR" --update-env
+    fi
+    pm2 save || true
   else
+    stop_pid_file
     stop_port
-    pm2 start "$DEPLOY_DIR/server.mjs" --name "$APP_NAME" --interpreter node --cwd "$DEPLOY_DIR" --update-env
+    nohup node server.mjs > "$LOG_DIR/server.log" 2>&1 &
+    echo $! > "$PID_FILE"
   fi
-  pm2 save || true
-else
-  stop_pid_file
-  stop_port
-  nohup node server.mjs > "$LOG_DIR/server.log" 2>&1 &
-  echo $! > "$PID_FILE"
+
+  healthcheck_process
+}
+
+running_in_container() {
+  [ -f /.dockerenv ] || { [ -r /proc/1/cgroup ] && grep -qaE 'docker|containerd|kubepods' /proc/1/cgroup; }
+}
+
+if deploy_with_docker; then
+  exit 0
 fi
 
-for _ in $(seq 1 40); do
-  if curl -fsS "http://127.0.0.1:$PORT/api/health" >/tmp/kunqiong-health.json; then
-    cat /tmp/kunqiong-health.json
-    exit 0
-  fi
-  sleep 1
-done
-
-echo "Service did not become healthy on port $PORT" >&2
-if [ -f "$LOG_DIR/server.log" ]; then
-  tail -80 "$LOG_DIR/server.log" >&2 || true
+if running_in_container; then
+  echo "Docker is not available inside the CI container, so the service cannot be deployed persistently from this job." >&2
+  exit 1
 fi
-exit 1
+
+deploy_with_process_manager
