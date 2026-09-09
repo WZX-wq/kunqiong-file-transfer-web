@@ -2663,7 +2663,9 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
     const reopenableCollection = canReopenCollection(record)
     return (
       <div className={`record-menu row-menu ${menuPlacement === 'up' ? 'menu-up' : ''}`} onClick={(event) => event.stopPropagation()}>
-        <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
+        {record.scope !== 'my_collections' && (
+          <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
+        )}
         {record.scope === 'my_sent' && record.kind === 'share' ? (
           <>
             <button disabled={!shareUrl} onClick={runMenuAction(() => onCopy(shareUrl))}><Link2 size={14} /> 复制分享链接</button>
