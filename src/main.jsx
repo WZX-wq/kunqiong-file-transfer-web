@@ -29,6 +29,7 @@ import {
   FolderOpen,
   Gauge,
   History,
+  Image as ImageIcon,
   Inbox,
   KeyRound,
   Link2,
@@ -2373,7 +2374,7 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask })
         </div>
         <div className="modal-footer manage-modal-footer">
           {isShare || data.status === 'active' ? (
-            <button className="secondary-button danger-lite" disabled={data.status !== 'active' || closing} onClick={closeTask}><X size={15} /> {closing ? '关闭中' : isShare ? '关闭分享' : '关闭收集任务'}</button>
+            <button className="secondary-button danger-lite" disabled={isClosedStatus(data.status) || closing} onClick={closeTask}><X size={15} /> {closing ? '关闭中' : isShare ? '关闭分享' : '关闭收集任务'}</button>
           ) : (
             <button className="secondary-button reopen-button" disabled={reopening} onClick={reopenTask}><RefreshCw className={reopening ? 'spinning' : ''} size={15} /> {reopening ? '开启中' : '重新开启收集任务'}</button>
           )}
@@ -2681,7 +2682,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
         {record.scope === 'my_sent' && (
           <>
             <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
-            <button className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
+            <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
           </>
         )}
         {record.scope === 'my_collections' && (
@@ -2786,7 +2787,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
                   <span className={`record-icon ${record.scope}`}><Icon size={17} /></span>
                   <div className="record-main">
                     <div className="record-title-line">
-                      <strong>{recordDisplayName(record)}</strong>
+                      <RecordNameText name={recordDisplayName(record)} />
                       <span className="scope-pill">{recordScopeLabel(record.scope)}</span>
                     </div>
                     <span>{record.meta || recordDetail(record)}</span>
@@ -2818,7 +2819,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
           {expiringItems.length > 0 && (
             <div className="file-expiry-alert">
               <Clock3 size={18} />
-              <div><strong>{expiringItems.length} 个项目将在 3 天内过期</strong><span>可进入管理设置延期、关闭或清理记录。</span></div>
+              <div><strong>{expiringItems.length} 个项目将在 1 天内过期</strong><span>可进入管理设置延期、关闭或清理记录。</span></div>
               <button className="secondary-button" onClick={() => setExpiringOnly(true)}>查看即将过期</button>
             </div>
           )}
@@ -2872,7 +2873,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
                   <span className={`record-icon file-category-${item.category}`}><Icon size={17} /></span>
                   <div className="record-main">
                     <div className="record-title-line">
-                      <strong>{item.name}</strong>
+                      <RecordNameText name={item.name} />
                       <span className="scope-pill">{item.categoryLabel}</span>
                       <span className="scope-pill muted">{recordScopeLabel(record.scope)}</span>
                     </div>
@@ -3644,6 +3645,15 @@ function UserAvatar({ user, overrideSrc = '' }) {
   const avatarSrc = overrideSrc || userAvatarSource(user)
   return avatarSrc ? <img className="user-avatar" src={avatarSrc} alt={`${displayUserName(user)}头像`} /> : <span className="user-avatar">{displayUserInitial(user)}</span>
 }
+function RecordNameText({ name }) {
+  const text = String(name || '').trim() || '文件分享'
+  const { base, extension } = splitFileNameForDisplay(text)
+  return (
+    <strong className="record-name-text" title={text}>
+      {extension ? <><span>{base}</span><em>{extension}</em></> : text}
+    </strong>
+  )
+}
 function FeatureOrb({ icon: Icon, value, label, tone }) { return <div className={`feature-orb ${tone}`}><span className="orb-icon"><Icon size={21} /></span><strong>{value}</strong><span>{label}</span></div> }
 function ValueItem({ icon: Icon, title, detail }) { return <div className="value-item"><span className="value-icon"><Icon size={18} /></span><div><strong>{title}</strong><span>{detail}</span></div></div> }
 function FileRow({ file, onRemove, onPreview, onDownload, downloadDisabled = false }) {
@@ -3680,7 +3690,7 @@ function compactRecordSubmissions(submissions = []) {
 }
 const RECORD_STORAGE_KEY = 'kunqiong-records'
 const MAX_LOCAL_RECORDS = 100
-const EXPIRING_SOON_MS = 3 * 86400000
+const EXPIRING_SOON_MS = 24 * 60 * 60 * 1000
 
 function readRecords() {
   try {
@@ -4091,17 +4101,18 @@ function recordStatusGroup(record) {
 }
 
 function isRecordExpired(record) {
-  if (isClosedOrExpiredStatus(record.status)) return true
+  if (isClosedStatus(record.status)) return true
   const deadline = record.expiresAt || record.deadline
-  return isPastDeadline(deadline)
+  if (deadline) return isPastDeadline(deadline)
+  return isExpiredStatus(record.status)
 }
 
 function isRecordExpiringSoon(record) {
-  if (isExpiringSoonStatus(record.status)) return true
   const deadline = record.expiresAt || record.deadline
-  if (!deadline || isRecordExpired(record)) return false
+  if (!deadline) return isExpiringSoonStatus(record.status)
   const deadlineTime = new Date(deadline).getTime()
-  return Number.isFinite(deadlineTime) && deadlineTime - Date.now() <= EXPIRING_SOON_MS
+  const remaining = deadlineTime - Date.now()
+  return Number.isFinite(deadlineTime) && remaining > 0 && remaining <= EXPIRING_SOON_MS
 }
 
 function isPastDeadline(value) {
@@ -4111,7 +4122,15 @@ function isPastDeadline(value) {
 }
 
 function isClosedOrExpiredStatus(status) {
-  return ['expired', 'closed', '已过期', '已失效', '已截止', '已关闭'].includes(status)
+  return isClosedStatus(status) || isExpiredStatus(status)
+}
+
+function isClosedStatus(status) {
+  return ['closed', '已关闭'].includes(status)
+}
+
+function isExpiredStatus(status) {
+  return ['expired', '已过期', '已失效', '已截止'].includes(status)
 }
 
 function isExpiringSoonStatus(status) {
@@ -4190,7 +4209,9 @@ function recordManagedFiles(record) {
 function managedFileCategories(record, files) {
   if (record.kind === 'collection') return ['collection']
   const categories = Array.from(new Set(files.map(fileCategoryFromFile).filter(Boolean)))
-  return categories.length ? categories : ['other']
+  if (categories.length) return categories
+  const fallbackCategory = fileCategoryFromFile({ name: recordDisplayName(record), mimeType: record.mimeType })
+  return fallbackCategory ? [fallbackCategory] : ['other']
 }
 
 function managedFileDetail(record, fileCount, size) {
@@ -4220,6 +4241,7 @@ function fileCategoryLabel(category) {
 }
 
 function fileCategoryIcon(category) {
+  if (category === 'image') return ImageIcon
   if (category === 'archive') return FileArchive
   if (category === 'document') return FileText
   if (category === 'collection') return Inbox
@@ -4952,6 +4974,13 @@ function previewSupportLabel(kind) {
 function fileExtension(name = '') {
   const match = String(name).toLowerCase().match(/\.([^.\\/]+)$/)
   return match ? match[1] : ''
+}
+
+function splitFileNameForDisplay(name = '') {
+  const text = String(name || '').trim()
+  const match = text.match(/^(.+?)(\.[^.\\/]{1,12})$/)
+  if (!match || !match[1]) return { base: text, extension: '' }
+  return { base: match[1], extension: match[2] }
 }
 
 function totalFileSize(files = []) {

@@ -20,6 +20,7 @@ const metadataPath = path.join(storageRoot, 'metadata.json')
 const shareEmailTemplatePath = path.join(__dirname, 'email-templates', 'share-notification.html')
 const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
 const MAX_FILES = 100
+const EXPIRING_SOON_MS = 24 * 60 * 60 * 1000
 const serverPort = Number(process.env.PORT || process.env.KUNQIONG_PORT || 8045)
 const oauthAuthorizeUrl = process.env.KUNQIONG_OAUTH_AUTHORIZE_URL || 'https://login.kunqiongai.com/authorize.html'
 const oauthTokenUrl = process.env.KUNQIONG_OAUTH_TOKEN_URL || 'https://login.kunqiongai.com/api/oauth/token'
@@ -1326,7 +1327,7 @@ function adminResourceSummary(kind, item) {
     kind,
     name: kind === 'share' ? (files[0]?.name || '文件分享') : (item.title || '收集任务'),
     ownerUserId: item.ownerUserId || '',
-    status: item.status || 'active',
+    status: kind === 'share' ? currentShareStatus(item) : currentCollectionStatus(item),
     fileCount: files.length,
     totalSize: fileListSize(files),
     createdAt: item.createdAt,
@@ -1436,24 +1437,9 @@ function cleanupExpired() {
   let changed = false
   for (const share of metadata.shares) {
     if (maybeNotifyExpiringShare(share, now)) changed = true
-    if (share.status === 'active' && share.expiresAt && new Date(share.expiresAt).getTime() <= now) {
-      share.status = 'expired'
-      changed = true
-      removeDirectory(path.join(filesRoot, share.id))
-    }
   }
   for (const task of metadata.collections) {
     if (maybeNotifyExpiringCollection(task, now)) changed = true
-    if (task.status === 'active' && new Date(task.deadline).getTime() <= now) {
-      task.status = 'expired'
-      changed = true
-    }
-    if (task.status === 'expired' && new Date(task.deadline).getTime() + 86400000 <= now) {
-      removeDirectory(path.join(collectionsRoot, task.id))
-      task.submissions = []
-      task.cleanedAt = new Date().toISOString()
-      changed = true
-    }
   }
   const activeSessions = metadata.sessions.filter((session) => new Date(session.expiresAt).getTime() > now)
   if (activeSessions.length !== metadata.sessions.length) {
@@ -1474,6 +1460,7 @@ function cleanupUploadSessions() {
 
 function publicShare(share, req, includeFiles = true, includeManage = false) {
   const organization = share.ownerUserId ? enterpriseOrganizationForUser(share.ownerUserId) : null
+  const status = currentShareStatus(share)
   const payload = {
     id: share.id,
     code: share.code,
@@ -1490,13 +1477,19 @@ function publicShare(share, req, includeFiles = true, includeManage = false) {
     requiresPassword: Boolean(share.passwordHash),
     deliveryRecipients: share.deliveryRecipients || [],
     notificationLog: share.notificationLog || [],
-    status: share.status,
+    status,
   }
   if (includeManage) {
     payload.manageToken = share.manageToken
     payload.manageUrl = `${getOrigin(req)}/share/manage/${share.manageToken}`
   }
   return payload
+}
+
+function currentShareStatus(share = {}) {
+  if (share.status === 'closed') return 'closed'
+  if (share.expiresAt) return new Date(share.expiresAt).getTime() <= Date.now() ? 'expired' : 'active'
+  return share.status || 'active'
 }
 
 function publicCollection(task, req, includeManage = false) {
@@ -1524,7 +1517,8 @@ function publicCollection(task, req, includeManage = false) {
 }
 
 function currentCollectionStatus(task = {}) {
-  if (task.status === 'active' && task.deadline && new Date(task.deadline).getTime() <= Date.now()) return 'expired'
+  if (task.status === 'closed') return 'closed'
+  if (task.deadline) return new Date(task.deadline).getTime() <= Date.now() ? 'expired' : 'active'
   return task.status || 'active'
 }
 
@@ -2317,10 +2311,10 @@ function addCollectionSubmissionMessage(task, submission, req) {
 }
 
 function maybeNotifyExpiringShare(share, now) {
-  if (!share.ownerUserId || share.status !== 'active' || !share.expiresAt) return false
+  if (!share.ownerUserId || currentShareStatus(share) !== 'active' || !share.expiresAt) return false
   if (share.notificationFlags?.shareExpiring) return false
   const expiresAt = new Date(share.expiresAt).getTime()
-  if (!Number.isFinite(expiresAt) || expiresAt <= now || expiresAt - now > 3 * 86400000) return false
+  if (!Number.isFinite(expiresAt) || expiresAt <= now || expiresAt - now > EXPIRING_SOON_MS) return false
   const message = addAccountMessage(share.ownerUserId, {
     category: 'system',
     eventType: 'shareExpiring',
@@ -2334,10 +2328,10 @@ function maybeNotifyExpiringShare(share, now) {
 }
 
 function maybeNotifyExpiringCollection(task, now) {
-  if (!task.ownerUserId || task.status !== 'active' || !task.deadline) return false
+  if (!task.ownerUserId || currentCollectionStatus(task) !== 'active' || !task.deadline) return false
   if (task.notificationFlags?.collectionExpiring) return false
   const deadline = new Date(task.deadline).getTime()
-  if (!Number.isFinite(deadline) || deadline <= now || deadline - now > 3 * 86400000) return false
+  if (!Number.isFinite(deadline) || deadline <= now || deadline - now > EXPIRING_SOON_MS) return false
   const message = addAccountMessage(task.ownerUserId, {
     category: 'system',
     eventType: 'collectionExpiring',
@@ -2832,6 +2826,8 @@ function applyShareUpdate(share, body = {}, ownerUser = null) {
       if (new Date(expiresAt).getTime() > maxDate) throw httpError(400, '当前权益不能超过系统设置的最长有效期')
     }
     share.expiresAt = expiresAt
+    if (share.status === 'expired' && (!expiresAt || new Date(expiresAt).getTime() > Date.now())) share.status = 'active'
+    if (share.notificationFlags?.shareExpiring) share.notificationFlags = { ...share.notificationFlags, shareExpiring: false }
   }
   if (Object.prototype.hasOwnProperty.call(body, 'downloadLimit')) {
     share.downloadLimit = normalizeDownloadLimit(body.downloadLimit)
@@ -2865,6 +2861,7 @@ function applyCollectionUpdate(task, body = {}) {
     if (task.status === 'expired' && new Date(task.deadline).getTime() > Date.now()) {
       task.status = 'active'
     }
+    if (task.notificationFlags?.collectionExpiring) task.notificationFlags = { ...task.notificationFlags, collectionExpiring: false }
   }
   if (Object.prototype.hasOwnProperty.call(body, 'allowedTypes')) {
     const allowed = Array.isArray(body.allowedTypes) ? body.allowedTypes.map(String).filter((type) => ['图片', '文档', '视频', '其他'].includes(type)) : []
@@ -2919,11 +2916,9 @@ function findShareByCode(code) {
 }
 
 function validateShare(share, password, { allowMissingPassword = false, hasAccessCookie = false } = {}) {
-  if (share.status !== 'active') return { ok: false, status: 410, message: '分享已失效' }
-  if (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now()) {
-    share.status = 'expired'
-    removeDirectory(path.join(filesRoot, share.id))
-    persistMetadata()
+  const status = currentShareStatus(share)
+  if (status === 'closed') return { ok: false, status: 410, message: '分享已失效' }
+  if (status === 'expired') {
     return { ok: false, status: 410, message: '分享已过期' }
   }
   if (share.downloadLimit && share.downloadCount >= share.downloadLimit) {
@@ -2944,10 +2939,9 @@ function validateShare(share, password, { allowMissingPassword = false, hasAcces
 }
 
 function validateCollection(task) {
-  if (task.status !== 'active') return { ok: false, status: 410, message: '收集任务已关闭' }
-  if (new Date(task.deadline).getTime() <= Date.now()) {
-    task.status = 'expired'
-    persistMetadata()
+  const status = currentCollectionStatus(task)
+  if (status === 'closed') return { ok: false, status: 410, message: '收集任务已关闭' }
+  if (status === 'expired') {
     return { ok: false, status: 410, message: '收集任务已截止' }
   }
   return { ok: true }

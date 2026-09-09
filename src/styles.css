@@ -443,6 +443,9 @@ h1, h2, p { margin-top: 0; }
 .record-check { display: grid; place-items: center; }
 .record-title-line { display: flex; align-items: center; gap: 8px; min-width: 0; line-height: 1.2; }
 .record-title-line strong { min-width: 0; }
+.record-name-text { display: inline-flex; align-items: baseline; max-width: 100%; overflow: hidden; color: #3a5750; font-size: 13px; font-weight: 800; }
+.record-name-text span { min-width: 0; overflow: hidden; color: inherit; font-size: inherit; line-height: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.record-name-text em { flex: none; color: inherit; font-size: inherit; font-style: normal; line-height: inherit; }
 .scope-pill { display: inline-flex; align-items: center; justify-content: center; flex: none; padding: 3px 6px; color: #6f9188; background: #eef7f4; border-radius: 5px; font-size: 10px; font-weight: 700; line-height: 1; text-align: center; }
 .scope-pill.muted { color: #8c9e99; background: #f2f6f5; }
 .record-expiry { display: flex; align-items: center; justify-content: flex-end; min-height: 25px; overflow: hidden; color: #829991; font-size: 11px; line-height: 1.2; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
