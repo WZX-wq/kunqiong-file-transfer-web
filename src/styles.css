@@ -442,11 +442,11 @@ h1, h2, p { margin-top: 0; }
 .record-row-enhanced > * { align-self: center; }
 .record-row-enhanced.selected { background: #f7fbf9; }
 .record-check { display: grid; place-items: center; }
-.record-title-line { display: flex; align-items: center; gap: 8px; min-width: 0; line-height: 1.2; }
+.record-title-line { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; line-height: 1.25; }
 .record-title-line strong { min-width: 0; }
-.record-name-text { display: inline-flex; align-items: baseline; max-width: 100%; overflow: hidden; color: #3a5750; font-size: 13px; font-weight: 800; }
-.record-name-text span { min-width: 0; overflow: hidden; color: inherit; font-size: inherit; line-height: inherit; text-overflow: ellipsis; white-space: nowrap; }
-.record-name-text em { flex: none; color: inherit; font-size: inherit; font-style: normal; line-height: inherit; }
+.record-main .record-name-text { display: inline-flex; flex: 0 1 auto; align-items: center; min-width: 0; max-width: 100%; overflow: visible; color: #3a5750; font-size: 13px; font-weight: 800; line-height: 1.45; white-space: nowrap; }
+.record-name-text span { display: block; flex: 1 1 auto; min-width: 0; overflow: hidden; color: inherit; font-size: inherit; line-height: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.record-name-text em { display: block; flex: none; color: inherit; font-size: inherit; font-style: normal; line-height: inherit; }
 .scope-pill { display: inline-flex; align-items: center; justify-content: center; flex: none; padding: 3px 6px; color: #6f9188; background: #eef7f4; border-radius: 5px; font-size: 10px; font-weight: 700; line-height: 1; text-align: center; }
 .scope-pill.muted { color: #8c9e99; background: #f2f6f5; }
 .scope-pill.file-format-pill, .record-title-line > .file-format-badge { color: #477a70; background: #edf7f4; border: 1px solid #d9ebe6; }

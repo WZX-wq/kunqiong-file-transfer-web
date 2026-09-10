@@ -3718,7 +3718,7 @@ function RecordNameText({ name }) {
   const { base, extension } = splitFileNameForDisplay(text)
   return (
     <strong className="record-name-text" title={text}>
-      {extension ? <><span>{base}</span><em>{extension}</em></> : text}
+      <span>{base}</span>{extension && <em>{extension}</em>}
     </strong>
   )
 }
