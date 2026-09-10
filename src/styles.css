@@ -614,6 +614,7 @@ h1, h2, p { margin-top: 0; }
 .manage-field input, .manage-field select, .manage-field textarea { width: 100%; color: var(--ink); background: #fbfdfc; border: 1px solid #d8e7e2; border-radius: 7px; outline: 0; font-size: 13px; }
 .manage-field input, .manage-field select { height: 42px; padding: 0 12px; }
 .manage-field textarea { min-height: 88px; padding: 11px 12px; resize: vertical; line-height: 1.6; }
+.manage-password-field input { height: 56px; padding: 0 15px; font-size: 14px; }
 .manage-field input:focus, .manage-field select:focus, .manage-field textarea:focus { border-color: #76b6a5; background: #fff; }
 .manage-setting-block { margin: 0; }
 .manage-check-row { display: flex; align-items: center; gap: 8px; color: #6c8981; font-size: 12px; font-weight: 700; }
