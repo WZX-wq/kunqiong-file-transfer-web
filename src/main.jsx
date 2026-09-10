@@ -2017,20 +2017,20 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       setMessage(`${invalidFile.name} 不符合当前收集任务的文件限制`)
       return
     }
-    const body = new FormData()
-    files.forEach((item) => body.append('files', item.file, item.name))
-    body.append('participantName', participantName)
-    body.append('relativePaths', JSON.stringify(files.map((item) => item.relativePath)))
     const submitRun = submitRunRef.current + 1
     submitRunRef.current = submitRun
     setSubmitting(true)
-    xhrRequest(`/api/collections/${token}/submissions`, {
-      method: 'POST',
-      body,
-      onProgress: setProgress,
-      onRequest: (request) => {
-        if (submitRunRef.current === submitRun) submitRequestRef.current = request
+    const collectionUploadRef = { current: createUploadSessionState() }
+    uploadShareInChunks(files, {}, collectionUploadRef, ({ progress }) => {
+      if (submitRunRef.current === submitRun) setProgress(progress)
+    }, {
+      sessionBody: {
+        mode: 'collection',
+        collectionToken: token,
+        participantName,
+        relativePaths: files.map((item) => item.relativePath),
       },
+      completeBody: { mode: 'collection' },
     }).then((result) => {
       if (submitRunRef.current !== submitRun) return
       const submittedAt = result.submission?.submittedAt || new Date().toISOString()
@@ -2045,6 +2045,7 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
         setSubmitting(false)
       }
     })
+    submitRequestRef.current = { abort: () => { collectionUploadRef.current.paused = true; collectionUploadRef.current.abortCurrent?.() } }
   }
   return (
     <PublicShell>
@@ -4516,11 +4517,13 @@ function createUploadSessionState() {
     startedAt: 0,
     paused: false,
     abortCurrent: null,
+    activeXhrs: new Set(),
   }
 }
 
-async function uploadShareInChunks(files, settings, uploadRef, onState) {
-  const chunkSize = 2 * 1024 * 1024
+async function uploadShareInChunks(files, settings, uploadRef, onState, uploadConfig = {}) {
+  const chunkSize = 8 * 1024 * 1024
+  const concurrency = Math.min(4, Math.max(2, Number(navigator.hardwareConcurrency || 4) >= 8 ? 4 : 2))
   const session = uploadRef.current
   session.totalBytes = files.reduce((sum, item) => sum + item.size, 0)
   session.startedAt = session.startedAt || Date.now()
@@ -4533,6 +4536,7 @@ async function uploadShareInChunks(files, settings, uploadRef, onState) {
       body: JSON.stringify({
         files: files.map((item) => ({ name: item.name, relativePath: item.relativePath, size: item.size, mimeType: item.file.type })),
         ...shareOptions,
+        ...(uploadConfig.sessionBody || {}),
       }),
     })
     session.sessionId = response.sessionId
@@ -4542,39 +4546,66 @@ async function uploadShareInChunks(files, settings, uploadRef, onState) {
     const item = files[fileIndex]
     const totalChunks = Math.max(1, Math.ceil(item.size / chunkSize))
     const startChunk = fileIndex === session.fileIndex ? session.chunkIndex : 0
-    for (let chunkIndex = startChunk; chunkIndex < totalChunks; chunkIndex += 1) {
-      if (session.paused) throw new UploadPausedError()
-      const start = chunkIndex * chunkSize
-      const end = Math.min(item.size, start + chunkSize)
-      const chunk = item.file.slice(start, end)
-      let attempt = 0
-      while (attempt < 3) {
-        try {
-          onState(uploadStateFromProgress(session, session.uploadedBytes, `上传 ${item.name}`, item.name, attempt))
-          await xhrUploadChunk(`/api/upload-sessions/${session.sessionId}/chunks`, {
-            fileIndex,
-            chunkIndex,
-            totalChunks,
-            chunk,
-            filename: item.name,
-          }, {
-            uploadRef,
-            onProgress: (loaded) => onState(uploadStateFromProgress(session, session.uploadedBytes + loaded, `上传 ${item.name}`, item.name, attempt)),
-          })
-          break
-        } catch (error) {
-          if (error.name === 'UploadPausedError') throw error
-          attempt += 1
-          onState(uploadStateFromProgress(session, session.uploadedBytes, `分片失败，正在重试`, item.name, attempt, error.message))
-          if (attempt >= 3) throw error
-          await wait(450 * attempt)
+    const completedChunks = new Set()
+    const inFlightProgress = new Map()
+    let nextChunk = startChunk
+    let firstError = null
+    const worker = async () => {
+      while (!firstError) {
+        if (session.paused) throw new UploadPausedError()
+        const chunkIndex = nextChunk
+        if (chunkIndex >= totalChunks) return
+        nextChunk += 1
+        const start = chunkIndex * chunkSize
+        const end = Math.min(item.size, start + chunkSize)
+        const chunk = item.file.slice(start, end)
+        let attempt = 0
+        while (attempt < 3) {
+          try {
+            onState(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, attempt))
+            await xhrUploadChunk(`/api/upload-sessions/${session.sessionId}/chunks`, {
+              fileIndex,
+              chunkIndex,
+              totalChunks,
+              chunk,
+              filename: item.name,
+            }, {
+              uploadRef,
+              onProgress: (loaded) => {
+                inFlightProgress.set(chunkIndex, loaded)
+                onState(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, attempt))
+              },
+            })
+            inFlightProgress.delete(chunkIndex)
+            completedChunks.add(chunkIndex)
+            session.uploadedBytes += end - start
+            session.chunkIndex = Math.min(...Array.from({ length: totalChunks }, (_, index) => index).filter((index) => !completedChunks.has(index)), totalChunks)
+            onState(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, 0))
+            break
+          } catch (error) {
+            inFlightProgress.delete(chunkIndex)
+            if (error.name === 'UploadPausedError') throw error
+            attempt += 1
+            onState(uploadStateFromProgress(session, session.uploadedBytes, `分片失败，正在重试`, item.name, attempt, error.message))
+            if (attempt >= 3) {
+              firstError = error
+              throw error
+            }
+            await wait(450 * attempt)
+          }
         }
       }
-      session.uploadedBytes += end - start
-      session.fileIndex = fileIndex
-      session.chunkIndex = chunkIndex + 1
-      onState(uploadStateFromProgress(session, session.uploadedBytes, `上传 ${item.name}`, item.name, 0))
     }
+    const workers = Array.from({ length: Math.min(concurrency, totalChunks - startChunk) }, () => worker())
+    try {
+      await Promise.all(workers)
+    } catch (error) {
+      if (error.name === 'UploadPausedError' || session.paused) throw new UploadPausedError()
+      throw firstError || error
+    }
+    session.fileIndex = fileIndex
+    session.chunkIndex = totalChunks
+    onState(uploadStateFromProgress(session, session.uploadedBytes, `上传 ${item.name}`, item.name, 0))
     session.fileIndex = fileIndex + 1
     session.chunkIndex = 0
   }
@@ -4582,7 +4613,7 @@ async function uploadShareInChunks(files, settings, uploadRef, onState) {
   onState({ status: 'finalizing', phase: '正在生成分享信息', progress: 100, uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: currentSpeed(session, session.totalBytes), etaSeconds: 0, currentFile: '', retryCount: 0, error: '' })
   return apiRequest(`/api/upload-sessions/${session.sessionId}/complete`, {
     method: 'POST',
-    body: JSON.stringify({ chunkSize }),
+    body: JSON.stringify({ chunkSize, ...(uploadConfig.completeBody || {}) }),
   })
 }
 
@@ -4611,27 +4642,36 @@ function currentSpeed(session, loadedBytes) {
 function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunk, filename }, { uploadRef, onProgress }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
+    const uploadState = uploadRef.current
     const body = new FormData()
     body.append('fileIndex', String(fileIndex))
     body.append('chunkIndex', String(chunkIndex))
     body.append('totalChunks', String(totalChunks))
     body.append('chunk', chunk, filename)
-    uploadRef.current.abortCurrent = () => xhr.abort()
+    const activeXhrs = uploadState.activeXhrs || new Set()
+    uploadState.activeXhrs = activeXhrs
+    activeXhrs.add(xhr)
+    uploadState.abortCurrent = () => activeXhrs.forEach((request) => request.abort())
+    const cleanup = () => {
+      activeXhrs.delete(xhr)
+      if (!activeXhrs.size) uploadState.abortCurrent = null
+    }
     xhr.open('POST', url)
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded) }
     xhr.onload = () => {
-      uploadRef.current.abortCurrent = null
-      const data = JSON.parse(xhr.responseText || '{}')
+      cleanup()
+      let data = {}
+      try { data = JSON.parse(xhr.responseText || '{}') } catch { data = {} }
       if (xhr.status >= 200 && xhr.status < 300) resolve(data)
       else reject(new Error(data.message || '分片上传失败'))
     }
     xhr.onerror = () => {
-      uploadRef.current.abortCurrent = null
+      cleanup()
       reject(new Error('网络连接失败，请确认鲲穹服务已启动'))
     }
     xhr.onabort = () => {
-      uploadRef.current.abortCurrent = null
-      reject(uploadRef.current.paused ? new UploadPausedError() : new Error('上传已中断'))
+      cleanup()
+      reject(uploadState.paused ? new UploadPausedError() : new Error('上传已中断'))
     }
     xhr.send(body)
   })

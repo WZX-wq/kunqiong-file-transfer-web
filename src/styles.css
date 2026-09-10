@@ -524,6 +524,8 @@ h1, h2, p { margin-top: 0; }
 .page-footer button:hover { color: var(--accent-dark); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 20px; background: rgba(27, 46, 42, .28); backdrop-filter: blur(5px); }
 .modal { width: min(450px, 100%); background: #fff; border: 1px solid #e0ebe7; border-radius: 14px; box-shadow: 0 28px 80px rgba(27, 65, 55, .2); }
+.retrieve-modal { width: min(560px, calc(100vw - 40px)); max-height: min(86dvh, 760px); display: flex; flex-direction: column; overflow: hidden; }
+.retrieve-modal .modal-body { min-height: 0; overflow: auto; }
 .qr-modal { width: min(410px, 100%); overflow: hidden; }
 .qr-modal-body { display: flex; align-items: center; flex-direction: column; padding: 30px 30px 24px; text-align: center; }
 .qr-modal-body h2 { margin: 0 0 7px; color: var(--ink); font-size: 22px; letter-spacing: -0.02em; }
@@ -1033,6 +1035,15 @@ h1, h2, p { margin-top: 0; }
 }
 
 @media (max-width: 520px) {
+  .retrieve-modal { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); border-radius: 12px; }
+  .retrieve-modal .modal-header { padding: 18px 18px 15px; }
+  .retrieve-modal .modal-body { padding: 18px; }
+  .retrieve-modal .modal-footer { padding: 13px 18px 17px; }
+  .retrieve-modal .public-files { max-height: min(42dvh, 330px); overflow: auto; }
+  .retrieve-modal .file-row { min-width: 0; }
+  .retrieve-modal .file-info { min-width: 0; }
+  .retrieve-modal .file-info strong { overflow-wrap: anywhere; white-space: normal; }
+  .retrieve-modal .file-actions { flex: none; }
   .public-shell .topbar { height: 62px; padding: 0 22px; }
   .public-shell .brand-mark { width: 36px; height: 36px; }
   .public-safe { max-width: 46%; justify-content: flex-end; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }

@@ -597,7 +597,17 @@ app.post('/api/upload-sessions', (req, res) => {
   if (invalid) return res.status(413).json({ message: `${invalid.name} 超过 5 GB 限制` })
   assertSafeUploadFiles(normalizedFiles)
   const ownerSession = authSessionFromRequest(req)
-  assertAccountCapacity(ownerSession?.user, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
+  let collectionTask = null
+  if (req.body.mode === 'collection') {
+    collectionTask = metadata.collections.find((item) => item.token === String(req.body.collectionToken || ''))
+    if (!collectionTask) return res.status(404).json({ message: '收集任务不存在' })
+    const access = validateCollection(collectionTask)
+    if (!access.ok) return res.status(access.status).json({ message: access.message })
+    if (!String(req.body.participantName || '').trim()) return res.status(400).json({ message: '请填写提交人名称' })
+    const invalidCollectionFile = normalizedFiles.find((file) => file.size > collectionTask.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.name, collectionTask.allowedTypes))
+    if (invalidCollectionFile) return res.status(413).json({ message: `${invalidCollectionFile.name} 不符合当前收集任务的文件限制` })
+  }
+  assertAccountCapacity(collectionTask ? accountUserById(collectionTask.ownerUserId) : ownerSession?.user, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
 
   const sessionId = createToken(18)
   const sessionDirectory = path.join(tempRoot, 'upload-sessions', sessionId)
@@ -606,6 +616,10 @@ app.post('/api/upload-sessions', (req, res) => {
     id: sessionId,
     files: normalizedFiles,
     options: readShareOptions(req.body, ownerSession?.user),
+    mode: req.body.mode === 'collection' ? 'collection' : 'share',
+    collectionToken: collectionTask?.token || '',
+    participantName: String(req.body.participantName || '').trim(),
+    relativePaths: Array.isArray(req.body.relativePaths) ? req.body.relativePaths : [],
     directory: sessionDirectory,
     createdAt: new Date().toISOString(),
   }
@@ -685,6 +699,32 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
       }
     })
     assertSafeUploadFiles(mergedFiles)
+    if (session.mode === 'collection') {
+      const task = metadata.collections.find((item) => item.token === session.collectionToken)
+      if (!task) return res.status(404).json({ message: '收集任务不存在' })
+      const access = validateCollection(task)
+      if (!access.ok) return res.status(access.status).json({ message: access.message })
+      const participantName = session.participantName.trim()
+      const files = mergedFiles.map((file, index) => {
+        const relativePath = safeRelativePath(session.relativePaths[index] || file.relativePath || file.name)
+        const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
+        return { ...file, relativePath, storedName }
+      })
+      const submissionId = createToken(12)
+      const submissionDirectory = path.join(collectionsRoot, task.id, submissionId)
+      fs.mkdirSync(submissionDirectory, { recursive: true })
+      const submissionFiles = files.map((file) => {
+        fs.renameSync(file.tempPath, path.join(submissionDirectory, file.storedName))
+        return { name: file.name, relativePath: file.relativePath, storedName: file.storedName, size: file.size, mimeType: file.mimeType, reviewStatus: 'approved' }
+      })
+      const submission = { id: submissionId, participantName, submittedAt: new Date().toISOString(), files: submissionFiles }
+      task.submissions.push(submission)
+      addCollectionSubmissionMessage(task, submission, req)
+      persistMetadata()
+      uploadSessions.delete(session.id)
+      removeDirectory(session.directory)
+      return res.status(201).json({ submission: publicSubmission(submission) })
+    }
     const share = await createShareFromTempFiles(mergedFiles, session.options, req)
     uploadSessions.delete(session.id)
     removeDirectory(session.directory)
