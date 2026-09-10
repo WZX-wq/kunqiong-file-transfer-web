@@ -91,6 +91,7 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const serverHost = process.env.HOST || process.env.KUNQIONG_HOST || '0.0.0.0'
 let metadataNeedsPersist = false
 let emailTransporter = null
+const reservedShareCodes = new Set()
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
   fs.mkdirSync(directory, { recursive: true })
@@ -325,6 +326,15 @@ app.patch('/api/account/messages', (req, res) => {
   if (!session) return
   const key = accountRecordOwnerKey(session.user.id)
   metadata.messages[key] = accountMessagesForUser(session.user.id).map((message) => ({ ...message, unread: false }))
+  persistMetadata()
+  res.json({ messages: metadata.messages[key] })
+})
+
+app.delete('/api/account/messages', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const key = accountRecordOwnerKey(session.user.id)
+  metadata.messages[key] = []
   persistMetadata()
   res.json({ messages: metadata.messages[key] })
 })
@@ -725,9 +735,6 @@ app.patch('/api/shares/manage/:manageToken', async (req, res, next) => {
     if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
     applyShareUpdate(share, req.body || {}, accountUserById(share.ownerUserId))
     share.updatedAt = new Date().toISOString()
-    if (share.status === 'active' && !fs.existsSync(path.join(filesRoot, share.id))) {
-      return res.status(410).json({ message: '分享文件已清理，无法恢复为有效状态' })
-    }
     persistMetadata()
     res.json({ share: publicShare(share, req, true, true) })
   } catch (error) {
@@ -741,7 +748,6 @@ app.delete('/api/shares/manage/:manageToken', (req, res, next) => {
     if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
     share.status = 'closed'
     share.updatedAt = new Date().toISOString()
-    removeDirectory(path.join(filesRoot, share.id))
     persistMetadata()
     res.json({ share: publicShare(share, req, false, true) })
   } catch (error) {
@@ -2153,12 +2159,15 @@ function accountMessagesForUser(userId) {
   const key = accountRecordOwnerKey(userId)
   if (!key) return []
   if (!metadata.messages || typeof metadata.messages !== 'object' || Array.isArray(metadata.messages)) metadata.messages = {}
+  if (!Object.prototype.hasOwnProperty.call(metadata.messages, key)) {
+    metadata.messages[key] = normalizeAccountMessages(DEFAULT_ACCOUNT_MESSAGES.map((message, index) => ({
+      ...message,
+      createdAt: new Date(Date.now() - (index + 1) * 1000).toISOString(),
+    })))
+    return metadata.messages[key]
+  }
   const current = normalizeAccountMessages(metadata.messages[key])
-  const currentIds = new Set(current.map((message) => message.id))
-  const defaults = DEFAULT_ACCOUNT_MESSAGES
-    .filter((message) => !currentIds.has(message.id))
-    .map((message, index) => normalizeAccountMessage({ ...message, createdAt: new Date(Date.now() - (index + 1) * 1000).toISOString() }))
-  metadata.messages[key] = normalizeAccountMessages([...defaults, ...current])
+  metadata.messages[key] = current
   return metadata.messages[key]
 }
 
@@ -2753,48 +2762,56 @@ function publicFile(file = {}) {
 }
 
 async function createShareFromTempFiles(tempFiles, options, req) {
-  const ownerSession = authSessionFromRequest(req)
-  const totalSize = tempFiles.reduce((sum, file) => sum + Number(file.size || 0), 0)
-  assertAccountCapacity(ownerSession?.user, totalSize)
-  const shareToken = createToken(10)
-  const shareDirectory = path.join(filesRoot, shareToken)
-  fs.mkdirSync(shareDirectory, { recursive: true })
-  const files = tempFiles.map((file, index) => {
-    const relativePath = safeRelativePath(file.relativePath || file.name)
-    const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
-    fs.renameSync(file.tempPath, path.join(shareDirectory, storedName))
-    return {
-      name: file.name,
-      relativePath,
-      storedName,
-      size: Number(file.size || 0),
-      mimeType: file.mimeType || 'application/octet-stream',
-      reviewStatus: file.reviewStatus || fileSafetyVerdict(file).status,
+  let reservedCode = ''
+  try {
+    const ownerSession = authSessionFromRequest(req)
+    const totalSize = tempFiles.reduce((sum, file) => sum + Number(file.size || 0), 0)
+    assertAccountCapacity(ownerSession?.user, totalSize)
+    const shareToken = createToken(10)
+    const shareDirectory = path.join(filesRoot, shareToken)
+    fs.mkdirSync(shareDirectory, { recursive: true })
+    const files = tempFiles.map((file, index) => {
+      const relativePath = safeRelativePath(file.relativePath || file.name)
+      const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
+      fs.renameSync(file.tempPath, path.join(shareDirectory, storedName))
+      return {
+        name: file.name,
+        relativePath,
+        storedName,
+        size: Number(file.size || 0),
+        mimeType: file.mimeType || 'application/octet-stream',
+        reviewStatus: file.reviewStatus || fileSafetyVerdict(file).status,
+      }
+    })
+    const expiryDays = String(options.expiryDays || '3')
+    const downloadLimit = normalizeDownloadLimit(options.downloadLimit)
+    reservedCode = createCode(options.codeLength)
+    const share = {
+      id: shareToken,
+      manageToken: createToken(18),
+      code: reservedCode,
+      files,
+      createdAt: new Date().toISOString(),
+      expiresAt: expiryDays === '0' ? null : new Date(Date.now() + Number(expiryDays) * 86400000).toISOString(),
+      downloadLimit,
+      downloadCount: 0,
+      passwordHash: options.password ? hashSecret(options.password) : null,
+      deliveryRecipients: options.recipients,
+      notificationLog: [],
+      ownerUserId: ownerSession?.user?.id || '',
+      status: 'active',
     }
-  })
-  const expiryDays = String(options.expiryDays || '3')
-  const downloadLimit = normalizeDownloadLimit(options.downloadLimit)
-  const share = {
-    id: shareToken,
-    manageToken: createToken(18),
-    code: createCode(options.codeLength),
-    files,
-    createdAt: new Date().toISOString(),
-    expiresAt: expiryDays === '0' ? null : new Date(Date.now() + Number(expiryDays) * 86400000).toISOString(),
-    downloadLimit,
-    downloadCount: 0,
-    passwordHash: options.password ? hashSecret(options.password) : null,
-    deliveryRecipients: options.recipients,
-    notificationLog: [],
-    ownerUserId: ownerSession?.user?.id || '',
-    status: 'active',
+    const shareUrl = `${getOrigin(req)}/share/${shareToken}`
+    share.qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
+    share.notificationLog = await notifyShareRecipients(share, req, ownerSession?.user)
+    metadata.shares.push(share)
+    reservedShareCodes.delete(reservedCode)
+    persistMetadata()
+    return share
+  } catch (error) {
+    if (reservedCode) reservedShareCodes.delete(reservedCode)
+    throw error
   }
-  const shareUrl = `${getOrigin(req)}/share/${shareToken}`
-  share.qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
-  share.notificationLog = await notifyShareRecipients(share, req, ownerSession?.user)
-  metadata.shares.push(share)
-  persistMetadata()
-  return share
 }
 
 function readShareOptions(body = {}, user = null) {
@@ -2807,7 +2824,7 @@ function readShareOptions(body = {}, user = null) {
     expiryDays: requestedExpiryDays === '0' ? '0' : String(Math.min(maxShareDays, Math.max(1, Number(requestedExpiryDays) || 3))),
     downloadLimit: String(body.downloadLimit || 'unlimited'),
     password: String(body.password || ''),
-    codeLength: Number(body.codeLength || 4),
+    codeLength: Number(body.codeLength || 6),
     recipients: parseRecipients(body.recipients),
   }
 }
@@ -2846,8 +2863,10 @@ function applyShareUpdate(share, body = {}, ownerUser = null) {
   if (Object.prototype.hasOwnProperty.call(body, 'status')) {
     const status = String(body.status || '').trim()
     if (!['active', 'closed'].includes(status)) throw httpError(400, '分享状态不支持')
+    if (status === 'active' && !fs.existsSync(path.join(filesRoot, share.id))) {
+      throw httpError(410, '分享文件已清理，无法重新开启，请重新发送文件')
+    }
     share.status = status
-    if (status === 'closed') removeDirectory(path.join(filesRoot, share.id))
   }
 }
 
@@ -2988,11 +3007,12 @@ function createToken(length) {
 
 function createCode(requestedLength = 4) {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  const length = Math.min(6, Math.max(4, Number(requestedLength) || 4))
+  const length = Math.min(6, Math.max(4, Number(requestedLength) || 6))
   let code = ''
   do {
-    code = Array.from({ length }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
-  } while (metadata.shares.some((share) => share.code === code))
+    code = Array.from({ length }, () => alphabet[crypto.randomInt(alphabet.length)]).join('')
+  } while (metadata.shares.some((share) => share.code === code) || reservedShareCodes.has(code))
+  reservedShareCodes.add(code)
   return code
 }
 

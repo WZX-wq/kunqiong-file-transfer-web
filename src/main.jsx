@@ -74,7 +74,7 @@ const defaultSettings = {
   downloads: '不限次数',
   downloadLimit: 'unlimited',
   customDownloadLimit: '5',
-  codeLength: '4',
+  codeLength: '6',
   recipients: '',
   passwordEnabled: false,
   password: '',
@@ -328,12 +328,13 @@ function WorkspaceApp() {
     try {
       const cloudRecords = await fetchCloudRecords()
       const merged = writeRecords(upsertRecords(readRecords(), cloudRecords))
-      setRecords(merged)
-      const persisted = await replaceCloudRecords(merged)
-      const synced = writeRecords(upsertRecords(merged, persisted.records || []))
+      const synced = writeRecords(await syncRecords(merged))
       setRecords(synced)
+      const persisted = await replaceCloudRecords(synced)
+      const finalRecords = writeRecords(upsertRecords(synced, persisted.records || []))
+      setRecords(finalRecords)
       if (!silent) setToast('账号记录已同步')
-      return synced
+      return finalRecords
     } catch (error) {
       if (!silent) setToast(`账号记录同步失败：${error.message}`)
       throw error
@@ -569,6 +570,38 @@ function WorkspaceApp() {
     }
   }
 
+  const deleteMessage = async (message) => {
+    if (!authUser?.id || !message?.id) return
+    setMessages((current) => current.filter((item) => item.id !== message.id))
+    try {
+      const data = await deleteCloudMessage(message.id)
+      setMessages(normalizeMessages(data.messages || []))
+    } catch (error) {
+      setToast(`消息删除失败：${error.message}`)
+      refreshMessages(authUser).catch(() => {})
+    }
+  }
+
+  const clearAllMessages = async () => {
+    if (!authUser?.id || !messages.length) return
+    const confirmed = await requestConfirm({
+      eyebrow: '消息管理',
+      title: '清除全部消息',
+      detail: '清除后，消息中心中的全部消息将被移除，且无法恢复。确定继续吗？',
+      confirmText: '清除全部',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    setMessages([])
+    try {
+      const data = await deleteAllCloudMessages()
+      setMessages(normalizeMessages(data.messages || []))
+    } catch (error) {
+      setToast(`消息清除失败：${error.message}`)
+      refreshMessages(authUser).catch(() => {})
+    }
+  }
+
   const updateAccountUser = (user) => {
     setAuthUser(user || null)
     if (user?.id) refreshMessages(user).catch(() => {})
@@ -768,15 +801,18 @@ function WorkspaceApp() {
     const target = recordOrTarget?.record || recordOrTarget
     const normalized = normalizeRecord(target)
     const manageToken = recordOrTarget?.data?.manageToken || normalized.manageToken || getManageToken(normalized.manageUrl)
-    if (normalized.kind === 'share') {
-      setToast('分享关闭后文件已清理，不能重新开启')
-      return false
-    }
     if (!manageToken) {
       setToast('管理链接不可用')
       return false
     }
     try {
+      if (normalized.kind === 'share') {
+        const data = await apiRequest(`/api/shares/manage/${encodeURIComponent(manageToken)}`, { method: 'PATCH', body: JSON.stringify({ status: 'active' }) })
+        const record = replaceRecordEntry(createShareRecord(data.share, 'my_sent'))
+        setManagementTarget((current) => current?.kind === 'share' && current.data.manageToken === manageToken ? { kind: 'share', record, data: data.share } : current)
+        setToast('分享已重新开启')
+        return true
+      }
       const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(manageToken)}`, { method: 'PATCH', body: JSON.stringify({ ...patch, status: 'active' }) })
       const record = replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
       setCollectionManageData((current) => current?.manageToken === manageToken ? data.collection : current)
@@ -959,7 +995,7 @@ function WorkspaceApp() {
           <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
         </nav>
         <div className="topbar-actions">
-          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); setMessageOpen((current) => !current) }} onClose={() => setMessageOpen(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onLogin={startLogin} />
+          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); setMessageOpen((current) => !current) }} onClose={() => setMessageOpen(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} />
           {authUser?.isAdmin && <button className="merchant-button" onClick={() => { window.location.href = '/admin' }}><ShieldCheck size={15} /> 后台管理</button>}
           <button className="merchant-button" onClick={() => { window.location.href = '/workspace' }}><Sparkles size={15} /> 会员与企业版</button>
           <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
@@ -1069,7 +1105,7 @@ function FeedbackMessage({ message, tone = 'error' }) {
 }
 
 function feedbackTone(message = '') {
-  return /失败|错误|无效|不可用|不能|无法|不能为空|不足|过期|不正确|未配置|未生效|拒绝|异常|请先|未登录|未投递|不存在|已失效|没有可|不支持|通道|需接入|暂不|暂无|暂未|尚未/.test(String(message)) ? 'error' : 'success'
+  return /失败|错误|无效|不可用|不能|无法|不能为空|不足|过期|不正确|未配置|未生效|拒绝|异常|请先|未登录|未投递|不存在|已失效|已关闭|没有可|不支持|通道|需接入|暂不|暂无|暂未|尚未/.test(String(message)) ? 'error' : 'success'
 }
 
 function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve }) {
@@ -1282,10 +1318,11 @@ function ConfirmModal({ state, onCancel, onConfirm }) {
 
   if (!state) return null
 
+  const Icon = state.tone === 'danger' ? Trash2 : ShieldCheck
   return (
     <div className="modal-backdrop confirm-backdrop" onMouseDown={onCancel}>
       <div className={`modal confirm-modal ${state.tone === 'danger' ? 'danger' : ''}`} role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="confirm-modal-icon"><ShieldCheck size={20} /></div>
+        <div className="confirm-modal-icon"><Icon size={20} /></div>
         <p className="eyebrow">{state.eyebrow || '操作确认'}</p>
         <h2>{state.title || '确认操作'}</h2>
         {state.detail && <p>{state.detail}</p>}
@@ -2331,7 +2368,6 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask })
         return
       }
       payload = {
-        expiresAt: shareForm.expiresAt || null,
         downloadLimit: shareForm.downloadLimit === 'custom' ? String(Math.floor(customLimit)) : shareForm.downloadLimit,
         password: shareForm.clearPassword ? '' : shareForm.password.trim(),
         clearPassword: shareForm.clearPassword,
@@ -2391,10 +2427,6 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask })
         <div className="modal-body manage-form">
           {isShare ? (
             <>
-              <label className="manage-field">
-                <span>到期日期</span>
-                <DatePicker value={shareForm.expiresAt} onChange={(value) => updateShare({ expiresAt: value })} ariaLabel="分享到期日期" placeholder="永久有效" />
-              </label>
               <div className="setting-block manage-setting-block">
                 <span>下载次数</span>
                 <div className="option-grid">{[['不限次数', 'unlimited'], ['10 次', '10'], ['1 次', '1'], ['自定义', 'custom']].map(([label, value]) => <button key={value} className={shareForm.downloadLimit === value ? 'selected' : ''} onClick={() => updateShare({ downloadLimit: value })}>{label}{shareForm.downloadLimit === value && <Check size={14} />}</button>)}</div>
@@ -2411,7 +2443,7 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask })
             </>
           ) : (
             <>
-              <label className="manage-field">
+              <label className="manage-field manage-title-field">
                 <span>任务名称</span>
                 <input className="modal-inline-input" value={collectionForm.title} onChange={(event) => updateCollection({ title: event.target.value })} placeholder="例如：9 月产品素材收集" />
               </label>
@@ -2436,10 +2468,10 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask })
           {error && <p className="manage-form-error">{error}</p>}
         </div>
         <div className="modal-footer manage-modal-footer">
-          {isShare || data.status === 'active' ? (
+          {(isShare && !isClosedStatus(data.status)) || (!isShare && data.status === 'active') ? (
             <button className="secondary-button danger-lite" disabled={isClosedStatus(data.status) || closing} onClick={closeTask}><X size={15} /> {closing ? '关闭中' : isShare ? '关闭分享' : '关闭收集任务'}</button>
           ) : (
-            <button className="secondary-button reopen-button" disabled={reopening} onClick={reopenTask}><RefreshCw className={reopening ? 'spinning' : ''} size={15} /> {reopening ? '开启中' : '重新开启收集任务'}</button>
+            <button className="secondary-button reopen-button" disabled={reopening} onClick={reopenTask}><RefreshCw className={reopening ? 'spinning' : ''} size={15} /> {reopening ? '开启中' : isShare ? '重新开启分享' : '重新开启收集任务'}</button>
           )}
           <button className="secondary-button" onClick={onClose}>取消</button>
           <button className="primary-button" disabled={saving} onClick={submit}>{saving ? '保存中' : '保存设置'}</button>
@@ -2724,6 +2756,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
     const copyTarget = recordCopyTarget(record)
     const shareUrl = record.kind === 'share' ? (record.shareUrl || link) : ''
     const statusGroup = recordStatusGroup(record)
+    const closedShare = record.kind === 'share' && isClosedStatus(record.status)
     const reopenableCollection = canReopenCollection(record)
     return (
       <div className={`record-menu row-menu ${menuPlacement === 'up' ? 'menu-up' : ''}`} onClick={(event) => event.stopPropagation()}>
@@ -2748,7 +2781,11 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
         {record.scope === 'my_sent' && (
           <>
             <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
-            <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
+            {closedShare ? (
+              <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启分享</button>
+            ) : (
+              <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
+            )}
           </>
         )}
         {record.scope === 'my_collections' && (
@@ -3639,7 +3676,7 @@ function PublicShell({ children }) {
 function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }
 function LoadingBlock() { return <div className="state-block"><span className="loading-dot" /><h1>正在打开</h1><p>正在检查分享状态，请稍候。</p></div> }
 function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
-function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onLogin }) {
+function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin }) {
   const unreadCount = messages.filter((message) => message.unread).length
 
   useEffect(() => {
@@ -3658,18 +3695,21 @@ function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, on
         <div className="message-center" role="dialog" aria-label="消息中心" onClick={(event) => event.stopPropagation()}>
           <div className="message-center-header">
             <div><strong>消息中心</strong><span>{unreadCount ? `${unreadCount} 条未读消息` : '没有未读消息'}</span></div>
-            {user ? <button className="message-mark-all" onClick={onMarkAllRead} disabled={!unreadCount}>全部已读</button> : null}
+            {user ? <div className="message-header-actions"><button className="message-mark-all" onClick={onMarkAllRead} disabled={!unreadCount}>全部已读</button><button className="message-mark-all danger" onClick={onClearAll} disabled={!messages.length}>清除全部</button></div> : null}
           </div>
           {!user ? (
             <div className="message-empty"><MessageCircle size={22} /><strong>登录后查看消息</strong><span>登录后可以接收系统、官方和他人发送的消息。</span><button className="secondary-button" onClick={onLogin}><UserRound size={15} /> 前往登录</button></div>
           ) : messages.length ? (
             <div className="message-list">
               {messages.map((message) => (
-                <button key={message.id} className={`message-item ${message.unread ? 'unread' : ''}`} onClick={() => onMarkRead(message)}>
+                <div key={message.id} className={`message-item ${message.unread ? 'unread' : ''}`}>
+                  <button className="message-item-main" onClick={() => onMarkRead(message)}>
                   <span className={`message-item-icon ${message.category}`}><MessageIcon category={message.category} /></span>
                   <span className="message-item-content"><strong>{message.title}</strong><span>{message.body}</span><small>{formatMessageTime(message.createdAt)}</small></span>
                   {message.unread && <i className="message-item-dot" />}
-                </button>
+                  </button>
+                  <button className="message-item-delete" aria-label={`删除消息：${message.title}`} title="删除消息" onClick={(event) => { event.stopPropagation(); onDelete(message) }}><Trash2 size={14} /></button>
+                </div>
               ))}
             </div>
           ) : (
@@ -3830,6 +3870,14 @@ async function markAllCloudMessagesRead() {
   return apiRequest('/api/account/messages', { method: 'PATCH' })
 }
 
+async function deleteCloudMessage(id) {
+  return apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+async function deleteAllCloudMessages() {
+  return apiRequest('/api/account/messages', { method: 'DELETE' })
+}
+
 async function saveCloudNoticeSettings(settings) {
   return apiRequest('/api/account/notification-settings', {
     method: 'PUT',
@@ -3970,7 +4018,6 @@ function normalizedManageUrl(kind, manageToken, currentUrl = '') {
 function createShareManageForm(share = {}) {
   const limit = share.downloadLimit ? String(share.downloadLimit) : 'unlimited'
   return {
-    expiresAt: toDateInputValue(share.expiresAt),
     downloadLimit: ['unlimited', '1', '10'].includes(limit) ? limit : 'custom',
     customDownloadLimit: share.downloadLimit ? String(share.downloadLimit) : '5',
     password: '',
