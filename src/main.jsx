@@ -88,7 +88,24 @@ const createDefaultCollectionForm = () => ({
   maxFileSizeMb: 500,
 })
 
-const COLLECTION_TYPE_OPTIONS = ['全部格式']
+const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']
+const COLLECTION_TYPE_EXTENSIONS = {
+  图片: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif', 'ico'],
+  文档: ['pdf', 'doc', 'docx', 'txt', 'rtf', 'xls', 'xlsx', 'csv', 'ppt', 'pptx', 'md'],
+  视频: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'ogv', 'flv', 'wmv'],
+  音频: ['mp3', 'wav', 'm4a', 'aac', 'flac', 'oga', 'ogg', 'wma'],
+  压缩包: ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'],
+  代码文件: ['js', 'jsx', 'ts', 'tsx', 'html', 'css', 'json', 'xml', 'yml', 'yaml', 'java', 'py', 'go', 'php', 'rb', 'rs', 'c', 'cpp', 'h', 'cs', 'sh', 'ps1', 'bat', 'cmd', 'sql'],
+}
+const COLLECTION_TYPE_CATEGORY_KEYS = {
+  图片: 'image',
+  文档: 'document',
+  视频: 'video',
+  音频: 'audio',
+  压缩包: 'archive',
+  代码文件: 'code',
+  其他: 'other',
+}
 
 const FOOTER_CONTENT = {
   help: {
@@ -1919,9 +1936,30 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       saveLocalRecord(createCollectionRecord(data.collection, 'collect_from_me'))
     }).catch((err) => setMessage(err.message))
   }, [token, enterpriseSlug])
+
+  const firstInvalidFile = (selectedFiles) => {
+    const limitMb = Number(collection?.maxFileSizeMb || 0)
+    return selectedFiles.find((file) => (
+      (limitMb > 0 && file.size > limitMb * 1024 * 1024)
+      || !isAllowedCollectionFile(file, collection?.allowedTypes)
+    ))
+  }
+
+  const handleSelectFiles = (incoming) => {
+    const selectedFiles = toFileItems(incoming)
+    setFiles(selectedFiles)
+    const invalidFile = firstInvalidFile(selectedFiles)
+    setMessage(invalidFile ? `${invalidFile.name} 不符合当前收集任务的文件限制` : '')
+  }
+
   const submit = () => {
     const participantName = name.trim()
     if (!participantName || !files.length) { setMessage('请填写提交人名称并选择文件'); return }
+    const invalidFile = firstInvalidFile(files)
+    if (invalidFile) {
+      setMessage(`${invalidFile.name} 不符合当前收集任务的文件限制`)
+      return
+    }
     const body = new FormData()
     files.forEach((item) => body.append('files', item.file, item.name))
     body.append('participantName', participantName)
@@ -1947,7 +1985,7 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
             <CollectionLimitInfo allowedTypes={collection.allowedTypes} maxFileSizeMb={collection.maxFileSizeMb} />
             <label className="public-label">提交人名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：张三 / 市场部" /></label>
             <div className="public-drop" onClick={() => inputRef.current?.click()}>
-              <input ref={inputRef} type="file" multiple hidden onChange={(event) => setFiles(toFileItems(event.target.files))} />
+              <input ref={inputRef} type="file" multiple hidden accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => handleSelectFiles(event.target.files)} />
               <UploadCloud size={24} />
               <strong>{files.length ? `${files.length} 个文件已选择` : '选择要提交的文件'}</strong>
               <span>按当前任务限制提交，提交者之间互不可见</span>
@@ -2499,6 +2537,7 @@ const FILE_CATEGORY_FILTERS = [
   ['video', '视频'],
   ['audio', '音频'],
   ['archive', '压缩包'],
+  ['code', '代码文件'],
   ['collection', '收集任务'],
   ['mixed', '混合文件'],
   ['other', '其他'],
@@ -4263,12 +4302,30 @@ function managedFileDetail(record, fileCount, size) {
 function fileCategoryFromFile(file = {}) {
   const mimeType = String(file.mimeType || '').toLowerCase()
   const extension = fileExtension(file.name || file.relativePath)
-  if (mimeType.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic'].includes(extension)) return 'image'
-  if (mimeType.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov', 'm4v', 'avi', 'mkv'].includes(extension)) return 'video'
-  if (mimeType.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac', 'flac', 'oga', 'ogg'].includes(extension)) return 'audio'
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(extension)) return 'archive'
-  if (['pdf', 'doc', 'docx', 'txt', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'md'].includes(extension)) return 'document'
+  if (mimeType.startsWith('image/')) return 'image'
+  if (mimeType.startsWith('video/')) return 'video'
+  if (mimeType.startsWith('audio/')) return 'audio'
+  const matchedType = collectionTypeForExtension(extension)
+  if (matchedType) return COLLECTION_TYPE_CATEGORY_KEYS[matchedType] || 'other'
   return 'other'
+}
+
+function collectionTypeForExtension(extension) {
+  return Object.entries(COLLECTION_TYPE_EXTENSIONS).find(([, extensions]) => extensions.includes(extension))?.[0] || ''
+}
+
+function isAllowedCollectionFile(file = {}, allowedTypes = []) {
+  const normalized = normalizeCollectionTypes(allowedTypes)
+  if (normalized.includes('全部格式')) return true
+  const type = collectionTypeForExtension(fileExtension(file.name || file.relativePath)) || '其他'
+  return normalized.includes(type)
+}
+
+function collectionFileAccept(allowedTypes = []) {
+  const normalized = normalizeCollectionTypes(allowedTypes)
+  if (normalized.includes('全部格式') || normalized.includes('其他')) return undefined
+  const extensions = normalized.flatMap((type) => COLLECTION_TYPE_EXTENSIONS[type] || [])
+  return extensions.length ? Array.from(new Set(extensions)).map((extension) => `.${extension}`).join(',') : undefined
 }
 
 function fileCategoryLabel(category) {
@@ -4278,7 +4335,7 @@ function fileCategoryLabel(category) {
 function fileCategoryIcon(category) {
   if (category === 'image') return ImageIcon
   if (category === 'archive') return FileArchive
-  if (category === 'document') return FileText
+  if (category === 'document' || category === 'code') return FileText
   if (category === 'collection') return Inbox
   return FileCheck2
 }

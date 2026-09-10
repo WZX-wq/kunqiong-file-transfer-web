@@ -52,6 +52,15 @@ const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections'
 const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
 const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
+const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']
+const COLLECTION_TYPE_EXTENSIONS = {
+  图片: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif', '.ico'],
+  文档: ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.xls', '.xlsx', '.csv', '.ppt', '.pptx', '.md'],
+  视频: ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.ogv', '.flv', '.wmv'],
+  音频: ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.oga', '.ogg', '.wma'],
+  压缩包: ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz'],
+  代码文件: ['.js', '.jsx', '.ts', '.tsx', '.html', '.css', '.json', '.xml', '.yml', '.yaml', '.java', '.py', '.go', '.php', '.rb', '.rs', '.c', '.cpp', '.h', '.cs', '.sh', '.ps1', '.bat', '.cmd', '.sql'],
+}
 const MAX_AUDIT_LOGS = 5000
 const DEFAULT_SYSTEM_CONFIG = {
   maintenanceMode: false,
@@ -812,7 +821,7 @@ app.post('/api/collections', async (req, res, next) => {
       title,
       description: String(req.body.description || '请上传你负责的文件'),
       deadline,
-      allowedTypes: Array.isArray(req.body.allowedTypes) ? req.body.allowedTypes : [],
+      allowedTypes: normalizeCollectionAllowedTypes(req.body.allowedTypes),
       maxFileSizeMb: Number(req.body.maxFileSizeMb || 500),
       createdAt: new Date().toISOString(),
       ownerUserId: ownerSession?.user?.id || '',
@@ -2861,8 +2870,7 @@ function applyCollectionUpdate(task, body = {}) {
     if (task.notificationFlags?.collectionExpiring) task.notificationFlags = { ...task.notificationFlags, collectionExpiring: false }
   }
   if (Object.prototype.hasOwnProperty.call(body, 'allowedTypes')) {
-    const allowed = Array.isArray(body.allowedTypes) ? body.allowedTypes.map(String).filter((type) => ['全部格式', '图片', '文档', '视频', '其他'].includes(type)) : []
-    task.allowedTypes = Array.from(new Set(allowed))
+    task.allowedTypes = normalizeCollectionAllowedTypes(body.allowedTypes)
   }
   if (Object.prototype.hasOwnProperty.call(body, 'maxFileSizeMb')) {
     const maxFileSizeMb = Number(body.maxFileSizeMb)
@@ -3005,8 +3013,18 @@ function safeRelativePath(value) {
   return normalized.replace(/^\/+/, '') || '未命名文件'
 }
 
+function normalizeCollectionAllowedTypes(types) {
+  const allowed = Array.isArray(types) ? types.map(String).filter((type) => COLLECTION_TYPE_OPTIONS.includes(type)) : []
+  if (!allowed.length || allowed.includes('全部格式')) return ['全部格式']
+  return Array.from(new Set(allowed))
+}
+
 function isAllowedType(filename, allowedTypes) {
-  return true
+  const allowed = normalizeCollectionAllowedTypes(allowedTypes)
+  if (allowed.includes('全部格式')) return true
+  const extension = path.extname(filename).toLowerCase()
+  const matchedType = Object.entries(COLLECTION_TYPE_EXTENSIONS).find(([, extensions]) => extensions.includes(extension))?.[0] || '其他'
+  return allowed.includes(matchedType)
 }
 
 function cleanupUploadedFiles(files = []) {
