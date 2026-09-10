@@ -219,6 +219,7 @@ h1, h2, p { margin-top: 0; }
 .file-info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .file-info strong { overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .file-info span { color: #9caaa7; font-size: 11px; }
+.file-format-badge { display: inline-flex; align-items: center; justify-content: center; margin-right: 5px; padding: 2px 5px; color: #477a70; background: #edf7f4; border: 1px solid #d9ebe6; border-radius: 4px; font-size: 10px; font-weight: 800; line-height: 1; text-transform: uppercase; vertical-align: middle; }
 .queue-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 23px; }
 .delivery-field { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; color: #638078; font-size: 13px; font-weight: 700; }
 .delivery-field > span { display: flex; align-items: center; gap: 6px; }
@@ -448,6 +449,7 @@ h1, h2, p { margin-top: 0; }
 .record-name-text em { flex: none; color: inherit; font-size: inherit; font-style: normal; line-height: inherit; }
 .scope-pill { display: inline-flex; align-items: center; justify-content: center; flex: none; padding: 3px 6px; color: #6f9188; background: #eef7f4; border-radius: 5px; font-size: 10px; font-weight: 700; line-height: 1; text-align: center; }
 .scope-pill.muted { color: #8c9e99; background: #f2f6f5; }
+.scope-pill.file-format-pill, .record-title-line > .file-format-badge { color: #477a70; background: #edf7f4; border: 1px solid #d9ebe6; }
 .record-expiry { display: flex; align-items: center; justify-content: flex-end; min-height: 25px; overflow: hidden; color: #829991; font-size: 11px; line-height: 1.2; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .record-icon.my_sent { color: #4d90d7; background: #e5f0fc; }
 .record-icon.sent_to_me { color: #328f70; background: #e3f4ed; }

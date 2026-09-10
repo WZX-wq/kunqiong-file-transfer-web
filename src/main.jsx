@@ -84,9 +84,11 @@ const createDefaultCollectionForm = () => ({
   title: '',
   description: '',
   deadline: defaultDeadline(10),
-  allowedTypes: ['图片', '文档'],
+  allowedTypes: ['全部格式'],
   maxFileSizeMb: 500,
 })
+
+const COLLECTION_TYPE_OPTIONS = ['全部格式']
 
 const FOOTER_CONTENT = {
   help: {
@@ -172,7 +174,7 @@ const FOOTER_CONTENT = {
       {
         title: '安全与控制',
         items: [
-          '我们通过登录会话、管理链接、提取密码、文件类型限制和访问校验降低误访问和滥用风险。',
+          '我们通过登录会话、管理链接、提取密码、访问校验和文件格式标签降低误访问风险。',
           '你可以删除分享、关闭收集任务、恢复登录头像或退出登录，以管理自己的内容和账户状态。',
           '如部署到测试或正式服务器，请妥善配置访问域名、回调地址、管理员账号和邮件服务参数。',
         ],
@@ -583,7 +585,7 @@ function WorkspaceApp() {
   }
 
   const createCollection = (form) => {
-    const payload = { ...form, title: form.title.trim(), description: form.description.trim() }
+    const payload = { ...form, title: form.title.trim(), description: form.description.trim(), allowedTypes: normalizeCollectionTypes(form.allowedTypes) }
     if (!payload.title) {
       setToast('请填写任务名称')
       return
@@ -1615,7 +1617,7 @@ function CollectView({ result, manageData, manageLoading, records, onCreate, onR
                 <label>任务名称<input value={form.title} onChange={(event) => update('title', event.target.value)} placeholder="例如：9 月产品素材收集" /></label>
                 <label>收集说明<input value={form.description} onChange={(event) => update('description', event.target.value)} placeholder="例如：请上传你负责的图片、文档或视频素材" /></label>
                 <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} ariaLabel="截止时间" /></label>
-                <label>文件类型<div className="chip-group">{['图片', '文档', '视频', '其他'].map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', form.allowedTypes.includes(type) ? form.allowedTypes.filter((item) => item !== type) : [...form.allowedTypes, type])}>{type}</button>)}</div></label>
+                <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
                 <label>单人大小限制<select value={form.maxFileSizeMb} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select></label>
                 <button className="primary-button wide" onClick={() => onCreate(form)}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
               </div>
@@ -2109,7 +2111,7 @@ function CollectionManagePage({ token }) {
               <div>
                 <strong>{submission.participantName}</strong>
                 <span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span>
-                <div className="manage-file-names">{submission.files.map((file, fileIndex) => <span className="manage-file-chip" key={`${submission.id}-${file.relativePath}`}>{canPreviewFile(file) && <button className="manage-file-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={13} /></button>}<button onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><FileText size={13} /> {file.name}</button></span>)}</div>
+                <div className="manage-file-names">{submission.files.map((file, fileIndex) => <span className="manage-file-chip" key={`${submission.id}-${file.relativePath}`}>{canPreviewFile(file) && <button className="manage-file-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={13} /></button>}<button onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><FileText size={13} /> <FileFormatBadge file={file} /> {file.name}</button></span>)}</div>
               </div>
               <div className="manage-submission-actions">
                 <button className="secondary-button" onClick={() => downloadSubmissionItem(submission)} disabled={downloadBusy}><Download size={15} /> 下载</button>
@@ -2255,11 +2257,7 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask })
   const updateShare = (patch) => setShareForm((current) => ({ ...current, ...patch }))
   const updateCollection = (patch) => setCollectionForm((current) => ({ ...current, ...patch }))
   const toggleAllowedType = (type) => {
-    updateCollection({
-      allowedTypes: collectionForm.allowedTypes.includes(type)
-        ? collectionForm.allowedTypes.filter((item) => item !== type)
-        : [...collectionForm.allowedTypes, type],
-    })
+    updateCollection({ allowedTypes: toggleCollectionType(collectionForm.allowedTypes, type) })
   }
 
   const buildCollectionPayload = ({ reopeningTask = false } = {}) => {
@@ -2280,7 +2278,7 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask })
       title,
       description: collectionForm.description.trim(),
       deadline: collectionForm.deadline,
-      allowedTypes: collectionForm.allowedTypes,
+      allowedTypes: normalizeCollectionTypes(collectionForm.allowedTypes),
       maxFileSizeMb: Number(collectionForm.maxFileSizeMb),
     }
   }
@@ -2389,7 +2387,7 @@ function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopenTask })
               </label>
               <label className="manage-field">
                 <span>文件类型</span>
-                <div className="chip-group">{['图片', '文档', '视频', '其他'].map((type) => <button key={type} className={collectionForm.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => toggleAllowedType(type)}>{type}</button>)}</div>
+                <div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={collectionForm.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => toggleAllowedType(type)}>{type}</button>)}</div>
               </label>
               <label className="manage-field">
                 <span>单人大小限制</span>
@@ -2817,6 +2815,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
                   <div className="record-main">
                     <div className="record-title-line">
                       <RecordNameText name={recordDisplayName(record)} />
+                      <FileFormatBadge record={record} />
                       <span className="scope-pill">{recordScopeLabel(record.scope)}</span>
                     </div>
                     <span>{record.meta || recordDetail(record)}</span>
@@ -2904,6 +2903,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
                     <div className="record-title-line">
                       <RecordNameText name={item.name} />
                       <span className="scope-pill">{item.categoryLabel}</span>
+                      <span className="scope-pill file-format-pill">{item.formatLabel}</span>
                       <span className="scope-pill muted">{recordScopeLabel(record.scope)}</span>
                     </div>
                     <span>{item.detail}</span>
@@ -3683,6 +3683,10 @@ function RecordNameText({ name }) {
     </strong>
   )
 }
+function FileFormatBadge({ file, record, label = '' }) {
+  const text = label || fileFormatLabel(file, record)
+  return text ? <span className="file-format-badge">{text}</span> : null
+}
 function FeatureOrb({ icon: Icon, value, label, tone }) { return <div className={`feature-orb ${tone}`}><span className="orb-icon"><Icon size={21} /></span><strong>{value}</strong><span>{label}</span></div> }
 function ValueItem({ icon: Icon, title, detail }) { return <div className="value-item"><span className="value-icon"><Icon size={18} /></span><div><strong>{title}</strong><span>{detail}</span></div></div> }
 function FileRow({ file, onRemove, onPreview, onDownload, downloadDisabled = false }) {
@@ -3690,7 +3694,7 @@ function FileRow({ file, onRemove, onPreview, onDownload, downloadDisabled = fal
   return (
     <div className="file-row">
       <span className="file-type"><Icon size={18} /></span>
-      <div className="file-info"><strong>{file.name}</strong><span>{formatBytes(file.size)}</span></div>
+      <div className="file-info"><strong>{file.name}</strong><span><FileFormatBadge file={file} /> {formatBytes(file.size)}</span></div>
       {onPreview && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={onPreview}><Eye size={16} /></button>}
       {onDownload && <button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={onDownload} disabled={downloadDisabled}><Download size={16} /></button>}
       {onRemove && <button className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={onRemove}><X size={16} /></button>}
@@ -4025,7 +4029,7 @@ function createCollectionRecord(collection, scope = 'my_collections', extra = {}
     manageToken: collection?.manageToken || getManageToken(collection?.manageUrl),
     collectionToken: collection?.token || getCollectionToken(collection?.publicUrl || collection?.shareUrl),
     deadline: collection?.deadline || null,
-    allowedTypes: collection?.allowedTypes || [],
+    allowedTypes: normalizeCollectionTypes(collection?.allowedTypes),
     maxFileSizeMb: collection?.maxFileSizeMb,
     submissionCount,
     fileCount: files.length,
@@ -4209,6 +4213,7 @@ function managedFileItemsFromRecords(records) {
       category,
       categories,
       categoryLabel: fileCategoryLabel(category),
+      formatLabel: fileFormatSummary(files, recordDisplayName(record)),
       fileCount,
       size,
       statusGroup: recordStatusGroup(record),
@@ -4222,6 +4227,7 @@ function managedFileItemsFromRecords(records) {
         record.meta,
         record.participantName,
         recordScopeLabel(record.scope),
+        fileFormatSummary(files, recordDisplayName(record)),
         ...participants,
         ...fileNames,
       ].filter(Boolean).join(' ').toLowerCase(),
@@ -5005,6 +5011,21 @@ function fileExtension(name = '') {
   return match ? match[1] : ''
 }
 
+function fileFormatLabel(file = {}, record = null) {
+  const extension = fileExtension(file.name || file.relativePath || recordDisplayName(record || {}))
+  if (extension) return extension.toUpperCase()
+  const mimeType = String(file.mimeType || record?.mimeType || '').trim().toLowerCase()
+  if (mimeType && mimeType !== 'application/octet-stream') return mimeType.split('/').pop().toUpperCase()
+  return record?.kind === 'collection' ? '收集' : '无后缀'
+}
+
+function fileFormatSummary(files = [], fallbackName = '') {
+  const labels = Array.from(new Set((files.length ? files : [{ name: fallbackName }]).map((file) => fileFormatLabel(file)).filter(Boolean)))
+  if (!labels.length) return '无后缀'
+  if (labels.length <= 2) return labels.join(' / ')
+  return '多格式'
+}
+
 function splitFileNameForDisplay(name = '') {
   const text = String(name || '').trim()
   const match = text.match(/^(.+?)(\.[^.\\/]{1,12})$/)
@@ -5026,7 +5047,19 @@ function formatBytes(bytes = 0) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 function formatAllowedTypes(types) {
-  return Array.isArray(types) && types.length ? types.join('、') : '不限类型'
+  const normalized = normalizeCollectionTypes(types)
+  return normalized.includes('全部格式') ? '全部格式' : normalized.join('、')
+}
+function normalizeCollectionTypes(types) {
+  const values = Array.isArray(types) ? types.filter((type) => COLLECTION_TYPE_OPTIONS.includes(type)) : []
+  if (!values.length || values.includes('全部格式')) return ['全部格式']
+  return Array.from(new Set(values))
+}
+function toggleCollectionType(types, type) {
+  if (type === '全部格式') return ['全部格式']
+  const current = normalizeCollectionTypes(types).filter((item) => item !== '全部格式')
+  const next = current.includes(type) ? current.filter((item) => item !== type) : [...current, type]
+  return next.length ? next : ['全部格式']
 }
 function formatLimitSize(value) {
   const mb = Number(value || 0)

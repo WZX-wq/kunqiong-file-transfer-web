@@ -52,8 +52,6 @@ const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections'
 const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
 const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
-const BLOCKED_FILE_EXTENSIONS = new Set(['.ade', '.adp', '.app', '.application', '.apk', '.appx', '.bat', '.cmd', '.com', '.cpl', '.dll', '.dmg', '.exe', '.gadget', '.hta', '.ins', '.iso', '.jar', '.js', '.jse', '.lnk', '.msi', '.msp', '.mst', '.ps1', '.reg', '.scr', '.sh', '.sys', '.vb', '.vbe', '.vbs', '.vxd', '.wsc', '.wsf', '.wsh'])
-const REVIEW_FILE_EXTENSIONS = new Set(['.docm', '.dotm', '.xlsm', '.xltm', '.pptm', '.ppam', '.potm'])
 const MAX_AUDIT_LOGS = 5000
 const DEFAULT_SYSTEM_CONFIG = {
   maintenanceMode: false,
@@ -1337,11 +1335,6 @@ function adminResourceSummary(kind, item) {
   const files = kind === 'share'
     ? item.files || []
     : (item.submissions || []).flatMap((submission) => submission.files || [])
-  const reviewStatus = files.some((file) => file.reviewStatus === 'blocked')
-    ? '已拦截'
-    : files.some((file) => file.reviewStatus === 'review')
-      ? '待审核'
-      : '正常'
   return {
     id: item.id || item.token,
     kind,
@@ -1352,7 +1345,7 @@ function adminResourceSummary(kind, item) {
     totalSize: fileListSize(files),
     createdAt: item.createdAt,
     expiresAt: kind === 'share' ? item.expiresAt : item.deadline,
-    reviewStatus,
+    reviewStatus: '正常',
   }
 }
 
@@ -1570,24 +1563,11 @@ function validateShareRequest(share, req, options = {}) {
 }
 
 function fileSafetyVerdict(file = {}) {
-  const name = String(file.originalname || file.name || file.relativePath || '').trim()
-  const extension = path.extname(name).toLowerCase()
-  if (BLOCKED_FILE_EXTENSIONS.has(extension)) {
-    return { status: 'blocked', message: `出于安全原因，暂不支持上传 ${extension} 文件` }
-  }
-  if (REVIEW_FILE_EXTENSIONS.has(extension)) {
-    return { status: 'review', message: `${extension} 文件将进入人工审核队列` }
-  }
   return { status: 'approved', message: '' }
 }
 
 function assertFilesDownloadable(files = []) {
-  if (files.some((file) => file?.reviewStatus === 'blocked')) {
-    throw httpError(403, '文件已被安全策略拦截，无法下载或预览')
-  }
-  if (files.some((file) => file?.reviewStatus === 'review')) {
-    throw httpError(423, '文件正在安全审核，审核通过后才可下载或预览')
-  }
+  return true
 }
 
 function assertSafeUploadFiles(files = []) {
@@ -2881,7 +2861,7 @@ function applyCollectionUpdate(task, body = {}) {
     if (task.notificationFlags?.collectionExpiring) task.notificationFlags = { ...task.notificationFlags, collectionExpiring: false }
   }
   if (Object.prototype.hasOwnProperty.call(body, 'allowedTypes')) {
-    const allowed = Array.isArray(body.allowedTypes) ? body.allowedTypes.map(String).filter((type) => ['图片', '文档', '视频', '其他'].includes(type)) : []
+    const allowed = Array.isArray(body.allowedTypes) ? body.allowedTypes.map(String).filter((type) => ['全部格式', '图片', '文档', '视频', '其他'].includes(type)) : []
     task.allowedTypes = Array.from(new Set(allowed))
   }
   if (Object.prototype.hasOwnProperty.call(body, 'maxFileSizeMb')) {
@@ -2940,12 +2920,6 @@ function validateShare(share, password, { allowMissingPassword = false, hasAcces
   }
   if (share.downloadLimit && share.downloadCount >= share.downloadLimit) {
     return { ok: false, status: 410, message: '下载次数已用完' }
-  }
-  if (share.files?.some((file) => file.reviewStatus === 'blocked')) {
-    return { ok: false, status: 403, message: '文件已被安全策略拦截，无法访问' }
-  }
-  if (share.files?.some((file) => file.reviewStatus === 'review')) {
-    return { ok: false, status: 423, message: '文件正在安全审核，审核通过后才可访问' }
   }
   if (hasAccessCookie && share.passwordHash) return { ok: true }
   if (allowMissingPassword && share.passwordHash && !password) return { ok: true }
@@ -3032,14 +3006,7 @@ function safeRelativePath(value) {
 }
 
 function isAllowedType(filename, allowedTypes) {
-  if (!allowedTypes?.length || allowedTypes.includes('其他')) return true
-  const extension = path.extname(filename).toLowerCase()
-  const typeMap = {
-    图片: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'],
-    文档: ['.pdf', '.doc', '.docx', '.txt', '.xls', '.xlsx', '.ppt', '.pptx'],
-    视频: ['.mp4', '.mov', '.avi', '.mkv', '.webm'],
-  }
-  return allowedTypes.some((type) => typeMap[type]?.includes(extension))
+  return true
 }
 
 function cleanupUploadedFiles(files = []) {
