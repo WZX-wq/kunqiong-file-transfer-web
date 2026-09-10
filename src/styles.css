@@ -614,7 +614,7 @@ h1, h2, p { margin-top: 0; }
 .manage-field input, .manage-field select, .manage-field textarea { width: 100%; color: var(--ink); background: #fbfdfc; border: 1px solid #d8e7e2; border-radius: 7px; outline: 0; font-size: 13px; }
 .manage-field input, .manage-field select { height: 42px; padding: 0 12px; }
 .manage-field textarea { min-height: 88px; padding: 11px 12px; resize: vertical; line-height: 1.6; }
-.manage-password-field input { height: 56px; padding: 0 15px; font-size: 14px; }
+.manage-password-field input { height: 42px; padding: 0 12px; font-size: 13px; }
 .manage-field input:focus, .manage-field select:focus, .manage-field textarea:focus { border-color: #76b6a5; background: #fff; }
 .manage-setting-block { margin: 0; }
 .manage-check-row { display: flex; align-items: center; gap: 8px; color: #6c8981; font-size: 12px; font-weight: 700; }
@@ -798,7 +798,7 @@ h1, h2, p { margin-top: 0; }
 .public-password { display: flex; gap: 9px; margin-top: 25px; }
 .public-password input, .modal-inline-input { flex: 1; min-width: 0; height: 42px; padding: 0 12px; color: var(--ink); background: #fbfdfc; border: 1px solid #d8e7e2; border-radius: 7px; outline: 0; font-size: 13px; }
 .public-password input:focus, .modal-inline-input:focus { border-color: #76b6a5; }
-.manage-form .manage-password-field input.modal-inline-input { height: 56px; padding: 0 15px; font-size: 14px; }
+.manage-form .manage-password-field input.modal-inline-input { height: 42px; padding: 0 12px; font-size: 13px; }
 .password-field { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; color: #678078; font-size: 12px; font-weight: 700; }
 .password-field .modal-inline-input { display: block; width: 100%; flex: none; height: 44px; padding: 0 13px; font-family: 'DM Sans', 'Noto Sans SC', sans-serif; letter-spacing: .04em; }
 .password-field .modal-inline-input::placeholder { color: #a9bbb5; font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; letter-spacing: 0; }
