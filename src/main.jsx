@@ -852,6 +852,19 @@ function WorkspaceApp() {
     setToast(authUser?.id ? '账号记录已清空' : '本机记录已清空')
   }
 
+  const clearRecordsWithConfirm = async () => {
+    const confirmed = await requestConfirm({
+      title: '清空全部记录',
+      detail: authUser?.id
+        ? '将清空当前账号同步的全部收发记录，文件资源本身不会被删除。确定继续吗？'
+        : '将清空当前设备保存的全部收发记录，文件资源本身不会被删除。确定继续吗？',
+      confirmText: '清空全部',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    clearRecords()
+  }
+
   const renameRecord = async (recordOrId, nextName) => {
     const alias = String(nextName || '').trim()
     if (!alias) {
@@ -984,7 +997,7 @@ function WorkspaceApp() {
             onRefreshRecords={refreshRecords}
           />
         )}
-        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecords} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} />}
+        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} />}
       </main>
 
       <footer className="page-footer">
