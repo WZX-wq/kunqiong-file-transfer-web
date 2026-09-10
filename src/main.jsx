@@ -187,6 +187,16 @@ const fileIcon = (name = '') => {
   return FileCheck2
 }
 
+const MAIN_VIEWS = new Set(['send', 'collect', 'records'])
+
+function normalizeMainView(value) {
+  return MAIN_VIEWS.has(value) ? value : 'send'
+}
+
+function mainViewUrl(view) {
+  return view === 'send' ? '/' : `/?view=${encodeURIComponent(view)}`
+}
+
 function App() {
   const route = window.location.pathname
   if (route.startsWith('/admin')) return <AdminPage />
@@ -240,7 +250,7 @@ function WorkspaceApp() {
   const uploadRef = useRef(createUploadSessionState())
   const recordSyncUserRef = useRef('')
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
-  const [activeView, setActiveView] = useState(() => new URLSearchParams(window.location.search).get('view') || 'send')
+  const [activeView, setActiveView] = useState(() => normalizeMainView(new URLSearchParams(window.location.search).get('view')))
   const [files, setFiles] = useState([])
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -271,7 +281,7 @@ function WorkspaceApp() {
       const nextPath = window.location.pathname
       setRoutePath(nextPath)
       if (!nextPath.startsWith('/settings')) {
-        setActiveView(new URLSearchParams(window.location.search).get('view') || 'send')
+        setActiveView(normalizeMainView(new URLSearchParams(window.location.search).get('view')))
       }
     }
     window.addEventListener('popstate', syncRoute)
@@ -479,14 +489,19 @@ function WorkspaceApp() {
   }
 
   const navigateMainView = (view) => {
+    const nextView = normalizeMainView(view)
+    const nextUrl = mainViewUrl(nextView)
     if (isSettingsRoute) {
-      const nextUrl = view === 'send' ? '/' : `/?view=${encodeURIComponent(view)}`
       window.history.pushState(null, '', nextUrl)
       setRoutePath('/')
-      setActiveView(view)
+      setActiveView(nextView)
       return
     }
-    setActiveView(view)
+    if (window.location.pathname !== '/' || `${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.pushState(null, '', nextUrl)
+    }
+    setRoutePath('/')
+    setActiveView(nextView)
   }
 
   const navigateSettingsSection = (path) => {
@@ -675,8 +690,7 @@ function WorkspaceApp() {
     try {
       if (target.kind === 'share') {
         const data = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify(payload) })
-        const record = createShareRecord(data.share, 'my_sent')
-        saveRecord(record)
+        const record = replaceRecordEntry(createShareRecord(data.share, 'my_sent'))
         setManagementTarget({ kind: 'share', record, data: data.share })
         setToast('分享设置已保存')
         return true
