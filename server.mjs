@@ -760,7 +760,7 @@ app.get('/api/shares/:token/download', async (req, res, next) => {
     const share = metadata.shares.find((item) => item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
     enforceDownloadOrigin(req)
-    const access = validateShare(share, req.get('x-share-password'))
+    const access = validateShareRequest(share, req, { allowOwner: true })
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     registerShareDownload(share, res)
     const shareDirectory = path.join(filesRoot, share.id)
@@ -784,7 +784,7 @@ app.get('/api/shares/:token/files/:fileIndex/download', (req, res, next) => {
     const share = metadata.shares.find((item) => item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
     enforceDownloadOrigin(req)
-    const access = validateShare(share, req.get('x-share-password'))
+    const access = validateShareRequest(share, req, { allowOwner: true })
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     const file = share.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
@@ -800,7 +800,7 @@ app.get('/api/shares/:token/files/:fileIndex/preview', (req, res, next) => {
     const share = metadata.shares.find((item) => item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
     enforceDownloadOrigin(req)
-    const access = validateShareRequest(share, req)
+    const access = validateShareRequest(share, req, { allowOwner: true })
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     const file = share.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
@@ -1571,8 +1571,11 @@ function managerCollection(task, req) {
 }
 
 function validateShareRequest(share, req, options = {}) {
+  const viewer = authSessionFromRequest(req)?.user
+  const isOwner = options.allowOwner && viewer?.id && share.ownerUserId && viewer.id === share.ownerUserId
   return validateShare(share, req.get('x-share-password'), {
     ...options,
+    skipPassword: isOwner,
     hasAccessCookie: hasShareAccessCookie(req, share),
   })
 }
@@ -1598,7 +1601,8 @@ function assertSafeUploadFiles(files = []) {
 
 function enforceDownloadOrigin(req) {
   const requestOrigin = getRequestOrigin(req)
-  const allowedOrigins = new Set([requestOrigin, configuredAppUrl, 'http://localhost:4173', 'http://127.0.0.1:4173', ...configuredCallbackUrls].filter(Boolean).map((value) => {
+  const directOrigin = `${req.protocol}://${req.get('host')}`
+  const allowedOrigins = new Set([requestOrigin, directOrigin, configuredAppUrl, 'http://localhost:4173', 'http://127.0.0.1:4173', ...configuredCallbackUrls].filter(Boolean).map((value) => {
     try { return new URL(value).origin } catch { return '' }
   }).filter(Boolean))
   for (const header of [req.get('origin'), req.get('referer')]) {
@@ -2939,7 +2943,7 @@ function findShareByCode(code) {
   return metadata.shares.find((share) => share.code.toLowerCase() === String(code).trim().toLowerCase())
 }
 
-function validateShare(share, password, { allowMissingPassword = false, hasAccessCookie = false } = {}) {
+function validateShare(share, password, { allowMissingPassword = false, hasAccessCookie = false, skipPassword = false } = {}) {
   const status = currentShareStatus(share)
   if (status === 'closed') return { ok: false, status: 410, message: '分享已失效' }
   if (status === 'expired') {
@@ -2948,6 +2952,7 @@ function validateShare(share, password, { allowMissingPassword = false, hasAcces
   if (share.downloadLimit && share.downloadCount >= share.downloadLimit) {
     return { ok: false, status: 410, message: '下载次数已用完' }
   }
+  if (skipPassword) return { ok: true }
   if (hasAccessCookie && share.passwordHash) return { ok: true }
   if (allowMissingPassword && share.passwordHash && !password) return { ok: true }
   if (share.passwordHash && hashSecret(password || '') !== share.passwordHash) {
