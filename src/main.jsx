@@ -1960,6 +1960,8 @@ function ShareManagePage({ token }) {
 
 function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const inputRef = useRef(null)
+  const submitRequestRef = useRef(null)
+  const submitRunRef = useRef(0)
   const [collection, setCollection] = useState(null)
   const [files, setFiles] = useState([])
   const [name, setName] = useState('')
@@ -1989,6 +1991,24 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     setMessage(invalidFile ? `${invalidFile.name} 不符合当前收集任务的文件限制` : '')
   }
 
+  const cancelSubmit = () => {
+    submitRunRef.current += 1
+    submitRequestRef.current?.abort()
+    submitRequestRef.current = null
+    setSubmitting(false)
+    setProgress(0)
+    setFiles([])
+    setMessage('已取消提交，可以重新选择文件')
+  }
+
+  const removeSelectedFile = (fileId) => {
+    if (submitting) {
+      cancelSubmit()
+      return
+    }
+    setFiles((current) => current.filter((item) => item.id !== fileId))
+  }
+
   const submit = () => {
     const participantName = name.trim()
     if (!participantName || !files.length) { setMessage('请填写提交人名称并选择文件'); return }
@@ -2001,13 +2021,30 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     files.forEach((item) => body.append('files', item.file, item.name))
     body.append('participantName', participantName)
     body.append('relativePaths', JSON.stringify(files.map((item) => item.relativePath)))
+    const submitRun = submitRunRef.current + 1
+    submitRunRef.current = submitRun
     setSubmitting(true)
-    xhrRequest(`/api/collections/${token}/submissions`, { method: 'POST', body, onProgress: setProgress }).then((result) => {
+    xhrRequest(`/api/collections/${token}/submissions`, {
+      method: 'POST',
+      body,
+      onProgress: setProgress,
+      onRequest: (request) => {
+        if (submitRunRef.current === submitRun) submitRequestRef.current = request
+      },
+    }).then((result) => {
+      if (submitRunRef.current !== submitRun) return
       const submittedAt = result.submission?.submittedAt || new Date().toISOString()
       saveLocalRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt, files: result.submission?.files || files }))
       setMessage('提交成功，感谢你的文件')
       setFiles([])
-    }).catch((err) => setMessage(err.message)).finally(() => setSubmitting(false))
+    }).catch((err) => {
+      if (submitRunRef.current === submitRun && err.name !== 'UploadCancelledError') setMessage(err.message)
+    }).finally(() => {
+      if (submitRunRef.current === submitRun) {
+        submitRequestRef.current = null
+        setSubmitting(false)
+      }
+    })
   }
   return (
     <PublicShell>
@@ -2027,8 +2064,9 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
               <strong>{files.length ? `${files.length} 个文件已选择` : '选择要提交的文件'}</strong>
               <span>按当前任务限制提交，提交者之间互不可见</span>
             </div>
-            {files.length > 0 && <div className="public-files">{files.map((file) => <FileRow key={file.id} file={file} onRemove={() => setFiles((current) => current.filter((item) => item.id !== file.id))} />)}</div>}
+            {files.length > 0 && <div className="public-files">{files.map((file) => <FileRow key={file.id} file={file} onRemove={() => removeSelectedFile(file.id)} />)}</div>}
             {submitting && <div className="progress-wrap"><div className="progress-label"><span>正在提交...</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
+            {submitting && <button className="secondary-button wide" onClick={cancelSubmit}><X size={16} /> 取消提交</button>}
             <button className="primary-button wide" onClick={submit} disabled={submitting}><UploadCloud size={17} /> {submitting ? '提交中...' : '提交文件'}</button>
             {message && <FeedbackMessage message={message} tone={feedbackTone(message)} />}
           </>
@@ -4723,10 +4761,11 @@ async function apiRequest(url, options = {}) {
   return data
 }
 
-function xhrRequest(url, { method = 'POST', body, onProgress }) {
+function xhrRequest(url, { method = 'POST', body, onProgress, onRequest }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open(method, url)
+    onRequest?.(xhr)
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100)) }
     xhr.onload = () => {
       const data = JSON.parse(xhr.responseText || '{}')
@@ -4734,6 +4773,11 @@ function xhrRequest(url, { method = 'POST', body, onProgress }) {
       else reject(new Error(data.message || '上传失败'))
     }
     xhr.onerror = () => reject(new Error('网络连接失败，请确认鲲穹服务已启动'))
+    xhr.onabort = () => {
+      const error = new Error('提交已取消')
+      error.name = 'UploadCancelledError'
+      reject(error)
+    }
     xhr.send(body)
   })
 }
