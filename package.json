@@ -17,6 +17,7 @@
     "lucide-react": "^0.468.0",
     "mammoth": "^1.12.2",
     "multer": "^2.3.0",
+    "mysql2": "^3.24.4",
     "nodemailer": "^10.0.0",
     "pptxviewjs": "^1.1.9",
     "qrcode": "^1.5.4",

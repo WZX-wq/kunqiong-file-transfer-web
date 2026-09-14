@@ -1,0 +1,25 @@
+{
+  "language": "zh-CN",
+  "messages": {
+    "payment_created": {
+      "title": "升级订单已创建",
+      "body": "订单已创建，请在支付页面完成付款。支付成功后，会员权益会自动开通。"
+    },
+    "payment_success": {
+      "title": "会员权益已开通",
+      "body": "你的{planName}已开通，有效期至{expiresAt}。"
+    },
+    "payment_failed": {
+      "title": "支付未完成",
+      "body": "本次支付未完成，订单仍可在升级页面继续处理。"
+    },
+    "payment_expired": {
+      "title": "支付订单已过期",
+      "body": "该支付订单已过期，请重新创建升级订单。"
+    },
+    "refund_success": {
+      "title": "退款已处理",
+      "body": "订单{orderNo}的退款已提交处理，到账时间以支付平台为准。"
+    }
+  }
+}

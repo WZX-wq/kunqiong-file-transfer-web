@@ -7,6 +7,7 @@ import multer from 'multer'
 import archiver from 'archiver'
 import QRCode from 'qrcode'
 import nodemailer from 'nodemailer'
+import mysql from 'mysql2/promise'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 loadEnvFile(path.join(__dirname, '.env'))
@@ -36,6 +37,26 @@ const smtpUser = String(process.env.KUNQIONG_SMTP_USER || '').trim()
 const smtpPassword = String(process.env.KUNQIONG_SMTP_PASSWORD || '')
 const smtpFrom = String(process.env.KUNQIONG_SMTP_FROM || smtpUser).trim()
 const smtpFromName = String(process.env.KUNQIONG_SMTP_FROM_NAME || '鲲穹文件传输').trim()
+const webMemberApiBase = String(process.env.KUNQIONG_WEB_MEMBER_API_BASE || 'https://api-web.kunqiongai.com').replace(/\/+$/, '')
+const webMemberSubsiteName = String(process.env.KUNQIONG_WEB_MEMBER_SUBSITE_NAME || configuredAppUrl || 'kunqiong-send').trim()
+const WEB_MEMBER_PACKAGE_ENV_KEYS = {
+  member: 'KUNQIONG_WEB_MEMBER_PACKAGE_MEMBER_ID',
+  team: 'KUNQIONG_WEB_MEMBER_PACKAGE_TEAM_ID',
+  enterprise: 'KUNQIONG_WEB_MEMBER_PACKAGE_ENTERPRISE_ID',
+}
+// These are the currently enabled package IDs returned by the member service.
+// Deployments can override them through the environment variables above.
+const DEFAULT_WEB_MEMBER_PACKAGE_IDS = {
+  member: 1,
+  team: 2,
+  enterprise: 5,
+}
+const databaseEnabled = parseBooleanEnv(process.env.KUNQIONG_DB_ENABLED, false)
+const databaseHost = String(process.env.KUNQIONG_DB_HOST || '').trim()
+const databasePort = Number(process.env.KUNQIONG_DB_PORT || 3306)
+const databaseName = String(process.env.KUNQIONG_DB_NAME || '').trim()
+const databaseUser = String(process.env.KUNQIONG_DB_USER || '').trim()
+const databasePassword = String(process.env.KUNQIONG_DB_PASSWORD || '')
 const AUTH_COOKIE_NAME = 'kunqiong_session'
 const SHARE_ACCESS_COOKIE_PREFIX = 'kunqiong_share_access_'
 const SHARE_ACCESS_TTL_SECONDS = 15 * 60
@@ -61,6 +82,8 @@ const COLLECTION_TYPE_EXTENSIONS = {
   压缩包: ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz'],
   代码文件: ['.js', '.jsx', '.ts', '.tsx', '.html', '.css', '.json', '.xml', '.yml', '.yaml', '.java', '.py', '.go', '.php', '.rb', '.rs', '.c', '.cpp', '.h', '.cs', '.sh', '.ps1', '.bat', '.cmd', '.sql'],
 }
+const UPGRADE_ORDER_STATUSES = new Set(['pending_payment', 'paid', 'canceled', 'expired'])
+const MAX_UPGRADE_ORDERS = 500
 const MAX_AUDIT_LOGS = 5000
 const DEFAULT_SYSTEM_CONFIG = {
   maintenanceMode: false,
@@ -69,10 +92,26 @@ const DEFAULT_SYSTEM_CONFIG = {
   orphanGraceHours: 24,
 }
 const ACCOUNT_PLANS = {
-  free: { id: 'free', label: '基础版', totalBytes: 20 * 1024 * 1024 * 1024, permanent: false, team: false },
-  member: { id: 'member', label: '会员版', totalBytes: 100 * 1024 * 1024 * 1024, permanent: true, team: false },
-  team: { id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, permanent: true, team: true },
-  enterprise: { id: 'enterprise', label: '企业版', totalBytes: 2 * 1024 * 1024 * 1024 * 1024, permanent: true, team: true },
+  free: {
+    id: 'free', label: '基础版', totalBytes: 20 * 1024 * 1024 * 1024, permanent: false, team: false,
+    tagline: '个人临时传输', monthlyPrice: 0, validityDays: null,
+    features: ['20 GB 存储空间', '文件临时保存，到期自动失效', '分享码 / 链接 / 二维码取件', '文件收集任务'],
+  },
+  member: {
+    id: 'member', label: '会员版', totalBytes: 100 * 1024 * 1024 * 1024, permanent: true, team: false,
+    tagline: '个人永久空间', monthlyPrice: 1, validityDays: 30,
+    features: ['100 GB 存储空间', '文件永久保存', '完整分享与收集能力', '会员专属标识'],
+  },
+  team: {
+    id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, permanent: true, team: true,
+    tagline: '小团队协作', monthlyPrice: 4900, validityDays: 90,
+    features: ['500 GB 团队空间', '文件永久保存', '团队成员邀请与协作', '企业专属分享链接'],
+  },
+  enterprise: {
+    id: 'enterprise', label: '企业版', totalBytes: 2 * 1024 * 1024 * 1024 * 1024, permanent: true, team: true,
+    tagline: '企业统一管控', monthlyPrice: 15900, validityDays: 99999999,
+    features: ['2 TB 企业空间', '文件永久保存', '组织与成员统一管理', '企业专属入口与审计日志'],
+  },
 }
 const DEFAULT_NOTIFICATION_SETTINGS = {
   inApp: true,
@@ -91,13 +130,25 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const serverHost = process.env.HOST || process.env.KUNQIONG_HOST || '0.0.0.0'
 let metadataNeedsPersist = false
 let emailTransporter = null
+let metadataWriteQueue = Promise.resolve()
 const reservedShareCodes = new Set()
+const databasePool = databaseEnabled ? mysql.createPool({
+  host: databaseHost,
+  port: databasePort,
+  database: databaseName,
+  user: databaseUser,
+  password: databasePassword,
+  waitForConnections: true,
+  connectionLimit: Number(process.env.KUNQIONG_DB_CONNECTION_LIMIT || 5),
+  queueLimit: 0,
+  charset: 'utf8mb4',
+}) : null
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
   fs.mkdirSync(directory, { recursive: true })
 }
 
-const metadata = normalizeMetadata(loadMetadata())
+const metadata = normalizeMetadata(await loadMetadata())
 if (metadataNeedsPersist) persistMetadata()
 const uploadSessions = new Map()
 const oauthStates = new Map()
@@ -250,7 +301,13 @@ app.post('/api/account/bind', (req, res) => {
     if (!target) return res.status(400).json({ message: '请输入正确的邮箱或手机号' })
     verifyAuthCode(target, req.body?.code, 'bind')
     const existingUser = findAccountUserByTarget(target)
-    if (existingUser && existingUser.id !== session.user.id) {
+    const boundByAnotherAccount = Object.values(metadata.users || {}).some((user) => (
+      user.id !== session.user.id
+      && (target.type === 'email'
+        ? normalizeEmailValue(user.email) === target.value
+        : normalizePhoneValue(user.phone) === target.value)
+    ))
+    if ((existingUser && existingUser.id !== session.user.id) || boundByAnotherAccount) {
       return res.status(409).json({ message: target.type === 'email' ? '该邮箱已绑定其他账号' : '该手机号已绑定其他账号' })
     }
     const user = upsertAccountUser({
@@ -414,28 +471,97 @@ app.post('/api/account/workspace/members', (req, res) => {
   const organization = accountOrganizationForUser(session.user.id)
   if (!organization) return res.status(404).json({ message: '请先创建团队空间' })
   if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以管理成员' })
-  const target = normalizeContactTarget(req.body?.target)
+  const rawTarget = trimRecordString(req.body?.target, 160)
   const userId = trimRecordString(req.body?.userId, 120)
-  const matchedUser = userId ? accountUserById(userId) : findAccountUserByTarget(target)
-  const memberKey = matchedUser?.id || userId || target?.value
-  if (!memberKey) return res.status(400).json({ message: '请输入成员账号、邮箱或手机号' })
-  if (organization.members.some((member) => member.userId === memberKey || (member.email && target?.type === 'email' && member.email === target.value))) {
+  const matchedUser = userId ? accountUserById(userId) : findAccountUserByInvitationTarget(rawTarget)
+  if (!rawTarget && !userId) return res.status(400).json({ message: '请输入成员邮箱、手机号或登录账号' })
+  if (!matchedUser) return res.status(404).json({ message: '未找到对应的鲲穹账号，请确认邮箱、手机号或登录账号正确' })
+  if (matchedUser.id === session.user.id) return res.status(409).json({ message: '不能邀请自己加入团队空间' })
+  const existingOrganization = accountOrganizationForUser(matchedUser.id)
+  if (existingOrganization && existingOrganization.id !== organization.id) return res.status(409).json({ message: '该账号已经加入其他团队空间' })
+  if (organization.members.some((member) => member.userId === matchedUser.id || (member.email && matchedUser.email && member.email === matchedUser.email) || (member.phone && matchedUser.phone && member.phone === matchedUser.phone))) {
     return res.status(409).json({ message: '该成员已在团队空间中' })
   }
+  const invitationId = createToken(16)
   const member = {
     id: createToken(12),
-    userId: matchedUser?.id || '',
-    email: matchedUser?.email || (target?.type === 'email' ? target.value : ''),
-    phone: matchedUser?.phone || (target?.type === 'phone' ? target.value : ''),
-    displayName: displayAccountName(matchedUser || { username: memberKey }),
+    userId: matchedUser.id,
+    email: normalizeEmailValue(matchedUser.email),
+    phone: normalizePhoneValue(matchedUser.phone),
+    displayName: displayAccountName(matchedUser),
     role: 'member',
-    status: matchedUser ? 'active' : 'invited',
-    joinedAt: matchedUser ? new Date().toISOString() : null,
+    status: 'invited',
+    invitationId,
+    joinedAt: null,
     invitedAt: new Date().toISOString(),
   }
   organization.members.push(member)
+  addAccountMessage(matchedUser.id, {
+    category: 'other',
+    eventType: 'teamInvite',
+    title: '新的团队空间邀请',
+    body: `${displayAccountName(session.user)}邀请你加入团队“${organization.name}”，请在消息中心选择接受或拒绝。`,
+    actionType: 'workspace_invite',
+    actionId: invitationId,
+  })
+  organization.updatedAt = new Date().toISOString()
   persistMetadata()
   res.status(201).json(accountWorkspacePayload(session.user))
+})
+
+app.post('/api/account/workspace/invitations/:invitationId', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const decision = req.body?.decision === 'accept' ? 'accept' : req.body?.decision === 'decline' ? 'decline' : ''
+  if (!decision) return res.status(400).json({ message: '邀请处理方式无效' })
+  const invitationId = trimRecordString(req.params.invitationId, 120)
+  const organization = Object.values(metadata.organizations || {}).find((item) => item.members.some((member) => member.invitationId === invitationId && member.userId === session.user.id))
+  if (!organization) return res.status(404).json({ message: '团队邀请不存在或已处理' })
+  const member = organization.members.find((item) => item.invitationId === invitationId && item.userId === session.user.id)
+  if (!member || member.status !== 'invited') return res.status(409).json({ message: '该团队邀请已经处理' })
+
+  const invitationMessages = accountMessagesForUser(session.user.id).filter((item) => item.actionId === invitationId)
+  if (decision === 'decline') {
+    organization.members = organization.members.filter((item) => item.invitationId !== invitationId)
+    invitationMessages.forEach((item) => {
+      item.actionType = 'workspace_invite_resolved'
+      item.body = `你已拒绝加入团队“${organization.name}”。`
+      item.unread = false
+      item.readAt = new Date().toISOString()
+    })
+    addAccountMessage(organization.ownerUserId, {
+      category: 'other',
+      eventType: 'teamInvite',
+      title: '团队邀请已拒绝',
+      body: `${displayAccountName(session.user)}拒绝了加入团队“${organization.name}”的邀请。`,
+    })
+  } else {
+    const currentOrganization = accountOrganizationForUser(session.user.id)
+    if (currentOrganization && currentOrganization.id !== organization.id) return res.status(409).json({ message: '你已经加入其他团队空间' })
+    member.status = 'active'
+    member.joinedAt = new Date().toISOString()
+    const account = accountUserById(session.user.id) || session.user
+    account.organizationId = organization.id
+    account.organizationRole = 'member'
+    account.updatedAt = new Date().toISOString()
+    upsertAccountUser(account)
+    syncAccountUserSessions(account)
+    invitationMessages.forEach((item) => {
+      item.actionType = 'workspace_invite_resolved'
+      item.body = `你已加入团队“${organization.name}”。`
+      item.unread = false
+      item.readAt = new Date().toISOString()
+    })
+    addAccountMessage(organization.ownerUserId, {
+      category: 'other',
+      eventType: 'teamInvite',
+      title: '成员已加入团队',
+      body: `${displayAccountName(session.user)}已接受邀请并加入团队“${organization.name}”。`,
+    })
+  }
+  organization.updatedAt = new Date().toISOString()
+  persistMetadata()
+  res.json({ workspace: accountWorkspacePayload(session.user), messages: accountMessagesForUser(session.user.id) })
 })
 
 app.delete('/api/account/workspace/members/:memberId', (req, res) => {
@@ -452,6 +578,123 @@ app.delete('/api/account/workspace/members/:memberId', (req, res) => {
   organization.updatedAt = new Date().toISOString()
   persistMetadata()
   res.json(accountWorkspacePayload(session.user))
+})
+
+app.get('/api/account/upgrade-orders', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  res.json({ orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
+})
+
+app.post('/api/account/upgrade-orders', async (req, res) => {
+  try {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    const stored = accountUserById(session.user.id) || session.user
+    const effective = accountEffectivePlanForUser(stored)
+    const planId = normalizePlanId(req.body?.planId)
+    if (planId === 'free') return res.status(400).json({ message: '基础版为默认权益，无需订购' })
+    if (planId === effective.id) return res.status(409).json({ message: `当前已是${effective.label}权益` })
+
+    const staleBefore = Date.now() - 30 * 60 * 1000
+    for (const item of upgradeOrdersForUser(stored.id)) {
+      if (item.status === 'pending_payment' && new Date(item.createdAt).getTime() < staleBefore) {
+        item.status = 'expired'
+        item.updatedAt = new Date().toISOString()
+      }
+    }
+    const existing = upgradeOrdersForUser(stored.id).find((order) => order.status === 'pending_payment')
+    if (existing) {
+      return res.status(409).json({ message: '已有一个待支付的升级订单', order: upgradeOrderSummary(existing) })
+    }
+
+    const { package: memberPackage } = await resolveWebMemberPackage(session, planId)
+    const now = new Date().toISOString()
+    const remotePrice = Number(memberPackage.price_yuan)
+    const order = {
+      id: createToken(12),
+      orderNo: `WM1${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}${createToken(8).toUpperCase()}`,
+      userId: stored.id,
+      planId,
+      status: 'pending_payment',
+      amount: Number.isFinite(remotePrice) && remotePrice >= 0
+        ? Math.round(remotePrice * 100)
+        : ACCOUNT_PLANS[planId]?.monthlyPrice ?? null,
+      payType: 1,
+      remoteOrderNo: '',
+      remotePackageId: Number(memberPackage.id) || null,
+      remotePackageName: trimRecordString(memberPackage.name, 80),
+      remotePackageDays: normalizeNullablePositiveInteger(memberPackage.days),
+      payment: null,
+      createdAt: now,
+      updatedAt: now,
+      paidAt: null,
+    }
+    metadata.upgradeOrders.unshift(order)
+    metadata.upgradeOrders = normalizeUpgradeOrders(metadata.upgradeOrders)
+    persistMetadata()
+    res.status(201).json({ order: upgradeOrderSummary(order), orders: upgradeOrdersForUser(stored.id).slice(0, 20).map(upgradeOrderSummary) })
+  } catch (error) {
+    res.status(error.status || 502).json({ message: error.message || '升级套餐读取失败' })
+  }
+})
+
+app.post('/api/account/upgrade-orders/:orderId/cancel', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const order = findUpgradeOrder(req.params.orderId, session.user.id)
+  if (!order) return res.status(404).json({ message: '升级订单不存在' })
+  if (order.status !== 'pending_payment') return res.status(409).json({ message: '当前订单状态不可取消' })
+  order.status = 'canceled'
+  order.updatedAt = new Date().toISOString()
+  persistMetadata()
+  res.json({ order: upgradeOrderSummary(order), orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
+})
+
+app.post('/api/account/upgrade-orders/:orderId/confirm', async (req, res) => {
+  try {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    const order = findUpgradeOrder(req.params.orderId, session.user.id)
+    if (!order) return res.status(404).json({ message: '升级订单不存在' })
+    if (order.status !== 'pending_payment') return res.status(409).json({ message: '当前订单不支持支付确认' })
+    const payType = normalizeWebMemberPayType(req.body?.payType || order.payType || 1)
+    const payment = order.remoteOrderNo
+      ? { order_no: order.remoteOrderNo, pay_type: order.payType || payType, ...(order.payment || {}) }
+      : await createWebMemberPaymentOrder(session, order, payType)
+    persistMetadata()
+    res.json({
+      message: payment.pay_type === 2 ? '支付宝收银台已创建，请在新窗口完成支付' : '微信支付二维码已创建，请扫码支付',
+      order: upgradeOrderSummary(order),
+      payment: publicPaymentPayload(payment),
+    })
+  } catch (error) {
+    res.status(error.status || 502).json({ message: error.message || '支付订单创建失败' })
+  }
+})
+
+app.post('/api/account/upgrade-orders/:orderId/pay-status', async (req, res) => {
+  try {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    const order = findUpgradeOrder(req.params.orderId, session.user.id)
+    if (!order) return res.status(404).json({ message: '升级订单不存在' })
+    if (!order.remoteOrderNo) return res.status(409).json({ message: '请先创建支付二维码或支付宝订单' })
+    if (order.status === 'paid') {
+      return res.json({ message: '支付成功', order: upgradeOrderSummary(order), workspace: accountWorkspacePayload(session.user) })
+    }
+    const result = await checkWebMemberPaymentStatus(session, order.remoteOrderNo)
+    if (Number(result.pay_status) === 1) {
+      activatePaidUpgradeOrder(order, result.expire_at)
+      persistMetadata()
+      return res.json({ message: '支付成功，会员权益已开通', order: upgradeOrderSummary(order), workspace: accountWorkspacePayload(session.user) })
+    }
+    order.updatedAt = new Date().toISOString()
+    persistMetadata()
+    res.json({ message: result.msg || '还未支付', order: upgradeOrderSummary(order), paid: false })
+  } catch (error) {
+    res.status(error.status || 502).json({ message: error.message || '支付状态查询失败' })
+  }
 })
 
 app.get('/api/admin/overview', (req, res) => {
@@ -488,6 +731,9 @@ app.patch('/api/admin/users/:userId', (req, res) => {
   if (user.id === session.user.id && status === 'disabled') return res.status(400).json({ message: '不能禁用当前管理员账号' })
   user.status = status
   user.planId = planId
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'planExpiresAt')) {
+    user.planExpiresAt = normalizeRecordDate(req.body.planExpiresAt)
+  }
   user.updatedAt = new Date().toISOString()
   if (status === 'disabled') {
     metadata.sessions = metadata.sessions.filter((item) => item.user?.id !== user.id)
@@ -1101,12 +1347,81 @@ cleanupTimer.unref()
 cleanupExpired()
 cleanupUploadSessions()
 
-function loadMetadata() {
+let shuttingDown = false
+async function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  clearInterval(cleanupTimer)
+  try {
+    await metadataWriteQueue
+    if (databasePool) await databasePool.end()
+    server.close(() => process.exit(0))
+  } catch (error) {
+    console.error(`服务关闭时保存数据失败（${signal}）：${error.message || error}`)
+    process.exit(1)
+  }
+}
+process.once('SIGINT', () => { shutdown('SIGINT').catch(() => process.exit(1)) })
+process.once('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)) })
+
+function emptyMetadata() {
+  return {
+    shares: [],
+    collections: [],
+    sessions: [],
+    records: {},
+    users: {},
+    messages: {},
+    notificationSettings: {},
+    verificationCodes: [],
+    auditLogs: [],
+    organizations: [],
+    upgradeOrders: [],
+    systemConfig: DEFAULT_SYSTEM_CONFIG,
+  }
+}
+
+function loadLocalMetadata() {
   try {
     return JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
   } catch {
-    return { shares: [], collections: [], sessions: [], records: {}, users: {}, messages: {}, notificationSettings: {}, verificationCodes: [], auditLogs: [], organizations: [], systemConfig: DEFAULT_SYSTEM_CONFIG }
+    return emptyMetadata()
   }
+}
+
+async function loadMetadata() {
+  const localMetadata = loadLocalMetadata()
+  if (!databasePool) return localMetadata
+  if (!databaseHost || !databaseName || !databaseUser) {
+    throw new Error('数据库模式已开启，但数据库连接参数不完整')
+  }
+  await ensureDatabaseStateTable()
+  const [rows] = await databasePool.query('SELECT payload FROM kunqiong_app_state WHERE state_key = ? LIMIT 1', ['metadata'])
+  if (!rows.length) {
+    const normalized = normalizeMetadata(localMetadata)
+    await databasePool.execute(
+      'INSERT INTO kunqiong_app_state (state_key, schema_version, payload) VALUES (?, ?, ?)',
+      ['metadata', 1, JSON.stringify(normalized)],
+    )
+    console.log('已将本地 metadata.json 迁移到 MySQL')
+    return normalized
+  }
+  try {
+    return JSON.parse(rows[0].payload)
+  } catch {
+    throw new Error('数据库中的鲲穹元数据不是有效 JSON，已停止启动以避免覆盖数据')
+  }
+}
+
+async function ensureDatabaseStateTable() {
+  await databasePool.query(`
+    CREATE TABLE IF NOT EXISTS kunqiong_app_state (
+      state_key VARCHAR(64) NOT NULL PRIMARY KEY,
+      schema_version INT NOT NULL DEFAULT 1,
+      payload LONGTEXT NOT NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `)
 }
 
 function normalizeMetadata(value = {}) {
@@ -1114,6 +1429,11 @@ function normalizeMetadata(value = {}) {
   for (const share of shares) {
     if (!share.manageToken) {
       share.manageToken = createToken(18)
+      metadataNeedsPersist = true
+    }
+    if (share.status === 'expired') {
+      share.status = 'closed'
+      share.closeReason = share.closeReason || 'expired'
       metadataNeedsPersist = true
     }
   }
@@ -1152,12 +1472,81 @@ function normalizeMetadata(value = {}) {
     verificationCodes: normalizeVerificationCodes(value.verificationCodes),
     auditLogs: normalizeAuditLogs(value.auditLogs),
     organizations: normalizeOrganizations(value.organizations),
+    upgradeOrders: normalizeUpgradeOrders(value.upgradeOrders),
     systemConfig: normalizeSystemConfig(value.systemConfig),
   }
 }
 
+function normalizeUpgradeOrders(value = []) {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => ({
+    id: trimRecordString(item?.id, 80) || createToken(10),
+    orderNo: trimRecordString(item?.orderNo, 40) || `UPG-${createToken(8).toUpperCase()}`,
+    userId: trimRecordString(item?.userId, 120),
+    planId: normalizePlanId(item?.planId),
+    status: UPGRADE_ORDER_STATUSES.has(item?.status) ? item.status : 'expired',
+    amount: Number(item?.amount) > 0 ? Number(item.amount) : null,
+    payType: normalizeWebMemberPayType(item?.payType || item?.payment?.pay_type || 1),
+    remoteOrderNo: trimRecordString(item?.remoteOrderNo || item?.remoteOrderNumber, 80),
+    remotePackageId: normalizeNullablePositiveInteger(item?.remotePackageId),
+    remotePackageName: trimRecordString(item?.remotePackageName, 80),
+    remotePackageDays: normalizeNullablePositiveInteger(item?.remotePackageDays),
+    payment: normalizePaymentPayload(item?.payment),
+    createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
+    updatedAt: normalizeRecordDate(item?.updatedAt) || new Date().toISOString(),
+    paidAt: normalizeRecordDate(item?.paidAt) || null,
+    remoteExpireAt: normalizeRecordDate(item?.remoteExpireAt) || null,
+  })).filter((item) => item.userId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, MAX_UPGRADE_ORDERS)
+}
+
+function upgradeOrderSummary(order = {}) {
+  const plan = ACCOUNT_PLANS[order.planId] || ACCOUNT_PLANS.free
+  return {
+    id: order.id,
+    orderNo: order.orderNo,
+    planId: order.planId,
+    planLabel: plan.label,
+    status: order.status,
+    amount: order.amount,
+    payType: order.payType || 1,
+    remoteOrderNo: order.remoteOrderNo || '',
+    remotePackageId: order.remotePackageId || null,
+    remotePackageName: order.remotePackageName || '',
+    remotePackageDays: order.remotePackageDays || null,
+    payment: publicPaymentPayload(order.payment),
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    paidAt: order.paidAt,
+    remoteExpireAt: order.remoteExpireAt || null,
+  }
+}
+
+function upgradeOrdersForUser(userId) {
+  const key = String(userId || '')
+  return (metadata.upgradeOrders || []).filter((order) => order.userId === key)
+}
+
+function findUpgradeOrder(orderId, userId) {
+  return (metadata.upgradeOrders || []).find((order) => order.id === orderId && order.userId === userId) || null
+}
+
 function persistMetadata() {
   fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf8')
+  if (!databasePool) return
+  const payload = JSON.stringify(metadata)
+  metadataWriteQueue = metadataWriteQueue
+    .catch(() => {})
+    .then(() => databasePool.execute(
+      `INSERT INTO kunqiong_app_state (state_key, schema_version, payload)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE schema_version = VALUES(schema_version), payload = VALUES(payload)`,
+      ['metadata', 1, payload],
+    ))
+    .catch((error) => {
+      console.error(`MySQL 元数据保存失败：${error.message || error}`)
+    })
 }
 
 function normalizeSystemConfig(value = {}) {
@@ -1204,6 +1593,7 @@ function normalizeOrganizations(value = []) {
       displayName: trimRecordString(member?.displayName, 80) || '团队成员',
       role: member?.role === 'owner' ? 'owner' : 'member',
       status: member?.status === 'invited' ? 'invited' : 'active',
+      invitationId: trimRecordString(member?.invitationId, 120),
       joinedAt: normalizeRecordDate(member?.joinedAt),
       invitedAt: normalizeRecordDate(member?.invitedAt),
     })) : []
@@ -1256,7 +1646,10 @@ function normalizePlanId(value) {
 }
 
 function accountPlanForUser(user = {}) {
-  return ACCOUNT_PLANS[normalizePlanId(user.planId)] || ACCOUNT_PLANS.free
+  const plan = ACCOUNT_PLANS[normalizePlanId(user.planId)] || ACCOUNT_PLANS.free
+  const expiresAt = user.planExpiresAt ? new Date(user.planExpiresAt).getTime() : 0
+  if (plan.id !== 'free' && Number.isFinite(expiresAt) && expiresAt <= Date.now()) return ACCOUNT_PLANS.free
+  return plan
 }
 
 function accountEffectivePlanForUser(user = {}) {
@@ -1359,10 +1752,13 @@ function accountWorkspacePayload(user) {
   const organization = accountOrganizationForUser(user.id)
   return {
     plan: accountEffectivePlanForUser(stored),
+    planStartedAt: stored.planStartedAt || null,
+    planExpiresAt: stored.planExpiresAt || null,
     plans: Object.values(ACCOUNT_PLANS),
     capacity: accountUsageForUser(user.id),
     organization: publicOrganization(organization, user.id),
     canManage: Boolean(organization && isOrganizationManager(organization, user.id)),
+    orders: upgradeOrdersForUser(user.id).slice(0, 10).map(upgradeOrderSummary),
   }
 }
 
@@ -1379,6 +1775,7 @@ function adminUserSummary(user) {
     status: user.status || 'active',
     planId: plan.id,
     planLabel: plan.label,
+    planExpiresAt: user.planExpiresAt || null,
     organizationName: organization?.name || '',
     usageBytes: usage.usedBytes,
     createdAt: user.createdAt,
@@ -1504,6 +1901,9 @@ function cleanupExpired() {
   const now = Date.now()
   let changed = false
   for (const share of metadata.shares) {
+    const previousStatus = share.status
+    currentShareStatus(share, now)
+    if (share.status !== previousStatus) changed = true
     if (maybeNotifyExpiringShare(share, now)) changed = true
   }
   for (const task of metadata.collections) {
@@ -1550,13 +1950,25 @@ function publicShare(share, req, includeFiles = true, includeManage = false) {
   if (includeManage) {
     payload.manageToken = share.manageToken
     payload.manageUrl = `${getOrigin(req)}/share/manage/${share.manageToken}`
+    payload.canReopen = Boolean(share.ownerUserId && accountEffectivePlanForUser(share.ownerUserId).permanent)
   }
   return payload
 }
 
-function currentShareStatus(share = {}) {
-  if (share.status === 'closed') return 'closed'
-  if (share.expiresAt) return new Date(share.expiresAt).getTime() <= Date.now() ? 'expired' : 'active'
+function currentShareStatus(share = {}, now = Date.now()) {
+  if (share.status === 'closed' || share.status === 'expired') return 'closed'
+  if (share.expiresAt && new Date(share.expiresAt).getTime() <= now) {
+    share.status = 'closed'
+    share.closeReason = share.closeReason || 'expired'
+    return 'closed'
+  }
+  const owner = share.ownerUserId ? accountUserById(share.ownerUserId) : null
+  const planExpiresAt = owner?.planExpiresAt ? new Date(owner.planExpiresAt).getTime() : 0
+  if (!share.expiresAt && Number.isFinite(planExpiresAt) && planExpiresAt > 0 && now >= planExpiresAt + 7 * 86400000) {
+    share.status = 'closed'
+    share.closeReason = share.closeReason || 'plan_expired'
+    return 'closed'
+  }
   return share.status || 'active'
 }
 
@@ -1701,7 +2113,8 @@ function sendPreviewFile(res, next, filePath, file) {
   res.setHeader('Content-Disposition', contentDisposition('inline', normalizeUploadFileName(file.name || path.basename(filePath))))
   res.setHeader('X-Preview-Type', kind)
   res.setHeader('X-Preview-File-Size', String(stat.size))
-  res.type(fileContentType(file))
+  // 文本类预览一律按纯文本返回，避免 html/xml 等以 text/html 内联渲染带来 XSS 风险
+  res.type(kind === 'text' ? 'text/plain; charset=utf-8' : fileContentType(file))
   res.sendFile(filePath, (error) => {
     if (!error) return
     if (!res.headersSent) next(error)
@@ -1784,6 +2197,13 @@ function zipEntryPath(...parts) {
     .join('/') || '未命名文件'
 }
 
+const TEXT_PREVIEW_EXTENSIONS = new Set([
+  '.txt', '.md', '.log', '.json', '.xml', '.yml', '.yaml', '.ini', '.conf',
+  '.js', '.jsx', '.ts', '.tsx', '.html', '.htm', '.css', '.vue', '.swift', '.kt',
+  '.java', '.py', '.go', '.php', '.rb', '.rs', '.c', '.cpp', '.h', '.cs',
+  '.sh', '.ps1', '.bat', '.cmd', '.sql',
+])
+
 function previewKind(file = {}) {
   const contentType = fileContentType(file)
   const extension = path.extname(file.name || file.relativePath || '').toLowerCase()
@@ -1794,6 +2214,7 @@ function previewKind(file = {}) {
   if (contentType.includes('wordprocessingml') || extension === '.docx') return 'document'
   if (contentType.includes('spreadsheetml') || ['.xlsx', '.xls', '.csv'].includes(extension)) return 'spreadsheet'
   if (contentType.includes('presentationml') || extension === '.pptx') return 'presentation'
+  if (contentType.startsWith('text/') || TEXT_PREVIEW_EXTENSIONS.has(extension)) return 'text'
   return ''
 }
 
@@ -1858,6 +2279,8 @@ function publicUser(user = {}) {
     provider,
     loginMethods: mergeLoginMethods(user.loginMethods, provider ? ['oauth'] : []),
     planId: user.planId || null,
+    planStartedAt: normalizeRecordDate(user.planStartedAt),
+    planExpiresAt: normalizeRecordDate(user.planExpiresAt),
     organizationId: trimRecordString(user.organizationId, 80),
     organizationRole: user.organizationRole === 'owner' ? 'owner' : user.organizationRole === 'member' ? 'member' : '',
     status: user.status === 'disabled' ? 'disabled' : 'active',
@@ -1911,6 +2334,8 @@ function normalizeAccountUser(user = {}) {
     id,
     loginMethods: mergeLoginMethods(base.loginMethods, user.loginMethods),
     planId: normalizePlanId(user.planId || base.planId || 'free'),
+    planStartedAt: normalizeRecordDate(user.planStartedAt || base.planStartedAt),
+    planExpiresAt: normalizeRecordDate(user.planExpiresAt || base.planExpiresAt),
     organizationId: trimRecordString(user.organizationId || base.organizationId, 80),
     organizationRole: user.organizationRole === 'owner' || user.organizationRole === 'member' ? user.organizationRole : '',
     status: user.status === 'disabled' ? 'disabled' : 'active',
@@ -1947,6 +2372,8 @@ function mergeAccountUser(existing = null, incoming = {}) {
     provider: normalized.provider || existing.provider,
     loginMethods: mergeLoginMethods(existing.loginMethods, normalized.loginMethods),
     planId: existing.planId || normalized.planId || 'free',
+    planStartedAt: normalized.planStartedAt || existing.planStartedAt || null,
+    planExpiresAt: normalized.planExpiresAt || existing.planExpiresAt || null,
     organizationId: normalized.organizationId || existing.organizationId,
     organizationRole: normalized.organizationRole || existing.organizationRole,
     status: existing.status === 'disabled' ? 'disabled' : normalized.status || existing.status || 'active',
@@ -2004,6 +2431,15 @@ function findAccountUserByTarget(target) {
   if (!target) return null
   const users = Object.values(metadata.users || {})
   return users.find((user) => target.type === 'email' ? normalizeEmailValue(user.email) === target.value : normalizePhoneValue(user.phone) === target.value) || null
+}
+
+function findAccountUserByInvitationTarget(value) {
+  const raw = trimRecordString(value, 160)
+  if (!raw) return null
+  const contact = normalizeContactTarget(raw)
+  if (contact) return findAccountUserByTarget(contact)
+  const key = raw.toLowerCase()
+  return Object.values(metadata.users || {}).find((user) => [user.id, user.username].some((item) => trimRecordString(item, 160).toLowerCase() === key)) || null
 }
 
 function boundMethodForTargetType(type) {
@@ -2196,6 +2632,8 @@ function normalizeAccountMessage(message = {}) {
     unread: message.unread !== false,
     readAt: normalizeRecordDate(message.readAt),
     actionUrl: trimRecordString(message.actionUrl, 400),
+    actionType: trimRecordString(message.actionType, 50),
+    actionId: trimRecordString(message.actionId, 120),
   }
 }
 
@@ -2268,12 +2706,12 @@ async function notifyShareRecipients(share, req, ownerUser = null) {
         statusParts.push('邮件通道未配置')
       } else {
         try {
-          await sendShareEmail({ recipient: target.value, share, req, ownerName, title })
-          emailSent = true
-          statusParts.push('邮件已发送')
+          const result = await sendShareEmail({ recipient: target.value, share, req, ownerName, title })
+          emailSent = Array.isArray(result?.accepted) ? result.accepted.some((item) => String(item).toLowerCase() === target.value) : true
+          statusParts.push(emailSent ? '邮件已提交投递' : '邮件未被服务器接受')
         } catch (error) {
           console.error(`邮件投递失败（${target.value}）：`, error.message || error)
-          statusParts.push('邮件发送失败')
+          statusParts.push(`邮件发送失败：${mailErrorReason(error)}`)
         }
       }
     } else if (target?.type === 'phone' && !deliveredUserIds.length) {
@@ -2294,6 +2732,11 @@ async function notifyShareRecipients(share, req, ownerUser = null) {
 
 function isSmtpConfigured() {
   return Boolean(smtpHost && Number.isInteger(smtpPort) && smtpPort > 0 && smtpPort <= 65535 && smtpUser && smtpPassword && smtpFrom)
+}
+
+function mailErrorReason(error) {
+  const raw = String(error?.responseCode ? `${error.responseCode} ${error.message || ''}` : error?.message || error || '未知邮件错误')
+  return raw.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180)
 }
 
 function getEmailTransporter() {
@@ -2318,14 +2761,13 @@ async function sendShareEmail({ recipient, share, req, ownerName, title }) {
   const shareInfo = publicShare(share, req, false, false)
   const shareUrl = shareInfo.enterpriseUrl || shareInfo.shareUrl
   const expiryText = share.expiresAt ? new Date(share.expiresAt).toLocaleString('zh-CN') : '永久有效'
-  const qrAttachment = qrDataUrlAttachment(share.qrDataUrl)
+  // 腾讯云 SMTP 会拒绝当前二维码 Data URL 生成的 MIME Base64 附件，邮件改用可点击分享链接。
   return transporter.sendMail({
     from: { name: smtpFromName || '鲲穹文件传输', address: smtpFrom },
     to: recipient,
     subject: `你收到一个文件分享：${title}`,
     text: `${ownerName} 通过鲲穹文件传输向你发送了 ${share.files.length} 个文件。\n\n打开链接：${shareUrl}\n取件码：${share.code}\n有效期：${expiryText}\n${share.passwordHash ? '该分享还需要输入提取密码。' : ''}`,
-    html: buildShareEmailHtml({ share, shareUrl, ownerName, title, expiryText, hasQr: Boolean(qrAttachment) }),
-    attachments: qrAttachment ? [qrAttachment] : undefined,
+    html: buildShareEmailHtml({ share, shareUrl, ownerName, title, expiryText, hasQr: false }),
   })
 }
 
@@ -2586,6 +3028,139 @@ function isOAuthConfigured() {
   return Boolean(oauthClientId && oauthClientSecret)
 }
 
+function normalizeWebMemberPayType(value) {
+  return Number(value) === 2 ? 2 : 1
+}
+
+function normalizePaymentPayload(value) {
+  if (!value || typeof value !== 'object') return null
+  return {
+    pay_type: normalizeWebMemberPayType(value.pay_type),
+    code_url: trimRecordString(value.code_url, 1000),
+    qrcode_img_url: trimRecordString(value.qrcode_img_url, 2_000_000),
+    alipaysubmit_html: trimRecordString(value.alipaysubmit_html, 2_000_000),
+  }
+}
+
+function publicPaymentPayload(value) {
+  return normalizePaymentPayload(value)
+}
+
+function sessionApiWebToken(session) {
+  return trimRecordString(session?.apiWebToken, 300)
+}
+
+async function webMemberRequest(pathname, token, params = {}) {
+  if (!token) throw httpError(401, '登录会话缺少会员支付凭证，请退出后重新登录')
+  const response = await fetch(`${webMemberApiBase}${pathname}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      token,
+    },
+    body: new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value ?? '')])).toString(),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || Number(payload.code) !== 1) {
+    throw httpError(response.status >= 400 ? response.status : 502, payload.msg || `会员服务返回 ${response.status}`)
+  }
+  return payload.data || {}
+}
+
+async function getWebMemberPackageInfo(session) {
+  return webMemberRequest('/user/get_web_member_package_info', sessionApiWebToken(session), {
+    subsite_name: webMemberSubsiteName,
+  })
+}
+
+async function resolveWebMemberPackage(session, planId) {
+  const envKey = WEB_MEMBER_PACKAGE_ENV_KEYS[planId]
+  const configuredId = envKey
+    ? Number(process.env[envKey] || DEFAULT_WEB_MEMBER_PACKAGE_IDS[planId] || 0)
+    : 0
+  const info = await getWebMemberPackageInfo(session)
+  const packages = Array.isArray(info.packages) ? info.packages : []
+  if (configuredId > 0) {
+    const configured = packages.find((item) => Number(item.id) === configuredId)
+    if (configured) return { info, package: configured }
+  }
+  const planLabel = ACCOUNT_PLANS[planId]?.label || ''
+  const normalizePackageName = (value) => String(value || '')
+    .replace(/\s+/g, '')
+    .replace(/[（(].*?[）)]/g, '')
+    .toLowerCase()
+  const packageName = (item) => normalizePackageName(item.name)
+  const label = normalizePackageName(planLabel)
+  const aliases = {
+    member: ['会员', '月卡', '季卡', '半年卡', '年卡', '永久'],
+    team: ['团队', '成长', '进阶', '半年', '年卡'],
+    enterprise: ['企业', '永久'],
+  }
+  const aliasMatched = packages.find((item) => aliases[planId]?.some((alias) => packageName(item).includes(alias)))
+  const durationMatched = planId === 'enterprise'
+    ? packages.find((item) => Number(item.days) >= 365 * 1000)
+    : planId === 'team'
+      ? packages.find((item) => Number(item.days) >= 90 && Number(item.days) < 365 * 1000)
+      : packages.find((item) => Number(item.days) >= 30 && Number(item.days) < 90)
+  const matched = packages.find((item) => packageName(item).includes(label) || label.includes(packageName(item)))
+    || aliasMatched
+    || durationMatched
+  if (!matched) throw httpError(502, `会员服务中未找到“${planLabel}”套餐，请配置正确的套餐 ID`)
+  return { info, package: matched }
+}
+
+async function createWebMemberPaymentOrder(session, order, payType) {
+  const { package: memberPackage } = await resolveWebMemberPackage(session, order.planId)
+  const data = await webMemberRequest('/user/create_web_member_order', sessionApiWebToken(session), {
+    package_id: memberPackage.id,
+    pay_type: payType,
+    subsite_name: webMemberSubsiteName,
+  })
+  order.payType = normalizeWebMemberPayType(data.pay_type || payType)
+  order.remoteOrderNo = trimRecordString(data.order_no, 80)
+  order.remotePackageId = Number(data.package_id || memberPackage.id) || null
+  order.remotePackageName = trimRecordString(data.package_name || memberPackage.name, 80)
+  order.remotePackageDays = normalizeNullablePositiveInteger(data.package_days || memberPackage.days)
+  order.amount = Math.round(Number(data.pay_amount) * 100) || order.amount
+  order.payment = normalizePaymentPayload(data)
+  order.updatedAt = new Date().toISOString()
+  if (!order.remoteOrderNo) throw httpError(502, '会员服务未返回主站订单号')
+  return { ...data, pay_type: order.payType }
+}
+
+async function checkWebMemberPaymentStatus(session, remoteOrderNo) {
+  return webMemberRequest('/user/check_web_member_order_paystatus', sessionApiWebToken(session), {
+    order_no: remoteOrderNo,
+  })
+}
+
+function activatePaidUpgradeOrder(order, expireAt = null) {
+  const account = accountUserById(order.userId)
+  if (!account) throw httpError(404, '支付用户不存在')
+  const plan = ACCOUNT_PLANS[order.planId] || ACCOUNT_PLANS.free
+  const currentExpiry = account.planExpiresAt ? new Date(account.planExpiresAt).getTime() : 0
+  const remoteExpiry = expireAt ? new Date(expireAt).getTime() : 0
+  const nextExpiry = remoteExpiry > Date.now()
+    ? remoteExpiry
+    : Date.now() + (Number(order.remotePackageDays) || plan.validityDays || 30) * 86400000
+  account.planId = order.planId
+  account.planStartedAt = account.planStartedAt || new Date().toISOString()
+  account.planExpiresAt = new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
+  account.updatedAt = new Date().toISOString()
+  order.status = 'paid'
+  order.paidAt = new Date().toISOString()
+  order.remoteExpireAt = expireAt || new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
+  order.updatedAt = new Date().toISOString()
+  upsertAccountUser(account)
+  syncAccountUserSessions(account)
+  addAccountMessage(account.id, {
+    category: 'other',
+    eventType: 'membershipActivated',
+    title: '会员权益已开通',
+    body: `你的${plan.label}已开通，有效期至${new Date(account.planExpiresAt).toLocaleString('zh-CN')}。`,
+  })
+}
+
 function authRedirectUri(req) {
   const origin = getRequestOrigin(req)
   if (configuredCallbackUrls.length) {
@@ -2644,6 +3219,7 @@ function createAuthSession(tokenData) {
     id: createToken(40),
     expiresAt: new Date(now.getTime() + expiresIn * 1000).toISOString(),
     createdAt: now.toISOString(),
+    apiWebToken: trimRecordString(tokenData.api_web_token || tokenData.apiWebToken || tokenData.access_token, 300),
     user: publicUser(user),
   }
   metadata.sessions.push(session)
@@ -2884,16 +3460,21 @@ function findShareByManageToken(manageToken) {
 }
 
 function applyShareUpdate(share, body = {}, ownerUser = null) {
+  const wasClosed = currentShareStatus(share) === 'closed'
   if (Object.prototype.hasOwnProperty.call(body, 'expiresAt')) {
     const expiresAt = normalizeExpiryInput(body.expiresAt, '分享有效期')
     const plan = accountEffectivePlanForUser(ownerUser || {})
+    const currentExpiresAt = share.expiresAt || null
+    if (expiresAt !== currentExpiresAt && !plan.permanent) {
+      throw httpError(403, '设置分享截止时间需要会员版或更高权益')
+    }
     if (!expiresAt && !plan.permanent) throw httpError(403, '永久保存需要会员版或更高权益')
     if (expiresAt && !plan.permanent) {
       const maxDate = Date.now() + normalizeSystemConfig(metadata.systemConfig).maxShareDays * 86400000
       if (new Date(expiresAt).getTime() > maxDate) throw httpError(400, '当前权益不能超过系统设置的最长有效期')
     }
     share.expiresAt = expiresAt
-    if (share.status === 'expired' && (!expiresAt || new Date(expiresAt).getTime() > Date.now())) share.status = 'active'
+    if ((share.status === 'expired' || share.status === 'closed') && (!expiresAt || new Date(expiresAt).getTime() > Date.now())) share.status = 'active'
     if (share.notificationFlags?.shareExpiring) share.notificationFlags = { ...share.notificationFlags, shareExpiring: false }
   }
   if (Object.prototype.hasOwnProperty.call(body, 'downloadLimit')) {
@@ -2907,8 +3488,22 @@ function applyShareUpdate(share, body = {}, ownerUser = null) {
   if (Object.prototype.hasOwnProperty.call(body, 'status')) {
     const status = String(body.status || '').trim()
     if (!['active', 'closed'].includes(status)) throw httpError(400, '分享状态不支持')
-    if (status === 'active' && !fs.existsSync(path.join(filesRoot, share.id))) {
-      throw httpError(410, '分享文件已清理，无法重新开启，请重新发送文件')
+    if (status === 'active') {
+      if (!fs.existsSync(path.join(filesRoot, share.id))) {
+        throw httpError(410, '分享文件已清理，无法重新开启，请重新发送文件')
+      }
+      if (wasClosed && !accountEffectivePlanForUser(ownerUser || {}).permanent) {
+        throw httpError(403, '重新开启分享需要会员版或更高权益')
+      }
+      if (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now()) {
+        throw httpError(400, '请先设置未来的截止时间，或选择永久保存')
+      }
+      if (!share.expiresAt && !accountEffectivePlanForUser(ownerUser || {}).permanent) {
+        throw httpError(403, '永久保存需要会员版或更高权益')
+      }
+      share.closeReason = ''
+    } else {
+      share.closeReason = 'manual'
     }
     share.status = status
   }
@@ -2985,7 +3580,7 @@ function findShareByCode(code) {
 
 function validateShare(share, password, { allowMissingPassword = false, hasAccessCookie = false, skipPassword = false } = {}) {
   const status = currentShareStatus(share)
-  if (status === 'closed') return { ok: false, status: 410, message: '分享已失效' }
+  if (status === 'closed') return { ok: false, status: 410, message: '分享已关闭' }
   if (status === 'expired') {
     return { ok: false, status: 410, message: '分享已过期' }
   }
