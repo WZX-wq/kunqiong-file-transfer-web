@@ -219,6 +219,7 @@ function mainViewUrl(view) {
 function App() {
   const route = window.location.pathname
   if (route.startsWith('/admin')) return <AdminPage />
+  if (route.startsWith('/team')) return <TeamPage />
   if (route.startsWith('/workspace')) return <WorkspacePage />
   if (route.startsWith('/e/')) {
     const parts = route.split('/').filter(Boolean)
@@ -384,6 +385,13 @@ function WorkspaceApp() {
         setToast(loginMessage || '登录失败')
       }
     })
+    apiRequest('/api/runtime-config').then((config) => {
+      const days = String(config.defaultShareDays || '')
+      if (!['1', '3', '7'].includes(days)) return
+      setSettings((current) => current.expiryDays === defaultSettings.expiryDays
+        ? { ...current, expiry: `${days} 天`, expiryDays: days }
+        : current)
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -1029,6 +1037,25 @@ function WorkspaceApp() {
           <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
         </nav>
         <div className="topbar-actions">
+          {authUser?.organization ? (
+            <button className="team-context-button" onClick={() => { window.location.href = '/team' }} title="打开团队管理">
+              <span className="team-context-icon"><Building2 size={15} /></span>
+              <span className="team-context-copy">
+                <strong>{authUser.organization.name}</strong>
+                <small>{authUser.organization.members?.length || 0} 位成员 · 共享空间</small>
+              </span>
+              <ChevronRight size={14} />
+            </button>
+          ) : authUser?.plan?.team ? (
+            <button className="team-context-button team-context-empty" onClick={() => { window.location.href = '/workspace' }} title="创建团队空间">
+              <span className="team-context-icon"><Building2 size={15} /></span>
+              <span className="team-context-copy">
+                <strong>创建团队空间</strong>
+                <small>团队版权益已开启</small>
+              </span>
+              <ChevronRight size={14} />
+            </button>
+          ) : null}
           <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); setMessageOpen((current) => !current) }} onClose={() => setMessageOpen(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} />
           {authUser?.isAdmin && <button className="merchant-button" onClick={() => { window.location.href = '/admin' }}><ShieldCheck size={15} /> 后台管理</button>}
           <button className="merchant-button" onClick={() => { window.location.href = '/workspace' }}><Sparkles size={15} /> 会员与企业版</button>
@@ -3418,7 +3445,7 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
               <div className="settings-notice-group">
                 <h2>通知方式</h2>
                 <NoticeToggle label="站内消息" detail="在鲲穹页面内显示处理结果和状态提醒" checked={noticeSettings.inApp} onChange={() => updateNoticeSetting('inApp')} />
-                <NoticeToggle label="邮件提醒" detail="邮箱通知能力接入后生效" checked={noticeSettings.email} onChange={() => updateNoticeSetting('email')} />
+                <NoticeToggle label="邮件提醒" detail="绑定邮箱后接收分享和账户动态提醒" checked={noticeSettings.email} onChange={() => updateNoticeSetting('email')} />
               </div>
               <div className="settings-notice-group">
                 <h2>文件与任务动态</h2>
@@ -3448,6 +3475,128 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
   )
 }
 
+function TeamPage() {
+  const [user, setUser] = useState(null)
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [memberTarget, setMemberTarget] = useState('')
+  const [savingMember, setSavingMember] = useState(false)
+  const [activeTab, setActiveTab] = useState('members')
+  const [memberUsagePage, setMemberUsagePage] = useState(1)
+  const [teamResourcePage, setTeamResourcePage] = useState(1)
+  const [teamMemberPage, setTeamMemberPage] = useState(1)
+
+  const load = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const auth = await apiRequest('/api/auth/me')
+      if (!auth.user) {
+        setUser(null)
+        return
+      }
+      setUser(auth.user)
+      setData(await apiRequest('/api/account/team/overview'))
+    } catch (err) {
+      setError(err.message || '团队数据加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+  useEffect(() => {
+    setMemberUsagePage(1)
+    setTeamResourcePage(1)
+    setTeamMemberPage(1)
+  }, [data?.memberUsage?.length, data?.resources?.length])
+
+  const login = () => {
+    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`
+    window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
+  }
+  const goWorkspace = () => { window.location.href = '/workspace' }
+  const goBack = () => {
+    if (window.history.length > 1) window.history.back()
+    else window.location.href = '/workspace'
+  }
+  const inviteMember = async (event) => {
+    event.preventDefault()
+    if (!memberTarget.trim() || !data?.canManage) return
+    setSavingMember(true)
+    setError('')
+    try {
+      await apiRequest('/api/account/workspace/members', { method: 'POST', body: JSON.stringify({ target: memberTarget.trim() }) })
+      setMemberTarget('')
+      await load()
+    } catch (err) {
+      setError(err.message || '成员邀请失败')
+    } finally {
+      setSavingMember(false)
+    }
+  }
+  const removeMember = async (member) => {
+    if (!data?.canManage || !member?.id || member.role === 'owner') return
+    if (!window.confirm(`确定移除 ${member.displayName || '该成员'} 吗？`)) return
+    setSavingMember(true)
+    setError('')
+    try {
+      await apiRequest(`/api/account/workspace/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' })
+      await load()
+    } catch (err) {
+      setError(err.message || '成员移除失败')
+    } finally {
+      setSavingMember(false)
+    }
+  }
+
+  if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开团队管理</h1><p>正在读取团队成员和资源使用情况。</p></div></PublicShell>
+  if (!user) return <PublicShell><div className="state-block"><div className="settings-state-icon"><Users size={24} /></div><h1>登录后查看团队</h1><p>团队成员、容量和资源使用情况会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
+  if (error || !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><Users size={24} /></div><h1>暂未加入团队空间</h1><p>{error || '接受团队邀请后，可以在这里查看团队使用情况。'}</p><button className="secondary-button" onClick={goWorkspace}><ArrowLeft size={15} /> 返回会员与团队空间</button></div></PublicShell>
+
+  const organization = data.organization || {}
+  const capacity = data.capacity || {}
+  const members = data.memberUsage || []
+  const resources = data.resources || []
+  const totalBytes = Number(capacity.totalBytes || 0)
+  const usedBytes = Number(capacity.usedBytes || 0)
+  const ratio = totalBytes ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0
+  const memberMax = Math.max(1, ...members.map((item) => Number(item.usedBytes || 0)))
+  const memberName = (userId) => members.find((item) => item.userId === userId)?.displayName || '团队成员'
+  const statusLabel = (status) => status === 'active' ? '进行中' : status === 'expired' ? '已过期' : status === 'closed' ? '已关闭' : status
+  const teamPageSize = 8
+  const memberUsagePageCount = Math.max(1, Math.ceil(members.length / teamPageSize))
+  const teamResourcePageCount = Math.max(1, Math.ceil(resources.length / teamPageSize))
+  const teamMemberPageCount = Math.max(1, Math.ceil(members.length / teamPageSize))
+  const safeMemberUsagePage = Math.min(memberUsagePage, memberUsagePageCount)
+  const safeTeamResourcePage = Math.min(teamResourcePage, teamResourcePageCount)
+  const safeTeamMemberPage = Math.min(teamMemberPage, teamMemberPageCount)
+  const visibleMemberUsage = members.slice((safeMemberUsagePage - 1) * teamPageSize, safeMemberUsagePage * teamPageSize)
+  const visibleTeamResources = resources.slice((safeTeamResourcePage - 1) * teamPageSize, safeTeamResourcePage * teamPageSize)
+  const visibleTeamMembers = members.slice((safeTeamMemberPage - 1) * teamPageSize, safeTeamMemberPage * teamPageSize)
+
+  return <PublicShell>
+    <section className="team-page">
+      <div className="team-page-heading"><div><p className="eyebrow">团队空间</p><h1>{organization.name}</h1><p>统一查看成员使用量、团队资源和空间状态。</p></div><div className="team-page-actions"><button className="secondary-button" onClick={goBack}><ArrowLeft size={15} /> 返回</button></div></div>
+      <div className="team-kpi-grid"><div className="team-kpi"><span><Users size={16} /> 成员</span><strong>{members.filter((item) => item.status !== 'invited').length}</strong><small>{members.filter((item) => item.status === 'invited').length} 个待加入</small></div><div className="team-kpi"><span><HardDrive size={16} /> 已使用空间</span><strong>{formatBytes(usedBytes)}</strong><small>共 {formatBytes(totalBytes)}</small></div><div className="team-kpi"><span><Database size={16} /> 文件资源</span><strong>{resources.reduce((sum, item) => sum + item.fileCount, 0)}</strong><small>{resources.length} 个分享或收集任务</small></div><div className="team-kpi"><span><Link2 size={16} /> 活跃资源</span><strong>{resources.filter((item) => item.status === 'active').length}</strong><small>{data.canManage ? '你是团队所有者' : '团队成员视图'}</small></div></div>
+      <div className="team-overview-grid">
+        <div className="public-card team-panel team-capacity-panel"><div className="team-panel-heading"><div><p className="eyebrow">空间使用</p><h2>团队容量</h2></div><span className="workspace-status">{ratio}%</span></div><div className="team-capacity-number"><strong>{formatBytes(usedBytes)}</strong><span>/ {formatBytes(totalBytes)}</span></div><div className="capacity-bar"><span style={{ width: `${ratio}%` }} /></div><div className="team-capacity-meta"><span>{capacity.shareCount || 0} 个分享</span><span>{capacity.collectionCount || 0} 个收集任务</span><span>{capacity.fileCount || 0} 个文件</span></div></div>
+      </div>
+      <div className="team-tabs-shell">
+        <div className="team-tabs" role="tablist" aria-label="团队详情">
+          <button className={activeTab === 'members' ? 'active' : ''} role="tab" aria-selected={activeTab === 'members'} onClick={() => setActiveTab('members')}><Users size={15} /> 成员观察</button>
+          <button className={activeTab === 'resources' ? 'active' : ''} role="tab" aria-selected={activeTab === 'resources'} onClick={() => setActiveTab('resources')}><Database size={15} /> 团队资源 <span>{resources.length}</span></button>
+          <button className={activeTab === 'manage' ? 'active' : ''} role="tab" aria-selected={activeTab === 'manage'} onClick={() => setActiveTab('manage')}><UserPlus size={15} /> 团队成员 <span>{members.length}</span></button>
+        </div>
+        {activeTab === 'members' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">成员观察</p><h2>成员使用量</h2></div><span>{members.length} 位成员</span></div><div className="team-member-usage">{visibleMemberUsage.map((member) => <div className="team-member-usage-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'} · {member.fileCount} 个文件</small><div className="team-usage-bar"><i style={{ width: `${(Number(member.usedBytes || 0) / memberMax) * 100}%` }} /></div></div><b>{formatBytes(member.usedBytes || 0)}</b></div>)}</div><AdminPagination page={safeMemberUsagePage} pageCount={memberUsagePageCount} total={members.length} pageSize={teamPageSize} onPageChange={setMemberUsagePage} /></div>}
+        {activeTab === 'resources' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队资源</p><h2>最近文件与任务</h2></div><span>{resources.length} 条</span></div><div className="team-resource-table">{resources.length ? visibleTeamResources.map((resource) => <div className="team-resource-row" key={`${resource.kind}-${resource.id}`}><span className="team-resource-icon">{resource.kind === 'share' ? <Send size={15} /> : <Inbox size={15} />}</span><div><strong>{resource.name}</strong><small>{memberName(resource.ownerUserId)} · {resource.kind === 'share' ? '文件分享' : '收集任务'} · {resource.fileCount} 个文件</small></div><span className={`team-resource-status ${resource.status}`}>{statusLabel(resource.status)}</span><small className="team-resource-size">{formatBytes(resource.totalSize)}</small></div>) : <div className="empty-manage"><Database size={25} /><span>暂无团队资源</span></div>}</div><AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={resources.length} pageSize={teamPageSize} onPageChange={setTeamResourcePage} /></div>}
+        {activeTab === 'manage' && <div className="public-card team-panel team-tab-panel team-members-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队成员</p><h2>管理项目成员</h2></div><span>{data.canManage ? '所有者' : '只读'}</span></div>{data.canManage && <form className="team-invite-form" onSubmit={inviteMember}><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="邮箱 / 手机号 / 鲲穹账号" disabled={savingMember} /><button className="primary-button" disabled={savingMember || !memberTarget.trim()}><UserPlus size={14} /> 邀请</button></form>}<div className="team-management-list">{visibleTeamMembers.map((member) => <div className="team-management-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</small></div><span className={`workspace-member-state ${member.status === 'invited' ? 'pending' : 'active'}`}>{member.status === 'invited' ? '待加入' : member.role === 'owner' ? '所有者' : '已加入'}</span>{data.canManage && member.role !== 'owner' && <button className="ghost-icon" type="button" onClick={() => removeMember(member)} disabled={savingMember} aria-label={`移除${member.displayName || '成员'}`} title="移除成员"><X size={15} /></button>}</div>)}</div><AdminPagination page={safeTeamMemberPage} pageCount={teamMemberPageCount} total={members.length} pageSize={teamPageSize} onPageChange={setTeamMemberPage} /></div>}
+      </div>
+    </section>
+  </PublicShell>
+}
+
 function WorkspacePage() {
   const [user, setUser] = useState(null)
   const [workspace, setWorkspace] = useState(null)
@@ -3457,15 +3606,12 @@ function WorkspacePage() {
   const [teamName, setTeamName] = useState('')
   const [editingTeamName, setEditingTeamName] = useState(false)
   const [workspaceName, setWorkspaceName] = useState('')
-  const [memberTarget, setMemberTarget] = useState('')
   const [saving, setSaving] = useState(false)
-  const [memberActionId, setMemberActionId] = useState('')
   const [selectedPlanId, setSelectedPlanId] = useState('')
   const [upgradeOpen, setUpgradeOpen] = useState(false)
-  const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
 
-  const load = async () => {
-    setLoading(true)
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     setError('')
     try {
       const auth = await apiRequest('/api/auth/me')
@@ -3479,7 +3625,7 @@ function WorkspacePage() {
     } catch (err) {
       setError(err.message || '团队空间加载失败')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -3521,26 +3667,6 @@ function WorkspacePage() {
     }
   }
 
-  const inviteMember = async (event) => {
-    event.preventDefault()
-    if (!memberTarget.trim()) return
-    if (!workspace?.plan?.team) {
-      setError('成员管理需要团队版或企业版权益')
-      return
-    }
-    setSaving(true)
-    setError('')
-    try {
-      setWorkspace(await apiRequest('/api/account/workspace/members', { method: 'POST', body: JSON.stringify({ target: memberTarget.trim() }) }))
-      setMemberTarget('')
-      setMessage('成员邀请已记录')
-    } catch (err) {
-      setError(err.message || '成员邀请失败')
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const saveWorkspaceName = async (event) => {
     event.preventDefault()
     const name = workspaceName.trim()
@@ -3558,26 +3684,6 @@ function WorkspacePage() {
     }
   }
 
-  const removeMember = async (member) => {
-    const confirmed = await requestConfirm({
-      title: '移除团队成员',
-      detail: `确定从团队空间移除 ${member.displayName || member.email || '该成员'} 吗？`,
-      confirmText: '移除成员',
-      tone: 'danger',
-    })
-    if (!confirmed) return
-    try {
-      setMemberActionId(member.id)
-      setError('')
-      setWorkspace(await apiRequest(`/api/account/workspace/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' }))
-      setMessage('成员已移除')
-    } catch (err) {
-      setError(err.message || '成员移除失败')
-    } finally {
-      setMemberActionId('')
-    }
-  }
-
   if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开团队空间</h1><p>正在读取账号权益和团队数据。</p></div></PublicShell>
   if (!user) {
     return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和企业专属链接会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
@@ -3592,12 +3698,11 @@ function WorkspacePage() {
   const hasTeamPlan = Boolean(plan.team)
   const canManageTeam = Boolean(hasTeamPlan && workspace?.canManage)
   const members = organization?.members || []
-  const activeMemberCount = members.filter((member) => member.status !== 'invited').length
-  const pendingMemberCount = members.filter((member) => member.status === 'invited').length
+  const ownerMember = members.find((member) => member.role === 'owner') || members[0] || null
   const selectedTotalBytes = Number(selectedPlan.totalBytes || capacity.totalBytes || 0)
   const ratio = selectedTotalBytes ? Math.min(100, Math.round((capacity.usedBytes / selectedTotalBytes) * 100)) : 0
   const currentPlanLabel = plan.label || '基础版'
-  const planValidity = plan.id === 'free' ? '长期免费' : workspace?.planExpiresAt ? `有效至 ${formatDate(workspace.planExpiresAt)}` : '长期有效'
+  const planValidity = plan.id === 'free' ? '长期免费' : plan.permanent ? '永久有效' : workspace?.planExpiresAt ? `有效至 ${formatDate(workspace.planExpiresAt)}` : '长期有效'
   const enterpriseLink = organization ? `${window.location.origin}/e/${organization.slug}/share/` : ''
   const goBack = () => {
     const referrer = document.referrer
@@ -3612,15 +3717,15 @@ function WorkspacePage() {
     <PublicShell>
       <section className="workspace-page">
         {(message || error) && <div className="workspace-toast"><FeedbackMessage message={message || error} tone={error ? 'error' : feedbackTone(message)} /></div>}
-        <div className="workspace-grid">
+      <div className="workspace-grid">
             <div className="public-card workspace-hero">
               <div><p className="eyebrow">会员与企业版</p><h1>{currentPlanLabel}空间</h1><p>存储空间、保存策略、团队协作能力均由账号权益统一管控，升级后立即生效。</p></div>
               <button className="secondary-button workspace-back-button" onClick={goBack}><ArrowLeft size={15} /> 返回</button>
             </div>
             <div className="public-card workspace-section workspace-benefits-card">
-              <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {plan.monthlyPrice ? `¥${(plan.monthlyPrice / 100).toFixed(2)} / ${plan.validityDays || 30}天` : '免费使用'}</p></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
+              <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(plan)}</p></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
               <div className="workspace-capacity"><div><span>已使用空间 · {selectedPlan.label || currentPlanLabel}</span><strong>{formatBytes(capacity.usedBytes || 0)} / {formatBytes(selectedTotalBytes)}</strong></div><div className="capacity-bar" title={`已使用 ${ratio}%`} role="progressbar" aria-valuenow={ratio} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${ratio}%` }} /></div><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务 · {capacity.fileCount || 0} 个文件</small></div>
-              <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id}><em className="plan-current-tag">{item.id === plan.id ? '当前' : item.team ? '推荐' : ''}</em><strong>{item.label}</strong><span>{formatBytes(item.totalBytes)}</span><small>{item.monthlyPrice ? `¥${(item.monthlyPrice / 100).toFixed(2)} / ${item.validityDays || 30}天` : '免费使用'} · {item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</small></button>)}</div>
+              <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id ? 'true' : 'false'}><em className="plan-current-tag">{item.id === plan.id ? '当前' : item.team ? '推荐' : ''}</em><strong>{item.label}</strong><span>{formatBytes(item.totalBytes)}</span><small>{formatPlanPrice(item)} · {item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</small></button>)}</div>
               <div className="workspace-benefits-cta"><span>{plan.id === 'enterprise' ? '你已拥有最高企业版权益。' : '需要更多空间、永久保存或团队协作？'}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {plan.id === 'enterprise' ? '查看权益详情' : '升级权益'}</button></div>
             </div>
             <div className="public-card workspace-section workspace-team-card">
@@ -3640,7 +3745,7 @@ function WorkspacePage() {
                     </div>
                   )}
                 </div>
-                {organization ? <span className="workspace-status">{members.length} 位成员</span> : <span className="workspace-status muted team-required-tag" title={canManageTeam ? '当前权益可以创建团队空间。' : '该功能需要升级团队版权限才可解锁。'}>{canManageTeam ? '可创建' : '需团队版'}</span>}
+                {organization ? <span className="workspace-status">团队所有者</span> : <span className="workspace-status muted team-required-tag" title={canManageTeam ? '当前权益可以创建团队空间。' : '该功能需要升级团队版权限才可解锁。'}>{canManageTeam ? '可创建' : '需团队版'}</span>}
               </div>
               {!organization ? (
                 hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
@@ -3648,18 +3753,17 @@ function WorkspacePage() {
                 <>
                   <div className="workspace-link-row"><Link2 size={15} /><span>企业专属标识</span><code>{organization.slug}</code><button className="copy-button" onClick={async () => { try { await copyTextToClipboard(organization.slug); setMessage('企业标识已复制') } catch { setError('当前浏览器不支持自动复制，请手动复制企业标识') } }}><Copy size={14} /> 复制</button></div>
                   {!canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
-                  <form className="workspace-inline-form" onSubmit={inviteMember}><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="邮箱 / 手机号 / 鲲穹账号" disabled={!canManageTeam} /><button className="secondary-button" disabled={saving || !memberTarget.trim() || !canManageTeam}><UserPlus size={15} /> 邀请成员</button></form>
-                  <div className="workspace-member-summary"><span><strong>{activeMemberCount}</strong> 已加入</span><span><strong>{pendingMemberCount}</strong> 待加入</span><small>创建于 {formatDate(organization.createdAt)}</small></div>
-                  <div className="workspace-members">{members.map((member) => <div className="workspace-member" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || member.email || member.phone || '待接受邀请'}</strong><span>{member.email || member.phone || member.userId || '邀请已发出'} · {member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</span></div><span className={`workspace-member-state ${member.status === 'invited' ? 'pending' : 'active'}`}>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '已加入'}</span>{canManageTeam && member.canRemove && <button className="ghost-icon" disabled={memberActionId === member.id} aria-label={`移除${member.displayName || '成员'}`} title="移除成员" onClick={() => removeMember(member)}>{memberActionId === member.id ? <span className="button-spinner" /> : <X size={16} />}</button>}</div>)}</div>
+                  {ownerMember && <div className="workspace-owner-summary"><span className="workspace-member-avatar">{(ownerMember.displayName || '团').slice(0, 1)}</span><div><strong>{ownerMember.displayName || ownerMember.email || ownerMember.phone || '团队所有者'}</strong><span>{ownerMember.email || ownerMember.phone || ownerMember.userId || '当前账号'} · 所有者</span></div><span className="workspace-member-state active">所有者</span></div>}
+                  <div className="workspace-member-summary"><small>其他成员、待加入成员和邀请操作请前往团队空间查看</small></div>
+                  <button type="button" className="team-manage-link" onClick={() => { window.location.href = '/team' }}><BarChart3 size={14} /> 查看团队成员与使用情况 <ChevronRight size={14} /></button>
                 </>
               )}
             </div>
-            <div className="public-card workspace-side-card workspace-link-card"><ShieldCheck size={22} /><strong>企业专属链接</strong><p>{organization ? '你的团队专属分享入口，外部访客打开链接即可看到团队标识。' : '团队/企业版分享，自动生成携带团队标识的专属访问链接。'}</p><div className="workspace-link-row"><code>{organization ? enterpriseLink : '/e/your-team/share/...'}</code><button className="ghost-icon" aria-label="复制企业专属链接" title={organization ? '复制企业专属链接' : '复制企业专属链接格式'} onClick={async () => { try { await copyTextToClipboard(organization ? enterpriseLink : '/e/your-team/share/...'); setMessage(organization ? '企业专属链接已复制' : '企业专属链接格式已复制') } catch { setError('当前浏览器不支持自动复制，请手动复制链接') } }}><Copy size={15} /></button></div><div className="workspace-side-points"><span><Check size={13} /> 访问地址自动带团队标识</span><span><Check size={13} /> 可用于团队专属分享入口</span></div></div>
-            <div className="public-card workspace-side-card workspace-status-card"><ListChecks size={22} /><strong>当前状态</strong><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan ? 'on' : 'off'}>{hasTeamPlan ? <Check size={13} /> : <X size={13} />} 团队协作与成员管理</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 企业专属分享入口</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
+            <div className="public-card workspace-side-card workspace-link-card"><div className="workspace-side-heading"><ShieldCheck size={22} /><strong>企业专属链接</strong></div><p>{organization ? '创建文件分享后，结果页会生成可直接访问的企业专属链接。' : '团队/企业版分享会自动生成携带团队标识的专属访问链接。'}</p><div className="workspace-link-row"><code>{organization ? `${window.location.origin}/e/${organization.slug}/share/{分享ID}` : '/e/your-team/share/{分享ID}'}</code></div><div className="workspace-side-points"><span><Check size={13} /> 完整链接包含具体分享 ID</span><span><Check size={13} /> 可用于团队专属分享入口</span></div></div>
+            <div className="public-card workspace-side-card workspace-status-card"><div className="workspace-side-heading"><ListChecks size={22} /><strong>当前状态</strong></div><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan ? 'on' : 'off'}>{hasTeamPlan ? <Check size={13} /> : <X size={13} />} 团队协作与成员管理</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 企业专属分享入口</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
         </div>
       </section>
       {upgradeOpen && <UpgradeModal workspace={workspace} onClose={() => setUpgradeOpen(false)} onRefresh={load} onNotify={(text, tone) => { if (tone === 'error') setError(text); else setMessage(text) }} />}
-      <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
   )
 }
@@ -3670,6 +3774,8 @@ const UPGRADE_ORDER_STATUS_LABELS = {
   canceled: '已取消',
   expired: '已过期',
 }
+const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, enterprise: 3 }
+const accountPlanRank = (planId) => ACCOUNT_PLAN_RANK[planId] ?? 0
 
 async function upgradeApiRequest(url, options = {}) {
   const { headers = {}, ...fetchOptions } = options
@@ -3687,7 +3793,8 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
   const plan = workspace?.plan || {}
   const plans = (workspace?.plans || []).filter((item) => item.id !== 'free')
   const pendingOrder = (workspace?.orders || []).find((order) => order.status === 'pending_payment') || null
-  const defaultPlanId = plans.find((item) => item.id !== plan.id)?.id || plans[0]?.id || ''
+  const currentPlanRank = accountPlanRank(plan.id)
+  const defaultPlanId = plans.find((item) => accountPlanRank(item.id) > currentPlanRank)?.id || ''
   const [selectedPlanId, setSelectedPlanId] = useState(defaultPlanId)
   const [orderView, setOrderView] = useState(pendingOrder)
   const [busy, setBusy] = useState(false)
@@ -3711,7 +3818,7 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
         const result = await upgradeApiRequest(`/api/account/upgrade-orders/${encodeURIComponent(orderView.id)}/pay-status`, { method: 'POST' })
         setOrderView(result.order)
         if (result.workspace) {
-          onRefresh()
+          onRefresh?.({ silent: true })
         }
         if (result.order?.status === 'paid') {
           setPayment(null)
@@ -3725,8 +3832,9 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
     return () => window.clearInterval(timer)
   }, [payment, orderView?.id, orderView?.status])
 
-  const selectedPlan = plans.find((item) => item.id === selectedPlanId) || null
+  const selectedPlan = plans.find((item) => item.id === selectedPlanId && accountPlanRank(item.id) > currentPlanRank) || null
   const isCurrentPlan = (item) => item.id === plan.id
+  const isIncludedPlan = (item) => accountPlanRank(item.id) <= currentPlanRank
 
   const createOrder = async () => {
     if (!selectedPlan || busy) return
@@ -3736,12 +3844,12 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
     try {
       const result = await upgradeApiRequest('/api/account/upgrade-orders', { method: 'POST', body: JSON.stringify({ planId: selectedPlan.id }) })
       setOrderView(result.order)
-      onRefresh()
+      onRefresh?.({ silent: true })
       onNotify?.('升级订单已创建', 'success')
     } catch (err) {
       if (err.order) {
         setOrderView(err.order)
-        onRefresh()
+        onRefresh?.({ silent: true })
       } else {
         setError(err.message || '升级订单创建失败')
       }
@@ -3762,15 +3870,11 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
       })
       setOrderView(result.order)
       setPayment(result.payment || null)
-      if (result.payment?.alipaysubmit_html) {
-        const popup = window.open('', '_blank', 'noopener,noreferrer')
-        if (!popup) {
-          setNotice('支付宝收银台窗口被浏览器拦截，请允许弹窗后再次点击继续支付')
+      if (payType === 2) {
+        if (result.payment?.alipaysubmit_html) {
+          setNotice('支付宝收银台已加载，请完成支付后刷新支付状态')
         } else {
-          popup.document.open()
-          popup.document.write(result.payment.alipaysubmit_html)
-          popup.document.close()
-          setNotice('支付宝收银台已打开，请完成支付后等待本页自动确认')
+          setError('支付服务未返回支付宝收银台，请稍后重试')
         }
       } else {
         setNotice(result.message || '微信支付二维码已创建，请扫码支付')
@@ -3789,7 +3893,7 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
     try {
       const result = await upgradeApiRequest(`/api/account/upgrade-orders/${encodeURIComponent(orderView.id)}/pay-status`, { method: 'POST' })
       setOrderView(result.order)
-      if (result.workspace) onRefresh()
+      if (result.workspace) onRefresh?.({ silent: true })
       setNotice(result.message || '支付状态已刷新')
       if (result.order?.status === 'paid') {
         setPayment(null)
@@ -3810,7 +3914,7 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
     try {
       await upgradeApiRequest(`/api/account/upgrade-orders/${encodeURIComponent(orderView.id)}/cancel`, { method: 'POST' })
       setOrderView(null)
-      onRefresh()
+      onRefresh?.({ silent: true })
       onNotify?.('升级订单已取消', 'success')
     } catch (err) {
       setError(err.message || '订单取消失败')
@@ -3837,10 +3941,11 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
               <dl className="upgrade-order-meta">
                 <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={async () => { try { await copyTextToClipboard(orderView.orderNo); onNotify?.('订单号已复制', 'success') } catch { /* 忽略 */ } }}><Copy size={13} /> 复制</button></dd></div>
                 <div><dt>创建时间</dt><dd>{formatDate(orderView.createdAt)}</dd></div>
-                <div><dt>应付金额</dt><dd>{orderView.amount ? `¥${(orderView.amount / 100).toFixed(2)}` : '以支付通道上线后公示为准'}</dd></div>
+                <div><dt>应付金额</dt><dd>{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '价格以支付通道为准'}</dd></div>
               </dl>
               {!payment && <div className="upgrade-pay-type" role="group" aria-label="支付方式"><button type="button" className={payType === 1 ? 'selected' : ''} onClick={() => setPayType(1)}>微信扫码</button><button type="button" className={payType === 2 ? 'selected' : ''} onClick={() => setPayType(2)}>支付宝</button></div>}
               {payment?.qrcode_img_url && <div className="upgrade-payment-qr"><img src={payment.qrcode_img_url} alt="微信支付二维码" /><span>请使用微信扫码支付</span></div>}
+              {payment?.alipaysubmit_html && <div className="upgrade-payment-qr upgrade-payment-alipay"><div className="upgrade-payment-alipay-frame"><iframe title="支付宝收银台" scrolling="no" srcDoc={payment.alipaysubmit_html} /></div><span>请使用支付宝扫码支付</span></div>}
               <div className="upgrade-order-note"><Clock3 size={15} /><span>{notice || '请选择支付方式并完成支付，支付成功后会员权益会自动开通。'}</span></div>
               <div className="upgrade-order-actions">
                 <button className="primary-button" onClick={continuePay} disabled={busy}><Zap size={15} /> {busy ? '正在处理…' : '继续支付'}</button>
@@ -3850,20 +3955,20 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
             </div>
           ) : (
             <>
-              <p className="upgrade-intro">当前权益：<strong>{plan.label || '基础版'}</strong>。会员、团队版和企业版按 30 天计费，价格和权益在支付接入后正式生效。</p>
+              <p className="upgrade-intro">当前权益：<strong>{plan.label || '基础版'}</strong>。价格和有效期以当前支付套餐为准，创建订单前会同步主站实际金额。</p>
               <div className="upgrade-plan-grid">
                 {plans.map((item) => (
                   <button
                     type="button"
                     key={item.id}
-                    className={`upgrade-plan-card ${item.id === selectedPlanId ? 'selected' : ''} ${isCurrentPlan(item) ? 'is-current' : ''}`}
-                    onClick={() => !isCurrentPlan(item) && setSelectedPlanId(item.id)}
-                    disabled={isCurrentPlan(item)}
+                    className={`upgrade-plan-card ${item.id === selectedPlanId ? 'selected' : ''} ${isIncludedPlan(item) ? 'is-current' : ''}`}
+                    onClick={() => !isIncludedPlan(item) && setSelectedPlanId(item.id)}
+                    disabled={isIncludedPlan(item)}
                     aria-pressed={item.id === selectedPlanId}
                   >
-                    <span className="upgrade-plan-top"><strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
+                    <span className="upgrade-plan-top"><strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
                     <span className="upgrade-plan-capacity">{formatBytes(item.totalBytes)}</span>
-                    <span className="upgrade-plan-tags">{item.monthlyPrice ? `¥${(item.monthlyPrice / 100).toFixed(2)} / ${item.validityDays || 30}天` : '免费使用'} · {item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</span>
+                    <span className="upgrade-plan-tags"><strong className="upgrade-plan-price">{formatPlanPrice(item)}</strong><span className="upgrade-plan-detail">{item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</span></span>
                     <ul className="upgrade-plan-features">
                       {(item.features || []).map((feature) => <li key={feature}><Check size={12} /> {feature}</li>)}
                     </ul>
@@ -3910,22 +4015,6 @@ function AdminPage() {
     const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`
     window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
   }
-  const removeResource = async (resource) => {
-    const confirmed = await requestConfirm({
-      title: '删除文件资源',
-      detail: `将删除“${resource.name}”及其服务器文件，操作不可恢复。`,
-      confirmText: '删除资源',
-      tone: 'danger',
-    })
-    if (!confirmed) return
-    try {
-      setError('')
-      const result = await apiRequest(`/api/admin/resources/${resource.kind}/${encodeURIComponent(resource.id)}`, { method: 'DELETE' })
-      setData(result.overview)
-    } catch (err) {
-      setError(err.message || '资源删除失败')
-    }
-  }
   const updateUser = async (user, patch) => {
     try {
       setError('')
@@ -3941,7 +4030,24 @@ function AdminPage() {
     try {
       const form = new FormData(event.currentTarget)
       setError('')
-      const result = await apiRequest('/api/admin/config', { method: 'PATCH', body: JSON.stringify({ maxShareDays: form.get('maxShareDays'), auditLogRetentionDays: form.get('auditLogRetentionDays'), orphanGraceHours: form.get('orphanGraceHours'), maintenanceMode: form.get('maintenanceMode') === 'on' }) })
+      const planOverrides = {}
+      ;['free', 'member', 'team', 'enterprise'].forEach((planId) => {
+        planOverrides[planId] = {
+          totalGb: form.get(`plan-${planId}-gb`),
+          monthlyPrice: form.get(`plan-${planId}-price`),
+          validityDays: form.get(`plan-${planId}-days`) || null,
+        }
+      })
+      const result = await apiRequest('/api/admin/config', { method: 'PATCH', body: JSON.stringify({
+        defaultShareDays: form.get('defaultShareDays'),
+        maxShareDays: form.get('maxShareDays'),
+        anonymousMaxFileSizeMb: form.get('anonymousMaxFileSizeMb'),
+        maxBatchFiles: form.get('maxBatchFiles'),
+        auditLogRetentionDays: form.get('auditLogRetentionDays'),
+        orphanGraceHours: form.get('orphanGraceHours'),
+        maintenanceMode: form.get('maintenanceMode') === 'on',
+        planOverrides,
+      }) })
       setData((current) => ({ ...current, config: result.config }))
     } catch (err) {
       setError(err.message || '系统配置保存失败')
@@ -3958,48 +4064,79 @@ function AdminPage() {
       setError(err.message || '清理失败')
     }
   }
-  const approveResource = async (resource) => {
-    try {
-      setError('')
-      const result = await apiRequest(`/api/admin/resources/${resource.kind}/${encodeURIComponent(resource.id)}/review`, { method: 'PATCH' })
-      setData(result.overview)
-    } catch (err) {
-      setError(err.message || '审核处理失败')
-    }
-  }
-
   if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开后台</h1><p>正在检查管理员权限。</p></div></PublicShell>
   if (error && !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p>{/登录/.test(error) && <button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button>}<a className="secondary-button" href="/">返回首页</a></div></PublicShell>
   if (!data) return null
   const stats = data.stats || {}
-  const dashboardCards = [['用户', stats.users || 0, Users], ['分享', stats.shares || 0, Link2], ['收集任务', stats.collections || 0, Inbox], ['资源文件', stats.files || 0, Database], ['占用空间', formatBytes(stats.totalBytes || 0), HardDrive], ['待审核', stats.reviewResources || 0, ShieldCheck]]
+  const dashboardCards = [['注册用户', stats.users || 0, Users], ['活跃用户', stats.activeUsers || 0, UserRound], ['分享', stats.shares || 0, Link2], ['收集任务', stats.collections || 0, Inbox], ['占用空间', formatBytes(stats.totalBytes || 0), HardDrive], ['待清理', stats.pendingCleanup || 0, RefreshCw]]
+  const trend = data.trend || []
+  const trendMax = Math.max(1, ...trend.flatMap((item) => [item.activeUsers, item.uploads, item.downloads]))
   return (
     <PublicShell>
       <section className="admin-page">
-        <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、文件资源、安全日志和运行配置。</p></div><div><button className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</button><button className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</button></div></div>
-        <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['users', '用户管理', Users], ['resources', '文件资源', Database], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button className={tab === key ? 'active' : ''} key={key} onClick={() => setTab(key)}><Icon size={16} /> {label}</button>)}</nav>
+        <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、安全日志、运行配置和系统概览。</p></div><div><button className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</button><button className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</button></div></div>
+        <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button className={tab === key ? 'active' : ''} key={key} onClick={() => setTab(key)}><Icon size={16} /> {label}</button>)}</nav>
         {error && <p className="public-message">{error}</p>}
-        {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot review" /> 待审核资源 <strong>{stats.reviewResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span></div></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">最近事件</p><h2>访问审计</h2></div></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 5).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
-        {tab === 'users' && <AdminUsers users={data.users} onUpdate={updateUser} />}
-        {tab === 'resources' && <AdminResources resources={data.resources} onDelete={removeResource} onApprove={approveResource} />}
-        {tab === 'security' && <AdminLogs logs={data.auditLogs} />}
-        {tab === 'config' && <form className="public-card admin-panel admin-config-form" onSubmit={saveConfig}><div className="admin-panel-heading"><div><p className="eyebrow">运行参数</p><h2>系统配置</h2></div></div><label className="manage-field"><span>普通分享最长有效期（天）</span><input name="maxShareDays" type="number" min="1" max="365" defaultValue={data.config.maxShareDays} /></label><label className="manage-field"><span>审计日志保留（天）</span><input name="auditLogRetentionDays" type="number" min="1" max="3650" defaultValue={data.config.auditLogRetentionDays} /></label><label className="manage-field"><span>孤立目录宽限（小时）</span><input name="orphanGraceHours" type="number" min="1" max="720" defaultValue={data.config.orphanGraceHours} /></label><label className="switch-row"><div><strong>维护模式</strong><span>开启后会阻止非管理员创建分享、收集任务或提交文件。</span></div><input name="maintenanceMode" type="checkbox" defaultChecked={data.config.maintenanceMode} /></label><button className="primary-button" disabled={savingConfig}><SlidersHorizontal size={15} /> {savingConfig ? '保存中' : '保存配置'}</button></form>}
+        <div className="admin-content">
+          {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-list">{trend.map((item) => <div className="admin-trend-row" key={item.date}><span>{item.label}</span><div><i style={{ width: `${(item.activeUsers / trendMax) * 100}%` }} title={`活跃用户 ${item.activeUsers}`} /><i className="upload" style={{ width: `${(item.uploads / trendMax) * 100}%` }} title={`上传 ${item.uploads}`} /><i className="download" style={{ width: `${(item.downloads / trendMax) * 100}%` }} title={`下载 ${item.downloads}`} /></div><small>{item.activeUsers} / {item.uploads} / {item.downloads}</small></div>)}</div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot review" /> 待审核资源 <strong>{stats.reviewResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
+          {tab === 'users' && <AdminUsers users={data.users} onUpdate={updateUser} />}
+          {tab === 'security' && <AdminLogs logs={data.auditLogs} />}
+          {tab === 'config' && <AdminConfig config={data.config} saving={savingConfig} onSubmit={saveConfig} />}
+        </div>
       </section>
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
   )
 }
 
-function AdminUsers({ users = [], onUpdate }) {
-  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">账号与权益</p><h2>用户管理</h2></div></div><div className="admin-table">{users.length ? users.map((user) => <div className="admin-table-row" key={user.id}><div><strong>{user.nickname || user.username || user.id}</strong><span>{user.email || user.phone || user.id}</span></div><select value={user.planId} onChange={(event) => onUpdate(user, { planId: event.target.value })}><option value="free">基础版</option><option value="member">会员版</option><option value="team">团队版</option><option value="enterprise">企业版</option></select><input className="admin-plan-expiry" type="date" aria-label={`${user.nickname || user.username || user.id}会员到期日`} title="留空表示长期有效；到期后永久分享保留 7 天" value={user.planExpiresAt ? toDateInputValue(user.planExpiresAt) : ''} onChange={(event) => onUpdate(user, { planExpiresAt: event.target.value || null })} /><button className={user.status === 'disabled' ? 'secondary-button' : 'secondary-button danger-lite'} onClick={() => onUpdate(user, { status: user.status === 'disabled' ? 'active' : 'disabled' })}>{user.status === 'disabled' ? '启用' : '禁用'}</button><small>{user.planLabel} · {formatBytes(user.usageBytes || 0)}</small></div>) : <div className="empty-manage"><Users size={25} /><span>暂无登录用户</span></div>}</div></div>
+function AdminPagination({ page, pageCount, total, pageSize, onPageChange }) {
+  if (total <= pageSize) return null
+  const start = (page - 1) * pageSize + 1
+  const end = Math.min(total, page * pageSize)
+  return <div className="admin-pagination"><span>显示 {start}-{end} / {total}</span><div><button className="secondary-button" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}><ChevronLeft size={14} /> 上一页</button><button className="secondary-button" onClick={() => onPageChange(Math.min(pageCount, page + 1))} disabled={page >= pageCount}>下一页 <ChevronRight size={14} /></button></div></div>
 }
 
-function AdminResources({ resources = [], onDelete, onApprove }) {
-  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">文件与任务</p><h2>文件资源管理</h2></div></div><div className="admin-table">{resources.length ? resources.map((resource) => <div className="admin-table-row" key={`${resource.kind}-${resource.id}`}><div><strong>{resource.name}</strong><span>{resource.kind === 'share' ? '文件分享' : '收集任务'} · {formatDate(resource.createdAt)}</span></div><span className={`admin-review ${resource.reviewStatus === '待审核' ? 'review' : resource.reviewStatus === '已拦截' ? 'blocked' : ''}`}>{resource.reviewStatus}</span><small>{resource.fileCount} 个文件 · {formatBytes(resource.totalSize)}</small>{resource.reviewStatus === '待审核' && <button className="secondary-button" onClick={() => onApprove(resource)}><Check size={14} /> 通过</button>}<button className="secondary-button danger-lite" onClick={() => onDelete(resource)}><Trash2 size={14} /> 删除</button></div>) : <div className="empty-manage"><Database size={25} /><span>暂无文件资源</span></div>}</div></div>
+function AdminUsers({ users = [], onUpdate }) {
+  const pageSize = 8
+  const [page, setPage] = useState(1)
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredUsers = normalizedQuery
+    ? users.filter((user) => [user.id, user.username, user.nickname, user.email, user.phone].some((value) => String(value || '').toLowerCase().includes(normalizedQuery)))
+    : users
+  const pageCount = Math.max(1, Math.ceil(filteredUsers.length / pageSize))
+  const safePage = Math.min(page, pageCount)
+  const visibleUsers = filteredUsers.slice((safePage - 1) * pageSize, safePage * pageSize)
+  useEffect(() => { setPage(1) }, [users.length, normalizedQuery])
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">账号与权益</p><h2>用户管理</h2></div><span>{filteredUsers.length} / {users.length} 个用户</span></div><label className="admin-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索账号、手机号、邮箱或用户 ID" /></label><div className="admin-table">{filteredUsers.length ? visibleUsers.map((user) => <div className="admin-table-row" key={user.id}><div><strong>{user.nickname || user.username || user.id}</strong><span>{user.email || user.phone || user.id}</span></div><select value={user.planId} onChange={(event) => onUpdate(user, { planId: event.target.value })}><option value="free">基础版</option><option value="member">会员版</option><option value="team">团队版</option><option value="enterprise">企业版</option></select><input className="admin-plan-expiry" type="date" aria-label={`${user.nickname || user.username || user.id}会员到期日`} title="留空表示长期有效；到期后永久分享保留 7 天" value={user.planExpiresAt ? toDateInputValue(user.planExpiresAt) : ''} onChange={(event) => onUpdate(user, { planExpiresAt: event.target.value || null })} /><button className={user.status === 'disabled' ? 'secondary-button' : 'secondary-button danger-lite'} onClick={() => onUpdate(user, { status: user.status === 'disabled' ? 'active' : 'disabled' })}>{user.status === 'disabled' ? '启用' : '禁用'}</button><small>{user.planLabel} · {formatBytes(user.usageBytes || 0)}</small></div>) : <div className="empty-manage"><Search size={25} /><span>没有匹配的用户</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredUsers.length} pageSize={pageSize} onPageChange={setPage} /></div>
+}
+
+function AdminConfig({ config = {}, saving = false, onSubmit }) {
+  const overrides = config.planOverrides || {}
+  return <form className="public-card admin-panel admin-config-form" onSubmit={onSubmit}>
+    <div className="admin-panel-heading"><div><p className="eyebrow">运行参数</p><h2>系统配置</h2></div></div>
+    <div className="admin-config-grid">
+      <label className="manage-field"><span>默认保存时效（天）</span><input name="defaultShareDays" type="number" min="1" max="365" defaultValue={config.defaultShareDays} /></label>
+      <label className="manage-field"><span>普通分享最长有效期（天）</span><input name="maxShareDays" type="number" min="1" max="365" defaultValue={config.maxShareDays} /></label>
+      <label className="manage-field"><span>匿名单文件上限（MB）</span><input name="anonymousMaxFileSizeMb" type="number" min="1" max="5120" defaultValue={config.anonymousMaxFileSizeMb} /></label>
+      <label className="manage-field"><span>单次最多文件数</span><input name="maxBatchFiles" type="number" min="1" max="100" defaultValue={config.maxBatchFiles} /></label>
+      <label className="manage-field"><span>审计日志保留（天）</span><input name="auditLogRetentionDays" type="number" min="1" max="3650" defaultValue={config.auditLogRetentionDays} /></label>
+      <label className="manage-field"><span>孤立目录宽限（小时）</span><input name="orphanGraceHours" type="number" min="1" max="720" defaultValue={config.orphanGraceHours} /></label>
+    </div>
+    <div className="admin-plan-config"><div className="admin-plan-config-heading"><strong>会员权益配置</strong><span>容量使用 GB，价格使用分；价格仍以主站支付套餐为准。</span></div>{[['free', '基础版'], ['member', '会员版'], ['team', '团队版'], ['enterprise', '企业版']].map(([id, label]) => <div className="admin-plan-row" key={id}><strong>{label}</strong><label><span>容量 GB</span><input name={`plan-${id}-gb`} type="number" min="1" step="1" defaultValue={overrides[id]?.totalBytes ? Math.round(overrides[id].totalBytes / 1024 ** 3) : ''} placeholder="默认" /></label><label><span>价格（分）</span><input name={`plan-${id}-price`} type="number" min="0" step="1" defaultValue={overrides[id]?.monthlyPrice ?? ''} placeholder="默认" /></label><label><span>有效期（天）</span><input name={`plan-${id}-days`} type="number" min="1" max="3650" defaultValue={overrides[id]?.validityDays ?? ''} placeholder="永久/默认" /></label></div>)}</div>
+    <label className="switch-row"><div><strong>维护模式</strong><span>开启后会阻止非管理员创建分享、收集任务或提交文件。</span></div><input name="maintenanceMode" type="checkbox" defaultChecked={config.maintenanceMode} /></label>
+    <button className="primary-button" disabled={saving}><SlidersHorizontal size={15} /> {saving ? '保存中' : '保存配置'}</button>
+  </form>
 }
 
 function AdminLogs({ logs = [] }) {
-  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">安全与访问</p><h2>审计日志</h2></div></div><div className="admin-log-list admin-log-list-large">{logs.length ? logs.map((item) => <div key={item.id}><span><strong>{item.type === 'security' ? '安全拦截' : item.type === 'admin' ? '管理员操作' : '访问'}</strong> {item.action}</span><small>{formatDate(item.createdAt)} · 状态 {item.status || '-'} · IP 摘要 {item.ip || '-'}</small></div>) : <div className="empty-manage"><ShieldCheck size={25} /><span>暂无日志</span></div>}</div></div>
+  const pageSize = 10
+  const [page, setPage] = useState(1)
+  const pageCount = Math.max(1, Math.ceil(logs.length / pageSize))
+  const safePage = Math.min(page, pageCount)
+  const visibleLogs = logs.slice((safePage - 1) * pageSize, safePage * pageSize)
+  useEffect(() => { setPage(1) }, [logs.length])
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">安全与访问</p><h2>审计日志</h2></div><span>{logs.length} 条日志</span></div><div className="admin-log-list admin-log-list-large">{logs.length ? visibleLogs.map((item) => <div key={item.id}><span><strong>{item.type === 'security' ? '安全拦截' : item.type === 'admin' ? '管理员操作' : '访问'}</strong> {item.action}</span><small>{formatDate(item.createdAt)} · 状态 {item.status || '-'} · IP 摘要 {item.ip || '-'}</small></div>) : <div className="empty-manage"><ShieldCheck size={25} /><span>暂无日志</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={logs.length} pageSize={pageSize} onPageChange={setPage} /></div>
 }
 
 function SettingsPanelHeader({ eyebrow, title, detail, onBack }) {
@@ -4016,7 +4153,7 @@ function AccountCapacityCard({ user }) {
   const usedBytes = Number(capacity.usedBytes || 0)
   const totalBytes = Number(capacity.totalBytes || 0)
   const ratio = totalBytes ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0
-  const validity = plan.id === 'free' ? '长期免费' : user.planExpiresAt ? `有效至 ${formatDate(user.planExpiresAt)} · 剩余${planDaysRemaining(user.planExpiresAt)}天` : '长期有效'
+  const validity = plan.id === 'free' ? '长期免费' : plan.permanent ? '永久有效' : user.planExpiresAt ? `有效至 ${formatDate(user.planExpiresAt)} · 剩余${planDaysRemaining(user.planExpiresAt)}天` : '长期有效'
   return (
     <div className="account-capacity-card">
       <div>
@@ -4029,7 +4166,7 @@ function AccountCapacityCard({ user }) {
         <span>{capacity.collectionCount || 0} 个收集任务</span>
         <span>{capacity.fileCount || 0} 个文件</span>
       </div>
-      <div className="account-plan-meta"><strong>{plan.label || '基础版'}</strong><span>{validity}</span><span>{plan.monthlyPrice ? `¥${(plan.monthlyPrice / 100).toFixed(2)} / ${plan.validityDays || 30}天` : '免费使用'}</span></div>
+      <div className="account-plan-meta"><strong>{plan.label || '基础版'}</strong><span>{validity}</span><span>{formatPlanPrice(plan)}</span></div>
     </div>
   )
 }
@@ -4067,6 +4204,7 @@ function AccountBindModal({ type, currentValue, onClose, onComplete }) {
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
   const [binding, setBinding] = useState(false)
+  const [resendSeconds, setResendSeconds] = useState(0)
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -4075,6 +4213,13 @@ function AccountBindModal({ type, currentValue, onClose, onComplete }) {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
+  useEffect(() => {
+    if (resendSeconds <= 0) return undefined
+    const timer = window.setInterval(() => {
+      setResendSeconds((current) => Math.max(0, current - 1))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [resendSeconds])
 
   const sendCode = async () => {
     if (!target.trim()) {
@@ -4088,6 +4233,7 @@ function AccountBindModal({ type, currentValue, onClose, onComplete }) {
       const data = await requestAccountBindCode(target.trim())
       setDebugCode(data.debugCode || '')
       setMessage(data.message || '绑定验证码已生成')
+      setResendSeconds(60)
     } catch (err) {
       setError(err.message || '验证码发送失败')
     } finally {
@@ -4131,7 +4277,7 @@ function AccountBindModal({ type, currentValue, onClose, onComplete }) {
               <span>验证码</span>
               <input value={code} maxLength={6} onChange={(event) => { setCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setError('') }} placeholder="6 位验证码" />
             </label>
-            <button className="secondary-button" type="button" onClick={sendCode} disabled={sending}>{sending ? '生成中' : '获取验证码'}</button>
+            <button className="secondary-button" type="button" onClick={sendCode} disabled={sending || resendSeconds > 0}>{sending ? '发送中' : resendSeconds > 0 ? `${resendSeconds}秒后重发` : debugCode ? '重新发送' : '获取验证码'}</button>
           </div>
           {debugCode && <div className="account-bind-debug"><KeyRound size={14} /> 演示验证码：<strong>{debugCode}</strong></div>}
           {message && <p className="account-bind-message">{message}</p>}
@@ -5733,6 +5879,18 @@ function formatDuration(seconds) {
   const hours = Math.floor(minutes / 60)
   return `${hours} 小时 ${minutes % 60} 分`
 }
+function formatPlanPrice(plan = {}) {
+  const amount = Number(plan.monthlyPrice)
+  if (plan.id === 'free' || amount === 0) return '免费使用'
+  if (!Number.isFinite(amount) || amount < 0) return '价格以主站为准'
+  if (plan.permanent || plan.validityDays === null || plan.validityDays === undefined) {
+    return `¥${(amount / 100).toFixed(2)} / 永久`
+  }
+  const days = Number(plan.validityDays)
+  return Number.isFinite(days) && days > 0
+    ? `¥${(amount / 100).toFixed(2)} / ${days}天`
+    : `¥${(amount / 100).toFixed(2)}`
+}
 function formatExpiry(value) { return value ? `有效期至 ${new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '永久有效' }
 function formatDate(value) { return new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 function planDaysRemaining(value) {
@@ -5820,3 +5978,4 @@ function maskPhone(value = '') {
 }
 
 createRoot(document.getElementById('root')).render(<App />)
+

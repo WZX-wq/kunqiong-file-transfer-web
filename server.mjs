@@ -37,6 +37,12 @@ const smtpUser = String(process.env.KUNQIONG_SMTP_USER || '').trim()
 const smtpPassword = String(process.env.KUNQIONG_SMTP_PASSWORD || '')
 const smtpFrom = String(process.env.KUNQIONG_SMTP_FROM || smtpUser).trim()
 const smtpFromName = String(process.env.KUNQIONG_SMTP_FROM_NAME || '鲲穹文件传输').trim()
+const tencentSmsSecretId = String(process.env.KUNQIONG_TENCENT_SECRET_ID || '').trim()
+const tencentSmsSecretKey = String(process.env.KUNQIONG_TENCENT_SECRET_KEY || '')
+const tencentSmsSdkAppId = String(process.env.KUNQIONG_TENCENT_SMS_SDK_APP_ID || '').trim()
+const tencentSmsSignName = String(process.env.KUNQIONG_TENCENT_SMS_SIGN_NAME || '').trim()
+const tencentSmsBindTemplateId = String(process.env.KUNQIONG_TENCENT_SMS_TEMPLATE_BIND_CODE_ID || '').trim()
+const tencentSmsRegion = String(process.env.KUNQIONG_TENCENT_SMS_REGION || 'ap-guangzhou').trim()
 const webMemberApiBase = String(process.env.KUNQIONG_WEB_MEMBER_API_BASE || 'https://api-web.kunqiongai.com').replace(/\/+$/, '')
 const webMemberSubsiteName = String(process.env.KUNQIONG_WEB_MEMBER_SUBSITE_NAME || configuredAppUrl || 'kunqiong-send').trim()
 const WEB_MEMBER_PACKAGE_ENV_KEYS = {
@@ -87,9 +93,13 @@ const MAX_UPGRADE_ORDERS = 500
 const MAX_AUDIT_LOGS = 5000
 const DEFAULT_SYSTEM_CONFIG = {
   maintenanceMode: false,
+  defaultShareDays: 3,
   maxShareDays: 30,
+  anonymousMaxFileSizeMb: 500,
+  maxBatchFiles: MAX_FILES,
   auditLogRetentionDays: 90,
   orphanGraceHours: 24,
+  planOverrides: {},
 }
 const ACCOUNT_PLANS = {
   free: {
@@ -109,10 +119,11 @@ const ACCOUNT_PLANS = {
   },
   enterprise: {
     id: 'enterprise', label: '企业版', totalBytes: 2 * 1024 * 1024 * 1024 * 1024, permanent: true, team: true,
-    tagline: '企业统一管控', monthlyPrice: 15900, validityDays: 99999999,
+    tagline: '企业统一管控', monthlyPrice: 15900, validityDays: null,
     features: ['2 TB 企业空间', '文件永久保存', '组织与成员统一管理', '企业专属入口与审计日志'],
   },
 }
+const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, enterprise: 3 }
 const DEFAULT_NOTIFICATION_SETTINGS = {
   inApp: true,
   email: false,
@@ -129,6 +140,7 @@ const DEFAULT_ACCOUNT_MESSAGES = [
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const serverHost = process.env.HOST || process.env.KUNQIONG_HOST || '0.0.0.0'
 let metadataNeedsPersist = false
+let metadataReady = null
 let emailTransporter = null
 let metadataWriteQueue = Promise.resolve()
 const reservedShareCodes = new Set()
@@ -149,6 +161,7 @@ for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
 }
 
 const metadata = normalizeMetadata(await loadMetadata())
+metadataReady = metadata
 if (metadataNeedsPersist) persistMetadata()
 const uploadSessions = new Map()
 const oauthStates = new Map()
@@ -217,24 +230,40 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'kunqiong-local-api', release: releaseSha, now: new Date().toISOString() })
 })
 
+app.get('/api/runtime-config', (_req, res) => {
+  const config = normalizeSystemConfig(metadata.systemConfig)
+  res.json({
+    defaultShareDays: config.defaultShareDays,
+    maxShareDays: config.maxShareDays,
+    maxBatchFiles: config.maxBatchFiles,
+    anonymousMaxFileSizeMb: config.anonymousMaxFileSizeMb,
+  })
+})
+
 app.get('/api/auth/login', (req, res) => {
-  let returnTo = safeReturnUrl(req.query.return_to, req)
-  if (!isOAuthConfigured()) {
-    return res.redirect(appendAuthResult(returnTo, 'failed', '登录服务未配置'))
+  let returnTo = safeReturnUrl('', req)
+  try {
+    returnTo = safeReturnUrl(req.query.return_to, req)
+    if (!isOAuthConfigured()) {
+      return res.redirect(appendAuthResult(returnTo, 'failed', '登录服务未配置'))
+    }
+
+    cleanupOAuthStates()
+    const state = createToken(32)
+    const redirectUri = authRedirectUri(req)
+    returnTo = alignReturnUrlWithAuthHost(returnTo, redirectUri)
+    oauthStates.set(state, { redirectUri, returnTo, createdAt: Date.now() })
+
+    const loginUrl = new URL(oauthAuthorizeUrl)
+    loginUrl.searchParams.set('client_id', oauthClientId)
+    loginUrl.searchParams.set('redirect_uri', redirectUri)
+    loginUrl.searchParams.set('response_type', 'code')
+    loginUrl.searchParams.set('state', state)
+    return res.redirect(loginUrl.toString())
+  } catch (error) {
+    console.error('OAuth login redirect failed:', error)
+    return res.redirect(appendAuthResult(returnTo, 'failed', '登录服务暂时不可用，请稍后重试'))
   }
-
-  cleanupOAuthStates()
-  const state = createToken(32)
-  const redirectUri = authRedirectUri(req)
-  returnTo = alignReturnUrlWithAuthHost(returnTo, redirectUri)
-  oauthStates.set(state, { redirectUri, returnTo, createdAt: Date.now() })
-
-  const loginUrl = new URL(oauthAuthorizeUrl)
-  loginUrl.searchParams.set('client_id', oauthClientId)
-  loginUrl.searchParams.set('redirect_uri', redirectUri)
-  loginUrl.searchParams.set('response_type', 'code')
-  loginUrl.searchParams.set('state', state)
-  res.redirect(loginUrl.toString())
 })
 
 app.get('/api/auth/me', (req, res) => {
@@ -274,19 +303,53 @@ app.patch('/api/auth/profile', (req, res) => {
   res.json({ user: publicAccountUser(user) })
 })
 
-app.post('/api/auth/code', (req, res) => {
+app.post('/api/auth/code', async (req, res) => {
   try {
     const session = requireAuthSession(req, res)
     if (!session) return
     const target = normalizeContactTarget(req.body?.target)
     if (!target) return res.status(400).json({ message: '请输入正确的邮箱或手机号' })
     const debugCode = createVerificationCode(target, 'bind')
+    if (target.type === 'email') {
+      const transporter = getEmailTransporter()
+      if (!transporter) {
+        discardVerificationCode(target, 'bind')
+        return res.status(503).json({ message: '邮箱 SMTP 服务未配置，暂时无法发送验证码' })
+      }
+      try {
+        await transporter.sendMail({
+          from: { name: smtpFromName || '鲲穹文件传输', address: smtpFrom },
+          to: target.value,
+          subject: '鲲穹文件传输邮箱绑定验证码',
+          text: `你的鲲穹文件传输邮箱绑定验证码是：${debugCode}。验证码 10 分钟内有效，请勿泄露给他人。`,
+          html: `<div style="font-family:Arial,'Microsoft YaHei',sans-serif;color:#243b35;line-height:1.7;"><h2 style="margin:0 0 16px;">绑定邮箱验证码</h2><p>你的鲲穹文件传输邮箱绑定验证码是：</p><p style="font-size:28px;font-weight:700;letter-spacing:6px;color:#128c73;">${debugCode}</p><p style="color:#74877f;">验证码 10 分钟内有效，请勿泄露给他人。</p></div>`,
+        })
+      } catch (error) {
+        discardVerificationCode(target, 'bind')
+        throw httpError(502, `验证码邮件发送失败：${mailErrorReason(error)}`)
+      }
+      return res.status(201).json({
+        ok: true,
+        channel: 'email',
+        expiresIn: Math.floor(VERIFICATION_CODE_TTL_MS / 1000),
+        message: '验证码已发送至你的邮箱，请查收邮件。',
+      })
+    }
+    if (!isTencentSmsConfigured()) {
+      discardVerificationCode(target, 'bind')
+      return res.status(503).json({ message: '短信服务未配置，暂时无法发送验证码' })
+    }
+    try {
+      await sendTencentSmsCode(target.value, debugCode, tencentSmsBindTemplateId)
+    } catch (error) {
+      discardVerificationCode(target, 'bind')
+      throw httpError(502, `验证码短信发送失败：${error.message || '腾讯云短信服务异常'}`)
+    }
     res.status(201).json({
       ok: true,
-      channel: target.type === 'email' ? 'email' : 'sms',
+      channel: 'sms',
       expiresIn: Math.floor(VERIFICATION_CODE_TTL_MS / 1000),
-      debugCode,
-      message: target.type === 'email' ? '演示绑定验证码已生成，邮件通道接入后会自动发送。' : '演示绑定验证码已生成，短信通道接入后会自动发送。',
+      message: '验证码已发送至你的手机，请查收短信。',
     })
   } catch (error) {
     res.status(error.status || 500).json({ message: error.message || '验证码生成失败' })
@@ -436,6 +499,68 @@ app.get('/api/account/workspace', (req, res) => {
   const session = requireAuthSession(req, res)
   if (!session) return
   res.json(accountWorkspacePayload(session.user))
+})
+
+app.get('/api/account/team/overview', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const organization = accountOrganizationForUser(session.user.id)
+  if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
+  const memberIds = new Set(organization.members.map((member) => member.userId).filter(Boolean))
+  const memberUsage = organization.members.map((member) => {
+    const shares = metadata.shares.filter((item) => item.ownerUserId === member.userId)
+    const collections = metadata.collections.filter((item) => item.ownerUserId === member.userId)
+    const shareBytes = shares.reduce((sum, item) => sum + fileListSize(item.files), 0)
+    const collectionBytes = collections.reduce((sum, item) => sum + item.submissions.reduce((inner, submission) => inner + fileListSize(submission.files), 0), 0)
+    return {
+      id: member.id,
+      userId: member.userId,
+      displayName: member.displayName,
+      email: member.email,
+      phone: member.phone,
+      role: member.role,
+      status: member.status,
+      shareCount: shares.length,
+      collectionCount: collections.length,
+      fileCount: shares.reduce((sum, item) => sum + (item.files?.length || 0), 0) + collections.reduce((sum, item) => sum + item.submissions.reduce((inner, submission) => inner + (submission.files?.length || 0), 0), 0),
+      usedBytes: shareBytes + collectionBytes,
+      lastActivityAt: [ ...shares, ...collections ].map((item) => item.updatedAt || item.createdAt).filter(Boolean).sort().pop() || null,
+    }
+  })
+  const resources = [
+    ...metadata.shares.filter((item) => memberIds.has(item.ownerUserId)).map((item) => ({
+      id: item.id,
+      kind: 'share',
+      name: item.files?.[0]?.name || '文件分享',
+      ownerUserId: item.ownerUserId,
+      status: currentShareStatus(item),
+      fileCount: item.files?.length || 0,
+      totalSize: fileListSize(item.files),
+      downloadCount: item.downloadCount || 0,
+      createdAt: item.createdAt,
+      expiresAt: item.expiresAt || null,
+    })),
+    ...metadata.collections.filter((item) => memberIds.has(item.ownerUserId)).map((item) => ({
+      id: item.id || item.token,
+      kind: 'collection',
+      name: item.title || '收集任务',
+      ownerUserId: item.ownerUserId,
+      status: currentCollectionStatus(item),
+      fileCount: (item.submissions || []).reduce((sum, submission) => sum + (submission.files?.length || 0), 0),
+      totalSize: (item.submissions || []).reduce((sum, submission) => sum + fileListSize(submission.files), 0),
+      downloadCount: 0,
+      createdAt: item.createdAt,
+      expiresAt: item.deadline || null,
+    })),
+  ].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+  res.json({
+    organization: publicOrganization(organization, session.user.id),
+    canManage: isOrganizationManager(organization, session.user.id),
+    plan: accountEffectivePlanForUser(organization.ownerUserId),
+    capacity: accountUsageForUser(session.user.id),
+    memberUsage,
+    resources: resources.slice(0, 100),
+  })
 })
 
 app.post('/api/account/workspace', (req, res) => {
@@ -595,6 +720,9 @@ app.post('/api/account/upgrade-orders', async (req, res) => {
     const planId = normalizePlanId(req.body?.planId)
     if (planId === 'free') return res.status(400).json({ message: '基础版为默认权益，无需订购' })
     if (planId === effective.id) return res.status(409).json({ message: `当前已是${effective.label}权益` })
+    if (accountPlanRank(planId) <= accountPlanRank(effective.id)) {
+      return res.status(409).json({ message: `当前已享有${effective.label}权益，无需订购低等级套餐` })
+    }
 
     const staleBefore = Date.now() - 30 * 60 * 1000
     for (const item of upgradeOrdersForUser(stored.id)) {
@@ -619,7 +747,7 @@ app.post('/api/account/upgrade-orders', async (req, res) => {
       status: 'pending_payment',
       amount: Number.isFinite(remotePrice) && remotePrice >= 0
         ? Math.round(remotePrice * 100)
-        : ACCOUNT_PLANS[planId]?.monthlyPrice ?? null,
+        : configuredAccountPlan(planId)?.monthlyPrice ?? null,
       payType: 1,
       remoteOrderNo: '',
       remotePackageId: Number(memberPackage.id) || null,
@@ -664,7 +792,7 @@ app.post('/api/account/upgrade-orders/:orderId/confirm', async (req, res) => {
       : await createWebMemberPaymentOrder(session, order, payType)
     persistMetadata()
     res.json({
-      message: payment.pay_type === 2 ? '支付宝收银台已创建，请在新窗口完成支付' : '微信支付二维码已创建，请扫码支付',
+      message: payment.pay_type === 2 ? '支付宝收银台已创建，请在当前弹窗完成支付' : '微信支付二维码已创建，请扫码支付',
       order: upgradeOrderSummary(order),
       payment: publicPaymentPayload(payment),
     })
@@ -714,7 +842,11 @@ app.post('/api/admin/cleanup', (req, res) => {
 app.patch('/api/admin/config', (req, res) => {
   const session = requireAdminSession(req, res)
   if (!session) return
-  metadata.systemConfig = normalizeSystemConfig({ ...metadata.systemConfig, ...req.body })
+  metadata.systemConfig = normalizeSystemConfig({
+    ...metadata.systemConfig,
+    ...req.body,
+    planOverrides: req.body?.planOverrides || metadata.systemConfig.planOverrides,
+  })
   persistMetadata()
   recordAuditLog({ type: 'admin', action: '更新系统配置', userId: session.user.id, details: metadata.systemConfig })
   res.json({ config: metadata.systemConfig })
@@ -803,6 +935,7 @@ app.post('/api/shares', upload.array('files', MAX_FILES), normalizeUploadedFileN
     assertServiceWritable(req)
     const uploadedFiles = req.files || []
     if (!uploadedFiles.length) return res.status(400).json({ message: '至少选择一个文件' })
+    assertConfiguredUploadLimits(req, uploadedFiles)
     assertSafeUploadFiles(uploadedFiles)
 
     const relativePaths = parseJson(req.body.relativePaths, [])
@@ -830,7 +963,8 @@ app.post('/api/upload-sessions', (req, res) => {
   assertServiceWritable(req)
   const files = Array.isArray(req.body.files) ? req.body.files : []
   if (!files.length) return res.status(400).json({ message: '至少选择一个文件' })
-  if (files.length > MAX_FILES) return res.status(413).json({ message: `单次最多上传 ${MAX_FILES} 个文件` })
+  const config = normalizeSystemConfig(metadata.systemConfig)
+  if (files.length > config.maxBatchFiles) return res.status(413).json({ message: `单次最多上传 ${config.maxBatchFiles} 个文件` })
 
   const normalizedFiles = files.map((file, index) => ({
     name: normalizeUploadFileName(file.name || `文件 ${index + 1}`),
@@ -841,6 +975,7 @@ app.post('/api/upload-sessions', (req, res) => {
   }))
   const invalid = normalizedFiles.find((file) => file.size > MAX_FILE_SIZE)
   if (invalid) return res.status(413).json({ message: `${invalid.name} 超过 5 GB 限制` })
+  assertConfiguredUploadLimits(req, normalizedFiles)
   assertSafeUploadFiles(normalizedFiles)
   const ownerSession = authSessionFromRequest(req)
   let collectionTask = null
@@ -1165,6 +1300,7 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
     if (!uploadedFiles.length) {
       return res.status(400).json({ message: '至少选择一个文件' })
     }
+    assertConfiguredUploadLimits(req, uploadedFiles)
     assertSafeUploadFiles(uploadedFiles)
     const invalidFile = uploadedFiles.find((file) => file.size > task.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.originalname, task.allowedTypes))
     if (invalidFile) {
@@ -1502,7 +1638,7 @@ function normalizeUpgradeOrders(value = []) {
 }
 
 function upgradeOrderSummary(order = {}) {
-  const plan = ACCOUNT_PLANS[order.planId] || ACCOUNT_PLANS.free
+  const plan = configuredAccountPlan(order.planId)
   return {
     id: order.id,
     orderNo: order.orderNo,
@@ -1551,15 +1687,39 @@ function persistMetadata() {
 
 function normalizeSystemConfig(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const defaultShareDays = Number(source.defaultShareDays)
   const maxShareDays = Number(source.maxShareDays)
+  const anonymousMaxFileSizeMb = Number(source.anonymousMaxFileSizeMb)
+  const maxBatchFiles = Number(source.maxBatchFiles)
   const auditLogRetentionDays = Number(source.auditLogRetentionDays)
   const orphanGraceHours = Number(source.orphanGraceHours)
   return {
     maintenanceMode: Boolean(source.maintenanceMode),
+    defaultShareDays: Number.isFinite(defaultShareDays) ? Math.min(365, Math.max(1, Math.floor(defaultShareDays))) : DEFAULT_SYSTEM_CONFIG.defaultShareDays,
     maxShareDays: Number.isFinite(maxShareDays) ? Math.min(365, Math.max(1, Math.floor(maxShareDays))) : DEFAULT_SYSTEM_CONFIG.maxShareDays,
+    anonymousMaxFileSizeMb: Number.isFinite(anonymousMaxFileSizeMb) ? Math.min(5120, Math.max(1, Math.floor(anonymousMaxFileSizeMb))) : DEFAULT_SYSTEM_CONFIG.anonymousMaxFileSizeMb,
+    maxBatchFiles: Number.isFinite(maxBatchFiles) ? Math.min(MAX_FILES, Math.max(1, Math.floor(maxBatchFiles))) : DEFAULT_SYSTEM_CONFIG.maxBatchFiles,
     auditLogRetentionDays: Number.isFinite(auditLogRetentionDays) ? Math.min(3650, Math.max(1, Math.floor(auditLogRetentionDays))) : DEFAULT_SYSTEM_CONFIG.auditLogRetentionDays,
     orphanGraceHours: Number.isFinite(orphanGraceHours) ? Math.min(720, Math.max(1, Math.floor(orphanGraceHours))) : DEFAULT_SYSTEM_CONFIG.orphanGraceHours,
+    planOverrides: normalizePlanOverrides(source.planOverrides),
   }
+}
+
+function normalizePlanOverrides(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const overrides = {}
+  for (const planId of Object.keys(ACCOUNT_PLANS)) {
+    const plan = source[planId] && typeof source[planId] === 'object' ? source[planId] : {}
+    const totalGb = Number(plan.totalGb ?? plan.totalGB)
+    const monthlyPrice = Number(plan.monthlyPrice)
+    const validityDays = plan.validityDays === null || plan.validityDays === '' ? null : Number(plan.validityDays)
+    const normalized = {}
+    if (Number.isFinite(totalGb) && totalGb > 0) normalized.totalBytes = Math.round(Math.min(20480, totalGb) * 1024 ** 3)
+    if (Number.isFinite(monthlyPrice) && monthlyPrice >= 0) normalized.monthlyPrice = Math.round(monthlyPrice)
+    if (validityDays === null || (Number.isFinite(validityDays) && validityDays > 0)) normalized.validityDays = validityDays === null ? null : Math.min(3650, Math.floor(validityDays))
+    if (Object.keys(normalized).length) overrides[planId] = normalized
+  }
+  return overrides
 }
 
 function normalizeAuditLogs(value = []) {
@@ -1645,20 +1805,38 @@ function normalizePlanId(value) {
   return Object.prototype.hasOwnProperty.call(ACCOUNT_PLANS, id) ? id : 'free'
 }
 
+function accountPlanRank(planId) {
+  return ACCOUNT_PLAN_RANK[normalizePlanId(planId)] ?? 0
+}
+
+function configuredAccountPlan(planId) {
+  const id = normalizePlanId(planId)
+  const base = ACCOUNT_PLANS[id] || ACCOUNT_PLANS.free
+  const override = normalizeSystemConfig(metadataReady?.systemConfig || {}).planOverrides[id] || {}
+  return { ...base, ...override, id: base.id, label: base.label, permanent: base.permanent, team: base.team, features: base.features }
+}
+
+function configuredAccountPlans() {
+  return Object.keys(ACCOUNT_PLANS).map(configuredAccountPlan)
+}
+
 function accountPlanForUser(user = {}) {
-  const plan = ACCOUNT_PLANS[normalizePlanId(user.planId)] || ACCOUNT_PLANS.free
+  const plan = configuredAccountPlan(user.planId)
   const expiresAt = user.planExpiresAt ? new Date(user.planExpiresAt).getTime() : 0
-  if (plan.id !== 'free' && Number.isFinite(expiresAt) && expiresAt <= Date.now()) return ACCOUNT_PLANS.free
+  if (plan.id !== 'free' && Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now()) return configuredAccountPlan('free')
   return plan
 }
 
 function accountEffectivePlanForUser(user = {}) {
   const userId = typeof user === 'string' ? user : user?.id
+  const directUser = typeof user === 'string' ? accountUserById(user) || {} : user
+  const directPlan = accountPlanForUser(directUser)
+  if (directPlan.id !== 'free') return directPlan
   const organization = accountOrganizationForUser(userId)
   if (organization && organization.ownerUserId !== userId) {
     return accountPlanForUser(accountUserById(organization.ownerUserId) || {})
   }
-  return accountPlanForUser(typeof user === 'string' ? accountUserById(user) || {} : user)
+  return directPlan
 }
 
 function isAdminUser(user = {}) {
@@ -1749,12 +1927,13 @@ function createOrganization(user, name) {
 
 function accountWorkspacePayload(user) {
   const stored = accountUserById(user.id) || user
+  const plan = accountEffectivePlanForUser(stored)
   const organization = accountOrganizationForUser(user.id)
   return {
-    plan: accountEffectivePlanForUser(stored),
+    plan,
     planStartedAt: stored.planStartedAt || null,
-    planExpiresAt: stored.planExpiresAt || null,
-    plans: Object.values(ACCOUNT_PLANS),
+    planExpiresAt: plan.permanent ? null : stored.planExpiresAt || null,
+    plans: configuredAccountPlans(),
     capacity: accountUsageForUser(user.id),
     organization: publicOrganization(organization, user.id),
     canManage: Boolean(organization && isOrganizationManager(organization, user.id)),
@@ -1831,6 +2010,7 @@ function buildAdminOverview() {
     ...metadata.collections.map((item) => adminResourceSummary('collection', item)),
   ].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   const totalBytes = resources.reduce((sum, item) => sum + item.totalSize, 0)
+  const trend = adminTrendStats()
   return {
     stats: {
       users: users.length,
@@ -1841,13 +2021,43 @@ function buildAdminOverview() {
       totalBytes,
       activeResources: resources.filter((item) => item.status === 'active').length,
       reviewResources: resources.filter((item) => item.reviewStatus === '待审核').length,
+      activeOrganizations: Object.keys(metadata.organizations || {}).length,
+      pendingCleanup: resources.filter((item) => item.status !== 'active' || (item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now())).length,
     },
+    trend,
     users: users.slice(0, 200),
     resources: resources.slice(0, 200),
     auditLogs: normalizeAuditLogs(metadata.auditLogs).slice(0, 100),
     config: normalizeSystemConfig(metadata.systemConfig),
-    plans: Object.values(ACCOUNT_PLANS),
+    plans: configuredAccountPlans(),
   }
+}
+
+function adminTrendStats() {
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date()
+    date.setHours(0, 0, 0, 0)
+    date.setDate(date.getDate() - (6 - index))
+    return date
+  })
+  return days.map((date) => {
+    const next = new Date(date)
+    next.setDate(next.getDate() + 1)
+    const logs = normalizeAuditLogs(metadata.auditLogs).filter((item) => {
+      const time = new Date(item.createdAt).getTime()
+      return time >= date.getTime() && time < next.getTime()
+    })
+    const activeUsers = new Set(logs.map((item) => item.userId).filter(Boolean)).size
+    const uploads = logs.filter((item) => /POST (?:\/api\/shares|\/api\/upload-sessions|\/api\/collections)/.test(item.action)).length
+    const downloads = logs.filter((item) => /GET \/api\/(?:shares|collections\/manage)\/.*download/.test(item.action) && item.status >= 200 && item.status < 300).length
+    return {
+      date: date.toISOString().slice(0, 10),
+      label: `${date.getMonth() + 1}/${date.getDate()}`,
+      activeUsers,
+      uploads,
+      downloads,
+    }
+  })
 }
 
 function cleanupStorageOrphans() {
@@ -2049,6 +2259,18 @@ function assertSafeUploadFiles(files = []) {
     }
     file.reviewStatus = verdict.status
   }
+}
+
+function assertConfiguredUploadLimits(req, files = []) {
+  const config = normalizeSystemConfig(metadata.systemConfig)
+  if (files.length > config.maxBatchFiles) {
+    throw httpError(413, `单次最多上传 ${config.maxBatchFiles} 个文件`)
+  }
+  const isAnonymous = !authSessionFromRequest(req)?.user?.id
+  if (!isAnonymous) return
+  const maxBytes = config.anonymousMaxFileSizeMb * 1024 * 1024
+  const invalid = files.find((file) => Number(file.size || 0) > maxBytes)
+  if (invalid) throw httpError(413, `匿名上传单文件不能超过 ${config.anonymousMaxFileSizeMb} MB`)
 }
 
 function enforceDownloadOrigin(req) {
@@ -2328,14 +2550,18 @@ function normalizeAccountUser(user = {}) {
       : null
   const id = base.id || (contactTarget ? accountUserIdForTarget(contactTarget) : '')
   if (!id) return null
+  const planId = normalizePlanId(user.planId || base.planId || 'free')
+  const plan = configuredAccountPlan(planId)
+  const planExpiresAt = plan.permanent ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
+  if (plan.permanent && (user.planExpiresAt || base.planExpiresAt)) metadataNeedsPersist = true
   const now = new Date().toISOString()
   return {
     ...base,
     id,
     loginMethods: mergeLoginMethods(base.loginMethods, user.loginMethods),
-    planId: normalizePlanId(user.planId || base.planId || 'free'),
+    planId,
     planStartedAt: normalizeRecordDate(user.planStartedAt || base.planStartedAt),
-    planExpiresAt: normalizeRecordDate(user.planExpiresAt || base.planExpiresAt),
+    planExpiresAt,
     organizationId: trimRecordString(user.organizationId || base.organizationId, 80),
     organizationRole: user.organizationRole === 'owner' || user.organizationRole === 'member' ? user.organizationRole : '',
     status: user.status === 'disabled' ? 'disabled' : 'active',
@@ -2371,7 +2597,10 @@ function mergeAccountUser(existing = null, incoming = {}) {
     providerAvatar: nextProviderAvatar,
     provider: normalized.provider || existing.provider,
     loginMethods: mergeLoginMethods(existing.loginMethods, normalized.loginMethods),
-    planId: existing.planId || normalized.planId || 'free',
+    // Do not let a stale upstream free record downgrade a locally confirmed paid plan.
+    planId: existing.planId && existing.planId !== 'free' && normalized.planId === 'free'
+      ? existing.planId
+      : normalized.planId || existing.planId || 'free',
     planStartedAt: normalized.planStartedAt || existing.planStartedAt || null,
     planExpiresAt: normalized.planExpiresAt || existing.planExpiresAt || null,
     organizationId: normalized.organizationId || existing.organizationId,
@@ -2494,6 +2723,92 @@ function createVerificationCode(target, scene) {
   metadata.verificationCodes = metadata.verificationCodes.slice(0, MAX_VERIFICATION_CODES)
   persistMetadata()
   return code
+}
+
+function discardVerificationCode(target, scene) {
+  const before = metadata.verificationCodes.length
+  metadata.verificationCodes = metadata.verificationCodes.filter((item) => !(item.type === target.type && item.target === target.value && item.scene === scene))
+  if (metadata.verificationCodes.length !== before) persistMetadata()
+}
+
+function isTencentSmsConfigured() {
+  return Boolean(
+    tencentSmsSecretId
+      && tencentSmsSecretKey
+      && tencentSmsSdkAppId
+      && tencentSmsSignName
+      && tencentSmsBindTemplateId,
+  )
+}
+
+async function sendTencentSmsCode(phone, code, templateId) {
+  const service = 'sms'
+  const host = 'sms.tencentcloudapi.com'
+  const action = 'SendSms'
+  const version = '2021-01-11'
+  const timestamp = Math.floor(Date.now() / 1000)
+  const date = new Date(timestamp * 1000).toISOString().slice(0, 10)
+  const payload = JSON.stringify({
+    SmsSdkAppId: tencentSmsSdkAppId,
+    SignName: tencentSmsSignName,
+    TemplateId: String(templateId),
+    // Template 2602343 is a single-variable verification-code template.
+    // Expiration is enforced by the server and does not need a second SMS parameter.
+    TemplateParamSet: [code],
+    PhoneNumberSet: [phone.startsWith('+') ? phone : `+86${phone}`],
+  })
+  const canonicalHeaders = `content-type:application/json; charset=utf-8\nhost:${host}\nx-tc-action:${action.toLowerCase()}\n`
+  const signedHeaders = 'content-type;host;x-tc-action'
+  const canonicalRequest = [
+    'POST',
+    '/',
+    '',
+    canonicalHeaders,
+    signedHeaders,
+    sha256(payload),
+  ].join('\n')
+  const credentialScope = `${date}/${service}/tc3_request`
+  const stringToSign = [
+    'TC3-HMAC-SHA256',
+    String(timestamp),
+    credentialScope,
+    sha256(canonicalRequest),
+  ].join('\n')
+  const secretDate = hmac(`TC3${tencentSmsSecretKey}`, date)
+  const secretService = hmac(secretDate, service)
+  const secretSigning = hmac(secretService, 'tc3_request')
+  const signature = hmac(secretSigning, stringToSign).toString('hex')
+  const response = await fetch(`https://${host}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `TC3-HMAC-SHA256 Credential=${tencentSmsSecretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      'Content-Type': 'application/json; charset=utf-8',
+      Host: host,
+      'X-TC-Action': action,
+      'X-TC-Version': version,
+      'X-TC-Timestamp': String(timestamp),
+      'X-TC-Region': tencentSmsRegion,
+    },
+    body: payload,
+  })
+  const result = await response.json().catch(() => ({}))
+  const error = result.Response?.Error
+  if (!response.ok || error) {
+    throw new Error(error?.Message || `腾讯云短信返回 HTTP ${response.status}`)
+  }
+  const sendStatus = result.Response?.SendStatusSet?.[0]
+  if (sendStatus?.Code !== 'Ok') {
+    throw new Error(sendStatus?.Message || '腾讯云短信未接受发送请求')
+  }
+  return result.Response
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex')
+}
+
+function hmac(key, value) {
+  return crypto.createHmac('sha256', key).update(value).digest()
 }
 
 function verifyAuthCode(target, value, scene) {
@@ -2669,6 +2984,12 @@ function shouldDeliverAccountMessage(userId, eventType) {
   return !eventType || !Object.prototype.hasOwnProperty.call(settings, eventType) || settings[eventType] !== false
 }
 
+function shouldDeliverAccountEmail(userId, eventType) {
+  const settings = accountNotificationSettingsForUser(userId)
+  if (!settings.email) return false
+  return !eventType || !Object.prototype.hasOwnProperty.call(settings, eventType) || settings[eventType] !== false
+}
+
 function findUsersByRecipient(recipient) {
   const raw = trimRecordString(recipient, 160).toLowerCase()
   if (!raw) return []
@@ -2702,7 +3023,11 @@ async function notifyShareRecipients(share, req, ownerUser = null) {
     if (deliveredUserIds.length) statusParts.push('站内已发送')
     let emailSent = false
     if (target?.type === 'email') {
-      if (!isSmtpConfigured()) {
+      const matchedEmailUsers = matchedUsers.filter((user) => normalizeEmailValue(user.email) === target.value)
+      const emailEnabled = !matchedEmailUsers.length || matchedEmailUsers.some((user) => shouldDeliverAccountEmail(user.id, 'incomingShare'))
+      if (!emailEnabled) {
+        statusParts.push('邮件提醒已关闭')
+      } else if (!isSmtpConfigured()) {
         statusParts.push('邮件通道未配置')
       } else {
         try {
@@ -3084,7 +3409,7 @@ async function resolveWebMemberPackage(session, planId) {
     const configured = packages.find((item) => Number(item.id) === configuredId)
     if (configured) return { info, package: configured }
   }
-  const planLabel = ACCOUNT_PLANS[planId]?.label || ''
+  const planLabel = configuredAccountPlan(planId)?.label || ''
   const normalizePackageName = (value) => String(value || '')
     .replace(/\s+/g, '')
     .replace(/[（(].*?[）)]/g, '')
@@ -3137,7 +3462,7 @@ async function checkWebMemberPaymentStatus(session, remoteOrderNo) {
 function activatePaidUpgradeOrder(order, expireAt = null) {
   const account = accountUserById(order.userId)
   if (!account) throw httpError(404, '支付用户不存在')
-  const plan = ACCOUNT_PLANS[order.planId] || ACCOUNT_PLANS.free
+  const plan = configuredAccountPlan(order.planId)
   const currentExpiry = account.planExpiresAt ? new Date(account.planExpiresAt).getTime() : 0
   const remoteExpiry = expireAt ? new Date(expireAt).getTime() : 0
   const nextExpiry = remoteExpiry > Date.now()
@@ -3145,11 +3470,15 @@ function activatePaidUpgradeOrder(order, expireAt = null) {
     : Date.now() + (Number(order.remotePackageDays) || plan.validityDays || 30) * 86400000
   account.planId = order.planId
   account.planStartedAt = account.planStartedAt || new Date().toISOString()
-  account.planExpiresAt = new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
+  account.planExpiresAt = plan.permanent
+    ? null
+    : new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
   account.updatedAt = new Date().toISOString()
   order.status = 'paid'
   order.paidAt = new Date().toISOString()
-  order.remoteExpireAt = expireAt || new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
+  order.remoteExpireAt = plan.permanent
+    ? null
+    : expireAt || new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
   order.updatedAt = new Date().toISOString()
   upsertAccountUser(account)
   syncAccountUserSessions(account)
@@ -3157,7 +3486,9 @@ function activatePaidUpgradeOrder(order, expireAt = null) {
     category: 'other',
     eventType: 'membershipActivated',
     title: '会员权益已开通',
-    body: `你的${plan.label}已开通，有效期至${new Date(account.planExpiresAt).toLocaleString('zh-CN')}。`,
+    body: plan.permanent
+      ? `你的${plan.label}已开通，文件永久保存。`
+      : `你的${plan.label}已开通，有效期至${new Date(account.planExpiresAt).toLocaleString('zh-CN')}。`,
   })
 }
 
@@ -3312,7 +3643,12 @@ function isLoopbackHost(hostname) {
 }
 
 function appendAuthResult(value, status, message = '') {
-  const url = new URL(value)
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    url = new URL(`http://localhost:${serverPort}/`)
+  }
   url.searchParams.set('login', status)
   if (message) url.searchParams.set('message', message)
   else url.searchParams.delete('message')
@@ -3435,13 +3771,14 @@ async function createShareFromTempFiles(tempFiles, options, req) {
 }
 
 function readShareOptions(body = {}, user = null) {
-  const requestedExpiryDays = String(body.expiryDays || '3')
-  const maxShareDays = normalizeSystemConfig(metadata.systemConfig).maxShareDays
+  const config = normalizeSystemConfig(metadata.systemConfig)
+  const requestedExpiryDays = String(body.expiryDays || config.defaultShareDays)
+  const maxShareDays = config.maxShareDays
   if (requestedExpiryDays === '0' && !accountEffectivePlanForUser(user || {}).permanent) {
     throw httpError(403, '永久保存需要会员版或更高权益')
   }
   return {
-    expiryDays: requestedExpiryDays === '0' ? '0' : String(Math.min(maxShareDays, Math.max(1, Number(requestedExpiryDays) || 3))),
+    expiryDays: requestedExpiryDays === '0' ? '0' : String(Math.min(maxShareDays, Math.max(1, Number(requestedExpiryDays) || config.defaultShareDays))),
     downloadLimit: String(body.downloadLimit || 'unlimited'),
     password: String(body.password || ''),
     codeLength: Number(body.codeLength || 6),
