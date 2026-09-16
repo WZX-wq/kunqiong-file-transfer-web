@@ -133,6 +133,10 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   collectionExpiring: true,
   collectionSubmitted: true,
 }
+const DEFAULT_FILE_CLEANUP_SETTINGS = {
+  enabled: false,
+  days: 3,
+}
 const DEFAULT_ACCOUNT_MESSAGES = [
   { id: 'system-welcome', category: 'system', eventType: 'welcome', title: '欢迎使用鲲穹文件传输', body: '你的账户已连接，可以开始发送和收集文件。' },
   { id: 'official-update', category: 'official', eventType: 'official', title: '鲲穹服务通知', body: '站内消息、账号容量和账号绑定已接入当前账户。' },
@@ -301,6 +305,18 @@ app.patch('/api/auth/profile', (req, res) => {
   syncAccountUserSessions(user)
   persistMetadata()
   res.json({ user: publicAccountUser(user) })
+})
+
+app.put('/api/account/file-cleanup-settings', (req, res) => {
+  const session = authSessionFromRequest(req)
+  if (!session) return res.status(401).json({ message: '请先登录' })
+  const settings = normalizeFileCleanupSettings(req.body?.settings)
+  session.user = { ...session.user, fileCleanup: settings }
+  const user = upsertAccountUser(session.user)
+  syncAccountUserSessions(user)
+  cleanupExpired()
+  persistMetadata()
+  res.json({ user: publicAccountUser(user), settings })
 })
 
 app.post('/api/auth/code', async (req, res) => {
@@ -2155,12 +2171,44 @@ function cleanupExpired() {
   for (const task of metadata.collections) {
     if (maybeNotifyExpiringCollection(task, now)) changed = true
   }
+  if (cleanupUserExpiredFiles(now)) changed = true
   const activeSessions = metadata.sessions.filter((session) => new Date(session.expiresAt).getTime() > now)
   if (activeSessions.length !== metadata.sessions.length) {
     metadata.sessions = activeSessions
     changed = true
   }
   if (changed) persistMetadata()
+}
+
+function cleanupUserExpiredFiles(now = Date.now()) {
+  let changed = false
+  for (const share of metadata.shares) {
+    if (share.teamResource || share.cleanedAt || !share.ownerUserId || !share.expiresAt || !share.files?.length) continue
+    const owner = accountUserById(share.ownerUserId)
+    const settings = normalizeFileCleanupSettings(owner?.fileCleanup)
+    const expiresAt = new Date(share.expiresAt).getTime()
+    if (!settings.enabled || !Number.isFinite(expiresAt) || now < expiresAt + settings.days * 86400000) continue
+    removeDirectory(path.join(filesRoot, share.id))
+    share.files = []
+    share.cleanedAt = new Date(now).toISOString()
+    share.status = 'closed'
+    share.closeReason = 'auto_cleanup'
+    changed = true
+  }
+  for (const task of metadata.collections) {
+    if (task.cleanedAt || !task.ownerUserId || !task.deadline || !task.submissions?.some((submission) => submission.files?.length)) continue
+    const owner = accountUserById(task.ownerUserId)
+    const settings = normalizeFileCleanupSettings(owner?.fileCleanup)
+    const deadline = new Date(task.deadline).getTime()
+    if (!settings.enabled || !Number.isFinite(deadline) || now < deadline + settings.days * 86400000) continue
+    for (const submission of task.submissions) {
+      removeDirectory(path.join(collectionsRoot, task.id, submission.id))
+      submission.files = []
+    }
+    task.cleanedAt = new Date(now).toISOString()
+    changed = true
+  }
+  return changed
 }
 
 function cleanupUploadSessions() {
@@ -2559,6 +2607,7 @@ function publicUser(user = {}) {
     organizationId: trimRecordString(user.organizationId, 80),
     organizationRole: user.organizationRole === 'owner' ? 'owner' : user.organizationRole === 'member' ? 'member' : '',
     status: user.status === 'disabled' ? 'disabled' : 'active',
+    fileCleanup: normalizeFileCleanupSettings(user.fileCleanup),
     createdAt: normalizeRecordDate(user.createdAt),
     updatedAt: normalizeRecordDate(user.updatedAt),
   }
@@ -2618,6 +2667,7 @@ function normalizeAccountUser(user = {}) {
     organizationId: trimRecordString(user.organizationId || base.organizationId, 80),
     organizationRole: user.organizationRole === 'owner' || user.organizationRole === 'member' ? user.organizationRole : '',
     status: user.status === 'disabled' ? 'disabled' : 'active',
+    fileCleanup: normalizeFileCleanupSettings(user.fileCleanup),
     createdAt: normalizeRecordDate(user.createdAt) || now,
     updatedAt: normalizeRecordDate(user.updatedAt) || now,
   }
@@ -2659,6 +2709,7 @@ function mergeAccountUser(existing = null, incoming = {}) {
     organizationId: normalized.organizationId || existing.organizationId,
     organizationRole: normalized.organizationRole || existing.organizationRole,
     status: existing.status === 'disabled' ? 'disabled' : normalized.status || existing.status || 'active',
+    fileCleanup: normalized.fileCleanup || existing.fileCleanup || DEFAULT_FILE_CLEANUP_SETTINGS,
     createdAt: existing.createdAt || normalized.createdAt,
     updatedAt: new Date().toISOString(),
   }
@@ -2877,7 +2928,7 @@ function accountUsageForUser(userId) {
   const key = accountRecordOwnerKey(userId)
   const user = accountUserById(key) || {}
   const plan = accountEffectivePlanForUser(user)
-  const ownedShares = metadata.shares.filter((share) => share.ownerUserId === key && !share.teamResource && share.status === 'active')
+  const ownedShares = metadata.shares.filter((share) => share.ownerUserId === key && !share.teamResource && !share.cleanedAt)
   const ownedCollections = metadata.collections.filter((task) => task.ownerUserId === key && !task.cleanedAt)
   const shareBytes = ownedShares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const collectionBytes = ownedCollections.reduce((sum, task) => sum + task.submissions.reduce((inner, submission) => inner + fileListSize(submission.files), 0), 0)
@@ -2996,6 +3047,15 @@ function normalizeNotificationSettings(settings = {}) {
     }
   }
   return next
+}
+
+function normalizeFileCleanupSettings(settings = {}) {
+  const source = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}
+  const days = Number(source.days)
+  return {
+    enabled: Boolean(source.enabled),
+    days: [1, 3, 7].includes(days) ? days : DEFAULT_FILE_CLEANUP_SETTINGS.days,
+  }
 }
 
 function accountNotificationSettingsForUser(userId) {

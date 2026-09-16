@@ -3247,6 +3247,7 @@ const SETTINGS_NAV_ITEMS = [
   { key: 'profile', label: '个人资料', icon: UserRound, path: '/settings/profile' },
   { key: 'security', label: '账号与安全', icon: ShieldCheck, path: '/settings/security' },
   { key: 'notice', label: '消息通知', icon: Bell, path: '/settings/notice' },
+  { key: 'cleanup', label: '文件清理', icon: Trash2, path: '/settings/cleanup' },
 ]
 
 const DEFAULT_NOTICE_SETTINGS = {
@@ -3270,6 +3271,8 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
   const [profileError, setProfileError] = useState('')
   const [noticeSettings, setNoticeSettings] = useState(DEFAULT_NOTICE_SETTINGS)
   const [noticeError, setNoticeError] = useState('')
+  const [fileCleanupSettings, setFileCleanupSettings] = useState({ enabled: false, days: 3 })
+  const [fileCleanupError, setFileCleanupError] = useState('')
   const [bindingType, setBindingType] = useState('')
   const [avatarPreview, setAvatarPreview] = useState('')
   const [avatarError, setAvatarError] = useState('')
@@ -3281,9 +3284,11 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
     setNickname(user.nickname || user.username || '')
     setNoticeSettings(normalizeNoticeSettings(user.notificationSettings))
     setNoticeError('')
+    setFileCleanupSettings(normalizeFileCleanupSettings(user.fileCleanup))
+    setFileCleanupError('')
     setAvatarPreview('')
     setAvatarError('')
-  }, [user?.id, user?.notificationSettings])
+  }, [user?.id, user?.notificationSettings, user?.fileCleanup])
 
   const updateNoticeSetting = (key) => {
     setNoticeError('')
@@ -3301,6 +3306,22 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
         })
       return next
     })
+  }
+
+  const updateFileCleanup = async (patch) => {
+    const previous = fileCleanupSettings
+    const next = normalizeFileCleanupSettings({ ...previous, ...patch })
+    setFileCleanupSettings(next)
+    setFileCleanupError('')
+    try {
+      const data = await saveCloudFileCleanupSettings(next)
+      const saved = normalizeFileCleanupSettings(data.settings)
+      setFileCleanupSettings(saved)
+      onUpdateUser?.({ ...user, fileCleanup: saved })
+    } catch (error) {
+      setFileCleanupSettings(previous)
+      setFileCleanupError(error.message || '文件清理设置保存失败')
+    }
   }
 
   const saveNickname = async (event) => {
@@ -3456,6 +3477,29 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
                 <NoticeToggle label="我创建的收集任务有人提交" checked={noticeSettings.collectionSubmitted} onChange={() => updateNoticeSetting('collectionSubmitted')} />
               </div>
               {noticeError && <p className="settings-form-error settings-notice-error">{noticeError}</p>}
+            </>
+          )}
+
+          {section === 'cleanup' && (
+            <>
+              <SettingsPanelHeader eyebrow="账户设置" title="文件清理" detail="控制已过期文件是否自动删除，清理后才会释放账号容量。" onBack={onBack} />
+              <div className="settings-notice-group file-cleanup-settings">
+                <h2><Trash2 size={16} /> 过期文件自动清理</h2>
+                <NoticeToggle
+                  label="自动删除过期文件"
+                  detail="关闭后文件不会自动删除，但会继续占用空间；开启后按下方规则清理。"
+                  checked={fileCleanupSettings.enabled}
+                  onChange={() => updateFileCleanup({ enabled: !fileCleanupSettings.enabled })}
+                />
+                <div className={`file-cleanup-options ${fileCleanupSettings.enabled ? '' : 'disabled'}`}>
+                  <div className="settings-row-label"><strong>过期后多久删除</strong><span>仅清理已过期的分享文件和收集任务文件。</span></div>
+                  <div className="option-grid compact-grid">
+                    {[1, 3, 7].map((days) => <button type="button" key={days} disabled={!fileCleanupSettings.enabled} className={fileCleanupSettings.days === days ? 'selected' : ''} onClick={() => updateFileCleanup({ days })}>{days} 天{fileCleanupSettings.days === days && <Check size={14} />}</button>)}
+                  </div>
+                </div>
+                {fileCleanupError && <p className="settings-form-error">{fileCleanupError}</p>}
+                <div className="settings-notice"><HardDrive size={16} /><span>文件只有在真正清理后才会从容量统计中扣除；关闭自动清理不会删除已有文件。</span></div>
+              </div>
             </>
           )}
         </div>
@@ -4606,6 +4650,13 @@ async function saveCloudNoticeSettings(settings) {
   return apiRequest('/api/account/notification-settings', {
     method: 'PUT',
     body: JSON.stringify({ settings: normalizeNoticeSettings(settings) }),
+  })
+}
+
+async function saveCloudFileCleanupSettings(settings) {
+  return apiRequest('/api/account/file-cleanup-settings', {
+    method: 'PUT',
+    body: JSON.stringify({ settings: normalizeFileCleanupSettings(settings) }),
   })
 }
 
@@ -5998,6 +6049,15 @@ function normalizeNoticeSettings(settings = {}) {
     })
   }
   return next
+}
+
+function normalizeFileCleanupSettings(settings = {}) {
+  const source = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}
+  const days = Number(source.days)
+  return {
+    enabled: Boolean(source.enabled),
+    days: [1, 3, 7].includes(days) ? days : 3,
+  }
 }
 
 function normalizeMessages(messages = []) {

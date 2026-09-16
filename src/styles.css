@@ -202,6 +202,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-notice-row > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .settings-notice-row strong { overflow: hidden; color: #54746b; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .settings-notice-row span { color: #a0b1ac; font-size: 12px; line-height: 1.5; }
+.file-cleanup-settings { padding-bottom: 24px; }
+.file-cleanup-settings h2 svg { color: var(--accent); }
+.file-cleanup-options { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .75fr); align-items: center; gap: 18px; padding: 20px 0; border-bottom: 1px solid #edf3f0; }
+.file-cleanup-options.disabled { opacity: .52; }
+.file-cleanup-options .option-grid { margin: 0; }
+.file-cleanup-options .option-grid button:disabled { cursor: not-allowed; }
 .settings-state { display: flex; align-items: center; flex-direction: column; justify-content: center; min-height: 500px; padding: 38px 24px; background: #fff; border: 1px solid #e0ebe7; border-radius: 12px; box-shadow: var(--shadow); text-align: center; }
 .settings-state .loading-dot { margin-bottom: 16px; }
 .settings-state-icon { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 17px; color: var(--accent); background: var(--accent-pale); border-radius: 15px; }
@@ -1204,7 +1210,7 @@ h1, h2, p { margin-top: 0; }
   .settings-user-card > .user-avatar { grid-row: span 3; margin: 0; }
   .settings-user-card > strong, .settings-user-card > span { max-width: none; }
   .settings-account-line { grid-column: 2; justify-content: flex-start; width: auto; margin-top: 8px; padding-top: 8px; }
-  .settings-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 5px; }
+  .settings-nav { display: grid; grid-template-columns: repeat(4, minmax(92px, 1fr)); gap: 4px; padding: 5px; overflow-x: auto; }
   .settings-nav button { justify-content: center; gap: 5px; min-height: 46px; padding: 0 5px; border-left: 0; border-bottom: 3px solid transparent; font-size: 12px; }
   .settings-nav button svg:last-child { display: none; }
   .settings-nav button.active { border-bottom-color: var(--accent); }
@@ -1221,6 +1227,7 @@ h1, h2, p { margin-top: 0; }
   .settings-avatar-note { align-items: flex-start; flex-direction: column; justify-content: center; gap: 6px; padding: 9px 0; }
   .settings-profile-edit { grid-template-columns: 1fr; }
   .settings-profile-edit .primary-button { width: 100%; }
+  .file-cleanup-options { grid-template-columns: 1fr; gap: 12px; }
   .account-benefits { grid-template-columns: 1fr; }
   .account-capacity-card > div:first-child { align-items: flex-start; flex-direction: column; gap: 5px; }
   .account-bind-code-row { grid-template-columns: 1fr; }
