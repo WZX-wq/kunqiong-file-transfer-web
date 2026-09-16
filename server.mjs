@@ -79,7 +79,7 @@ const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections'
 const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
 const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
-const TEST_ENTERPRISE_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_TEST_ENTERPRISE_USER_IDS))
+const TEST_ENTERPRISE_USER_KEYS = new Set(splitConfigValues(process.env.KUNQIONG_TEST_ENTERPRISE_USER_KEYS || process.env.KUNQIONG_TEST_ENTERPRISE_USER_IDS).map((value) => value.toLowerCase()))
 const testVerificationDebugMode = process.env.NODE_ENV === 'test'
   && parseBooleanEnv(process.env.KUNQIONG_VERIFICATION_DEBUG, false)
 const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']
@@ -2703,7 +2703,11 @@ function normalizeAccountUser(user = {}) {
       : null
   const id = base.id || (contactTarget ? accountUserIdForTarget(contactTarget) : '')
   if (!id) return null
-  const testEnterpriseOverride = process.env.NODE_ENV === 'test' && TEST_ENTERPRISE_USER_IDS.has(id)
+  const testEnterpriseKeys = [id, base.username, base.email, base.phone]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+  const testEnterpriseOverride = process.env.NODE_ENV === 'test'
+    && testEnterpriseKeys.some((value) => TEST_ENTERPRISE_USER_KEYS.has(value))
   const planId = testEnterpriseOverride ? 'enterprise' : normalizePlanId(user.planId || base.planId || 'free')
   const plan = configuredAccountPlan(planId)
   const planExpiresAt = plan.permanent ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
