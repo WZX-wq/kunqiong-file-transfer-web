@@ -80,6 +80,8 @@ const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
 const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
 const TEST_ENTERPRISE_USER_KEYS = new Set(splitConfigValues(process.env.KUNQIONG_TEST_ENTERPRISE_USER_KEYS || process.env.KUNQIONG_TEST_ENTERPRISE_USER_IDS).map((value) => value.toLowerCase()))
+const testEnterpriseForAllUsers = process.env.NODE_ENV === 'test'
+  && parseBooleanEnv(process.env.KUNQIONG_TEST_ENTERPRISE_ALL, false)
 const testVerificationDebugMode = process.env.NODE_ENV === 'test'
   && parseBooleanEnv(process.env.KUNQIONG_VERIFICATION_DEBUG, false)
 const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']
@@ -234,7 +236,19 @@ app.use((req, res, next) => {
 })
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'kunqiong-local-api', release: releaseSha, now: new Date().toISOString() })
+  res.json({
+    ok: true,
+    service: 'kunqiong-local-api',
+    release: releaseSha,
+    now: new Date().toISOString(),
+    test: process.env.NODE_ENV === 'test',
+    testEnterpriseForAllUsers,
+    verification: {
+      email: isSmtpConfigured(),
+      sms: isTencentSmsConfigured(),
+      debugFallback: testVerificationDebugMode,
+    },
+  })
 })
 
 app.get('/api/runtime-config', (_req, res) => {
@@ -2706,8 +2720,8 @@ function normalizeAccountUser(user = {}) {
   const testEnterpriseKeys = [id, base.username, base.email, base.phone]
     .map((value) => String(value || '').trim().toLowerCase())
     .filter(Boolean)
-  const testEnterpriseOverride = process.env.NODE_ENV === 'test'
-    && testEnterpriseKeys.some((value) => TEST_ENTERPRISE_USER_KEYS.has(value))
+  const testEnterpriseOverride = testEnterpriseForAllUsers
+    || (process.env.NODE_ENV === 'test' && testEnterpriseKeys.some((value) => TEST_ENTERPRISE_USER_KEYS.has(value)))
   const planId = testEnterpriseOverride ? 'enterprise' : normalizePlanId(user.planId || base.planId || 'free')
   const plan = configuredAccountPlan(planId)
   const planExpiresAt = plan.permanent ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
