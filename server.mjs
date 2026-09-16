@@ -79,6 +79,9 @@ const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections'
 const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
 const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
+const TEST_ENTERPRISE_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_TEST_ENTERPRISE_USER_IDS))
+const testVerificationDebugMode = process.env.NODE_ENV === 'test'
+  && parseBooleanEnv(process.env.KUNQIONG_VERIFICATION_DEBUG, false)
 const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']
 const COLLECTION_TYPE_EXTENSIONS = {
   图片: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif', '.ico'],
@@ -338,6 +341,15 @@ app.post('/api/auth/code', async (req, res) => {
     if (target.type === 'email') {
       const transporter = getEmailTransporter()
       if (!transporter) {
+        if (testVerificationDebugMode) {
+          return res.status(201).json({
+            ok: true,
+            channel: 'email',
+            debugCode,
+            expiresIn: Math.floor(VERIFICATION_CODE_TTL_MS / 1000),
+            message: '测试环境未配置 SMTP，已生成演示验证码。',
+          })
+        }
         discardVerificationCode(target, 'bind')
         return res.status(503).json({ message: '邮箱 SMTP 服务未配置，暂时无法发送验证码' })
       }
@@ -350,6 +362,15 @@ app.post('/api/auth/code', async (req, res) => {
           html: `<div style="font-family:Arial,'Microsoft YaHei',sans-serif;color:#243b35;line-height:1.7;"><h2 style="margin:0 0 16px;">绑定邮箱验证码</h2><p>你的鲲穹文件传输邮箱绑定验证码是：</p><p style="font-size:28px;font-weight:700;letter-spacing:6px;color:#128c73;">${debugCode}</p><p style="color:#74877f;">验证码 10 分钟内有效，请勿泄露给他人。</p></div>`,
         })
       } catch (error) {
+        if (testVerificationDebugMode) {
+          return res.status(201).json({
+            ok: true,
+            channel: 'email',
+            debugCode,
+            expiresIn: Math.floor(VERIFICATION_CODE_TTL_MS / 1000),
+            message: `测试环境邮件投递失败，已生成演示验证码（${mailErrorReason(error)}）。`,
+          })
+        }
         discardVerificationCode(target, 'bind')
         throw httpError(502, `验证码邮件发送失败：${mailErrorReason(error)}`)
       }
@@ -361,12 +382,30 @@ app.post('/api/auth/code', async (req, res) => {
       })
     }
     if (!isTencentSmsConfigured()) {
+      if (testVerificationDebugMode) {
+        return res.status(201).json({
+          ok: true,
+          channel: 'sms',
+          debugCode,
+          expiresIn: Math.floor(VERIFICATION_CODE_TTL_MS / 1000),
+          message: '测试环境未配置短信服务，已生成演示验证码。',
+        })
+      }
       discardVerificationCode(target, 'bind')
       return res.status(503).json({ message: '短信服务未配置，暂时无法发送验证码' })
     }
     try {
       await sendTencentSmsCode(target.value, debugCode, tencentSmsBindTemplateId)
     } catch (error) {
+      if (testVerificationDebugMode) {
+        return res.status(201).json({
+          ok: true,
+          channel: 'sms',
+          debugCode,
+          expiresIn: Math.floor(VERIFICATION_CODE_TTL_MS / 1000),
+          message: `测试环境短信投递失败，已生成演示验证码（${error.message || '腾讯云短信服务异常'}）。`,
+        })
+      }
       discardVerificationCode(target, 'bind')
       throw httpError(502, `验证码短信发送失败：${error.message || '腾讯云短信服务异常'}`)
     }
@@ -2661,10 +2700,11 @@ function normalizeAccountUser(user = {}) {
       : null
   const id = base.id || (contactTarget ? accountUserIdForTarget(contactTarget) : '')
   if (!id) return null
-  const planId = normalizePlanId(user.planId || base.planId || 'free')
+  const testEnterpriseOverride = process.env.NODE_ENV === 'test' && TEST_ENTERPRISE_USER_IDS.has(id)
+  const planId = testEnterpriseOverride ? 'enterprise' : normalizePlanId(user.planId || base.planId || 'free')
   const plan = configuredAccountPlan(planId)
   const planExpiresAt = plan.permanent ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
-  if (plan.permanent && (user.planExpiresAt || base.planExpiresAt)) metadataNeedsPersist = true
+  if (testEnterpriseOverride || (plan.permanent && (user.planExpiresAt || base.planExpiresAt))) metadataNeedsPersist = true
   const now = new Date().toISOString()
   return {
     ...base,
