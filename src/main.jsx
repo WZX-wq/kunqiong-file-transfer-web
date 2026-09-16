@@ -2825,6 +2825,8 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
   const [previewChoices, setPreviewChoices] = useState(null)
   const [qrPreview, setQrPreview] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [recordPage, setRecordPage] = useState(1)
+  const [filePage, setFilePage] = useState(1)
   const { startDownload: startRecordPreviewDownload, downloadBusy: previewDownloadBusy } = useDownloadTask()
 
   const normalizedRecords = records.map(normalizeRecord)
@@ -2839,8 +2841,15 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
     && matchesManagedFileCategory(item, fileCategory)
     && (!expiringOnly || item.expiringSoon)
   ))
+  const recordsPageSize = 8
+  const recordPageCount = Math.max(1, Math.ceil(filteredRecords.length / recordsPageSize))
+  const filePageCount = Math.max(1, Math.ceil(filteredFileItems.length / recordsPageSize))
+  const safeRecordPage = Math.min(recordPage, recordPageCount)
+  const safeFilePage = Math.min(filePage, filePageCount)
+  const visibleRecords = filteredRecords.slice((safeRecordPage - 1) * recordsPageSize, safeRecordPage * recordsPageSize)
+  const visibleFileItems = filteredFileItems.slice((safeFilePage - 1) * recordsPageSize, safeFilePage * recordsPageSize)
   const expiringItems = fileItems.filter((item) => item.expiringSoon)
-  const visibleIds = Array.from(new Set((viewMode === 'files' ? filteredFileItems.map((item) => item.record.id) : filteredRecords.map((record) => record.id))))
+  const visibleIds = Array.from(new Set((viewMode === 'files' ? visibleFileItems.map((item) => item.record.id) : visibleRecords.map((record) => record.id))))
   const selectedVisibleCount = visibleIds.filter((id) => selectedIds.has(id)).length
   const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
   const recordCounts = RECORD_SCOPE_TABS.reduce((acc, tab) => {
@@ -2858,6 +2867,8 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
     setSelectedIds(new Set())
     setOpenMenu(null)
     setMenuPlacement('down')
+    setRecordPage(1)
+    setFilePage(1)
   }, [viewMode, scopeFilter, dateFilter, dateFrom, dateTo, statusFilter, fileQuery, fileCategory, expiringOnly])
 
   useEffect(() => {
@@ -3101,7 +3112,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
             <div className="records-bulk-row">
               <label className="record-select-all">
                 <input type="checkbox" checked={allVisibleSelected} disabled={!visibleIds.length} onChange={toggleVisibleSelection} />
-                <span>已选 {selectedIds.size} 条 · 当前筛选 {filteredRecords.length} 条</span>
+                <span>已选 {selectedIds.size} 条 · 本页 {visibleRecords.length} 条 / 筛选 {filteredRecords.length} 条</span>
               </label>
               <div className="record-bulk-actions">
                 <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
@@ -3111,7 +3122,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
           </div>
 
           <div className="records-list enhanced-records-list">
-            {filteredRecords.length ? filteredRecords.map((record) => {
+            {filteredRecords.length ? visibleRecords.map((record) => {
               const Icon = recordIconForScope(record.scope)
               const statusGroup = recordStatusGroup(record)
               const selected = selectedIds.has(record.id)
@@ -3143,6 +3154,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
               <div className="empty-manage records-empty"><History size={25} /><span>没有符合当前筛选的记录</span></div>
             )}
           </div>
+          <AdminPagination page={safeRecordPage} pageCount={recordPageCount} total={filteredRecords.length} pageSize={recordsPageSize} onPageChange={setRecordPage} />
         </>
       ) : (
         <>
@@ -3188,7 +3200,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
             <div className="records-bulk-row">
               <label className="record-select-all">
                 <input type="checkbox" checked={allVisibleSelected} disabled={!visibleIds.length} onChange={toggleVisibleSelection} />
-                <span>已选 {selectedIds.size} 项 · 当前筛选 {filteredFileItems.length} 项</span>
+                <span>已选 {selectedIds.size} 项 · 本页 {visibleFileItems.length} 项 / 筛选 {filteredFileItems.length} 项</span>
               </label>
               <div className="record-bulk-actions">
                 <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
@@ -3198,7 +3210,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
           </div>
 
           <div className="records-list enhanced-records-list file-center-list">
-            {filteredFileItems.length ? filteredFileItems.map((item) => {
+            {filteredFileItems.length ? visibleFileItems.map((item) => {
               const record = item.record
               const Icon = fileCategoryIcon(item.category)
               const selected = selectedIds.has(record.id)
@@ -3231,6 +3243,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
               <div className="empty-manage records-empty"><HardDrive size={25} /><span>没有符合当前筛选的文件项目</span></div>
             )}
           </div>
+          <AdminPagination page={safeFilePage} pageCount={filePageCount} total={filteredFileItems.length} pageSize={recordsPageSize} onPageChange={setFilePage} />
         </>
       )}
       {renameTarget && <RenameRecordModal record={renameTarget} onClose={() => setRenameTarget(null)} onSave={saveRename} />}
@@ -3655,7 +3668,11 @@ function TeamPage() {
         ({ progress, ...nextState }) => setTeamUploadState((current) => ({ ...current, ...nextState, progress })),
         { sessionBody: { mode: 'team_resource' } },
       )
-      if (result?.share) saveRecord(createShareRecord(result.share, 'my_sent'))
+      if (result?.share) {
+        const record = createShareRecord(result.share, 'my_sent')
+        saveLocalRecord(record)
+        upsertCloudRecords([record]).catch(() => {})
+      }
       setTeamFiles([])
       teamUploadRef.current = createUploadSessionState()
       setTeamUploadState(createUploadState())
@@ -4654,10 +4671,28 @@ async function saveCloudNoticeSettings(settings) {
 }
 
 async function saveCloudFileCleanupSettings(settings) {
-  return apiRequest('/api/account/file-cleanup-settings', {
-    method: 'PUT',
-    body: JSON.stringify({ settings: normalizeFileCleanupSettings(settings) }),
-  })
+  const body = JSON.stringify({ settings: normalizeFileCleanupSettings(settings) })
+  const request = async (method) => {
+    const response = await fetch('/api/account/file-cleanup-settings', {
+      method,
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const error = new Error(data.message || '请求失败')
+      error.status = response.status
+      throw error
+    }
+    return data
+  }
+  try {
+    return await request('PUT')
+  } catch (error) {
+    if (error.status === 404 || /接口不存在/.test(error.message || '')) return request('POST')
+    throw error
+  }
 }
 
 async function requestAccountBindCode(target) {

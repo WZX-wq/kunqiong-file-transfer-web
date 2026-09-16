@@ -307,7 +307,7 @@ app.patch('/api/auth/profile', (req, res) => {
   res.json({ user: publicAccountUser(user) })
 })
 
-app.put('/api/account/file-cleanup-settings', (req, res) => {
+function updateFileCleanupSettings(req, res) {
   const session = authSessionFromRequest(req)
   if (!session) return res.status(401).json({ message: '请先登录' })
   const settings = normalizeFileCleanupSettings(req.body?.settings)
@@ -317,7 +317,16 @@ app.put('/api/account/file-cleanup-settings', (req, res) => {
   cleanupExpired()
   persistMetadata()
   res.json({ user: publicAccountUser(user), settings })
+}
+
+app.get('/api/account/file-cleanup-settings', (req, res) => {
+  const session = authSessionFromRequest(req)
+  if (!session) return res.status(401).json({ message: '请先登录' })
+  res.json({ settings: normalizeFileCleanupSettings(accountUserById(session.user.id)?.fileCleanup || session.user.fileCleanup) })
 })
+app.put('/api/account/file-cleanup-settings', updateFileCleanupSettings)
+app.patch('/api/account/file-cleanup-settings', updateFileCleanupSettings)
+app.post('/api/account/file-cleanup-settings', updateFileCleanupSettings)
 
 app.post('/api/auth/code', async (req, res) => {
   try {
