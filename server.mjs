@@ -867,6 +867,9 @@ app.post('/api/account/upgrade-orders/:orderId/confirm', async (req, res) => {
     const payment = order.remoteOrderNo
       ? { order_no: order.remoteOrderNo, pay_type: order.payType || payType, ...(order.payment || {}) }
       : await createWebMemberPaymentOrder(session, order, payType)
+    await ensurePaymentAssets(payment)
+    order.payment = normalizePaymentPayload(payment)
+    order.payType = normalizeWebMemberPayType(payment.pay_type || order.payType || payType)
     persistMetadata()
     res.json({
       message: payment.pay_type === 2 ? '支付宝收银台已创建，请在当前弹窗完成支付' : '微信支付二维码已创建，请扫码支付',
@@ -3575,6 +3578,22 @@ function publicPaymentPayload(value) {
   return normalizePaymentPayload(value)
 }
 
+async function ensurePaymentAssets(payment) {
+  if (!payment || normalizeWebMemberPayType(payment.pay_type) !== 1 || payment.qrcode_img_url || !payment.code_url) {
+    return payment
+  }
+  try {
+    payment.qrcode_img_url = await QRCode.toDataURL(payment.code_url, {
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: 280,
+    })
+  } catch {
+    // Keep code_url available so the caller can retry or copy the payment address.
+  }
+  return payment
+}
+
 function sessionApiWebToken(session) {
   return trimRecordString(session?.apiWebToken, 300)
 }
@@ -3652,6 +3671,7 @@ async function createWebMemberPaymentOrder(session, order, payType) {
   order.remotePackageDays = normalizeNullablePositiveInteger(data.package_days || memberPackage.days)
   order.amount = Math.round(Number(data.pay_amount) * 100) || order.amount
   order.payment = normalizePaymentPayload(data)
+  await ensurePaymentAssets(order.payment)
   order.updatedAt = new Date().toISOString()
   if (!order.remoteOrderNo) throw httpError(502, '会员服务未返回主站订单号')
   return { ...data, pay_type: order.payType }
