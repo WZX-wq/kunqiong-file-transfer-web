@@ -1261,7 +1261,7 @@ app.get('/api/shares/:token/files/:fileIndex/preview', (req, res, next) => {
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     const file = share.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
-    sendPreviewFile(res, next, path.join(filesRoot, share.id, file.storedName), file)
+    sendPreviewFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
   } catch (error) {
     next(error)
   }
@@ -1473,7 +1473,7 @@ app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:f
     const file = submission?.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
     assertFilesDownloadable([file])
-    sendPreviewFile(res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
+    sendPreviewFile(req, res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
   } catch (error) {
     next(error)
   }
@@ -2362,7 +2362,7 @@ function registerShareDownload(share, res) {
   })
 }
 
-function sendPreviewFile(res, next, filePath, file) {
+function sendPreviewFile(req, res, next, filePath, file) {
   const kind = previewKind(file)
   if (!kind) return res.status(415).json({ message: '当前文件类型暂不支持在线预览' })
   if (!fs.existsSync(filePath)) return res.status(410).json({ message: '文件已清理，无法预览' })
@@ -2373,11 +2373,28 @@ function sendPreviewFile(res, next, filePath, file) {
   res.setHeader('X-Preview-File-Size', String(stat.size))
   // 文本类预览一律按纯文本返回，避免 html/xml 等以 text/html 内联渲染带来 XSS 风险
   res.type(kind === 'text' ? 'text/plain; charset=utf-8' : fileContentType(file))
-  res.sendFile(filePath, (error) => {
-    if (!error) return
-    if (!res.headersSent) next(error)
-    else console.error(error)
-  })
+  const range = req.get('range')
+  if (!range) {
+    res.setHeader('Content-Length', String(stat.size))
+    fs.createReadStream(filePath).on('error', next).pipe(res)
+    return
+  }
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
+  if (!match || (match[1] === '' && match[2] === '')) {
+    res.setHeader('Content-Range', `bytes */${stat.size}`)
+    return res.status(416).end()
+  }
+  let start = match[1] === '' ? Math.max(0, stat.size - Number(match[2])) : Number(match[1])
+  let end = match[2] === '' ? stat.size - 1 : Number(match[2])
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= stat.size) {
+    res.setHeader('Content-Range', `bytes */${stat.size}`)
+    return res.status(416).end()
+  }
+  end = Math.min(end, stat.size - 1)
+  res.status(206)
+  res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`)
+  res.setHeader('Content-Length', String(end - start + 1))
+  fs.createReadStream(filePath, { start, end }).on('error', next).pipe(res)
 }
 
 function sendDownloadFile(req, res, next, filePath, file) {
