@@ -10,6 +10,8 @@ PID_FILE="$RUNTIME_DIR/server.pid"
 ENV_FILE="$RUNTIME_DIR/test.env"
 PORT="${PORT:-8045}"
 HOST="${KUNQIONG_HOST:-0.0.0.0}"
+COMPOSE_DIR="${KUNQIONG_COMPOSE_DIR:-/opt/$APP_NAME}"
+COMPOSE_FILE="docker-compose.test.yml"
 RELEASE_SHA="${GITHUB_SHA:-${GITEA_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}}"
 
 require_var() {
@@ -64,17 +66,46 @@ healthcheck_docker() {
   return 1
 }
 
+write_compose_file() {
+  local target="$1"
+  mkdir -p "$(dirname "$target")"
+  cat > "$target" <<EOF
+name: $APP_NAME
+
+services:
+  app:
+    image: $IMAGE_NAME
+    container_name: $APP_NAME
+    restart: unless-stopped
+    ports:
+      - "$PORT:$PORT"
+    env_file:
+      - .env
+    volumes:
+      - storage:/app/storage
+
+volumes:
+  storage:
+    name: $APP_NAME-storage
+EOF
+}
+
 deploy_with_docker() {
   docker info >/dev/null 2>&1 || return 1
   docker build -t "$IMAGE_NAME" .
-  docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
-  docker run -d \
-    --name "$APP_NAME" \
-    --restart unless-stopped \
-    -p "$PORT:$PORT" \
-    --env-file "$ENV_FILE" \
-    -v "$APP_NAME-storage:/app/storage" \
-    "$IMAGE_NAME"
+
+  mkdir -p "$COMPOSE_DIR"
+  write_compose_file "$COMPOSE_DIR/$COMPOSE_FILE"
+  cp "$ENV_FILE" "$COMPOSE_DIR/.env"
+  chmod 600 "$COMPOSE_DIR/.env" 2>/dev/null || true
+
+  # 清掉历史遗留的裸 docker run 容器（非 compose 管理），避免容器名冲突
+  existing_proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$APP_NAME" 2>/dev/null || true)"
+  if [ "$existing_proj" = "<no value>" ]; then
+    docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
+  fi
+
+  ( cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans )
   healthcheck_docker
 }
 
