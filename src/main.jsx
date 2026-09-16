@@ -3481,8 +3481,16 @@ function TeamPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [memberTarget, setMemberTarget] = useState('')
+  const [memberSuggestions, setMemberSuggestions] = useState([])
   const [savingMember, setSavingMember] = useState(false)
   const [activeTab, setActiveTab] = useState('members')
+  const [memberQuery, setMemberQuery] = useState('')
+  const [resourceQuery, setResourceQuery] = useState('')
+  const [teamFiles, setTeamFiles] = useState([])
+  const [teamUploadState, setTeamUploadState] = useState(createUploadState())
+  const [teamUploading, setTeamUploading] = useState(false)
+  const teamUploadInputRef = useRef(null)
+  const teamUploadRef = useRef(createUploadSessionState())
   const [memberUsagePage, setMemberUsagePage] = useState(1)
   const [teamResourcePage, setTeamResourcePage] = useState(1)
   const [teamMemberPage, setTeamMemberPage] = useState(1)
@@ -3510,7 +3518,19 @@ function TeamPage() {
     setMemberUsagePage(1)
     setTeamResourcePage(1)
     setTeamMemberPage(1)
-  }, [data?.memberUsage?.length, data?.resources?.length])
+  }, [data?.memberUsage?.length, data?.resources?.length, memberQuery, resourceQuery])
+  useEffect(() => {
+    if (!data?.canManage || !memberTarget.trim()) {
+      setMemberSuggestions([])
+      return undefined
+    }
+    const timer = window.setTimeout(() => {
+      apiRequest(`/api/account/workspace/member-search?q=${encodeURIComponent(memberTarget.trim())}`)
+        .then((result) => setMemberSuggestions(result.users || []))
+        .catch(() => setMemberSuggestions([]))
+    }, 180)
+    return () => window.clearTimeout(timer)
+  }, [data?.canManage, memberTarget])
 
   const login = () => {
     const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`
@@ -3529,6 +3549,7 @@ function TeamPage() {
     try {
       await apiRequest('/api/account/workspace/members', { method: 'POST', body: JSON.stringify({ target: memberTarget.trim() }) })
       setMemberTarget('')
+      setMemberSuggestions([])
       await load()
     } catch (err) {
       setError(err.message || '成员邀请失败')
@@ -3551,6 +3572,57 @@ function TeamPage() {
     }
   }
 
+  const addTeamFiles = (incoming) => {
+    const nextFiles = Array.from(incoming || []).map((file, index) => ({
+      id: `${file.name}-${file.lastModified}-${index}-${Math.random()}`,
+      file,
+      name: file.name,
+      size: file.size,
+      relativePath: file.webkitRelativePath || file.name,
+    }))
+    if (!nextFiles.length) return
+    const names = new Set()
+    const duplicate = nextFiles.find((file) => {
+      const normalized = file.name.trim().toLowerCase()
+      if (names.has(normalized)) return true
+      names.add(normalized)
+      return false
+    })
+    if (duplicate) {
+      setError(`团队上传中存在同名文件“${duplicate.name}”`)
+      return
+    }
+    setTeamFiles(nextFiles)
+    setTeamUploadState(createUploadState())
+    teamUploadRef.current = createUploadSessionState()
+    setError('')
+  }
+
+  const uploadTeamFiles = async () => {
+    if (!teamFiles.length || teamUploading) return
+    setTeamUploading(true)
+    setError('')
+    try {
+      const result = await uploadShareInChunks(
+        teamFiles,
+        { expiryDays: '0', downloadLimit: 'unlimited', password: '', codeLength: '6', recipients: '' },
+        teamUploadRef,
+        ({ progress, ...nextState }) => setTeamUploadState((current) => ({ ...current, ...nextState, progress })),
+        { sessionBody: { mode: 'team_resource' } },
+      )
+      if (result?.share) saveRecord(createShareRecord(result.share, 'my_sent'))
+      setTeamFiles([])
+      teamUploadRef.current = createUploadSessionState()
+      setTeamUploadState(createUploadState())
+      await load()
+    } catch (err) {
+      setTeamUploadState((current) => ({ ...current, status: 'failed', phase: '上传失败', error: err.message }))
+      setError(err.message || '团队文件上传失败')
+    } finally {
+      setTeamUploading(false)
+    }
+  }
+
   if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开团队管理</h1><p>正在读取团队成员和资源使用情况。</p></div></PublicShell>
   if (!user) return <PublicShell><div className="state-block"><div className="settings-state-icon"><Users size={24} /></div><h1>登录后查看团队</h1><p>团队成员、容量和资源使用情况会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
   if (error || !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><Users size={24} /></div><h1>暂未加入团队空间</h1><p>{error || '接受团队邀请后，可以在这里查看团队使用情况。'}</p><button className="secondary-button" onClick={goWorkspace}><ArrowLeft size={15} /> 返回会员与团队空间</button></div></PublicShell>
@@ -3559,21 +3631,29 @@ function TeamPage() {
   const capacity = data.capacity || {}
   const members = data.memberUsage || []
   const resources = data.resources || []
+  const memberName = (userId) => members.find((item) => item.userId === userId)?.displayName || '团队成员'
+  const normalizedMemberQuery = memberQuery.trim().toLowerCase()
+  const normalizedResourceQuery = resourceQuery.trim().toLowerCase()
+  const filteredMembers = normalizedMemberQuery
+    ? members.filter((member) => [member.displayName, member.email, member.phone, member.userId].some((value) => String(value || '').toLowerCase().includes(normalizedMemberQuery)))
+    : members
+  const filteredResources = normalizedResourceQuery
+    ? resources.filter((resource) => [resource.name, memberName(resource.ownerUserId)].some((value) => String(value || '').toLowerCase().includes(normalizedResourceQuery)))
+    : resources
   const totalBytes = Number(capacity.totalBytes || 0)
   const usedBytes = Number(capacity.usedBytes || 0)
   const ratio = totalBytes ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0
   const memberMax = Math.max(1, ...members.map((item) => Number(item.usedBytes || 0)))
-  const memberName = (userId) => members.find((item) => item.userId === userId)?.displayName || '团队成员'
   const statusLabel = (status) => status === 'active' ? '进行中' : status === 'expired' ? '已过期' : status === 'closed' ? '已关闭' : status
   const teamPageSize = 8
-  const memberUsagePageCount = Math.max(1, Math.ceil(members.length / teamPageSize))
-  const teamResourcePageCount = Math.max(1, Math.ceil(resources.length / teamPageSize))
+  const memberUsagePageCount = Math.max(1, Math.ceil(filteredMembers.length / teamPageSize))
+  const teamResourcePageCount = Math.max(1, Math.ceil(filteredResources.length / teamPageSize))
   const teamMemberPageCount = Math.max(1, Math.ceil(members.length / teamPageSize))
   const safeMemberUsagePage = Math.min(memberUsagePage, memberUsagePageCount)
   const safeTeamResourcePage = Math.min(teamResourcePage, teamResourcePageCount)
   const safeTeamMemberPage = Math.min(teamMemberPage, teamMemberPageCount)
-  const visibleMemberUsage = members.slice((safeMemberUsagePage - 1) * teamPageSize, safeMemberUsagePage * teamPageSize)
-  const visibleTeamResources = resources.slice((safeTeamResourcePage - 1) * teamPageSize, safeTeamResourcePage * teamPageSize)
+  const visibleMemberUsage = filteredMembers.slice((safeMemberUsagePage - 1) * teamPageSize, safeMemberUsagePage * teamPageSize)
+  const visibleTeamResources = filteredResources.slice((safeTeamResourcePage - 1) * teamPageSize, safeTeamResourcePage * teamPageSize)
   const visibleTeamMembers = members.slice((safeTeamMemberPage - 1) * teamPageSize, safeTeamMemberPage * teamPageSize)
 
   return <PublicShell>
@@ -3589,9 +3669,9 @@ function TeamPage() {
           <button className={activeTab === 'resources' ? 'active' : ''} role="tab" aria-selected={activeTab === 'resources'} onClick={() => setActiveTab('resources')}><Database size={15} /> 团队资源 <span>{resources.length}</span></button>
           <button className={activeTab === 'manage' ? 'active' : ''} role="tab" aria-selected={activeTab === 'manage'} onClick={() => setActiveTab('manage')}><UserPlus size={15} /> 团队成员 <span>{members.length}</span></button>
         </div>
-        {activeTab === 'members' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">成员观察</p><h2>成员使用量</h2></div><span>{members.length} 位成员</span></div><div className="team-member-usage">{visibleMemberUsage.map((member) => <div className="team-member-usage-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'} · {member.fileCount} 个文件</small><div className="team-usage-bar"><i style={{ width: `${(Number(member.usedBytes || 0) / memberMax) * 100}%` }} /></div></div><b>{formatBytes(member.usedBytes || 0)}</b></div>)}</div><AdminPagination page={safeMemberUsagePage} pageCount={memberUsagePageCount} total={members.length} pageSize={teamPageSize} onPageChange={setMemberUsagePage} /></div>}
-        {activeTab === 'resources' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队资源</p><h2>最近文件与任务</h2></div><span>{resources.length} 条</span></div><div className="team-resource-table">{resources.length ? visibleTeamResources.map((resource) => <div className="team-resource-row" key={`${resource.kind}-${resource.id}`}><span className="team-resource-icon">{resource.kind === 'share' ? <Send size={15} /> : <Inbox size={15} />}</span><div><strong>{resource.name}</strong><small>{memberName(resource.ownerUserId)} · {resource.kind === 'share' ? '文件分享' : '收集任务'} · {resource.fileCount} 个文件</small></div><span className={`team-resource-status ${resource.status}`}>{statusLabel(resource.status)}</span><small className="team-resource-size">{formatBytes(resource.totalSize)}</small></div>) : <div className="empty-manage"><Database size={25} /><span>暂无团队资源</span></div>}</div><AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={resources.length} pageSize={teamPageSize} onPageChange={setTeamResourcePage} /></div>}
-        {activeTab === 'manage' && <div className="public-card team-panel team-tab-panel team-members-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队成员</p><h2>管理项目成员</h2></div><span>{data.canManage ? '所有者' : '只读'}</span></div>{data.canManage && <form className="team-invite-form" onSubmit={inviteMember}><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="邮箱 / 手机号 / 鲲穹账号" disabled={savingMember} /><button className="primary-button" disabled={savingMember || !memberTarget.trim()}><UserPlus size={14} /> 邀请</button></form>}<div className="team-management-list">{visibleTeamMembers.map((member) => <div className="team-management-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</small></div><span className={`workspace-member-state ${member.status === 'invited' ? 'pending' : 'active'}`}>{member.status === 'invited' ? '待加入' : member.role === 'owner' ? '所有者' : '已加入'}</span>{data.canManage && member.role !== 'owner' && <button className="ghost-icon" type="button" onClick={() => removeMember(member)} disabled={savingMember} aria-label={`移除${member.displayName || '成员'}`} title="移除成员"><X size={15} /></button>}</div>)}</div><AdminPagination page={safeTeamMemberPage} pageCount={teamMemberPageCount} total={members.length} pageSize={teamPageSize} onPageChange={setTeamMemberPage} /></div>}
+        {activeTab === 'members' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">成员观察</p><h2>成员使用量</h2></div><span>{filteredMembers.length} / {members.length} 位成员</span></div>{data.canManage && <div className="team-invite-wrap"><form className="team-invite-form team-inline-search" onSubmit={inviteMember}><Search size={15} /><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="输入邮箱、手机号或鲲穹账号，直接邀请成员" disabled={savingMember} /><button className="primary-button" disabled={savingMember || !memberTarget.trim()}><UserPlus size={14} /> 邀请</button></form>{memberSuggestions.length > 0 && <div className="team-suggestions">{memberSuggestions.map((candidate) => <button type="button" key={candidate.id} onClick={() => { setMemberTarget(candidate.email || candidate.phone || candidate.username || candidate.id); setMemberSuggestions([]) }}><span className="workspace-member-avatar">{(candidate.displayName || '成').slice(0, 1)}</span><span><strong>{candidate.displayName || candidate.username || candidate.id}</strong><small>{candidate.username || candidate.email || candidate.phone || candidate.id}</small></span></button>)}</div>}</div>}<label className="team-search"><Search size={15} /><input value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-member-usage">{visibleMemberUsage.map((member) => <div className="team-member-usage-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'} · {member.fileCount} 个文件</small><div className="team-usage-bar"><i style={{ width: `${(Number(member.usedBytes || 0) / memberMax) * 100}%` }} /></div></div><b>{formatBytes(member.usedBytes || 0)}</b></div>)}</div>{!filteredMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的成员</span></div>}<AdminPagination page={safeMemberUsagePage} pageCount={memberUsagePageCount} total={filteredMembers.length} pageSize={teamPageSize} onPageChange={setMemberUsagePage} /></div>}
+        {activeTab === 'resources' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队资源</p><h2>专属团队文件</h2></div><span>{filteredResources.length} / {resources.length} 个文件</span></div><div className="team-resource-toolbar"><label className="team-search"><Search size={15} /><input value={resourceQuery} onChange={(event) => setResourceQuery(event.target.value)} placeholder="检索文件名或上传成员" /></label><input ref={teamUploadInputRef} type="file" multiple hidden onChange={(event) => { addTeamFiles(event.target.files); event.target.value = '' }} />{data.organization?.members?.some((member) => member.userId === user.id && member.status === 'active') && <button type="button" className="primary-button" onClick={() => teamUploadInputRef.current?.click()} disabled={teamUploading}><UploadCloud size={15} /> 上传到团队空间</button>}</div>{teamFiles.length > 0 && <div className="team-upload-draft"><div><strong>待上传 {teamFiles.length} 个文件</strong><span>{formatBytes(teamFiles.reduce((sum, file) => sum + file.size, 0))} · 同名文件会被拒绝</span></div><div><button type="button" className="primary-button" onClick={uploadTeamFiles} disabled={teamUploading}><UploadCloud size={14} /> {teamUploading ? '上传中' : '开始上传'}</button><button type="button" className="ghost-icon" onClick={() => setTeamFiles([])} aria-label="清除待上传文件" title="清除待上传文件"><X size={15} /></button></div></div>}{teamUploadState.status !== 'idle' && <div className="team-upload-progress"><div><span>{teamUploadState.phase || '上传处理中'}</span><b>{teamUploadState.progress || 0}%</b></div><div className="capacity-bar"><span style={{ width: `${teamUploadState.progress || 0}%` }} /></div></div>}<div className="team-resource-table">{filteredResources.length ? visibleTeamResources.map((resource) => <div className="team-resource-row" key={`${resource.kind}-${resource.id}`}><span className="team-resource-icon"><FileText size={15} /></span><div><strong>{resource.name}</strong><small>{memberName(resource.ownerUserId)} · {resource.fileCount} 个文件</small></div><span className={`team-resource-status ${resource.status}`}>{statusLabel(resource.status)}</span><small className="team-resource-size">{formatBytes(resource.totalSize)}</small><a className="ghost-icon" href={resource.manageUrl} target="_blank" rel="noreferrer" aria-label={`管理 ${resource.name}`} title="管理文件"><Settings2 size={15} /></a></div>) : <div className="empty-manage"><Database size={25} /><span>{resourceQuery ? '没有匹配的团队文件' : '暂无团队文件，请从专属入口上传'}</span></div>}</div><AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={filteredResources.length} pageSize={teamPageSize} onPageChange={setTeamResourcePage} /></div>}
+        {activeTab === 'manage' && <div className="public-card team-panel team-tab-panel team-members-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队成员</p><h2>成员权限</h2></div><span>{data.canManage ? '所有者' : '只读'}</span></div><div className="team-management-list">{visibleTeamMembers.map((member) => <div className="team-management-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</small></div><span className={`workspace-member-state ${member.status === 'invited' ? 'pending' : 'active'}`}>{member.status === 'invited' ? '待加入' : member.role === 'owner' ? '所有者' : '已加入'}</span>{data.canManage && member.role !== 'owner' && <button className="ghost-icon" type="button" onClick={() => removeMember(member)} disabled={savingMember} aria-label={`移除${member.displayName || '成员'}`} title="移除成员"><X size={15} /></button>}</div>)}</div><AdminPagination page={safeTeamMemberPage} pageCount={teamMemberPageCount} total={members.length} pageSize={teamPageSize} onPageChange={setTeamMemberPage} /></div>}
       </div>
     </section>
   </PublicShell>
@@ -3725,7 +3805,7 @@ function WorkspacePage() {
             <div className="public-card workspace-section workspace-benefits-card">
               <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(plan)}</p></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
               <div className="workspace-capacity"><div><span>已使用空间 · {selectedPlan.label || currentPlanLabel}</span><strong>{formatBytes(capacity.usedBytes || 0)} / {formatBytes(selectedTotalBytes)}</strong></div><div className="capacity-bar" title={`已使用 ${ratio}%`} role="progressbar" aria-valuenow={ratio} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${ratio}%` }} /></div><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务 · {capacity.fileCount || 0} 个文件</small></div>
-              <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id ? 'true' : 'false'}><em className="plan-current-tag">{item.id === plan.id ? '当前' : item.team ? '推荐' : ''}</em><strong>{item.label}</strong><span>{formatBytes(item.totalBytes)}</span><small>{formatPlanPrice(item)} · {item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</small></button>)}</div>
+              <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id ? 'true' : 'false'}><em className="plan-current-tag">{item.id === plan.id ? '当前' : item.team ? '推荐' : ''}</em><strong>{item.label}</strong><span>{formatBytes(item.totalBytes)}</span><small>{formatPlanSpaceSummary(item)} · {formatPlanPrice(item)}</small></button>)}</div>
               <div className="workspace-benefits-cta"><span>{plan.id === 'enterprise' ? '你已拥有最高企业版权益。' : '需要更多空间、永久保存或团队协作？'}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {plan.id === 'enterprise' ? '查看权益详情' : '升级权益'}</button></div>
             </div>
             <div className="public-card workspace-section workspace-team-card">
@@ -3967,7 +4047,7 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
                     aria-pressed={item.id === selectedPlanId}
                   >
                     <span className="upgrade-plan-top"><strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
-                    <span className="upgrade-plan-capacity">{formatBytes(item.totalBytes)}</span>
+                    <span className="upgrade-plan-capacity">{formatPlanSpaceSummary(item)}</span>
                     <span className="upgrade-plan-tags"><strong className="upgrade-plan-price">{formatPlanPrice(item)}</strong><span className="upgrade-plan-detail">{item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</span></span>
                     <ul className="upgrade-plan-features">
                       {(item.features || []).map((feature) => <li key={feature}><Check size={12} /> {feature}</li>)}
@@ -5890,6 +5970,10 @@ function formatPlanPrice(plan = {}) {
   return Number.isFinite(days) && days > 0
     ? `¥${(amount / 100).toFixed(2)} / ${days}天`
     : `¥${(amount / 100).toFixed(2)}`
+}
+function formatPlanSpaceSummary(plan = {}) {
+  if (!plan.teamSpaceBytes) return `${formatBytes(plan.totalBytes)} 个人空间`
+  return `${formatBytes(plan.totalBytes)} 个人 · ${formatBytes(plan.teamSpaceBytes)} 团队`
 }
 function formatExpiry(value) { return value ? `有效期至 ${new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '永久有效' }
 function formatDate(value) { return new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }

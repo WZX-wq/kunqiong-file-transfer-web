@@ -113,14 +113,14 @@ const ACCOUNT_PLANS = {
     features: ['100 GB 存储空间', '文件永久保存', '完整分享与收集能力', '会员专属标识'],
   },
   team: {
-    id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, permanent: true, team: true,
+    id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, teamSpaceBytes: 250 * 1024 * 1024 * 1024, permanent: true, team: true,
     tagline: '小团队协作', monthlyPrice: 4900, validityDays: 90,
-    features: ['500 GB 团队空间', '文件永久保存', '团队成员邀请与协作', '企业专属分享链接'],
+    features: ['500 GB 个人空间', '250 GB 团队空间', '团队成员邀请与协作', '企业专属分享链接'],
   },
   enterprise: {
-    id: 'enterprise', label: '企业版', totalBytes: 2 * 1024 * 1024 * 1024 * 1024, permanent: true, team: true,
+    id: 'enterprise', label: '企业版', totalBytes: 2 * 1024 * 1024 * 1024 * 1024, teamSpaceBytes: 1024 * 1024 * 1024 * 1024, permanent: true, team: true,
     tagline: '企业统一管控', monthlyPrice: 15900, validityDays: null,
-    features: ['2 TB 企业空间', '文件永久保存', '组织与成员统一管理', '企业专属入口与审计日志'],
+    features: ['2048 GB 个人空间', '1024 GB 团队空间', '组织与成员统一管理', '企业专属入口与审计日志'],
   },
 }
 const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, enterprise: 3 }
@@ -508,10 +508,8 @@ app.get('/api/account/team/overview', (req, res) => {
   if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
   const memberIds = new Set(organization.members.map((member) => member.userId).filter(Boolean))
   const memberUsage = organization.members.map((member) => {
-    const shares = metadata.shares.filter((item) => item.ownerUserId === member.userId)
-    const collections = metadata.collections.filter((item) => item.ownerUserId === member.userId)
+    const shares = metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && item.ownerUserId === member.userId)
     const shareBytes = shares.reduce((sum, item) => sum + fileListSize(item.files), 0)
-    const collectionBytes = collections.reduce((sum, item) => sum + item.submissions.reduce((inner, submission) => inner + fileListSize(submission.files), 0), 0)
     return {
       id: member.id,
       userId: member.userId,
@@ -521,14 +519,14 @@ app.get('/api/account/team/overview', (req, res) => {
       role: member.role,
       status: member.status,
       shareCount: shares.length,
-      collectionCount: collections.length,
-      fileCount: shares.reduce((sum, item) => sum + (item.files?.length || 0), 0) + collections.reduce((sum, item) => sum + item.submissions.reduce((inner, submission) => inner + (submission.files?.length || 0), 0), 0),
-      usedBytes: shareBytes + collectionBytes,
-      lastActivityAt: [ ...shares, ...collections ].map((item) => item.updatedAt || item.createdAt).filter(Boolean).sort().pop() || null,
+      collectionCount: 0,
+      fileCount: shares.reduce((sum, item) => sum + (item.files?.length || 0), 0),
+      usedBytes: shareBytes,
+      lastActivityAt: shares.map((item) => item.updatedAt || item.createdAt).filter(Boolean).sort().pop() || null,
     }
   })
   const resources = [
-    ...metadata.shares.filter((item) => memberIds.has(item.ownerUserId)).map((item) => ({
+    ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && memberIds.has(item.ownerUserId)).map((item) => ({
       id: item.id,
       kind: 'share',
       name: item.files?.[0]?.name || '文件分享',
@@ -539,28 +537,43 @@ app.get('/api/account/team/overview', (req, res) => {
       downloadCount: item.downloadCount || 0,
       createdAt: item.createdAt,
       expiresAt: item.expiresAt || null,
-    })),
-    ...metadata.collections.filter((item) => memberIds.has(item.ownerUserId)).map((item) => ({
-      id: item.id || item.token,
-      kind: 'collection',
-      name: item.title || '收集任务',
-      ownerUserId: item.ownerUserId,
-      status: currentCollectionStatus(item),
-      fileCount: (item.submissions || []).reduce((sum, submission) => sum + (submission.files?.length || 0), 0),
-      totalSize: (item.submissions || []).reduce((sum, submission) => sum + fileListSize(submission.files), 0),
-      downloadCount: 0,
-      createdAt: item.createdAt,
-      expiresAt: item.deadline || null,
+      manageToken: item.manageToken,
+      manageUrl: `${getOrigin(req)}/share/manage/${item.manageToken}`,
     })),
   ].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   res.json({
     organization: publicOrganization(organization, session.user.id),
     canManage: isOrganizationManager(organization, session.user.id),
     plan: accountEffectivePlanForUser(organization.ownerUserId),
-    capacity: accountUsageForUser(session.user.id),
+    capacity: accountTeamUsageForOrganization(organization),
     memberUsage,
-    resources: resources.slice(0, 100),
+    resources: resources.slice(0, 200),
   })
+})
+
+app.get('/api/account/workspace/member-search', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const organization = accountOrganizationForUser(session.user.id)
+  if (!organization || !isOrganizationManager(organization, session.user.id)) {
+    return res.status(403).json({ message: '只有团队所有者可以检索可邀请成员' })
+  }
+  const query = trimRecordString(req.query.q, 160).toLowerCase()
+  if (!query) return res.json({ users: [] })
+  const existingIds = new Set(organization.members.map((member) => String(member.userId || '')))
+  const users = Object.values(metadata.users || {})
+    .filter((user) => !existingIds.has(String(user.id)))
+    .filter((user) => [user.id, user.username, user.nickname, user.email, user.phone].some((value) => String(value || '').toLowerCase().includes(query)))
+    .slice(0, 8)
+    .map((user) => ({
+      id: user.id,
+      username: user.username || '',
+      nickname: user.nickname || '',
+      email: user.email || '',
+      phone: user.phone || '',
+      displayName: displayAccountName(user),
+    }))
+  res.json({ users })
 })
 
 app.post('/api/account/workspace', (req, res) => {
@@ -979,6 +992,7 @@ app.post('/api/upload-sessions', (req, res) => {
   assertSafeUploadFiles(normalizedFiles)
   const ownerSession = authSessionFromRequest(req)
   let collectionTask = null
+  let teamOrganization = null
   if (req.body.mode === 'collection') {
     collectionTask = metadata.collections.find((item) => item.token === String(req.body.collectionToken || ''))
     if (!collectionTask) return res.status(404).json({ message: '收集任务不存在' })
@@ -988,7 +1002,18 @@ app.post('/api/upload-sessions', (req, res) => {
     const invalidCollectionFile = normalizedFiles.find((file) => file.size > collectionTask.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.name, collectionTask.allowedTypes))
     if (invalidCollectionFile) return res.status(413).json({ message: `${invalidCollectionFile.name} 不符合当前收集任务的文件限制` })
   }
-  assertAccountCapacity(collectionTask ? accountUserById(collectionTask.ownerUserId) : ownerSession?.user, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
+  if (req.body.mode === 'team_resource') {
+    if (!ownerSession?.user?.id) return res.status(401).json({ message: '请先登录后上传到团队空间' })
+    teamOrganization = accountOrganizationForUser(ownerSession.user.id)
+    if (!teamOrganization) return res.status(404).json({ message: '你尚未加入团队空间' })
+    if (!teamOrganization.members.some((member) => member.userId === ownerSession.user.id && member.status === 'active')) {
+      return res.status(403).json({ message: '当前成员状态不能上传到团队空间' })
+    }
+    assertUniqueTeamResourceNames(teamOrganization, normalizedFiles)
+    assertTeamCapacity(teamOrganization, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
+  } else {
+    assertAccountCapacity(collectionTask ? accountUserById(collectionTask.ownerUserId) : ownerSession?.user, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
+  }
 
   const sessionId = createToken(18)
   const sessionDirectory = path.join(tempRoot, 'upload-sessions', sessionId)
@@ -997,7 +1022,8 @@ app.post('/api/upload-sessions', (req, res) => {
     id: sessionId,
     files: normalizedFiles,
     options: readShareOptions(req.body, ownerSession?.user),
-    mode: req.body.mode === 'collection' ? 'collection' : 'share',
+    mode: req.body.mode === 'collection' ? 'collection' : req.body.mode === 'team_resource' ? 'team_resource' : 'share',
+    organizationId: teamOrganization?.id || '',
     collectionToken: collectionTask?.token || '',
     participantName: String(req.body.participantName || '').trim(),
     relativePaths: Array.isArray(req.body.relativePaths) ? req.body.relativePaths : [],
@@ -1106,7 +1132,17 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
       removeDirectory(session.directory)
       return res.status(201).json({ submission: publicSubmission(submission) })
     }
-    const share = await createShareFromTempFiles(mergedFiles, session.options, req)
+    if (session.mode === 'team_resource') {
+      const organization = Object.values(metadata.organizations || {}).find((item) => item.id === session.organizationId)
+      if (!organization) return res.status(404).json({ message: '团队空间不存在' })
+      assertUniqueTeamResourceNames(organization, mergedFiles)
+      assertTeamCapacity(organization, mergedFiles.reduce((sum, file) => sum + file.size, 0))
+    }
+    const share = await createShareFromTempFiles(mergedFiles, {
+      ...session.options,
+      teamResource: session.mode === 'team_resource',
+      teamOrganizationId: session.organizationId,
+    }, req)
     uploadSessions.delete(session.id)
     removeDirectory(session.directory)
     res.status(201).json({ share: publicShare(share, req, true, true) })
@@ -2823,14 +2859,9 @@ function verifyAuthCode(target, value, scene) {
 function accountUsageForUser(userId) {
   const key = accountRecordOwnerKey(userId)
   const user = accountUserById(key) || {}
-  const organization = accountOrganizationForUser(key)
-  const memberIds = organization
-    ? new Set(organization.members.map((member) => member.userId).filter(Boolean))
-    : new Set([key])
-  memberIds.add(organization?.ownerUserId || key)
   const plan = accountEffectivePlanForUser(user)
-  const ownedShares = metadata.shares.filter((share) => memberIds.has(share.ownerUserId) && share.status === 'active')
-  const ownedCollections = metadata.collections.filter((task) => memberIds.has(task.ownerUserId) && !task.cleanedAt)
+  const ownedShares = metadata.shares.filter((share) => share.ownerUserId === key && !share.teamResource && share.status === 'active')
+  const ownedCollections = metadata.collections.filter((task) => task.ownerUserId === key && !task.cleanedAt)
   const shareBytes = ownedShares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const collectionBytes = ownedCollections.reduce((sum, task) => sum + task.submissions.reduce((inner, submission) => inner + fileListSize(submission.files), 0), 0)
   const usedBytes = shareBytes + collectionBytes
@@ -2847,6 +2878,53 @@ function accountUsageForUser(userId) {
     collectionCount: ownedCollections.length,
     fileCount,
     singleFileLimitBytes: ACCOUNT_SINGLE_FILE_BYTES,
+  }
+}
+
+function accountTeamUsageForOrganization(organization) {
+  const owner = accountUserById(organization?.ownerUserId) || {}
+  const plan = accountEffectivePlanForUser(owner)
+  const shares = metadata.shares.filter((share) => share.teamResource && share.teamOrganizationId === organization?.id && share.status === 'active')
+  const usedBytes = shares.reduce((sum, share) => sum + fileListSize(share.files), 0)
+  const totalBytes = Number(plan.teamSpaceBytes || 0)
+  return {
+    usedBytes,
+    totalBytes,
+    remainingBytes: Math.max(totalBytes - usedBytes, 0),
+    usageRatio: totalBytes ? Math.min(1, usedBytes / totalBytes) : 0,
+    shareBytes: usedBytes,
+    collectionBytes: 0,
+    shareCount: shares.length,
+    collectionCount: 0,
+    fileCount: shares.reduce((sum, share) => sum + (share.files?.length || 0), 0),
+    singleFileLimitBytes: ACCOUNT_SINGLE_FILE_BYTES,
+  }
+}
+
+function assertTeamCapacity(organization, incomingBytes) {
+  const usage = accountTeamUsageForOrganization(organization)
+  if (!usage.totalBytes) throw httpError(403, '当前团队套餐没有配置团队空间')
+  if (usage.usedBytes + Number(incomingBytes || 0) > usage.totalBytes) {
+    throw httpError(507, `团队空间不足，剩余 ${formatByteSize(usage.remainingBytes)}`)
+  }
+}
+
+function assertUniqueTeamResourceNames(organization, files) {
+  const existingNames = new Set(
+    metadata.shares
+      .filter((share) => share.teamResource && share.teamOrganizationId === organization?.id)
+      .flatMap((share) => share.files || [])
+      .map((file) => normalizeUploadFileName(file.name || '').trim().toLowerCase())
+      .filter(Boolean),
+  )
+  const incomingNames = new Set()
+  for (const file of files || []) {
+    const name = normalizeUploadFileName(file.name || '').trim()
+    const normalized = name.toLowerCase()
+    if (!normalized || existingNames.has(normalized) || incomingNames.has(normalized)) {
+      throw httpError(409, `团队空间中已存在同名文件“${name || '未命名文件'}”`)
+    }
+    incomingNames.add(normalized)
   }
 }
 
@@ -3722,7 +3800,14 @@ async function createShareFromTempFiles(tempFiles, options, req) {
   try {
     const ownerSession = authSessionFromRequest(req)
     const totalSize = tempFiles.reduce((sum, file) => sum + Number(file.size || 0), 0)
-    assertAccountCapacity(ownerSession?.user, totalSize)
+    if (options.teamResource) {
+      const organization = Object.values(metadata.organizations || {}).find((item) => item.id === options.teamOrganizationId)
+      if (!organization) throw httpError(404, '团队空间不存在')
+      assertUniqueTeamResourceNames(organization, tempFiles)
+      assertTeamCapacity(organization, totalSize)
+    } else {
+      assertAccountCapacity(ownerSession?.user, totalSize)
+    }
     const shareToken = createToken(10)
     const shareDirectory = path.join(filesRoot, shareToken)
     fs.mkdirSync(shareDirectory, { recursive: true })
@@ -3756,6 +3841,8 @@ async function createShareFromTempFiles(tempFiles, options, req) {
       notificationLog: [],
       ownerUserId: ownerSession?.user?.id || '',
       status: 'active',
+      teamResource: Boolean(options.teamResource),
+      teamOrganizationId: options.teamResource ? String(options.teamOrganizationId || '') : '',
     }
     const shareUrl = `${getOrigin(req)}/share/${shareToken}`
     share.qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
