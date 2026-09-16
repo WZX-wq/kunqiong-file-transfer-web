@@ -3537,6 +3537,7 @@ function TeamPage() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState(null)
   const [memberTarget, setMemberTarget] = useState('')
   const [memberSuggestions, setMemberSuggestions] = useState([])
   const [savingMember, setSavingMember] = useState(false)
@@ -3553,8 +3554,8 @@ function TeamPage() {
   const [teamResourcePage, setTeamResourcePage] = useState(1)
   const [teamMemberPage, setTeamMemberPage] = useState(1)
 
-  const load = async () => {
-    setLoading(true)
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     setError('')
     try {
       const auth = await apiRequest('/api/auth/me')
@@ -3565,13 +3566,19 @@ function TeamPage() {
       setUser(auth.user)
       setData(await apiRequest('/api/account/team/overview'))
     } catch (err) {
-      setError(err.message || '团队数据加载失败')
+      if (silent) setNotice({ message: err.message || '团队数据刷新失败', tone: 'error' })
+      else setError(err.message || '团队数据加载失败')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (!notice) return undefined
+    const timer = window.setTimeout(() => setNotice(null), 3200)
+    return () => window.clearTimeout(timer)
+  }, [notice])
   useEffect(() => {
     setMemberUsagePage(1)
     setTeamResourcePage(1)
@@ -3610,7 +3617,7 @@ function TeamPage() {
       setMemberSuggestions([])
       await load()
     } catch (err) {
-      setError(err.message || '成员邀请失败')
+      setNotice({ message: err.message || '成员邀请失败', tone: 'error' })
     } finally {
       setSavingMember(false)
     }
@@ -3624,7 +3631,7 @@ function TeamPage() {
       await apiRequest(`/api/account/workspace/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' })
       await load()
     } catch (err) {
-      setError(err.message || '成员移除失败')
+      setNotice({ message: err.message || '成员移除失败', tone: 'error' })
     } finally {
       setSavingMember(false)
     }
@@ -3647,7 +3654,7 @@ function TeamPage() {
       return false
     })
     if (duplicate) {
-      setError(`团队上传中存在同名文件“${duplicate.name}”`)
+      setNotice({ message: `团队空间已存在同名文件“${duplicate.name}”，请修改文件名后再上传。`, tone: 'error' })
       return
     }
     setTeamFiles(nextFiles)
@@ -3658,8 +3665,9 @@ function TeamPage() {
 
   const uploadTeamFiles = async () => {
     if (!teamFiles.length || teamUploading) return
+    const uploadCount = teamFiles.length
     setTeamUploading(true)
-    setError('')
+    setNotice(null)
     try {
       const result = await uploadShareInChunks(
         teamFiles,
@@ -3676,10 +3684,11 @@ function TeamPage() {
       setTeamFiles([])
       teamUploadRef.current = createUploadSessionState()
       setTeamUploadState(createUploadState())
-      await load()
+      await load({ silent: true })
+      setNotice({ message: `已成功上传 ${uploadCount} 个文件到团队空间。`, tone: 'success' })
     } catch (err) {
       setTeamUploadState((current) => ({ ...current, status: 'failed', phase: '上传失败', error: err.message }))
-      setError(err.message || '团队文件上传失败')
+      setNotice({ message: err.message || '团队文件上传失败', tone: 'error' })
     } finally {
       setTeamUploading(false)
     }
@@ -3740,6 +3749,7 @@ function TeamPage() {
         {activeTab === 'manage' && <div className="public-card team-panel team-tab-panel team-members-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队成员</p><h2>成员权限</h2></div><span>{filteredManageMembers.length} / {members.length} 位成员</span></div><label className="team-search team-management-search"><Search size={15} /><input value={manageMemberQuery} onChange={(event) => setManageMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-management-list">{visibleTeamMembers.map((member) => <div className="team-management-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</small></div><span className={`workspace-member-state ${member.status === 'invited' ? 'pending' : 'active'}`}>{member.status === 'invited' ? '待加入' : member.role === 'owner' ? '所有者' : '已加入'}</span>{data.canManage && member.role !== 'owner' && <button className="ghost-icon" type="button" onClick={() => removeMember(member)} disabled={savingMember} aria-label={`移除${member.displayName || '成员'}`} title="移除成员"><X size={15} /></button>}</div>)}</div>{!filteredManageMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的团队成员</span></div>}<AdminPagination page={safeTeamMemberPage} pageCount={teamMemberPageCount} total={filteredManageMembers.length} pageSize={teamPageSize} onPageChange={setTeamMemberPage} /></div>}
       </div>
     </section>
+    {notice && <div className={`toast ${notice.tone || 'success'}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}><span className="toast-icon">{notice.tone === 'error' ? <X size={18} /> : <Check size={18} />}</span><span>{notice.message}</span></div>}
   </PublicShell>
 }
 
