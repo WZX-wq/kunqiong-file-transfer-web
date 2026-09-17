@@ -2495,14 +2495,20 @@ function syncOrganizationMemberProfile(user = {}) {
   const phone = normalizePhoneValue(user.phone)
   let changed = false
   for (const organization of Object.values(metadata.organizations || {})) {
+    // 每个组织单独记变更：changed 若只在循环外声明，第一个组织改到后
+    // 后续组织的 updatedAt 都会被无谓地刷新一遍。
+    let organizationChanged = false
     for (const member of organization.members || []) {
       if (member.userId !== userId) continue
       // 只补「有值且变了」的字段：账号侧为空时保留 roster 上的历史联系方式，避免把已有信息抹掉。
-      if (displayName && member.displayName !== displayName) { member.displayName = displayName; changed = true }
-      if (email && member.email !== email) { member.email = email; changed = true }
-      if (phone && member.phone !== phone) { member.phone = phone; changed = true }
+      if (displayName && member.displayName !== displayName) { member.displayName = displayName; organizationChanged = true }
+      if (email && member.email !== email) { member.email = email; organizationChanged = true }
+      if (phone && member.phone !== phone) { member.phone = phone; organizationChanged = true }
     }
-    if (changed) organization.updatedAt = new Date().toISOString()
+    if (organizationChanged) {
+      organization.updatedAt = new Date().toISOString()
+      changed = true
+    }
   }
   if (changed) metadataNeedsPersist = true
   return changed

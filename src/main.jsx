@@ -224,8 +224,18 @@ function App() {
   if (route.startsWith('/workspace')) return <WorkspacePage />
   if (route.startsWith('/e/')) {
     const parts = route.split('/').filter(Boolean)
-    if (parts[2] === 'share' && parts[3]) return <SharePage token={parts[3]} enterpriseSlug={parts[1]} />
-    if (parts[2] === 'collect' && parts[3]) return <CollectionSubmitPage token={parts[3]} enterpriseSlug={parts[1]} />
+    if (parts[2] === 'share') {
+      // 带 token → 正常的企业分享页；
+      // 不带 token（/e/<slug>/share/）→ 团队邀请链接，渲染入团落地页。
+      if (parts[3]) return <SharePage token={parts[3]} enterpriseSlug={parts[1]} />
+      return <TeamInvitePage slug={parts[1]} />
+    }
+    if (parts[2] === 'collect') {
+      if (parts[3]) return <CollectionSubmitPage token={parts[3]} enterpriseSlug={parts[1]} />
+      return <TeamInvitePage slug={parts[1]} />
+    }
+    // /e/<slug> 或 /e/<slug>/ 也视为团队邀请入口，避免复制链接时丢掉尾段就失效。
+    if (parts[1]) return <TeamInvitePage slug={parts[1]} />
   }
   if (route.startsWith('/share/manage/')) return <ShareManagePage token={route.split('/')[3]} />
   if (route.startsWith('/share/')) return <SharePage token={route.split('/')[2]} />
@@ -2062,6 +2072,25 @@ function TeamJoinRequestCard({ enterpriseSlug }) {
         </button>
       )}
     </div>
+  )
+}
+
+// 团队邀请链接的落地页（/e/<slug>/share/、/e/<slug>/collect/、/e/<slug>/）。
+// 团队邀请链接不带分享 token，之前会落到 WorkspaceApp 兜底分支，访客根本看不到「申请加入团队」入口。
+// 这里给邀请链接一个专属落地页：直接展示加入卡片，不依赖任何分享/收集任务存在。
+function TeamInvitePage({ slug }) {
+  return (
+    <PublicShell>
+      <section className="team-invite-page">
+        <div className="team-invite-hero">
+          <span className="team-invite-hero-icon"><Users size={26} /></span>
+          <p className="eyebrow">团队空间邀请</p>
+          <h1>你收到一个团队空间邀请</h1>
+          <p>登录鲲穹账号后即可申请加入，申请会提交给团队所有者审批。</p>
+        </div>
+        <TeamJoinRequestCard enterpriseSlug={slug} />
+      </section>
+    </PublicShell>
   )
 }
 

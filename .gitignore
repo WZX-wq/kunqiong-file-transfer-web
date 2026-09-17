@@ -5,6 +5,10 @@ storage/
 *.log
 dev-server.*.log
 qa-*.png
+# 浏览器验证脚本会把结果落盘成 txt，属本地产物，不入库
+_verify_*.txt
+_invite_browser.txt
+_chrome_*/
 
 _api-*.txt
 _requirements.*

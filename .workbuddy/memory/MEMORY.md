@@ -36,6 +36,20 @@
 - 管理后台 /admin：**账号口令登录**（默认 ljxkjadmin / jxljxkj009900，env 可覆盖），
   cookie `kunqiong_admin_session`，TTL 12h，timingSafeEqual 比对 + 8 次/10 分钟限流；
   同时兼容鲲穹管理员账号（ADMIN_USER_IDS）。requireAdminSession 返回 { type, session, user }
+- **工作台 /workspace 栅格布局**：12 列 CSS Grid（`.workspace-grid`）。
+  hero、`.workspace-benefits-card`、`.workspace-lower-row` 均为 `grid-column: 1 / -1` 通栏。
+  团队卡 + 状态卡**并排**装在 `.workspace-lower-row` 内（通栏 + 内部 `minmax(0,1.6fr) minmax(0,1fr)`）。
+  ⚠️ 三个必须遵守的约束（都踩过坑）：
+  1. `.workspace-team-card` **绝不能**再写 `grid-column: 1 / -1` —— 它在只有 2 列的
+     lower-row 里会横跨两栏独占整行，把状态卡挤到下一行。定位交给
+     `.workspace-lower-row > .workspace-team-card { grid-column: 1 / 2 }`（status 同理占 `2 / 3`）。
+  2. `.workspace-grid .public-card { width: 100% }` 必须是**后代**选择器。写成 `>` 匹配不到
+     lower-row 里的孙元素，两卡会回落 `.public-card` 的 `min(570px,100%)` 被硬顶成 570px。
+     并在 lower-row 内加 `.workspace-lower-row > .public-card { max-width: none }`。
+  3. 子元素有显式 `grid-column` 后，**900px 断点必须显式复位成 `1 / -1`**，
+     否则会盖过 `.workspace-lower-row` 的单列定义，窄屏把状态卡压成窄条。
+  回归：`node _verify_layout_real.mjs`（真实 Chrome 布局，46 项）+ `_verify_layout.mjs` / `_verify_served.mjs`
+  ⚠️ 改此区域后必须确认 `dist/` 已重新构建（浏览器加载产物）
 
 ## metadata 内部字段名（易踩错）
 - 用户表：`metadata.users`（对象 map，key=userId）—— **不是** `accountUsers`
@@ -65,6 +79,48 @@
 - 测试服权益收敛：`KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST=true` 时，
   仅 `KUNQIONG_TEST_ENTERPRISE_USER_KEYS`（wx_Ba7AZPo6U9）保留企业版，其余强制回落 free
 - Windows 一键启动：start.bat / start.ps1 / start.vbs
+
+## 可复用的验证脚本（根目录 `_verify_*.mjs`，注意各自的输出文件名）
+| 脚本 | 覆盖 | 输出 | 项数 |
+|---|---|---|---|
+| `_verify_flow.mjs` | 真实 HTTP 端到端，完整入团链路 | `_flow.log` | 48 |
+| `_verify_nickname.mjs` | roster 昵称/联系方式同步 | `_nick.log` | 19 |
+| `_verify_link.mjs` | 邀请链接静态契约 + jsdom 渲染 | `_link.log` | 23 |
+| `_verify_layout.mjs` | CSS 契约 + breakpoint 配平 + jsdom 渲染 | `_layout.log` | 39 |
+| `_verify_served.mjs` | 直接执行 dist 产物做 DOM 断言 | `_served.log` | 21 |
+| `_verify_layout_real.mjs` | **真实 Chrome 布局测量** | `_verify_layout_real.txt` | 46 |
+
+### ⚠️ jsdom ≠ 布局引擎
+jsdom **不做真实布局**。它能断言 DOM 结构（父子/兄弟关系），
+但「结构正确 ≠ 视觉正确」—— 两卡同父同层，仍可能因为 `grid-column` / `width` 而竖排。
+**凡是「位置、宽度、是否同一行」这类问题，必须用真实浏览器测**，见下。
+
+### 真实浏览器测试模板（可复用）
+本机 Chrome：`C:\Program Files\Google\Chrome\Application\chrome.exe`（Edge 同目录也有）。
+无 puppeteer/playwright，直接用 **CDP over 原生 WebSocket**（Node 22 内置 `WebSocket`）：
+1. `spawn chrome --headless=new --remote-debugging-port=PORT --user-data-dir=<临时目录> --disable-extensions`
+   轮询 `GET http://127.0.0.1:PORT/json/version` 直到就绪
+2. 连 **browser 级** ws（`version.webSocketDebuggerUrl`），调
+   **`Target.createTarget {url:'about:blank'}`**
+   ⚠️ `/json/list` 初始可能只有 background_page，**必须自己建 target**
+3. 再从 `/json/list` 找该 `targetId` 的 `webSocketDebuggerUrl`，连**页面级** ws
+4. `Page.enable` + `Runtime.enable`
+5. **注入登录态**（关键）：`Page.addScriptToEvaluateOnNewDocument` 覆写 `window.fetch`，
+   让 `/api/auth/me` 返回已登录用户、`/api/account/workspace` 返回团队数据。
+   否则 `/workspace` 只渲染「登录后使用团队空间」，量不到任何目标元素（我在这卡了一轮）
+6. `Emulation.setDeviceMetricsOverride {width,height,deviceScaleFactor:1}` 设视口
+   → `Page.navigate` → 等 ~2s → `Runtime.evaluate` 读 `getBoundingClientRect()` / `getComputedStyle()`
+7. `Page.captureScreenshot {format:'png', captureBeyondViewport:true}` 出 PNG 肉眼复核
+8. 收尾：`chrome.kill()` + 删除 `--user-data-dir` 临时目录
+
+### 「改了没生效」的排查顺序
+产物 CSS → 产物 JS → 构建时间 vs 源码时间 → 本地起 server 验返回 hash → **真实浏览器断言几何**。
+若前四步都过、几何仍不对，那就是真 bug（别急着归因缓存 —— 我就误判过一次）。
+
+### 写测试断言的纪律
+断言要描述**期望行为**，不要描述**当时的实现**。
+我曾把「team-card 通栏 grid-column:1/-1」写成断言，结果这行正是 bug 根源，
+修 bug 时反被自己的测试拦住。改用 `_verify_layout_real.mjs` 后立刻复现了真问题。
 
 ## 注意事项
 - CI yml 中明文提交了 OAUTH_CLIENT_SECRET / DB 口令 / 腾讯云密钥，属安全隐患，待提醒用户迁到 Secrets

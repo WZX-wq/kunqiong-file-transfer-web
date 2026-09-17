@@ -896,7 +896,7 @@ h1, h2, p { margin-top: 0; }
 .team-request-time { color: #9aada7; font-size: 10px; white-space: nowrap; }
 .team-request-actions { display: flex; align-items: center; gap: 6px; }
 .team-request-actions .primary-button, .team-request-actions .secondary-button { min-height: 32px; padding: 0 11px; font-size: 11px; }
-.team-join-card { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 720px; margin-top: 14px; padding: 16px 18px; }
+.team-join-card { display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 14px; padding: 16px 18px; }
 .team-join-card.pending { background: #f6fbf9; border-color: #d5e9e1; }
 .team-join-card.member { background: #f4f9f6; }
 .team-join-icon { display: grid; flex: none; width: 38px; height: 38px; place-items: center; color: #378b77; background: #eaf6f1; border-radius: 10px; }
@@ -905,6 +905,17 @@ h1, h2, p { margin-top: 0; }
 .team-join-body span { color: #8ba39d; font-size: 11px; line-height: 1.55; }
 .team-join-feedback { display: inline-flex; align-items: center; gap: 5px; color: #378b77 !important; }
 .team-join-action { flex: none; min-height: 34px; padding: 0 13px; font-size: 11px; }
+/* 团队邀请落地页（/e/<slug>/share/ 等不带 token 的邀请链接） */
+.team-invite-page { width: min(720px, 100%); margin: 0 auto; }
+.team-invite-hero { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px 32px; text-align: center; background: #fff; border: 1px solid #dfebe7; border-radius: 14px; box-shadow: var(--shadow); }
+.team-invite-hero-icon { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 4px; color: var(--accent); background: var(--accent-pale); border-radius: 15px; }
+.team-invite-hero .eyebrow { margin: 0; }
+.team-invite-hero h1 { margin: 0; color: var(--ink); font-size: 26px; line-height: 1.3; letter-spacing: -0.02em; }
+.team-invite-hero p:last-child { max-width: 420px; margin: 0; color: #8ba39d; font-size: 13px; line-height: 1.7; }
+/* 宽度必须显式声明：.team-join-card 写在 .public-card 之前（899 vs 1168），
+   同特异性下后者的 width: min(570px,100%) 会胜出，卡片就被硬顶成 570px、
+   比上面的 hero(720px) 窄一截。只写 max-width:none 管不住 width。 */
+.team-invite-page .team-join-card { width: 100%; max-width: none; margin-top: 18px; }
 /* 团队空间卡片内部：分区块 + 底部操作条 */
 .workspace-team-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 22px; padding: 20px 0 18px; }
 .workspace-team-block { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
@@ -1492,6 +1503,11 @@ h1, h2, p { margin-top: 0; }
   .team-resource-row > a.ghost-icon { grid-column: 3; grid-row: 2; }
   .team-resource-actions { grid-column: 3; grid-row: 1 / span 2; }
   .workspace-toast { right: 14px; bottom: 14px; left: 14px; width: auto; }
+  .team-invite-page { width: 100%; }
+  .team-invite-hero { padding: 28px 20px; }
+  .team-invite-hero h1 { font-size: 21px; }
+  .team-invite-page .team-join-card { align-items: stretch; flex-direction: column; gap: 12px; }
+  .team-invite-page .team-join-action { width: 100%; justify-content: center; }
   .admin-heading { align-items: stretch; flex-direction: column; }
   .admin-heading h1 { font-size: 26px; }
   .admin-heading > div:last-child { justify-content: stretch; }
