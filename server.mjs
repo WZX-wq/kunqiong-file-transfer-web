@@ -338,6 +338,8 @@ app.patch('/api/auth/profile', (req, res) => {
   }
   const user = upsertAccountUser(session.user)
   syncAccountUserSessions(user)
+  // 改名/换头像后同步团队 roster，否则团队空间会一直显示入团时的旧快照。
+  syncOrganizationMemberProfile(user)
   persistMetadata()
   res.json({ user: publicAccountUser(user) })
 })
@@ -2483,6 +2485,29 @@ function createOrganization(user, name) {
   return organization
 }
 
+// 组织 roster 上的 displayName / email / phone 是「入团那一刻」的快照，
+// 用户之后改昵称不会回写，团队空间就会一直显示旧名字。这里按 userId 反查账号做一次同步。
+function syncOrganizationMemberProfile(user = {}) {
+  const userId = trimRecordString(user?.id, 120)
+  if (!userId) return false
+  const displayName = displayAccountName(user)
+  const email = normalizeEmailValue(user.email)
+  const phone = normalizePhoneValue(user.phone)
+  let changed = false
+  for (const organization of Object.values(metadata.organizations || {})) {
+    for (const member of organization.members || []) {
+      if (member.userId !== userId) continue
+      // 只补「有值且变了」的字段：账号侧为空时保留 roster 上的历史联系方式，避免把已有信息抹掉。
+      if (displayName && member.displayName !== displayName) { member.displayName = displayName; changed = true }
+      if (email && member.email !== email) { member.email = email; changed = true }
+      if (phone && member.phone !== phone) { member.phone = phone; changed = true }
+    }
+    if (changed) organization.updatedAt = new Date().toISOString()
+  }
+  if (changed) metadataNeedsPersist = true
+  return changed
+}
+
 function accountWorkspacePayload(user) {
   const stored = accountUserById(user.id) || user
   const plan = accountEffectivePlanForUser(stored)
@@ -4242,6 +4267,9 @@ function createAuthSession(tokenData) {
     user: publicUser(user),
   }
   metadata.sessions.push(session)
+  // 每次登录顺带把团队 roster 上的旧昵称/联系方式刷新一遍，
+  // 这样即使改名的请求没走到 PATCH /api/auth/profile（例如离线改的），下次登录也能自愈。
+  syncOrganizationMemberProfile(user)
   persistMetadata()
   return session
 }

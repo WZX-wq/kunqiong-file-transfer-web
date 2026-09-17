@@ -27,6 +27,12 @@
   顺序写错会让冷却永远不可达（已修）。
   ⚠️ `publicOrganization()` 对非所有者过滤 `requested`；`team/overview` 的 `memberUsage` 也必须排除 `requested`，
   否则「团队成员」计数虚高。
+- **组织 roster 的 displayName/email/phone 是入团快照**，改昵称不会自动回写。
+  `syncOrganizationMemberProfile(user)` 负责同步，挂在两处：`PATCH /api/auth/profile` 与 `createAuthSession`。
+  规则：只补「有值且变了」的字段，账号侧为空时保留 roster 历史值，绝不抹掉已有信息。
+  改动涉及成员资料展示时务必回归这条链路。
+- **团队邀请链接**：`/e/<slug>/share/`，两个入口渲染 —— `/workspace` 团队卡片内（`workspace-invite-link`）、
+  `/team` 页顶部（`team-invite-link-card`，仅 canManage）。都带复制按钮（`copyTextToClipboard`）。
 - 管理后台 /admin：**账号口令登录**（默认 ljxkjadmin / jxljxkj009900，env 可覆盖），
   cookie `kunqiong_admin_session`，TTL 12h，timingSafeEqual 比对 + 8 次/10 分钟限流；
   同时兼容鲲穹管理员账号（ADMIN_USER_IDS）。requireAdminSession 返回 { type, session, user }

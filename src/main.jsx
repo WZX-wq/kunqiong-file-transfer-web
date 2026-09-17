@@ -3903,6 +3903,17 @@ function TeamPage() {
   const resources = data.resources || []
   const joinRequests = data.joinRequests || []
   const memberName = (userId) => members.find((item) => item.userId === userId)?.displayName || '团队成员'
+  // 团队邀请链接：与工作台使用的是同一个企业专属入口。
+  const teamInviteLink = organization.slug ? `${window.location.origin}/e/${organization.slug}/share/` : ''
+  const copyTeamInviteLink = async () => {
+    setNotice(null)
+    try {
+      await copyTextToClipboard(teamInviteLink)
+      setNotice({ message: '团队邀请链接已复制，发给同事即可申请加入', tone: 'success' })
+    } catch {
+      setNotice({ message: '当前浏览器不支持自动复制，请手动选中链接复制', tone: 'error' })
+    }
+  }
   const normalizedMemberQuery = memberQuery.trim().toLowerCase()
   const normalizedManageMemberQuery = manageMemberQuery.trim().toLowerCase()
   const normalizedResourceQuery = resourceQuery.trim().toLowerCase()
@@ -3938,6 +3949,13 @@ function TeamPage() {
   return <PublicShell>
     <section className="team-page">
       <div className="team-page-heading"><div><p className="eyebrow">团队空间</p><h1>{organization.name}</h1><p>统一查看成员使用量、团队资源和空间状态。</p></div><div className="team-page-actions"><button className="secondary-button" onClick={goBack}><ArrowLeft size={15} /> 返回</button></div></div>
+      {data.canManage && teamInviteLink && <div className="public-card team-panel team-invite-link-card">
+        <div className="team-invite-link-head"><Link2 size={16} /><div><strong>团队邀请链接</strong><small>发给同事，对方登录后可在页面底部直接申请加入，申请会出现在「入团申请」里由你审批。</small></div></div>
+        <div className="team-invite-link-row">
+          <code title={teamInviteLink}>{teamInviteLink}</code>
+          <button type="button" className="copy-button" onClick={copyTeamInviteLink}><Copy size={14} /> 复制链接</button>
+        </div>
+      </div>}
       <div className="team-kpi-grid"><div className="team-kpi"><span><Users size={16} /> 成员</span><strong>{members.filter((item) => item.status !== 'invited').length}</strong><small>{members.filter((item) => item.status === 'invited').length} 个待加入</small></div><div className="team-kpi"><span><HardDrive size={16} /> 已使用空间</span><strong>{formatBytes(usedBytes)}</strong><small>共 {formatBytes(totalBytes)}</small></div><div className="team-kpi"><span><Database size={16} /> 文件资源</span><strong>{resources.reduce((sum, item) => sum + item.fileCount, 0)}</strong><small>{resources.length} 个分享或收集任务</small></div><div className="team-kpi"><span><Link2 size={16} /> 活跃资源</span><strong>{resources.filter((item) => item.status === 'active').length}</strong><small>{data.canManage ? '你是团队所有者' : '团队成员视图'}</small></div></div>
       <div className="team-overview-grid">
         <div className="public-card team-panel team-capacity-panel"><div className="team-panel-heading"><div><p className="eyebrow">空间使用</p><h2>团队容量</h2></div><span className="workspace-status">{ratio}%</span></div><div className="team-capacity-number"><strong>{formatBytes(usedBytes)}</strong><span>/ {formatBytes(totalBytes)}</span></div><div className="capacity-bar"><span style={{ width: `${ratio}%` }} /></div><div className="team-capacity-meta"><span>{capacity.shareCount || 0} 个分享</span><span>{capacity.collectionCount || 0} 个收集任务</span><span>{capacity.fileCount || 0} 个文件</span></div></div>
@@ -4085,7 +4103,18 @@ function WorkspacePage() {
   const ratio = selectedTotalBytes ? Math.min(100, Math.round((capacity.usedBytes / selectedTotalBytes) * 100)) : 0
   const currentPlanLabel = plan.label || '基础版'
   const planValidity = plan.id === 'free' ? '长期免费' : plan.permanent ? '永久有效' : workspace?.planExpiresAt ? `有效至 ${formatDate(workspace.planExpiresAt)}` : '长期有效'
-  const enterpriseLink = organization ? `${window.location.origin}/e/${organization.slug}/share/` : ''
+  // 团队邀请入口：走企业专属路径，访客打开后登录即可在页面底部直接申请入团。
+  const enterpriseInviteLink = organization ? `${window.location.origin}/e/${organization.slug}/share/` : ''
+  const copyEnterpriseLink = async () => {
+    setError('')
+    setMessage('')
+    try {
+      await copyTextToClipboard(enterpriseInviteLink)
+      setMessage('团队邀请链接已复制，发给同事即可申请加入')
+    } catch {
+      setError('当前浏览器不支持自动复制，请手动选中链接复制')
+    }
+  }
   const goBack = () => {
     const referrer = document.referrer
     const hasSameOriginReferrer = referrer && new URL(referrer, window.location.origin).origin === window.location.origin
@@ -4135,6 +4164,13 @@ function WorkspacePage() {
                 <>
                   {!canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
                   {ownerMember && <div className="workspace-owner-summary"><span className="workspace-member-avatar">{(ownerMember.displayName || '团').slice(0, 1)}</span><div><strong>{ownerMember.displayName || ownerMember.email || ownerMember.phone || '团队所有者'}</strong><span>{ownerMember.email || ownerMember.phone || ownerMember.userId || '当前账号'} · 所有者</span></div><span className="workspace-member-state active">所有者</span></div>}
+                  <div className="workspace-invite-link">
+                    <div className="workspace-invite-link-head"><Link2 size={15} /><strong>团队邀请链接</strong><small>把它发给同事，对方登录后即可申请加入，申请会出现在团队空间里由你审批。</small></div>
+                    <div className="workspace-invite-link-row">
+                      <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
+                      <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={14} /> 复制</button>
+                    </div>
+                  </div>
                   <div className="workspace-member-summary"><small>其他成员、待加入成员和入团申请请前往团队空间查看</small></div>
                   <button type="button" className="team-manage-link" onClick={() => { window.location.href = '/team' }}><BarChart3 size={14} /> 查看团队成员与使用情况 <ChevronRight size={14} /></button>
                 </>

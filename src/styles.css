@@ -892,6 +892,21 @@ h1, h2, p { margin-top: 0; }
 .team-join-body span { color: #8ba39d; font-size: 11px; line-height: 1.55; }
 .team-join-feedback { display: inline-flex; align-items: center; gap: 5px; color: #378b77 !important; }
 .team-join-action { flex: none; min-height: 34px; padding: 0 13px; font-size: 11px; }
+/* 团队邀请链接：工作台卡片内与团队空间页共用同一套样式 */
+.workspace-invite-link { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; padding: 13px 14px; background: #f7fbf9; border: 1px solid #dbe8e4; border-radius: 10px; }
+.workspace-invite-link-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.workspace-invite-link-head svg { flex: none; align-self: center; color: var(--accent); }
+.workspace-invite-link-head strong { color: #3f6058; font-size: 12px; }
+.workspace-invite-link-head small { flex: 1 1 220px; min-width: 0; color: #8ba39d; font-size: 10px; line-height: 1.5; }
+.workspace-invite-link-row, .team-invite-link-row { display: flex; align-items: center; gap: 8px; }
+.workspace-invite-link-row code, .team-invite-link-row code { flex: 1; min-width: 0; overflow: hidden; padding: 8px 10px; color: #4b6f65; background: #fff; border: 1px solid #dbe8e4; border-radius: 7px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-invite-link-row .copy-button, .team-invite-link-row .copy-button { flex: none; }
+.team-invite-link-card { display: flex; flex-direction: column; gap: 11px; width: 100%; margin-bottom: 16px; }
+.team-invite-link-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.team-invite-link-head > svg { flex: none; color: var(--accent); }
+.team-invite-link-head > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.team-invite-link-head strong { color: #3f6058; font-size: 12px; }
+.team-invite-link-head small { color: #8ba39d; font-size: 10px; line-height: 1.55; }
 .team-invite-wrap { position: relative; margin-bottom: 13px; }.team-inline-search { margin-bottom: 0; }
 .team-inline-search svg { margin-left: 10px; flex: none; color: var(--accent); }
 .team-inline-search input { border: 0; }
