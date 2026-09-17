@@ -4139,6 +4139,7 @@ function WorkspacePage() {
               <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id ? 'true' : 'false'}><em className="plan-current-tag">{item.id === plan.id ? '当前' : item.team ? '推荐' : ''}</em><strong>{item.label}</strong><PlanSpaceSummary plan={item} /><small className="plan-price-summary">{formatPlanPrice(item)}</small></button>)}</div>
               <div className="workspace-benefits-cta"><span>{plan.id === 'enterprise' ? '你已拥有最高企业版权益。' : '需要更多空间、永久保存或团队协作？'}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {plan.id === 'enterprise' ? '查看权益详情' : '升级权益'}</button></div>
             </div>
+            <div className="workspace-lower-row">
             <div className="public-card workspace-section workspace-team-card">
               <div className="workspace-section-heading">
                 <div className="workspace-team-heading">
@@ -4163,20 +4164,29 @@ function WorkspacePage() {
               ) : (
                 <>
                   {!canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
-                  {ownerMember && <div className="workspace-owner-summary"><span className="workspace-member-avatar">{(ownerMember.displayName || '团').slice(0, 1)}</span><div><strong>{ownerMember.displayName || ownerMember.email || ownerMember.phone || '团队所有者'}</strong><span>{ownerMember.email || ownerMember.phone || ownerMember.userId || '当前账号'} · 所有者</span></div><span className="workspace-member-state active">所有者</span></div>}
-                  <div className="workspace-invite-link">
-                    <div className="workspace-invite-link-head"><Link2 size={15} /><strong>团队邀请链接</strong><small>把它发给同事，对方登录后即可申请加入，申请会出现在团队空间里由你审批。</small></div>
-                    <div className="workspace-invite-link-row">
-                      <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
-                      <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={14} /> 复制</button>
+                  <div className="workspace-team-body">
+                    <div className="workspace-team-block">
+                      <p className="workspace-block-label">团队所有者</p>
+                      {ownerMember && <div className="workspace-owner-summary"><span className="workspace-member-avatar">{(ownerMember.displayName || '团').slice(0, 1)}</span><div><strong>{ownerMember.displayName || ownerMember.email || ownerMember.phone || '团队所有者'}</strong><span>{ownerMember.email || ownerMember.phone || ownerMember.userId || '当前账号'} · 所有者</span></div><span className="workspace-member-state active">所有者</span></div>}
+                    </div>
+                    <div className="workspace-team-block">
+                      <p className="workspace-block-label"><Link2 size={14} /> 团队邀请链接</p>
+                      <p className="workspace-block-hint">把它发给同事，对方登录后即可申请加入，申请会出现在团队空间里由你审批。</p>
+                      <div className="workspace-invite-link-row">
+                        <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
+                        <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={14} /> 复制</button>
+                      </div>
                     </div>
                   </div>
-                  <div className="workspace-member-summary"><small>其他成员、待加入成员和入团申请请前往团队空间查看</small></div>
-                  <button type="button" className="team-manage-link" onClick={() => { window.location.href = '/team' }}><BarChart3 size={14} /> 查看团队成员与使用情况 <ChevronRight size={14} /></button>
+                  <div className="workspace-team-foot">
+                    <span>其他成员、待加入成员和入团申请请前往团队空间查看</span>
+                    <button type="button" className="team-manage-link" onClick={() => { window.location.href = '/team' }}><BarChart3 size={14} /> 查看团队成员与使用情况 <ChevronRight size={14} /></button>
+                  </div>
                 </>
               )}
             </div>
             <div className="public-card workspace-side-card workspace-status-card"><div className="workspace-side-heading"><ListChecks size={22} /><strong>当前状态</strong></div><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan ? 'on' : 'off'}>{hasTeamPlan ? <Check size={13} /> : <X size={13} />} 团队协作与成员管理</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 分享链接入团申请</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
+            </div>
         </div>
       </section>
       {upgradeOpen && <UpgradeModal workspace={workspace} onClose={() => setUpgradeOpen(false)} onRefresh={load} onNotify={(text, tone) => { if (tone === 'error') setError(text); else setMessage(text) }} />}
