@@ -77,6 +77,7 @@
 - dev: npm run dev（server 8045 + vite 4173）
 - prod: npm run build && npm start，同源 8045，server 托管 dist/；有 Dockerfile
 - CI: Gitea Actions（.gitea/workflows/deploy-test.yml），push main 自动部署测试服 43.154.197.96:8045
+  ⚠️ 实测触发有延迟/可能排队（观察到 11~20+ 分钟不等）。**验证部署靠  的  字段与提交 SHA 比对**，别用固定等待时间。
 - **部署脚本关键约束**：测试机 8045 由 compose 管理的容器持有端口绑定，
   不能对同名容器一律 `docker rm -f`（会导致 CI 绿但线上旧）。按 compose 项目归属分流处理。
   脚本已内置部署后 release 校验（比对容器内 /api/health 的 release 与提交 SHA）
@@ -147,6 +148,21 @@ stub 的返回体必须**结构完整**：页面读 `data.share.files.length`，
 另外注入脚本里别做 `JSON.stringify(JSON.stringify(obj))` 双重序列化 —— 注入后是字符串不是对象，
 表现为「组件渲染了但状态全空」，很容易误判成代码 bug。
 排查手法：先在真实浏览器里记录 `window.fetch` 实际收到的 URL 与响应，别靠猜。
+
+### 验证脚本的依赖组件必须入库
+`_verify_invite.mjs` 依赖 `_invite_child.mjs`（子进程渲染探针）。
+我曾把它当临时文件删掉，18 项直接报子进程 MODULE_NOT_FOUND。
+**清理临时文件前先确认没有验证脚本 import 它。**
+
+### ⚠️ 兜底文案在「对象不存在」路径上会变成误导
+`state.organizationName || '该团队'` 这种兜底，在团队已删除时会把页面变成
+「加入『该团队』团队空间」+ 无任何按钮 —— 自相矛盾。
+**对象不存在的分支要显式渲染「不可用」状态，不要回落默认值。**
+邀请落地页已按此处理：`reason==='unavailable'` → hero 换成「这个邀请链接已失效」，且不渲染加入卡片。
+
+### 负向断言的纪律
+`!/该团队/.test(html)` 会误命中「**该团队**不存在或已解散」这句正常说明 → 假阳性。
+**负向断言必须精确到特征串**（如 `/加入「该团队」/`），别用一个通用词。
 
 ## 注意事项
 - CI yml 中明文提交了 OAUTH_CLIENT_SECRET / DB 口令 / 腾讯云密钥，属安全隐患，待提醒用户迁到 Secrets
