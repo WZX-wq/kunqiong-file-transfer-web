@@ -166,9 +166,17 @@ deploy_with_docker() {
   chmod 600 "$COMPOSE_DIR/.env" 2>/dev/null || true
 
   # 清掉历史遗留容器或其它 compose 项目创建的同名容器，避免容器名冲突。
-  existing_proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$APP_NAME" 2>/dev/null || true)"
-  if [ -n "$existing_proj" ] && [ "$existing_proj" != "$APP_NAME" ]; then
+  # 只要容器名被占用就先删除，不区分它是哪个 compose 项目创建的
+  # （测试机历史上曾被另一个 compose 项目占过同名容器，导致 up 直接 Conflict 失败）。
+  if docker inspect "$APP_NAME" >/dev/null 2>&1; then
+    existing_proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$APP_NAME" 2>/dev/null || true)"
+    echo "Removing stale container '$APP_NAME' (previous compose project: ${existing_proj:-none})"
     docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
+  fi
+
+  # 同名容器若被其它 compose 项目登记，先停掉那个项目，避免 remove-orphans 反向删除。
+  if [ -n "${existing_proj:-}" ] && [ "$existing_proj" != "$APP_NAME" ]; then
+    docker compose -p "$existing_proj" down --remove-orphans >/dev/null 2>&1 || true
   fi
 
   ( cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans )
