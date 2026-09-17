@@ -2016,6 +2016,9 @@ function TeamJoinRequestCard({ enterpriseSlug }) {
   }, [enterpriseSlug])
 
   if (!enterpriseSlug || loadFailed || !state) return null
+  // 团队不存在（无效 slug / 已解散）时整张卡片都不渲染：
+  // 否则会显示「加入『该团队』团队空间」这种兜底文案，比不显示更误导人。
+  if (state.available === false && state.reason === 'unavailable') return null
   const teamName = state.organizationName || '该团队'
   const login = () => {
     const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`
@@ -2079,16 +2082,28 @@ function TeamJoinRequestCard({ enterpriseSlug }) {
 // 团队邀请链接不带分享 token，之前会落到 WorkspaceApp 兜底分支，访客根本看不到「申请加入团队」入口。
 // 这里给邀请链接一个专属落地页：直接展示加入卡片，不依赖任何分享/收集任务存在。
 function TeamInvitePage({ slug }) {
+  // 落地页自己探一次团队是否存在：无效 slug 时上方导语必须换成「链接已失效」，
+  // 否则页面会一边说「你收到一个团队空间邀请」、一边渲染不出任何可操作入口，自相矛盾。
+  const [probe, setProbe] = useState(null)
+  useEffect(() => {
+    if (!slug) return undefined
+    let active = true
+    apiRequest(`/api/organizations/${encodeURIComponent(slug)}/join-request`)
+      .then((result) => { if (active) setProbe(result) })
+      .catch(() => { if (active) setProbe({ available: false, reason: 'unavailable' }) })
+    return () => { active = false }
+  }, [slug])
+  const invalid = probe && probe.reason === 'unavailable'
   return (
     <PublicShell>
       <section className="team-invite-page">
         <div className="team-invite-hero">
-          <span className="team-invite-hero-icon"><Users size={26} /></span>
+          <span className="team-invite-hero-icon">{invalid ? <Building2 size={26} /> : <Users size={26} />}</span>
           <p className="eyebrow">团队空间邀请</p>
-          <h1>你收到一个团队空间邀请</h1>
-          <p>登录鲲穹账号后即可申请加入，申请会提交给团队所有者审批。</p>
+          <h1>{invalid ? '这个邀请链接已失效' : '你收到一个团队空间邀请'}</h1>
+          <p>{invalid ? '该团队不存在或已解散，请联系邀请你的人重新获取链接。' : '登录鲲穹账号后即可申请加入，申请会提交给团队所有者审批。'}</p>
         </div>
-        <TeamJoinRequestCard enterpriseSlug={slug} />
+        {!invalid && <TeamJoinRequestCard enterpriseSlug={slug} />}
       </section>
     </PublicShell>
   )

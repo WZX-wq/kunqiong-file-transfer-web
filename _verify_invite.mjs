@@ -40,20 +40,19 @@ check('产物含邀请落地页文案', /你收到一个团队空间邀请/.test
 check('产物含邀请落地页样式类', /team-invite-page/.test(cssText))
 check('产物含邀请落地页骨架类', /team-invite-hero/.test(cssText))
 
-// 每个路由在独立子进程里渲染：产物是 ESM，同进程内 import 会被模块缓存，
-// 用 ?v= 绕缓存又会让 URL 解析拿到脏路径（历史上就是这么崩的）。
 const { execFileSync } = await import('node:child_process')
 const NODE = process.execPath
-const renderAt = (urlPath) => {
-  const outFile = path.join(ROOT, `_inv_${urlPath.replace(/[^a-z0-9]/gi, '_')}.json`)
+const renderAt = (urlPath, missing = false) => {
+  const tag = urlPath.replace(/[^a-z0-9]/gi, '_') + (missing ? '_MISS' : '')
+  const outFile = path.join(ROOT, `_inv_${tag}.json`)
+  const args = [path.join(ROOT, '_invite_child.mjs'), urlPath, outFile]
+  if (missing) args.push('__missing__')
   try {
-    execFileSync(NODE, [path.join(ROOT, '_invite_child.mjs'), urlPath, outFile], {
-      env: { ...process.env, KQ_ROOT: ROOT }, stdio: 'pipe', timeout: 60000,
-    })
+    execFileSync(NODE, args, { env: { ...process.env, KQ_ROOT: ROOT }, stdio: 'pipe', timeout: 60000 })
   } catch (e) {
-    return { fatal: '子进程异常：' + (e?.message || e), errors: [], hasInvitePage: false, hasJoinCard: false, hasWorkspace: false, html: '' }
+    return { fatal: '子进程异常：' + (e?.message || e), errors: [], hasInvitePage: false, hasJoinCard: false, hasWorkspace: false, hasSharePage: false, html: '' }
   }
-  try { return JSON.parse(fs.readFileSync(outFile, 'utf8')) } catch { return { fatal: '无输出', errors: [], hasInvitePage: false, hasJoinCard: false, hasWorkspace: false, html: '' } }
+  try { return JSON.parse(fs.readFileSync(outFile, 'utf8')) } catch { return { fatal: '无输出', errors: [], hasInvitePage: false, hasJoinCard: false, hasWorkspace: false, hasSharePage: false, html: '' } }
 }
 
 const inviteRoutes = ['/e/invite-team/share/', '/e/invite-team/collect/', '/e/invite-team/', '/e/invite-team']
@@ -67,10 +66,23 @@ for (const r of inviteRoutes) {
   check(`${r} 无运行时报错`, res.errors.length === 0 && !res.fatal, res.fatal || res.errors.slice(0, 1).join('') || 'clean')
 }
 
+// 团队不存在 / 链接失效：必须明确告知，不能既说「你收到邀请」又没有任何入口，
+// 更不能显示「加入『该团队』团队空间」这种兜底文案。
+for (const r of ['/e/ghost-team/share/', '/e/ghost-team/']) {
+  const res = await renderAt(r, true)
+  check(`★ ${r} 失效链接仍渲染落地页`, res.hasInvitePage, `invitePage=${res.hasInvitePage}`)
+  check(`★ ${r} 明确提示链接已失效`, /这个邀请链接已失效/.test(res.html))
+  check(`★ ${r} 不再渲染无意义的加入卡片`, !res.hasJoinCard, `joinCard=${res.hasJoinCard}`)
+  // 断言要精确到「兜底文案」的特征串。只测 /该团队/ 会误命中
+  // 「该团队不存在或已解散」这句正常说明，是假阳性。
+  check(`★ ${r} 不出现「加入『该团队』」兜底文案`, !/加入「该团队」/.test(res.html))
+  check(`${r} 无运行时报错`, res.errors.length === 0 && !res.fatal, res.fatal || res.errors.slice(0, 1).join('') || 'clean')
+}
+
 // 带 token 的企业分享链接仍应渲染分享页（不能把邀请页逻辑串味）
 const shareRes = await renderAt('/e/invite-team/share/tok123')
 if (shareRes.fatal) line(`  控制组渲染失败：${shareRes.fatal}`)
-check('带 token 的企业分享链接仍渲染 SharePage（非邀请页）', !shareRes.hasInvitePage, `invitePage=${shareRes.hasInvitePage}`)
+check('带 token 的企业分享链接仍渲染 SharePage（非邀请页）', !shareRes.hasInvitePage && shareRes.hasSharePage, `invitePage=${shareRes.hasInvitePage} sharePage=${shareRes.hasSharePage}`)
 
 // ============ B. 接口层：真实 HTTP 全链路 ============
 line('\n===== B. 接口层：探测 → 申请 → 审批 → 成为成员 =====')
