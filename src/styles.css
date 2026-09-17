@@ -1403,6 +1403,7 @@ h1, h2, p { margin-top: 0; }
   .team-resource-row .team-resource-status, .team-resource-row .team-resource-size { grid-column: 2; }
   .team-resource-row .team-resource-size { text-align: left; }
   .team-resource-row > a.ghost-icon { grid-column: 3; grid-row: 2; }
+  .team-resource-actions { grid-column: 3; grid-row: 1 / span 2; }
   .workspace-toast { right: 14px; bottom: 14px; left: 14px; width: auto; }
   .admin-heading { align-items: stretch; flex-direction: column; }
   .admin-heading h1 { font-size: 26px; }
