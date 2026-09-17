@@ -86,6 +86,12 @@ const ADMIN_COOKIE_NAME = 'kunqiong_admin_session'
 const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000
 const ADMIN_LOGIN_MAX_ATTEMPTS = 8
 const ADMIN_LOGIN_WINDOW_MS = 10 * 60 * 1000
+// 入团申请限流：同一 IP + 账号在窗口内的申请次数上限，防止被转发出去的分享链接被刷申请。
+const JOIN_REQUEST_MAX_PER_WINDOW = 5
+const JOIN_REQUEST_WINDOW_MS = 60 * 60 * 1000
+// 被拒绝后的重新申请冷却，避免持续骚扰团队所有者。
+const JOIN_REQUEST_REJECT_COOLDOWN_MS = 24 * 60 * 60 * 1000
+const joinRequestAttempts = new Map()
 const adminLoginAttempts = new Map()
 const adminSessions = new Map()
 const TEST_ENTERPRISE_USER_KEYS = new Set(splitConfigValues(process.env.KUNQIONG_TEST_ENTERPRISE_USER_KEYS || process.env.KUNQIONG_TEST_ENTERPRISE_USER_IDS).map((value) => value.toLowerCase()))
@@ -596,8 +602,10 @@ app.get('/api/account/team/overview', (req, res) => {
   if (!session) return
   const organization = accountOrganizationForUser(session.user.id)
   if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
-  const memberIds = new Set(organization.members.map((member) => member.userId).filter(Boolean))
-  const memberUsage = organization.members.map((member) => {
+  // 待审批的入团申请（status='requested'）不是成员，不计入成员观察/成员列表，也不应参与团队资源归属判定。
+  const rosterMembers = organization.members.filter((member) => member.status !== 'requested')
+  const memberIds = new Set(rosterMembers.map((member) => member.userId).filter(Boolean))
+  const memberUsage = rosterMembers.map((member) => {
     const shares = metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && item.ownerUserId === member.userId)
     const shareBytes = shares.reduce((sum, item) => sum + fileListSize(item.files), 0)
     return {
@@ -638,6 +646,7 @@ app.get('/api/account/team/overview', (req, res) => {
     plan: accountEffectivePlanForUser(organization.ownerUserId),
     capacity: accountTeamUsageForOrganization(organization),
     memberUsage,
+    joinRequests: isOrganizationManager(organization, session.user.id) ? publicJoinRequestsForOrganization(organization) : [],
     resources: resources.slice(0, 200),
   })
 })
@@ -824,6 +833,201 @@ app.delete('/api/account/workspace/members/:memberId', (req, res) => {
   persistMetadata()
   recordAuditLog({ type: 'team', action: '移除团队成员', userId: session.user.id, targetId: removedMember.userId, details: { organizationId: organization.id, notifiedInApp } })
   res.json({ ...accountWorkspacePayload(session.user), removedMemberId: removedMember.id, notifiedInApp })
+})
+
+// 入团申请：公开查询入口。分享/收集链接带 ?organization=slug 时会调用它，决定是否展示「申请加入团队」。
+app.get('/api/organizations/:slug/join-request', (req, res) => {
+  const organization = organizationBySlug(req.params.slug)
+  // 团队不存在、或团队版权益已失效时，一律按“不可申请”返回，避免把内部状态暴露给外部访客。
+  if (!organization || !accountEffectivePlanForUser(organization.ownerUserId).team) {
+    return res.json({ available: false, reason: 'unavailable' })
+  }
+  const session = authSessionFromRequest(req)
+  const viewer = session?.user || null
+  const payload = { available: false, organizationName: organization.name }
+  if (!viewer) return res.json({ ...payload, reason: 'anonymous' })
+  if (viewer.id === organization.ownerUserId) return res.json({ ...payload, reason: 'owner' })
+  const currentOrganization = accountOrganizationForUser(viewer.id)
+  const existing = organization.members.find((member) => member.userId === viewer.id)
+  if (existing?.status === 'active') return res.json({ ...payload, reason: 'member' })
+  if (currentOrganization && currentOrganization.id !== organization.id) return res.json({ ...payload, reason: 'other_team' })
+  if (existing?.status === 'requested') {
+    return res.json({ ...payload, available: false, reason: 'pending', requestedAt: existing.requestedAt || null })
+  }
+  // 冷却判定必须先于 invited：被拒绝的申请会留下 status='invited' 占位记录用于保存冷却锚点，
+  // 若先判 invited 会把「刚被拒绝」误报成「收到邀请」，冷却逻辑永远不可达。
+  const cooldownMs = joinRequestCooldownRemaining(organization, viewer.id)
+  if (cooldownMs > 0) {
+    return res.json({ ...payload, reason: 'cooldown', cooldownUntil: new Date(Date.now() + cooldownMs).toISOString() })
+  }
+  if (existing?.status === 'invited') return res.json({ ...payload, reason: 'invited' })
+  res.json({ ...payload, available: true, reason: 'eligible' })
+})
+
+app.post('/api/organizations/:slug/join-request', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const organization = organizationBySlug(req.params.slug)
+  if (!organization) return res.status(404).json({ message: '团队空间不存在' })
+  if (!accountEffectivePlanForUser(organization.ownerUserId).team) {
+    return res.status(403).json({ message: '该团队当前未开通团队版权益，暂不接收加入申请' })
+  }
+  const viewer = session.user
+  if (viewer.id === organization.ownerUserId) return res.status(409).json({ message: '你是该团队的所有者，无需申请加入' })
+  const currentOrganization = accountOrganizationForUser(viewer.id)
+  if (currentOrganization) {
+    return res.status(409).json({
+      message: currentOrganization.id === organization.id ? '你已经是该团队成员' : `你已加入团队“${currentOrganization.name}”，请先退出后再申请`,
+    })
+  }
+  const existing = organization.members.find((member) => member.userId === viewer.id)
+  if (existing?.status === 'active') return res.status(409).json({ message: '你已经是该团队成员' })
+  if (existing?.status === 'requested') return res.status(409).json({ message: '你的加入申请已提交，请等待团队所有者处理' })
+
+  // 冷却校验同样要先于 invited 分支，理由与 GET 探测一致。
+  const cooldownMs = joinRequestCooldownRemaining(organization, viewer.id)
+  if (cooldownMs > 0) {
+    const hours = Math.max(1, Math.ceil(cooldownMs / (60 * 60 * 1000)))
+    return res.status(429).json({ message: `你的上一次申请已被拒绝，请 ${hours} 小时后再试` })
+  }
+  if (existing?.status === 'invited') return res.status(409).json({ message: '你已收到该团队的邀请，请先在消息中心处理邀请' })
+
+  const ip = clientIpFromRequest(req)
+  if (isJoinRequestRateLimited(ip, viewer.id)) {
+    return res.status(429).json({ message: '申请提交过于频繁，请稍后再试' })
+  }
+
+  const joinMessage = trimRecordString(req.body?.message, 120)
+  const now = new Date().toISOString()
+  const requestId = createToken(16)
+  const account = accountUserById(viewer.id) || viewer
+  // 复用 member 记录：与「邀请」共用同一套成员表，查重、成员上限、审批流转逻辑无需重写。
+  if (existing) {
+    Object.assign(existing, {
+      displayName: displayAccountName(account),
+      email: normalizeEmailValue(account.email),
+      phone: normalizePhoneValue(account.phone),
+      status: 'requested',
+      role: 'member',
+      joinSource: 'request',
+      joinRequestId: requestId,
+      joinMessage,
+      requestedAt: now,
+      reviewedAt: null,
+      invitedAt: null,
+      invitationId: '',
+    })
+  } else {
+    organization.members.push({
+      id: createToken(12),
+      userId: viewer.id,
+      email: normalizeEmailValue(account.email),
+      phone: normalizePhoneValue(account.phone),
+      displayName: displayAccountName(account),
+      role: 'member',
+      status: 'requested',
+      joinSource: 'request',
+      joinRequestId: requestId,
+      joinMessage,
+      requestedAt: now,
+      reviewedAt: null,
+      joinedAt: null,
+      invitedAt: null,
+      invitationId: '',
+    })
+  }
+  organization.updatedAt = now
+  recordJoinRequestAttempt(ip, viewer.id)
+  persistMetadata()
+  addAccountMessage(organization.ownerUserId, {
+    category: 'other',
+    eventType: 'teamJoinRequest',
+    title: '新的入团申请',
+    body: `${displayAccountName(account)}申请加入团队“${organization.name}”，请前往团队空间选择同意或拒绝。`,
+    actionType: 'workspace_join_request',
+    actionId: requestId,
+  })
+  recordAuditLog({ type: 'team', action: '提交入团申请', userId: viewer.id, targetId: organization.id, details: { organizationId: organization.id, slug: organization.slug, ip } })
+  res.status(201).json({ requested: true, requestId, organizationName: organization.name, requestedAt: now })
+})
+
+// 入团申请：所有者审批。同意后申请人直接成为正式成员，拒绝后进入 24 小时冷却。
+app.post('/api/account/workspace/join-requests/:requestId', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const decision = req.body?.decision === 'approve' ? 'approve' : req.body?.decision === 'reject' ? 'reject' : ''
+  if (!decision) return res.status(400).json({ message: '审批方式无效' })
+  const organization = accountOrganizationForUser(session.user.id)
+  if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
+  if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以审批入团申请' })
+  if (!accountEffectivePlanForUser(organization.ownerUserId).team) {
+    return res.status(403).json({ message: '团队版权益已失效，请续费后再处理成员申请' })
+  }
+  const requestId = trimRecordString(req.params.requestId, 120)
+  const member = organization.members.find((item) => item.status === 'requested' && (item.joinRequestId === requestId || item.id === requestId))
+  if (!member) return res.status(404).json({ message: '该入团申请不存在或已处理' })
+
+  const applicantUser = accountUserById(member.userId)
+  const applicantName = member.displayName || (applicantUser && displayAccountName(applicantUser)) || '该账号'
+  const now = new Date().toISOString()
+  const resolvedMessages = accountMessagesForUser(organization.ownerUserId).filter((item) => item.actionId === member.joinRequestId || item.actionId === member.id)
+  resolvedMessages.forEach((item) => {
+    item.actionType = 'workspace_join_request_resolved'
+    item.unread = false
+    item.readAt = now
+  })
+
+  if (decision === 'reject') {
+    // 拒绝时保留一条 status='invited' 的空位记录用于记录冷却时间；申请人再次申请会被覆盖。
+    member.status = 'invited'
+    member.role = 'member'
+    member.reviewedAt = now
+    member.invitedAt = null
+    member.invitationId = ''
+    member.requestedAt = member.requestedAt || now
+    organization.updatedAt = now
+    persistMetadata()
+    const notifiedInApp = Boolean(addAccountMessage(member.userId, {
+      category: 'other',
+      eventType: 'teamJoinRejected',
+      title: '入团申请未通过',
+      body: `你申请加入团队“${organization.name}”的请求已被拒绝。24 小时后可再次申请。`,
+    }))
+    recordAuditLog({ type: 'team', action: '拒绝入团申请', userId: session.user.id, targetId: member.userId, details: { organizationId: organization.id, notifiedInApp } })
+    return res.json({ ...accountWorkspacePayload(session.user), joinRequests: publicJoinRequestsForOrganization(organization), decided: 'reject', applicantName, notifiedInApp })
+  }
+
+  const currentOrganization = accountOrganizationForUser(member.userId)
+  if (currentOrganization && currentOrganization.id !== organization.id) {
+    return res.status(409).json({ message: `${applicantName}已加入其他团队空间，无法同意该申请` })
+  }
+  const matched = applicantUser ? accountUserById(applicantUser.id) : null
+  if (matched) {
+    matched.organizationId = organization.id
+    matched.organizationRole = 'member'
+    matched.updatedAt = now
+    upsertAccountUser(matched)
+    syncAccountUserSessions(matched)
+    member.displayName = displayAccountName(matched)
+    member.email = normalizeEmailValue(matched.email)
+    member.phone = normalizePhoneValue(matched.phone)
+  }
+  member.status = 'active'
+  member.role = 'member'
+  member.reviewedAt = now
+  member.joinedAt = now
+  organization.updatedAt = now
+  persistMetadata()
+  const notifiedInApp = Boolean(addAccountMessage(member.userId, {
+    category: 'other',
+    eventType: 'teamJoinApproved',
+    title: '入团申请已通过',
+    body: `你已加入团队“${organization.name}”，现在可以访问团队空间内的共享文件和专属链接。`,
+    actionType: 'workspace_joined',
+    actionUrl: '/team',
+  }))
+  recordAuditLog({ type: 'team', action: '同意入团申请', userId: session.user.id, targetId: member.userId, details: { organizationId: organization.id, notifiedInApp } })
+  res.json({ ...accountWorkspacePayload(session.user), joinRequests: publicJoinRequestsForOrganization(organization), decided: 'approve', applicantName, notifiedInApp })
 })
 
 app.get('/api/account/upgrade-orders', (req, res) => {
@@ -1875,6 +2079,12 @@ function persistMetadata() {
     })
 }
 
+function normalizeMemberStatus(value) {
+  if (value === 'invited') return 'invited'
+  if (value === 'requested') return 'requested'
+  return 'active'
+}
+
 function normalizeSystemConfig(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const defaultShareDays = Number(source.defaultShareDays)
@@ -1942,8 +2152,13 @@ function normalizeOrganizations(value = []) {
       phone: normalizePhoneValue(member?.phone),
       displayName: trimRecordString(member?.displayName, 80) || '团队成员',
       role: member?.role === 'owner' ? 'owner' : 'member',
-      status: member?.status === 'invited' ? 'invited' : 'active',
+      status: normalizeMemberStatus(member?.status),
       invitationId: trimRecordString(member?.invitationId, 120),
+      joinRequestId: trimRecordString(member?.joinRequestId, 120),
+      joinSource: trimRecordString(member?.joinSource, 20),
+      joinMessage: trimRecordString(member?.joinMessage, 120),
+      requestedAt: normalizeRecordDate(member?.requestedAt),
+      reviewedAt: normalizeRecordDate(member?.reviewedAt),
       joinedAt: normalizeRecordDate(member?.joinedAt),
       invitedAt: normalizeRecordDate(member?.invitedAt),
     })) : []
@@ -2151,6 +2366,9 @@ function assertServiceWritable(req) {
 
 function publicOrganization(organization, viewerId = '') {
   if (!organization) return null
+  const isManager = organization.ownerUserId === viewerId
+  // 待审批的入团申请只对团队所有者可见，成员与外部访客看到的仍是正式成员列表。
+  const visibleMembers = isManager ? organization.members : organization.members.filter((member) => member.status !== 'requested')
   return {
     id: organization.id,
     slug: organization.slug,
@@ -2158,9 +2376,9 @@ function publicOrganization(organization, viewerId = '') {
     ownerUserId: organization.ownerUserId,
     createdAt: organization.createdAt,
     updatedAt: organization.updatedAt,
-    members: organization.members.map((member) => ({
+    members: visibleMembers.map((member) => ({
       ...member,
-      canRemove: member.userId !== organization.ownerUserId && organization.ownerUserId === viewerId,
+      canRemove: member.userId !== organization.ownerUserId && isManager,
     })),
   }
 }
@@ -2173,6 +2391,59 @@ function accountOrganizationForUser(userId) {
 
 function isOrganizationManager(organization, userId) {
   return organization?.ownerUserId === userId
+}
+
+function organizationBySlug(slug) {
+  const key = trimRecordString(slug, 80)
+  if (!key) return null
+  return Object.values(metadata.organizations || {}).find((organization) => organization.slug === key) || null
+}
+
+function isJoinRequestRateLimited(ip, userId) {
+  const key = `${ip || 'unknown'}::${userId || 'anonymous'}`
+  const now = Date.now()
+  const record = joinRequestAttempts.get(key)
+  if (!record || now - record.startedAt > JOIN_REQUEST_WINDOW_MS) return false
+  return record.count >= JOIN_REQUEST_MAX_PER_WINDOW
+}
+
+function recordJoinRequestAttempt(ip, userId) {
+  const key = `${ip || 'unknown'}::${userId || 'anonymous'}`
+  const now = Date.now()
+  const record = joinRequestAttempts.get(key)
+  if (!record || now - record.startedAt > JOIN_REQUEST_WINDOW_MS) {
+    joinRequestAttempts.set(key, { count: 1, startedAt: now })
+    return
+  }
+  record.count += 1
+}
+
+function joinRequestCooldownRemaining(organization, userId) {
+  const previous = organization.members.find((member) => member.userId === userId && member.status !== 'active' && member.reviewedAt && member.joinSource === 'request')
+  if (!previous) return 0
+  const elapsed = Date.now() - new Date(previous.reviewedAt).getTime()
+  return Math.max(0, JOIN_REQUEST_REJECT_COOLDOWN_MS - elapsed)
+}
+
+function publicJoinRequest(member, organization) {
+  return {
+    id: member.id,
+    requestId: member.joinRequestId || member.id,
+    userId: member.userId,
+    displayName: member.displayName,
+    email: member.email,
+    phone: member.phone,
+    message: member.joinMessage || '',
+    requestedAt: member.requestedAt || member.invitedAt || organization?.updatedAt || null,
+  }
+}
+
+function publicJoinRequestsForOrganization(organization) {
+  if (!organization) return []
+  return organization.members
+    .filter((member) => member.status === 'requested')
+    .map((member) => publicJoinRequest(member, organization))
+    .sort((a, b) => new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime())
 }
 
 function enterpriseOrganizationForUser(userId) {

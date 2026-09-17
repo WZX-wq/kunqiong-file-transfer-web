@@ -49,6 +49,7 @@ import {
   Send,
   Settings2,
   ShieldCheck,
+  ClipboardCheck,
   Sparkles,
   HardDrive,
   ListChecks,
@@ -1988,6 +1989,82 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onManageSettings, onCl
   )
 }
 
+// 分享/收集页底部的「申请加入团队」入口：通过企业专属链接访问时，登录用户可直接向团队所有者发起入团申请。
+function TeamJoinRequestCard({ enterpriseSlug }) {
+  const [state, setState] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [feedback, setFeedback] = useState('')
+  const [loadFailed, setLoadFailed] = useState(false)
+
+  useEffect(() => {
+    if (!enterpriseSlug) return undefined
+    let active = true
+    apiRequest(`/api/organizations/${encodeURIComponent(enterpriseSlug)}/join-request`)
+      .then((result) => { if (active) setState(result) })
+      .catch(() => { if (active) setLoadFailed(true) })
+    return () => { active = false }
+  }, [enterpriseSlug])
+
+  if (!enterpriseSlug || loadFailed || !state) return null
+  const teamName = state.organizationName || '该团队'
+  const login = () => {
+    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`
+    window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
+  }
+  const submit = async () => {
+    if (submitting) return
+    setSubmitting(true)
+    setFeedback('')
+    try {
+      const result = await apiRequest(`/api/organizations/${encodeURIComponent(enterpriseSlug)}/join-request`, { method: 'POST', body: JSON.stringify({}) })
+      setState((current) => ({ ...current, available: false, reason: 'pending', requestedAt: result.requestedAt || new Date().toISOString() }))
+      setFeedback('申请已提交，等待团队所有者处理')
+    } catch (err) {
+      setFeedback(err.message || '申请提交失败，请稍后再试')
+      try {
+        const latest = await apiRequest(`/api/organizations/${encodeURIComponent(enterpriseSlug)}/join-request`)
+        setState(latest)
+      } catch { /* 保持当前状态，仅提示错误 */ }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const cooldownText = () => {
+    if (!state.cooldownUntil) return ''
+    const hours = Math.max(1, Math.ceil((new Date(state.cooldownUntil).getTime() - Date.now()) / (60 * 60 * 1000)))
+    return `上次申请未通过，请 ${hours} 小时后再试。`
+  }
+  const hintByReason = {
+    anonymous: '登录鲲穹账号后，可直接向团队所有者申请加入。',
+    pending: '申请已提交，等待团队所有者同意或拒绝。',
+    invited: '你已收到该团队的邀请，请到消息中心选择接受或拒绝。',
+    member: '你已经是该团队成员。',
+    owner: '你是该团队的所有者。',
+    other_team: '你已加入其他团队空间，无法重复加入。',
+    cooldown: cooldownText(),
+  }
+  const showButton = state.available
+  const buttonLabel = state.available ? '申请加入团队' : state.reason === 'anonymous' ? '登录后申请加入' : '申请加入团队'
+  const tone = state.reason === 'pending' ? 'pending' : state.reason === 'member' ? 'member' : 'default'
+
+  return (
+    <div className={`public-card team-join-card ${tone}`}>
+      <span className="team-join-icon"><Building2 size={20} /></span>
+      <div className="team-join-body">
+        <strong>加入「{teamName}」团队空间</strong>
+        <span>{hintByReason[state.reason] || '团队版账号可通过分享链接直接申请加入团队空间。'}</span>
+        {feedback && <span className="team-join-feedback"><Check size={13} /> {feedback}</span>}
+      </div>
+      {(showButton || state.reason === 'anonymous') && !feedback && (
+        <button className="secondary-button team-join-action" onClick={state.reason === 'anonymous' ? login : submit} disabled={submitting}>
+          {state.reason === 'anonymous' ? <UserRound size={15} /> : <UserPlus size={15} />} {submitting ? '提交中' : buttonLabel}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function SharePage({ token, enterpriseSlug = '' }) {
   const [data, setData] = useState(null)
   const [password, setPassword] = useState('')
@@ -2040,6 +2117,7 @@ function SharePage({ token, enterpriseSlug = '' }) {
         {actionError && <FeedbackMessage message={actionError} tone="error" />}
         {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       </div>
+      <TeamJoinRequestCard enterpriseSlug={enterpriseSlug} />
     </PublicShell>
   )
 }
@@ -2267,6 +2345,7 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
           <StateBlock title="无法打开收集任务" detail={message || '正在加载任务'} />
         )}
       </div>
+      <TeamJoinRequestCard enterpriseSlug={enterpriseSlug} />
     </PublicShell>
   )
 }
@@ -3619,6 +3698,7 @@ function TeamPage() {
   const [memberUsagePage, setMemberUsagePage] = useState(1)
   const [teamResourcePage, setTeamResourcePage] = useState(1)
   const [teamMemberPage, setTeamMemberPage] = useState(1)
+  const [decidingRequestId, setDecidingRequestId] = useState('')
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
   const [previewItem, setPreviewItem] = useState(null)
@@ -3724,6 +3804,38 @@ function TeamPage() {
     }
   }
 
+  const reviewJoinRequest = async (request, decision) => {
+    if (!data?.canManage || !request?.requestId || decidingRequestId) return
+    const applicantName = request.displayName || request.email || request.phone || '该账号'
+    const approved = decision === 'approve'
+    const confirmed = await requestConfirm({
+      eyebrow: '入团申请审批',
+      title: approved ? `同意「${applicantName}」加入` : `拒绝「${applicantName}」的申请`,
+      detail: approved
+        ? `同意后，${applicantName} 将成为“${organization?.name || '团队空间'}”的正式成员，可访问团队共享文件并占用团队容量。确定同意吗？`
+        : `拒绝后，${applicantName} 将收到站内通知，并在 24 小时内无法再次申请。确定拒绝吗？`,
+      confirmText: approved ? '同意加入' : '拒绝申请',
+      cancelText: '取消',
+      tone: approved ? 'primary' : 'danger',
+    })
+    if (!confirmed) return
+    setDecidingRequestId(request.requestId)
+    setError('')
+    try {
+      const result = await apiRequest(`/api/account/workspace/join-requests/${encodeURIComponent(request.requestId)}`, {
+        method: 'POST',
+        body: JSON.stringify({ decision }),
+      })
+      setData((current) => (current ? { ...current, joinRequests: result.joinRequests || [] } : current))
+      await load({ silent: true })
+      setNotice({ message: approved ? `已同意「${applicantName}」加入团队空间。` : `已拒绝「${applicantName}」的入团申请。`, tone: 'success' })
+    } catch (err) {
+      setNotice({ message: err.message || '入团申请审批失败', tone: 'error' })
+    } finally {
+      setDecidingRequestId('')
+    }
+  }
+
   const addTeamFiles = (incoming) => {
     const nextFiles = Array.from(incoming || []).map((file, index) => ({
       id: `${file.name}-${file.lastModified}-${index}-${Math.random()}`,
@@ -3789,6 +3901,7 @@ function TeamPage() {
   const capacity = data.capacity || {}
   const members = data.memberUsage || []
   const resources = data.resources || []
+  const joinRequests = data.joinRequests || []
   const memberName = (userId) => members.find((item) => item.userId === userId)?.displayName || '团队成员'
   const normalizedMemberQuery = memberQuery.trim().toLowerCase()
   const normalizedManageMemberQuery = manageMemberQuery.trim().toLowerCase()
@@ -3834,10 +3947,28 @@ function TeamPage() {
           <button className={activeTab === 'members' ? 'active' : ''} role="tab" aria-selected={activeTab === 'members'} onClick={() => setActiveTab('members')}><Users size={15} /> 成员观察</button>
           <button className={activeTab === 'resources' ? 'active' : ''} role="tab" aria-selected={activeTab === 'resources'} onClick={() => setActiveTab('resources')}><Database size={15} /> 团队资源 <span>{resources.length}</span></button>
           <button className={activeTab === 'manage' ? 'active' : ''} role="tab" aria-selected={activeTab === 'manage'} onClick={() => setActiveTab('manage')}><UserPlus size={15} /> 团队成员 <span>{members.length}</span></button>
+          {data.canManage && <button className={activeTab === 'requests' ? 'active' : ''} role="tab" aria-selected={activeTab === 'requests'} onClick={() => setActiveTab('requests')}><ClipboardCheck size={15} /> 入团申请 <span>{joinRequests.length}</span></button>}
         </div>
         {activeTab === 'members' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">成员观察</p><h2>成员使用量</h2></div><span>{filteredMembers.length} / {members.length} 位成员</span></div>{data.canManage && <div className="team-invite-wrap"><form className="team-invite-form" onSubmit={inviteMember}><label className="team-invite-input"><Search size={15} /><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="输入邮箱、手机号或鲲穹账号，直接邀请成员" disabled={savingMember} /></label><button className="primary-button" disabled={savingMember || !memberTarget.trim()}><UserPlus size={14} /> 邀请</button></form>{memberSuggestions.length > 0 && <div className="team-suggestions">{memberSuggestions.map((candidate) => <button type="button" key={candidate.id} onClick={() => { setMemberTarget(candidate.email || candidate.phone || candidate.username || candidate.id); setMemberSuggestions([]) }}><span className="workspace-member-avatar">{(candidate.displayName || '成').slice(0, 1)}</span><span><strong>{candidate.displayName || candidate.username || candidate.id}</strong><small>{candidate.username || candidate.email || candidate.phone || candidate.id}</small></span></button>)}</div>}</div>}<label className="team-search"><Search size={15} /><input value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-member-usage">{visibleMemberUsage.map((member) => { const memberBytes = Math.max(0, Number(member.usedBytes) || 0); const memberShare = usedBytes > 0 ? Math.min(100, Math.max(0, (memberBytes / usedBytes) * 100)) : 0; const hasUsage = memberBytes > 0; return <div className="team-member-usage-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><div className="team-usage-line"><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'} · {member.fileCount} 个文件</small></div><div className={`team-usage-bar ${hasUsage ? '' : 'is-empty'}`} title={hasUsage ? `占团队已用空间 ${memberShare.toFixed(memberShare < 1 ? 2 : 1)}%` : '暂未占用团队空间'} role="progressbar" aria-valuenow={Number(memberShare.toFixed(1))} aria-valuemin="0" aria-valuemax="100" aria-label={`${member.displayName || '待加入成员'}空间占用`}><i style={{ width: `${hasUsage ? Math.max(memberShare, 1.5) : 0}%` }} /></div></div><span className="team-usage-value"><b>{formatBytes(memberBytes)}</b><em>{hasUsage ? `${memberShare.toFixed(memberShare < 1 ? 2 : 1)}%` : '未使用'}</em></span></div> })}</div>{!filteredMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的成员</span></div>}<AdminPagination page={safeMemberUsagePage} pageCount={memberUsagePageCount} total={filteredMembers.length} pageSize={teamPageSize} onPageChange={setMemberUsagePage} /></div>}
         {activeTab === 'resources' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队资源</p><h2>专属团队文件</h2></div><span>{filteredResources.length} / {resources.length} 个文件</span></div><div className="team-resource-toolbar"><label className="team-search"><Search size={15} /><input value={resourceQuery} onChange={(event) => setResourceQuery(event.target.value)} placeholder="检索文件名或上传成员" /></label><input ref={teamUploadInputRef} type="file" multiple hidden onChange={(event) => { addTeamFiles(event.target.files); event.target.value = '' }} />{data.organization?.members?.some((member) => member.userId === user.id && member.status === 'active') && <button type="button" className="primary-button" onClick={() => teamUploadInputRef.current?.click()} disabled={teamUploading}><UploadCloud size={15} /> 上传到团队空间</button>}</div>{teamFiles.length > 0 && <div className="team-upload-draft"><div><strong>待上传 {teamFiles.length} 个文件</strong><span>{formatBytes(teamFiles.reduce((sum, file) => sum + file.size, 0))} · 同名文件会被拒绝</span></div><div><button type="button" className="primary-button" onClick={uploadTeamFiles} disabled={teamUploading}><UploadCloud size={14} /> {teamUploading ? '上传中' : '开始上传'}</button><button type="button" className="ghost-icon" onClick={() => setTeamFiles([])} aria-label="清除待上传文件" title="清除待上传文件"><X size={15} /></button></div></div>}{teamUploadState.status !== 'idle' && <div className="team-upload-progress"><div><span>{teamUploadState.phase || '上传处理中'}</span><b>{teamUploadState.progress || 0}%</b></div><div className="capacity-bar"><span style={{ width: `${teamUploadState.progress || 0}%` }} /></div></div>}<div className="team-resource-table">{filteredResources.length ? visibleTeamResources.map((resource) => <div className="team-resource-row" key={`${resource.kind}-${resource.id}`}><span className="team-resource-icon"><FileText size={15} /></span><div><strong>{resource.name}</strong><small>{memberName(resource.ownerUserId)} · {resource.fileCount} 个文件</small></div><span className={`team-resource-status ${resource.status}`}>{statusLabel(resource.status)}</span><small className="team-resource-size">{formatBytes(resource.totalSize)}</small><div className="team-resource-actions"><button className="ghost-icon" type="button" onClick={() => previewResource(resource)} disabled={resource.files?.length !== 1 || !canPreviewFile(resource.files[0])} aria-label={`预览 ${resource.name}`} title={resource.files?.length === 1 ? '预览文件' : '单文件资源可预览'}><Eye size={15} /></button><button className="ghost-icon" type="button" onClick={() => downloadResource(resource)} disabled={downloadBusy} aria-label={`下载 ${resource.name}`} title="下载文件"><Download size={15} /></button><a className="ghost-icon" href={resource.manageUrl} target="_blank" rel="noreferrer" aria-label={`管理 ${resource.name}`} title="管理分享"><Settings2 size={15} /></a></div></div>) : <div className="empty-manage"><Database size={25} /><span>{resourceQuery ? '没有匹配的团队文件' : '暂无团队文件，请从专属入口上传'}</span></div>}</div><AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={filteredResources.length} pageSize={teamPageSize} onPageChange={setTeamResourcePage} /></div>}
         {activeTab === 'manage' && <div className="public-card team-panel team-tab-panel team-members-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队成员</p><h2>成员权限</h2></div><span>{filteredManageMembers.length} / {members.length} 位成员</span></div><label className="team-search team-management-search"><Search size={15} /><input value={manageMemberQuery} onChange={(event) => setManageMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-management-list">{visibleTeamMembers.map((member) => <div className="team-management-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</small></div><span className={`workspace-member-state ${member.status === 'invited' ? 'pending' : 'active'}`}>{member.status === 'invited' ? '待加入' : member.role === 'owner' ? '所有者' : '已加入'}</span>{data.canManage && member.role !== 'owner' && <button className="ghost-icon" type="button" onClick={() => removeMember(member)} disabled={savingMember} aria-label={`移除${member.displayName || '成员'}`} title="移除成员"><X size={15} /></button>}</div>)}</div>{!filteredManageMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的团队成员</span></div>}<AdminPagination page={safeTeamMemberPage} pageCount={teamMemberPageCount} total={filteredManageMembers.length} pageSize={teamPageSize} onPageChange={setTeamMemberPage} /></div>}
+        {activeTab === 'requests' && data.canManage && <div className="public-card team-panel team-tab-panel team-requests-panel">
+          <div className="team-panel-heading"><div><p className="eyebrow">入团申请</p><h2>待处理申请</h2></div><span>{joinRequests.length} 条待处理</span></div>
+          <p className="team-requests-hint">成员通过团队的企业专属分享链接提交申请，同意后立即成为正式成员，拒绝后 24 小时内不可再次申请。</p>
+          {joinRequests.length ? <div className="team-request-list">{joinRequests.map((request) => <div className="team-request-row" key={request.requestId}>
+            <span className="workspace-member-avatar">{(request.displayName || '申').slice(0, 1)}</span>
+            <div className="team-request-info">
+              <strong>{request.displayName || '待审批申请人'}</strong>
+              <small>{request.email || request.phone || request.userId}</small>
+              {request.message && <em>申请留言：{request.message}</em>}
+            </div>
+            <span className="team-request-time">{request.requestedAt ? formatDate(request.requestedAt) : '刚刚提交'}</span>
+            <div className="team-request-actions">
+              <button type="button" className="primary-button" onClick={() => reviewJoinRequest(request, 'approve')} disabled={Boolean(decidingRequestId)}><Check size={14} /> 同意</button>
+              <button type="button" className="secondary-button danger-lite" onClick={() => reviewJoinRequest(request, 'reject')} disabled={Boolean(decidingRequestId)}><X size={14} /> 拒绝</button>
+            </div>
+          </div>)}</div> : <div className="empty-manage"><ClipboardCheck size={25} /><span>当前没有待处理的入团申请</span></div>}
+        </div>}
       </div>
     </section>
     {notice && <div className={`toast ${notice.tone || 'success'}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}><span className="toast-icon">{notice.tone === 'error' ? <X size={18} /> : <Check size={18} />}</span><span>{notice.message}</span></div>}
@@ -3937,7 +4068,7 @@ function WorkspacePage() {
 
   if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开团队空间</h1><p>正在读取账号权益和团队数据。</p></div></PublicShell>
   if (!user) {
-    return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和企业专属链接会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
+    return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和入团申请会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
   }
   const plan = workspace?.plan || {}
   const plans = workspace?.plans || []
@@ -4002,16 +4133,14 @@ function WorkspacePage() {
                 hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
               ) : (
                 <>
-                  <div className="workspace-link-row"><Link2 size={15} /><span>企业专属标识</span><code>{organization.slug}</code><button className="copy-button" onClick={async () => { try { await copyTextToClipboard(organization.slug); setMessage('企业标识已复制') } catch { setError('当前浏览器不支持自动复制，请手动复制企业标识') } }}><Copy size={14} /> 复制</button></div>
                   {!canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
                   {ownerMember && <div className="workspace-owner-summary"><span className="workspace-member-avatar">{(ownerMember.displayName || '团').slice(0, 1)}</span><div><strong>{ownerMember.displayName || ownerMember.email || ownerMember.phone || '团队所有者'}</strong><span>{ownerMember.email || ownerMember.phone || ownerMember.userId || '当前账号'} · 所有者</span></div><span className="workspace-member-state active">所有者</span></div>}
-                  <div className="workspace-member-summary"><small>其他成员、待加入成员和邀请操作请前往团队空间查看</small></div>
+                  <div className="workspace-member-summary"><small>其他成员、待加入成员和入团申请请前往团队空间查看</small></div>
                   <button type="button" className="team-manage-link" onClick={() => { window.location.href = '/team' }}><BarChart3 size={14} /> 查看团队成员与使用情况 <ChevronRight size={14} /></button>
                 </>
               )}
             </div>
-            <div className="public-card workspace-side-card workspace-link-card"><div className="workspace-side-heading"><ShieldCheck size={22} /><strong>企业专属链接</strong></div><p>{organization ? '创建文件分享后，结果页会生成可直接访问的企业专属链接。' : '团队/企业版分享会自动生成携带团队标识的专属访问链接。'}</p><div className="workspace-link-row"><code>{organization ? `${window.location.origin}/e/${organization.slug}/share/{分享ID}` : '/e/your-team/share/{分享ID}'}</code></div><div className="workspace-side-points"><span><Check size={13} /> 完整链接包含具体分享 ID</span><span><Check size={13} /> 可用于团队专属分享入口</span></div></div>
-            <div className="public-card workspace-side-card workspace-status-card"><div className="workspace-side-heading"><ListChecks size={22} /><strong>当前状态</strong></div><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan ? 'on' : 'off'}>{hasTeamPlan ? <Check size={13} /> : <X size={13} />} 团队协作与成员管理</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 企业专属分享入口</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
+            <div className="public-card workspace-side-card workspace-status-card"><div className="workspace-side-heading"><ListChecks size={22} /><strong>当前状态</strong></div><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan ? 'on' : 'off'}>{hasTeamPlan ? <Check size={13} /> : <X size={13} />} 团队协作与成员管理</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 分享链接入团申请</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
         </div>
       </section>
       {upgradeOpen && <UpgradeModal workspace={workspace} onClose={() => setUpgradeOpen(false)} onRefresh={load} onNotify={(text, tone) => { if (tone === 'error') setError(text); else setMessage(text) }} />}

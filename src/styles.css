@@ -872,8 +872,27 @@ h1, h2, p { margin-top: 0; }
 .team-management-row small { margin-top: 3px; color: #9aada7; font-size: 9px; }
 .team-management-row .ghost-icon { color: #a77b78; }
 .team-management-row .ghost-icon:hover { color: #a94e48; background: #fff0ee; }
-.team-invite-wrap { position: relative; margin-bottom: 13px; }
-.team-inline-search { margin-bottom: 0; }
+.team-requests-panel .team-requests-hint { margin: 0 0 14px; color: #8fa5a0; font-size: 11px; line-height: 1.6; }
+.team-request-list { display: flex; flex-direction: column; }
+.team-request-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 58px; padding: 6px 0; border-bottom: 1px solid #edf3f0; }
+.team-request-row > div { min-width: 0; }
+.team-request-info strong, .team-request-info small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-request-info strong { color: #4b6f65; font-size: 11px; }
+.team-request-info small { margin-top: 3px; color: #9aada7; font-size: 9px; }
+.team-request-info em { display: block; margin-top: 4px; overflow: hidden; color: #7f9a93; font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.team-request-time { color: #9aada7; font-size: 10px; white-space: nowrap; }
+.team-request-actions { display: flex; align-items: center; gap: 6px; }
+.team-request-actions .primary-button, .team-request-actions .secondary-button { min-height: 32px; padding: 0 11px; font-size: 11px; }
+.team-join-card { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 720px; margin-top: 14px; padding: 16px 18px; }
+.team-join-card.pending { background: #f6fbf9; border-color: #d5e9e1; }
+.team-join-card.member { background: #f4f9f6; }
+.team-join-icon { display: grid; flex: none; width: 38px; height: 38px; place-items: center; color: #378b77; background: #eaf6f1; border-radius: 10px; }
+.team-join-body { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.team-join-body strong { color: #3f6058; font-size: 12px; }
+.team-join-body span { color: #8ba39d; font-size: 11px; line-height: 1.55; }
+.team-join-feedback { display: inline-flex; align-items: center; gap: 5px; color: #378b77 !important; }
+.team-join-action { flex: none; min-height: 34px; padding: 0 13px; font-size: 11px; }
+.team-invite-wrap { position: relative; margin-bottom: 13px; }.team-inline-search { margin-bottom: 0; }
 .team-inline-search svg { margin-left: 10px; flex: none; color: var(--accent); }
 .team-inline-search input { border: 0; }
 .team-suggestions { position: absolute; top: calc(100% + 5px); right: 0; left: 0; z-index: 3; display: flex; flex-direction: column; padding: 5px; background: #fff; border: 1px solid #dbe8e4; border-radius: 8px; box-shadow: 0 15px 30px rgba(40, 84, 74, .12); }
