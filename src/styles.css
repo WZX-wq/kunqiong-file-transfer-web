@@ -693,11 +693,22 @@ h1, h2, p { margin-top: 0; }
 .workspace-entry-button svg:last-child { margin-left: auto; color: #74aa9b; }
 .workspace-entry-button:hover { color: var(--accent-dark); background: #e6f5f0; border-color: #bcded3; }
 .workspace-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 22px; align-items: stretch; }
-.workspace-grid > .public-card { width: 100%; }
+/* 注意：这里必须匹配「后代」而不是「直接子元素」。
+   lower-row 把团队卡/状态卡降了一层，若用 > 匹配不到，两张卡会回落到
+   .public-card 的 width: min(570px, 100%) 被硬顶成 570px，从而塞不进各自栅格轨道、
+   出现右侧留白甚至被挤到下一行。 */
+.workspace-grid .public-card { width: 100%; }
 .workspace-benefits-card { grid-column: 1 / -1; }
-/* 团队空间卡片：与上方权益卡同宽通栏。状态卡改为同一行内并排，避免只占 8/12 列导致左侧对齐不齐。 */
-.workspace-team-card { grid-column: 1 / -1; }
+/* 团队空间卡片：作为 lower-row 的第一栏（1.6fr），由 lower-row 决定它通栏。
+   这里绝不能再写 1 / -1 —— 在只有 2 列的 lower-row 网格里，1 / -1 会让它
+   横跨两栏独占整行，把状态卡挤到下一行（真实浏览器实测过）。 */
+.workspace-team-card { min-width: 0; }
 .workspace-lower-row { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 22px; align-items: stretch; }
+/* 栅格轨道已由 grid-template-columns 决定宽度，卡片的 max-width 必须放开，
+   否则 .public-card 的 570px 上限会覆盖轨道宽度。 */
+.workspace-lower-row > .workspace-team-card { grid-column: 1 / 2; }
+.workspace-lower-row > .workspace-status-card { grid-column: 2 / 3; }
+.workspace-lower-row > .public-card { width: 100%; max-width: none; }
 .workspace-hero { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 22px; padding: 30px 32px; }
 .workspace-grid .workspace-hero { grid-column: 1 / -1; margin-bottom: 0; }
 .workspace-hero .secondary-button { flex: none; min-width: max-content; }
@@ -1440,8 +1451,12 @@ h1, h2, p { margin-top: 0; }
   .workspace-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); }
   .workspace-grid .workspace-hero, .workspace-benefits-card { grid-column: 1 / -1; }
   .workspace-link-card { grid-column: span 6; }
-  /* 900px 以下：团队卡与状态卡改为上下堆叠，避免并排后每栏过窄。 */
+  /* 900px 以下：团队卡与状态卡改为上下堆叠，避免并排后每栏过窄。
+     必须显式复位子元素的 grid-column —— 上面为并排写的 1/2、2/3 会覆盖
+     lower-row 的单列定义，导致状态卡被压成窄条而不是换行。 */
   .workspace-lower-row { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .workspace-lower-row > .workspace-team-card,
+  .workspace-lower-row > .workspace-status-card { grid-column: 1 / -1; }
   .upgrade-plan-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 

@@ -28,7 +28,11 @@ line('\n===== 1. 产物中的 CSS =====')
 const rowRule = cssText.match(/\.workspace-lower-row\{[^}]*\}/)?.[0] || ''
 check('★ 产物含 .workspace-lower-row 两栏规则', /grid-template-columns:\s*minmax\(0,\s*1\.6fr\)\s+minmax\(0,\s*1fr\)/.test(rowRule), rowRule.slice(0, 90))
 check('★ lower-row 通栏', /grid-column:1 \/ -1/.test(rowRule))
-check('team-card 通栏', /\.workspace-team-card\{grid-column:1 \/ -1\}/.test(cssText))
+// 团队卡「不再」写 1 / -1：在只有 2 列的 lower-row 里它会横跨整行、把状态卡挤到下一行。
+check('★ team-card 不再横跨整行（不是 grid-column:1 / -1）', !/\.workspace-team-card\{grid-column:1 \/ -1\}/.test(cssText))
+check('★ 团队卡显式占第 1 栏', /\.workspace-lower-row>\.workspace-team-card\{grid-column:1 \/ 2\}/.test(cssText) || /\.workspace-lower-row \.workspace-team-card\{grid-column:1 \/ 2\}/.test(cssText))
+check('★ 状态卡显式占第 2 栏', /\.workspace-lower-row>\.workspace-status-card\{grid-column:2 \/ 3\}/.test(cssText) || /\.workspace-lower-row \.workspace-status-card\{grid-column:2 \/ 3\}/.test(cssText))
+check('★ lower-row 内 public-card 放开 570px 上限', /\.workspace-lower-row>\.public-card\{width:100%;max-width:none\}/.test(cssText))
 check('status-card 内不再有 span 3', !/\.workspace-status-card\{grid-column:span 3/.test(cssText))
 
 line('\n===== 2. 产物中的 JSX 结构 =====')
@@ -105,7 +109,7 @@ check('★ lower-row 是 grid 直接子元素', lower?.parentElement?.classList?
 check('★ lower-row 与 hero / benefits 同级', lower?.parentElement === hero?.parentElement && lower?.parentElement === benefits?.parentElement)
 
 line('\n===== 4. 用真实 CSS 计算宽度占比 =====')
-// 手工套用产物里的规则（jsdom 不做布局），确认三者在同一 12 栅格下的占比一致
+// 并排布局下，宽度由 lower-row 的 1.6fr:1fr 轨道决定，而不是由各卡自己声明 grid-column。
 const spanOf = (sel) => {
   const re = new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\{([^}]*)\\}')
   const m = cssText.match(re)
@@ -116,10 +120,14 @@ const spanOf = (sel) => {
 const heroCol = spanOf('.workspace-grid .workspace-hero')
 const benCol = spanOf('.workspace-benefits-card')
 const rowCol = spanOf('.workspace-lower-row')
-const teamCol = spanOf('.workspace-team-card')
-line(`  hero=${heroCol} | benefits=${benCol} | lower-row=${rowCol} | team=${teamCol}`)
-const allFull = [heroCol, benCol, rowCol, teamCol].every((v) => v === '1 / -1')
-check('★ 四者列跨度一致（都是 1 / -1，宽度相同）', allFull)
+line(`  hero=${heroCol} | benefits=${benCol} | lower-row=${rowCol}`)
+check('★ 三者列跨度一致（都是 1 / -1，宽度相同）', [heroCol, benCol, rowCol].every((v) => v === '1 / -1'))
+
+// 两卡并排必须由 lower-row 的轨道决定；真实像素级验证见 _verify_layout_real.mjs
+const track = rowRule.match(/grid-template-columns:\s*([^;]+)/)?.[1] || ''
+line(`  lower-row 轨道 = ${track}`)
+check('★ 轨道为 1.6fr : 1fr 双栏', /1\.6fr/.test(track) && /\b1fr\b/.test(track))
+check('★ 团队卡不自行声明占满整行', spanOf('.workspace-team-card') === null, `team span=${spanOf('.workspace-team-card')}`)
 
 const failed = results.filter((l) => l.includes('FAIL')).length
 const total = results.filter((l) => l.includes('PASS') || l.includes('FAIL')).length

@@ -19,7 +19,12 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8')
 
 line('===== 1. CSS 结构契约 =====')
 const css = read('src/styles.css')
-check('团队卡改为通栏', /\.workspace-team-card \{ grid-column: 1 \/ -1; \}/.test(css), 'grid-column: 1/-1')
+// 团队卡「不能」自己写 1 / -1：lower-row 只有 2 列，写了会横跨整行把状态卡挤下去（真实浏览器实测）。
+check('团队卡不再横跨整行', !/\.workspace-team-card \{ grid-column: 1 \/ -1; \}/.test(css), '不应有 grid-column: 1/-1')
+check('团队卡显式占第 1 栏', /\.workspace-lower-row > \.workspace-team-card \{ grid-column: 1 \/ 2; \}/.test(css))
+check('状态卡显式占第 2 栏', /\.workspace-lower-row > \.workspace-status-card \{ grid-column: 2 \/ 3; \}/.test(css))
+check('lower-row 内 public-card 放开 570px 上限', /\.workspace-lower-row > \.public-card \{[^}]*max-width: none/.test(css))
+check('workspace-grid 用后代选择器覆盖 public-card 宽度', /\.workspace-grid \.public-card \{ width: 100%/.test(css))
 check('新增 lower-row 容器', /\.workspace-lower-row \{/.test(css))
 check('lower-row 用两栏网格', /\.workspace-lower-row \{[^}]*grid-template-columns: minmax\(0, 1\.6fr\) minmax\(0, 1fr\)/.test(css))
 check('状态卡不再单独占列', !/\.workspace-status-card \{ grid-column: span 3/.test(css))
@@ -146,7 +151,8 @@ try {
 }
 
 line('\n===== 3. 计算样式：宽度一致性 =====')
-// jsdom 不做真实布局，但能解析 grid-column 计算值 —— 用它断言列跨度一致
+// jsdom 不做真实布局，只能断言「容器级」的列跨度是否一致。
+// 两卡并排的真实像素验证在 _verify_layout_real.mjs（真实 Chrome）。
 try {
   const cssText = read('src/styles.css')
   const rule = (sel) => {
@@ -155,12 +161,13 @@ try {
     const end = cssText.indexOf('}', i)
     return cssText.slice(i, end)
   }
-  const teamRule = rule('.workspace-team-card {')
   const benefitsRule = rule('.workspace-benefits-card {')
   const heroRule = rule('.workspace-grid .workspace-hero {')
-  check('team-card 列跨度 = benefits-card', /grid-column: 1 \/ -1/.test(teamRule) && /grid-column: 1 \/ -1/.test(benefitsRule), 'both 1/-1')
-  check('hero 亦为通栏', /grid-column: 1 \/ -1/.test(heroRule))
+  check('benefits-card 通栏', /grid-column: 1 \/ -1/.test(benefitsRule))
+  check('hero 通栏', /grid-column: 1 \/ -1/.test(heroRule))
   check('lower-row 通栏', /grid-column: 1 \/ -1/.test(rule('.workspace-lower-row {')))
+  // 团队卡自身只指定占第 1 栏，宽度交给 lower-row 的 1.6fr 轨道。
+  check('team-card 占第 1 栏（不自行通栏）', /grid-column: 1 \/ 2/.test(rule('.workspace-lower-row > .workspace-team-card {')) && !/grid-column: 1 \/ -1/.test(rule('.workspace-team-card {')))
 } catch (e) { line('样式断言异常：' + (e?.message || e)) }
 
 const failed = results.filter((l) => l.includes('FAIL')).length
