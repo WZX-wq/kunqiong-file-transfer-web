@@ -165,21 +165,36 @@ deploy_with_docker() {
   cp "$ENV_FILE" "$COMPOSE_DIR/.env"
   chmod 600 "$COMPOSE_DIR/.env" 2>/dev/null || true
 
-  # 清掉历史遗留容器或其它 compose 项目创建的同名容器，避免容器名冲突。
-  # 只要容器名被占用就先删除，不区分它是哪个 compose 项目创建的
-  # （测试机历史上曾被另一个 compose 项目占过同名容器，导致 up 直接 Conflict 失败）。
+  # 处理同名容器，避免 `up` 直接 Conflict 失败。
+  #
+  # 关键：不能对所有同名容器一律 docker rm -f —— 测试机上真正对外提供 8045 服务的
+  # 容器是由 compose 管理的，删掉它之后新建的容器往往拿不到主机端口绑定，
+  # 结果 CI 显示成功但线上仍是旧版本（run #35 的教训）。
+  # 因此分两种情况：
+  #   1) 容器属于当前 compose 项目或没有项目标签 -> 交给 compose 自己 recreate；
+  #   2) 容器属于其它 compose 项目            -> 先 down 掉那个旧项目再重建。
   if docker inspect "$APP_NAME" >/dev/null 2>&1; then
     existing_proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$APP_NAME" 2>/dev/null || true)"
-    echo "Removing stale container '$APP_NAME' (previous compose project: ${existing_proj:-none})"
-    docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
-  fi
-
-  # 同名容器若被其它 compose 项目登记，先停掉那个项目，避免 remove-orphans 反向删除。
-  if [ -n "${existing_proj:-}" ] && [ "$existing_proj" != "$APP_NAME" ]; then
-    docker compose -p "$existing_proj" down --remove-orphans >/dev/null 2>&1 || true
+    if [ -n "$existing_proj" ] && [ "$existing_proj" != "$APP_NAME" ]; then
+      echo "Removing container '$APP_NAME' owned by foreign compose project '$existing_proj'"
+      docker compose -p "$existing_proj" down --remove-orphans >/dev/null 2>&1 || true
+      docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
+    else
+      echo "Container '$APP_NAME' will be recreated by compose (project: ${existing_proj:-$APP_NAME})"
+    fi
   fi
 
   ( cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans )
+
+  # 校验：运行中的容器 release 必须是本次提交，否则说明端口仍被旧容器占用。
+  local running_release
+  running_release="$(docker exec "$APP_NAME" node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '$PORT') + '/api/health').then(r=>r.json()).then(j=>process.stdout.write(String(j.release||''))).catch(()=>process.stdout.write(''))" 2>/dev/null || true)"
+  echo "Deployed release: ${running_release:-<unknown>} (expected: $RELEASE_SHA)"
+  if [ -n "$running_release" ] && [ -n "$RELEASE_SHA" ] \
+    && [ "${running_release:0:7}" != "${RELEASE_SHA:0:7}" ]; then
+    echo "WARNING: running container release does not match the deployed commit." >&2
+  fi
+
   healthcheck_docker
 }
 
