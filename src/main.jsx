@@ -1989,6 +1989,8 @@ function ShareManagePage({ token }) {
   const [share, setShare] = useState(null)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState(false)
+  const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
+  const [previewItem, setPreviewItem] = useState(null)
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
 
   const refreshShare = async () => {
@@ -2051,6 +2053,8 @@ function ShareManagePage({ token }) {
   const fileCount = share.files?.length || 0
   const totalSize = share.files?.reduce((sum, file) => sum + Number(file.size || 0), 0) || 0
   const manageTarget = { kind: 'share', record: createShareRecord(share, 'my_sent'), data: share }
+  const downloadFile = (file, fileIndex) => startDownload(createShareFileDownloadConfig(share, file, fileIndex))
+  const previewFile = (file, fileIndex) => setPreviewItem(createShareFilePreviewConfig(share, file, fileIndex))
 
   return (
     <PublicShell>
@@ -2068,12 +2072,15 @@ function ShareManagePage({ token }) {
           {fileCount ? share.files.map((file) => (
             <div className="manage-submission" key={file.relativePath}>
               <div><strong>{file.name}</strong><span>{file.relativePath} · {formatBytes(file.size)}</span></div>
+              <div className="manage-file-actions">{canPreviewFile(file) && <button className="ghost-icon" type="button" onClick={() => previewFile(file, share.files.indexOf(file))} disabled={!isActive} aria-label={`预览 ${file.name}`} title="预览文件"><Eye size={15} /></button>}<button className="ghost-icon" type="button" onClick={() => downloadFile(file, share.files.indexOf(file))} disabled={!isActive || downloadBusy} aria-label={`下载 ${file.name}`} title="下载文件"><Download size={15} /></button></div>
             </div>
           )) : (
             <div className="empty-manage"><FileText size={25} /><span>分享文件已关闭或清理</span></div>
           )}
         </div>
       </div>
+      <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+      {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveShareSettings} onCloseTask={async () => { const closed = await closeShare(); if (closed) setEditing(false); return closed }} onReopenTask={async (payload) => { const reopened = await reopenShare(payload); if (reopened) setEditing(false); return reopened }} />}
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
@@ -3553,6 +3560,8 @@ function TeamPage() {
   const [memberUsagePage, setMemberUsagePage] = useState(1)
   const [teamResourcePage, setTeamResourcePage] = useState(1)
   const [teamMemberPage, setTeamMemberPage] = useState(1)
+  const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
+  const [previewItem, setPreviewItem] = useState(null)
 
   const load = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true)
@@ -3730,6 +3739,11 @@ function TeamPage() {
   const visibleMemberUsage = filteredMembers.slice((safeMemberUsagePage - 1) * teamPageSize, safeMemberUsagePage * teamPageSize)
   const visibleTeamResources = filteredResources.slice((safeTeamResourcePage - 1) * teamPageSize, safeTeamResourcePage * teamPageSize)
   const visibleTeamMembers = filteredManageMembers.slice((safeTeamMemberPage - 1) * teamPageSize, safeTeamMemberPage * teamPageSize)
+  const downloadResource = (resource) => startDownload(createShareDownloadConfig(resource))
+  const previewResource = (resource) => {
+    const file = resource.files?.[0]
+    if (file && canPreviewFile(file)) setPreviewItem(createShareFilePreviewConfig(resource, file, 0))
+  }
 
   return <PublicShell>
     <section className="team-page">
@@ -3745,11 +3759,13 @@ function TeamPage() {
           <button className={activeTab === 'manage' ? 'active' : ''} role="tab" aria-selected={activeTab === 'manage'} onClick={() => setActiveTab('manage')}><UserPlus size={15} /> 团队成员 <span>{members.length}</span></button>
         </div>
         {activeTab === 'members' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">成员观察</p><h2>成员使用量</h2></div><span>{filteredMembers.length} / {members.length} 位成员</span></div>{data.canManage && <div className="team-invite-wrap"><form className="team-invite-form" onSubmit={inviteMember}><label className="team-invite-input"><Search size={15} /><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="输入邮箱、手机号或鲲穹账号，直接邀请成员" disabled={savingMember} /></label><button className="primary-button" disabled={savingMember || !memberTarget.trim()}><UserPlus size={14} /> 邀请</button></form>{memberSuggestions.length > 0 && <div className="team-suggestions">{memberSuggestions.map((candidate) => <button type="button" key={candidate.id} onClick={() => { setMemberTarget(candidate.email || candidate.phone || candidate.username || candidate.id); setMemberSuggestions([]) }}><span className="workspace-member-avatar">{(candidate.displayName || '成').slice(0, 1)}</span><span><strong>{candidate.displayName || candidate.username || candidate.id}</strong><small>{candidate.username || candidate.email || candidate.phone || candidate.id}</small></span></button>)}</div>}</div>}<label className="team-search"><Search size={15} /><input value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-member-usage">{visibleMemberUsage.map((member) => <div className="team-member-usage-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'} · {member.fileCount} 个文件</small><div className="team-usage-bar"><i style={{ width: `${(Number(member.usedBytes || 0) / memberMax) * 100}%` }} /></div></div><b>{formatBytes(member.usedBytes || 0)}</b></div>)}</div>{!filteredMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的成员</span></div>}<AdminPagination page={safeMemberUsagePage} pageCount={memberUsagePageCount} total={filteredMembers.length} pageSize={teamPageSize} onPageChange={setMemberUsagePage} /></div>}
-        {activeTab === 'resources' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队资源</p><h2>专属团队文件</h2></div><span>{filteredResources.length} / {resources.length} 个文件</span></div><div className="team-resource-toolbar"><label className="team-search"><Search size={15} /><input value={resourceQuery} onChange={(event) => setResourceQuery(event.target.value)} placeholder="检索文件名或上传成员" /></label><input ref={teamUploadInputRef} type="file" multiple hidden onChange={(event) => { addTeamFiles(event.target.files); event.target.value = '' }} />{data.organization?.members?.some((member) => member.userId === user.id && member.status === 'active') && <button type="button" className="primary-button" onClick={() => teamUploadInputRef.current?.click()} disabled={teamUploading}><UploadCloud size={15} /> 上传到团队空间</button>}</div>{teamFiles.length > 0 && <div className="team-upload-draft"><div><strong>待上传 {teamFiles.length} 个文件</strong><span>{formatBytes(teamFiles.reduce((sum, file) => sum + file.size, 0))} · 同名文件会被拒绝</span></div><div><button type="button" className="primary-button" onClick={uploadTeamFiles} disabled={teamUploading}><UploadCloud size={14} /> {teamUploading ? '上传中' : '开始上传'}</button><button type="button" className="ghost-icon" onClick={() => setTeamFiles([])} aria-label="清除待上传文件" title="清除待上传文件"><X size={15} /></button></div></div>}{teamUploadState.status !== 'idle' && <div className="team-upload-progress"><div><span>{teamUploadState.phase || '上传处理中'}</span><b>{teamUploadState.progress || 0}%</b></div><div className="capacity-bar"><span style={{ width: `${teamUploadState.progress || 0}%` }} /></div></div>}<div className="team-resource-table">{filteredResources.length ? visibleTeamResources.map((resource) => <div className="team-resource-row" key={`${resource.kind}-${resource.id}`}><span className="team-resource-icon"><FileText size={15} /></span><div><strong>{resource.name}</strong><small>{memberName(resource.ownerUserId)} · {resource.fileCount} 个文件</small></div><span className={`team-resource-status ${resource.status}`}>{statusLabel(resource.status)}</span><small className="team-resource-size">{formatBytes(resource.totalSize)}</small><a className="ghost-icon" href={resource.manageUrl} target="_blank" rel="noreferrer" aria-label={`管理 ${resource.name}`} title="管理文件"><Settings2 size={15} /></a></div>) : <div className="empty-manage"><Database size={25} /><span>{resourceQuery ? '没有匹配的团队文件' : '暂无团队文件，请从专属入口上传'}</span></div>}</div><AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={filteredResources.length} pageSize={teamPageSize} onPageChange={setTeamResourcePage} /></div>}
+        {activeTab === 'resources' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队资源</p><h2>专属团队文件</h2></div><span>{filteredResources.length} / {resources.length} 个文件</span></div><div className="team-resource-toolbar"><label className="team-search"><Search size={15} /><input value={resourceQuery} onChange={(event) => setResourceQuery(event.target.value)} placeholder="检索文件名或上传成员" /></label><input ref={teamUploadInputRef} type="file" multiple hidden onChange={(event) => { addTeamFiles(event.target.files); event.target.value = '' }} />{data.organization?.members?.some((member) => member.userId === user.id && member.status === 'active') && <button type="button" className="primary-button" onClick={() => teamUploadInputRef.current?.click()} disabled={teamUploading}><UploadCloud size={15} /> 上传到团队空间</button>}</div>{teamFiles.length > 0 && <div className="team-upload-draft"><div><strong>待上传 {teamFiles.length} 个文件</strong><span>{formatBytes(teamFiles.reduce((sum, file) => sum + file.size, 0))} · 同名文件会被拒绝</span></div><div><button type="button" className="primary-button" onClick={uploadTeamFiles} disabled={teamUploading}><UploadCloud size={14} /> {teamUploading ? '上传中' : '开始上传'}</button><button type="button" className="ghost-icon" onClick={() => setTeamFiles([])} aria-label="清除待上传文件" title="清除待上传文件"><X size={15} /></button></div></div>}{teamUploadState.status !== 'idle' && <div className="team-upload-progress"><div><span>{teamUploadState.phase || '上传处理中'}</span><b>{teamUploadState.progress || 0}%</b></div><div className="capacity-bar"><span style={{ width: `${teamUploadState.progress || 0}%` }} /></div></div>}<div className="team-resource-table">{filteredResources.length ? visibleTeamResources.map((resource) => <div className="team-resource-row" key={`${resource.kind}-${resource.id}`}><span className="team-resource-icon"><FileText size={15} /></span><div><strong>{resource.name}</strong><small>{memberName(resource.ownerUserId)} · {resource.fileCount} 个文件</small></div><span className={`team-resource-status ${resource.status}`}>{statusLabel(resource.status)}</span><small className="team-resource-size">{formatBytes(resource.totalSize)}</small><div className="team-resource-actions"><button className="ghost-icon" type="button" onClick={() => previewResource(resource)} disabled={resource.files?.length !== 1 || !canPreviewFile(resource.files[0])} aria-label={`预览 ${resource.name}`} title={resource.files?.length === 1 ? '预览文件' : '单文件资源可预览'}><Eye size={15} /></button><button className="ghost-icon" type="button" onClick={() => downloadResource(resource)} disabled={downloadBusy} aria-label={`下载 ${resource.name}`} title="下载文件"><Download size={15} /></button><a className="ghost-icon" href={resource.manageUrl} target="_blank" rel="noreferrer" aria-label={`管理 ${resource.name}`} title="管理分享"><Settings2 size={15} /></a></div></div>) : <div className="empty-manage"><Database size={25} /><span>{resourceQuery ? '没有匹配的团队文件' : '暂无团队文件，请从专属入口上传'}</span></div>}</div><AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={filteredResources.length} pageSize={teamPageSize} onPageChange={setTeamResourcePage} /></div>}
         {activeTab === 'manage' && <div className="public-card team-panel team-tab-panel team-members-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队成员</p><h2>成员权限</h2></div><span>{filteredManageMembers.length} / {members.length} 位成员</span></div><label className="team-search team-management-search"><Search size={15} /><input value={manageMemberQuery} onChange={(event) => setManageMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-management-list">{visibleTeamMembers.map((member) => <div className="team-management-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</small></div><span className={`workspace-member-state ${member.status === 'invited' ? 'pending' : 'active'}`}>{member.status === 'invited' ? '待加入' : member.role === 'owner' ? '所有者' : '已加入'}</span>{data.canManage && member.role !== 'owner' && <button className="ghost-icon" type="button" onClick={() => removeMember(member)} disabled={savingMember} aria-label={`移除${member.displayName || '成员'}`} title="移除成员"><X size={15} /></button>}</div>)}</div>{!filteredManageMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的团队成员</span></div>}<AdminPagination page={safeTeamMemberPage} pageCount={teamMemberPageCount} total={filteredManageMembers.length} pageSize={teamPageSize} onPageChange={setTeamMemberPage} /></div>}
       </div>
     </section>
     {notice && <div className={`toast ${notice.tone || 'success'}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}><span className="toast-icon">{notice.tone === 'error' ? <X size={18} /> : <Check size={18} />}</span><span>{notice.message}</span></div>}
+    {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+    <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
   </PublicShell>
 }
 
@@ -4416,7 +4432,7 @@ function AccountBindModal({ type, currentValue, onClose, onComplete }) {
   }
 
   return (
-    <div className="modal-backdrop account-bind-backdrop" onMouseDown={onClose}>
+    <div className="modal-backdrop account-bind-backdrop">
       <form className="modal account-bind-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">账号绑定</p><h2>绑定{label}</h2></div>

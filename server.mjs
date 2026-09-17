@@ -608,6 +608,7 @@ app.get('/api/account/team/overview', (req, res) => {
       id: item.id,
       kind: 'share',
       name: item.files?.[0]?.name || '文件分享',
+      files: item.files.map(publicFile),
       ownerUserId: item.ownerUserId,
       status: currentShareStatus(item),
       fileCount: item.files?.length || 0,
@@ -1998,7 +1999,7 @@ function publicOrganization(organization, viewerId = '') {
 function accountOrganizationForUser(userId) {
   const key = String(userId || '')
   if (!key) return null
-  return Object.values(metadata.organizations || {}).find((organization) => organization.ownerUserId === key || organization.members.some((member) => member.userId === key)) || null
+  return Object.values(metadata.organizations || {}).find((organization) => organization.ownerUserId === key || organization.members.some((member) => member.userId === key && member.status === 'active')) || null
 }
 
 function isOrganizationManager(organization, userId) {
