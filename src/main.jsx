@@ -3620,6 +3620,7 @@ function TeamPage() {
   const [teamResourcePage, setTeamResourcePage] = useState(1)
   const [teamMemberPage, setTeamMemberPage] = useState(1)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
+  const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
   const [previewItem, setPreviewItem] = useState(null)
 
   const load = async ({ silent = false } = {}) => {
