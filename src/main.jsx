@@ -1367,6 +1367,65 @@ function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, onCopyIm
   )
 }
 
+function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+
+  const submit = (event) => {
+    event.preventDefault()
+    if (busy || !username.trim() || !password) return
+    onSubmit({ username: username.trim(), password })
+  }
+
+  return (
+    <div className="modal-backdrop admin-login-backdrop">
+      <form className="modal confirm-modal admin-login-modal" role="dialog" aria-modal="true" aria-labelledby="admin-login-title" onSubmit={submit}>
+        <div className="admin-login-icon"><ShieldCheck size={22} /></div>
+        <p className="eyebrow">运营后台</p>
+        <h2 id="admin-login-title">管理员登录</h2>
+        <p>请输入后台管理员账号与密码，验证通过后可进入系统管理。</p>
+        <div className="admin-login-fields">
+          <label className="admin-login-field">
+            <span><UserRound size={14} /> 账号</span>
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder="请输入管理员账号"
+              autoComplete="username"
+              autoFocus
+              disabled={busy}
+            />
+          </label>
+          <label className="admin-login-field">
+            <span><LockKeyhole size={14} /> 密码</span>
+            <div className="admin-login-password">
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type={showPassword ? 'text' : 'password'}
+                placeholder="请输入管理员密码"
+                autoComplete="current-password"
+                disabled={busy}
+              />
+              <button type="button" className="ghost-icon" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? '隐藏密码' : '显示密码'} title={showPassword ? '隐藏密码' : '显示密码'}>
+                <Eye size={15} />
+              </button>
+            </div>
+          </label>
+        </div>
+        {error && <p className="admin-login-error" role="alert"><XCircle size={14} /> {error}</p>}
+        <div className="modal-footer confirm-modal-footer admin-login-footer">
+          <button type="button" className="secondary-button" onClick={onBackHome}>返回首页</button>
+          <button type="submit" className="primary-button" disabled={busy || !username.trim() || !password}>
+            {busy ? <><span className="button-spinner" /> 正在验证…</> : <><KeyRound size={15} /> 登录后台</>}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 function ConfirmModal({ state, onCancel, onConfirm }) {
   useEffect(() => {
     if (!state) return undefined
@@ -3633,12 +3692,30 @@ function TeamPage() {
   }
   const removeMember = async (member) => {
     if (!data?.canManage || !member?.id || member.role === 'owner') return
-    if (!window.confirm(`确定移除 ${member.displayName || '该成员'} 吗？`)) return
+    const memberName = member.displayName || member.email || member.phone || '该成员'
+    const confirmed = await requestConfirm({
+      eyebrow: '团队成员管理',
+      title: `移除「${memberName}」`,
+      detail: member.status === 'invited'
+        ? '移除后，该账号将无法再通过此前收到的邀请加入团队空间。此操作不可撤销，确定继续吗？'
+        : `移除后，该成员将无法继续访问“${organization?.name || '团队空间'}”内的共享文件，账号权益也会一并回收。此操作不可撤销，确定继续吗？`,
+      confirmText: '确认移除',
+      cancelText: '取消',
+      tone: 'danger',
+    })
+    if (!confirmed) return
     setSavingMember(true)
     setError('')
     try {
-      await apiRequest(`/api/account/workspace/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' })
+      const result = await apiRequest(`/api/account/workspace/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' })
       await load()
+      setNotice({
+        message: member.status === 'invited'
+          ? `已移除待加入成员「${memberName}」。`
+          : `已移除成员「${memberName}」，站内通知已发送。`,
+        tone: 'success',
+      })
+      return result
     } catch (err) {
       setNotice({ message: err.message || '成员移除失败', tone: 'error' })
     } finally {
@@ -3727,7 +3804,6 @@ function TeamPage() {
   const totalBytes = Number(capacity.totalBytes || 0)
   const usedBytes = Number(capacity.usedBytes || 0)
   const ratio = totalBytes ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0
-  const memberMax = Math.max(1, ...members.map((item) => Number(item.usedBytes || 0)))
   const statusLabel = (status) => status === 'active' ? '进行中' : status === 'expired' ? '已过期' : status === 'closed' ? '已关闭' : status
   const teamPageSize = 8
   const memberUsagePageCount = Math.max(1, Math.ceil(filteredMembers.length / teamPageSize))
@@ -3758,14 +3834,16 @@ function TeamPage() {
           <button className={activeTab === 'resources' ? 'active' : ''} role="tab" aria-selected={activeTab === 'resources'} onClick={() => setActiveTab('resources')}><Database size={15} /> 团队资源 <span>{resources.length}</span></button>
           <button className={activeTab === 'manage' ? 'active' : ''} role="tab" aria-selected={activeTab === 'manage'} onClick={() => setActiveTab('manage')}><UserPlus size={15} /> 团队成员 <span>{members.length}</span></button>
         </div>
-        {activeTab === 'members' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">成员观察</p><h2>成员使用量</h2></div><span>{filteredMembers.length} / {members.length} 位成员</span></div>{data.canManage && <div className="team-invite-wrap"><form className="team-invite-form" onSubmit={inviteMember}><label className="team-invite-input"><Search size={15} /><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="输入邮箱、手机号或鲲穹账号，直接邀请成员" disabled={savingMember} /></label><button className="primary-button" disabled={savingMember || !memberTarget.trim()}><UserPlus size={14} /> 邀请</button></form>{memberSuggestions.length > 0 && <div className="team-suggestions">{memberSuggestions.map((candidate) => <button type="button" key={candidate.id} onClick={() => { setMemberTarget(candidate.email || candidate.phone || candidate.username || candidate.id); setMemberSuggestions([]) }}><span className="workspace-member-avatar">{(candidate.displayName || '成').slice(0, 1)}</span><span><strong>{candidate.displayName || candidate.username || candidate.id}</strong><small>{candidate.username || candidate.email || candidate.phone || candidate.id}</small></span></button>)}</div>}</div>}<label className="team-search"><Search size={15} /><input value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-member-usage">{visibleMemberUsage.map((member) => <div className="team-member-usage-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'} · {member.fileCount} 个文件</small><div className="team-usage-bar"><i style={{ width: `${(Number(member.usedBytes || 0) / memberMax) * 100}%` }} /></div></div><b>{formatBytes(member.usedBytes || 0)}</b></div>)}</div>{!filteredMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的成员</span></div>}<AdminPagination page={safeMemberUsagePage} pageCount={memberUsagePageCount} total={filteredMembers.length} pageSize={teamPageSize} onPageChange={setMemberUsagePage} /></div>}
+        {activeTab === 'members' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">成员观察</p><h2>成员使用量</h2></div><span>{filteredMembers.length} / {members.length} 位成员</span></div>{data.canManage && <div className="team-invite-wrap"><form className="team-invite-form" onSubmit={inviteMember}><label className="team-invite-input"><Search size={15} /><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="输入邮箱、手机号或鲲穹账号，直接邀请成员" disabled={savingMember} /></label><button className="primary-button" disabled={savingMember || !memberTarget.trim()}><UserPlus size={14} /> 邀请</button></form>{memberSuggestions.length > 0 && <div className="team-suggestions">{memberSuggestions.map((candidate) => <button type="button" key={candidate.id} onClick={() => { setMemberTarget(candidate.email || candidate.phone || candidate.username || candidate.id); setMemberSuggestions([]) }}><span className="workspace-member-avatar">{(candidate.displayName || '成').slice(0, 1)}</span><span><strong>{candidate.displayName || candidate.username || candidate.id}</strong><small>{candidate.username || candidate.email || candidate.phone || candidate.id}</small></span></button>)}</div>}</div>}<label className="team-search"><Search size={15} /><input value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-member-usage">{visibleMemberUsage.map((member) => { const memberBytes = Math.max(0, Number(member.usedBytes) || 0); const memberShare = usedBytes > 0 ? Math.min(100, Math.max(0, (memberBytes / usedBytes) * 100)) : 0; const hasUsage = memberBytes > 0; return <div className="team-member-usage-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><div className="team-usage-line"><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'} · {member.fileCount} 个文件</small></div><div className={`team-usage-bar ${hasUsage ? '' : 'is-empty'}`} title={hasUsage ? `占团队已用空间 ${memberShare.toFixed(memberShare < 1 ? 2 : 1)}%` : '暂未占用团队空间'} role="progressbar" aria-valuenow={Number(memberShare.toFixed(1))} aria-valuemin="0" aria-valuemax="100" aria-label={`${member.displayName || '待加入成员'}空间占用`}><i style={{ width: `${hasUsage ? Math.max(memberShare, 1.5) : 0}%` }} /></div></div><span className="team-usage-value"><b>{formatBytes(memberBytes)}</b><em>{hasUsage ? `${memberShare.toFixed(memberShare < 1 ? 2 : 1)}%` : '未使用'}</em></span></div> })}</div>{!filteredMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的成员</span></div>}<AdminPagination page={safeMemberUsagePage} pageCount={memberUsagePageCount} total={filteredMembers.length} pageSize={teamPageSize} onPageChange={setMemberUsagePage} /></div>}
         {activeTab === 'resources' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队资源</p><h2>专属团队文件</h2></div><span>{filteredResources.length} / {resources.length} 个文件</span></div><div className="team-resource-toolbar"><label className="team-search"><Search size={15} /><input value={resourceQuery} onChange={(event) => setResourceQuery(event.target.value)} placeholder="检索文件名或上传成员" /></label><input ref={teamUploadInputRef} type="file" multiple hidden onChange={(event) => { addTeamFiles(event.target.files); event.target.value = '' }} />{data.organization?.members?.some((member) => member.userId === user.id && member.status === 'active') && <button type="button" className="primary-button" onClick={() => teamUploadInputRef.current?.click()} disabled={teamUploading}><UploadCloud size={15} /> 上传到团队空间</button>}</div>{teamFiles.length > 0 && <div className="team-upload-draft"><div><strong>待上传 {teamFiles.length} 个文件</strong><span>{formatBytes(teamFiles.reduce((sum, file) => sum + file.size, 0))} · 同名文件会被拒绝</span></div><div><button type="button" className="primary-button" onClick={uploadTeamFiles} disabled={teamUploading}><UploadCloud size={14} /> {teamUploading ? '上传中' : '开始上传'}</button><button type="button" className="ghost-icon" onClick={() => setTeamFiles([])} aria-label="清除待上传文件" title="清除待上传文件"><X size={15} /></button></div></div>}{teamUploadState.status !== 'idle' && <div className="team-upload-progress"><div><span>{teamUploadState.phase || '上传处理中'}</span><b>{teamUploadState.progress || 0}%</b></div><div className="capacity-bar"><span style={{ width: `${teamUploadState.progress || 0}%` }} /></div></div>}<div className="team-resource-table">{filteredResources.length ? visibleTeamResources.map((resource) => <div className="team-resource-row" key={`${resource.kind}-${resource.id}`}><span className="team-resource-icon"><FileText size={15} /></span><div><strong>{resource.name}</strong><small>{memberName(resource.ownerUserId)} · {resource.fileCount} 个文件</small></div><span className={`team-resource-status ${resource.status}`}>{statusLabel(resource.status)}</span><small className="team-resource-size">{formatBytes(resource.totalSize)}</small><div className="team-resource-actions"><button className="ghost-icon" type="button" onClick={() => previewResource(resource)} disabled={resource.files?.length !== 1 || !canPreviewFile(resource.files[0])} aria-label={`预览 ${resource.name}`} title={resource.files?.length === 1 ? '预览文件' : '单文件资源可预览'}><Eye size={15} /></button><button className="ghost-icon" type="button" onClick={() => downloadResource(resource)} disabled={downloadBusy} aria-label={`下载 ${resource.name}`} title="下载文件"><Download size={15} /></button><a className="ghost-icon" href={resource.manageUrl} target="_blank" rel="noreferrer" aria-label={`管理 ${resource.name}`} title="管理分享"><Settings2 size={15} /></a></div></div>) : <div className="empty-manage"><Database size={25} /><span>{resourceQuery ? '没有匹配的团队文件' : '暂无团队文件，请从专属入口上传'}</span></div>}</div><AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={filteredResources.length} pageSize={teamPageSize} onPageChange={setTeamResourcePage} /></div>}
         {activeTab === 'manage' && <div className="public-card team-panel team-tab-panel team-members-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队成员</p><h2>成员权限</h2></div><span>{filteredManageMembers.length} / {members.length} 位成员</span></div><label className="team-search team-management-search"><Search size={15} /><input value={manageMemberQuery} onChange={(event) => setManageMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-management-list">{visibleTeamMembers.map((member) => <div className="team-management-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</small></div><span className={`workspace-member-state ${member.status === 'invited' ? 'pending' : 'active'}`}>{member.status === 'invited' ? '待加入' : member.role === 'owner' ? '所有者' : '已加入'}</span>{data.canManage && member.role !== 'owner' && <button className="ghost-icon" type="button" onClick={() => removeMember(member)} disabled={savingMember} aria-label={`移除${member.displayName || '成员'}`} title="移除成员"><X size={15} /></button>}</div>)}</div>{!filteredManageMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的团队成员</span></div>}<AdminPagination page={safeTeamMemberPage} pageCount={teamMemberPageCount} total={filteredManageMembers.length} pageSize={teamPageSize} onPageChange={setTeamMemberPage} /></div>}
       </div>
     </section>
     {notice && <div className={`toast ${notice.tone || 'success'}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}><span className="toast-icon">{notice.tone === 'error' ? <X size={18} /> : <Check size={18} />}</span><span>{notice.message}</span></div>}
     {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
-    <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+    {/* 下载进度与上方团队卡片同宽：包一层受限宽容器，避免被 .public-page 的居中网格压缩。 */}
+    <div className="team-page team-download-slot"><DownloadProgressPanel task={downloadTask} onRetry={retryDownload} /></div>
+    <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
   </PublicShell>
 }
 
@@ -4168,12 +4246,38 @@ function AdminPage() {
   const [error, setError] = useState('')
   const [tab, setTab] = useState('dashboard')
   const [savingConfig, setSavingConfig] = useState(false)
+  const [authenticated, setAuthenticated] = useState(false)
+  const [adminInfo, setAdminInfo] = useState(null)
+  const [loginBusy, setLoginBusy] = useState(false)
+  const [loginError, setLoginError] = useState('')
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
+
+  const loadSession = async () => {
+    try {
+      const session = await apiRequest('/api/admin/session')
+      setAuthenticated(Boolean(session.authenticated))
+      setAdminInfo(session.admin || null)
+      return Boolean(session.authenticated)
+    } catch {
+      setAuthenticated(false)
+      setAdminInfo(null)
+      return false
+    }
+  }
 
   const load = async () => {
     setLoading(true)
     setError('')
     try {
+      const session = await apiRequest('/api/admin/session')
+      if (!session.authenticated) {
+        setAuthenticated(false)
+        setAdminInfo(null)
+        setData(null)
+        return
+      }
+      setAuthenticated(true)
+      setAdminInfo(session.admin || null)
       setData(await apiRequest('/api/admin/overview'))
     } catch (err) {
       setError(err.message || '后台数据加载失败')
@@ -4183,9 +4287,31 @@ function AdminPage() {
   }
   useEffect(() => { load() }, [])
 
-  const login = () => {
-    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`
-    window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
+  const submitLogin = async ({ username, password }) => {
+    setLoginBusy(true)
+    setLoginError('')
+    try {
+      const result = await apiRequest('/api/admin/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+      setAuthenticated(true)
+      setAdminInfo(result.admin || null)
+      setData(result.overview || null)
+      setError('')
+    } catch (err) {
+      setLoginError(err.message || '登录失败')
+    } finally {
+      setLoginBusy(false)
+    }
+  }
+
+  const logoutAdmin = async () => {
+    try {
+      await apiRequest('/api/admin/logout', { method: 'POST' })
+    } catch { /* 忽略退出异常，前端一律回到登录态 */ }
+    setAuthenticated(false)
+    setAdminInfo(null)
+    setData(null)
+    setError('')
+    setLoginError('')
   }
   const updateUser = async (user, patch) => {
     try {
@@ -4237,7 +4363,8 @@ function AdminPage() {
     }
   }
   if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开后台</h1><p>正在检查管理员权限。</p></div></PublicShell>
-  if (error && !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p>{/登录/.test(error) && <button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button>}<a className="secondary-button" href="/">返回首页</a></div></PublicShell>
+  if (!authenticated) return <AdminLoginModal onSubmit={submitLogin} busy={loginBusy} error={loginError} onBackHome={() => { window.location.href = '/' }} />
+  if (error && !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p><button className="primary-button" onClick={load}><RefreshCw size={16} /> 重新加载</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button><a className="secondary-button" href="/">返回首页</a></div></PublicShell>
   if (!data) return null
   const stats = data.stats || {}
   const dashboardCards = [['注册用户', stats.users || 0, Users], ['活跃用户', stats.activeUsers || 0, UserRound], ['分享', stats.shares || 0, Link2], ['收集任务', stats.collections || 0, Inbox], ['占用空间', formatBytes(stats.totalBytes || 0), HardDrive], ['待清理', stats.pendingCleanup || 0, RefreshCw]]
@@ -4246,7 +4373,7 @@ function AdminPage() {
   return (
     <PublicShell>
       <section className="admin-page">
-        <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、安全日志、运行配置和系统概览。</p></div><div><button className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</button><button className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</button></div></div>
+        <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、安全日志、运行配置和系统概览。</p></div><div className="admin-heading-actions">{adminInfo?.username && <span className="admin-identity" title={`当前登录管理员：${adminInfo.username}`}><ShieldCheck size={14} /> {adminInfo.username}</span>}<button className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</button><button className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button></div></div>
         <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button className={tab === key ? 'active' : ''} key={key} onClick={() => setTab(key)}><Icon size={16} /> {label}</button>)}</nav>
         {error && <p className="public-message">{error}</p>}
         <div className="admin-content">

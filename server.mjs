@@ -79,9 +79,21 @@ const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections'
 const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
 const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
+// 运营后台账号密码登录。优先读环境变量，未配置时回落到内置默认账号，保证后台开箱可用。
+const ADMIN_ACCOUNT_USERNAME = String(process.env.KUNQIONG_ADMIN_USERNAME || 'ljxkjadmin').trim()
+const ADMIN_ACCOUNT_PASSWORD = String(process.env.KUNQIONG_ADMIN_PASSWORD || 'jxljxkj009900')
+const ADMIN_COOKIE_NAME = 'kunqiong_admin_session'
+const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000
+const ADMIN_LOGIN_MAX_ATTEMPTS = 8
+const ADMIN_LOGIN_WINDOW_MS = 10 * 60 * 1000
+const adminLoginAttempts = new Map()
+const adminSessions = new Map()
 const TEST_ENTERPRISE_USER_KEYS = new Set(splitConfigValues(process.env.KUNQIONG_TEST_ENTERPRISE_USER_KEYS || process.env.KUNQIONG_TEST_ENTERPRISE_USER_IDS).map((value) => value.toLowerCase()))
 const testEnterpriseForAllUsers = process.env.NODE_ENV === 'test'
   && parseBooleanEnv(process.env.KUNQIONG_TEST_ENTERPRISE_ALL, false)
+// 测试服权益白名单模式：仅 KUNQIONG_TEST_ENTERPRISE_USER_KEYS 内的账号为高等级权益，其余强制基础版。
+const testEnforceEnterpriseAllowlist = process.env.NODE_ENV === 'test'
+  && parseBooleanEnv(process.env.KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST, true)
 const testVerificationDebugMode = process.env.NODE_ENV === 'test'
   && parseBooleanEnv(process.env.KUNQIONG_VERIFICATION_DEBUG, false)
 const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']
@@ -790,11 +802,28 @@ app.delete('/api/account/workspace/members/:memberId', (req, res) => {
   if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以管理成员' })
   const index = organization.members.findIndex((member) => member.id === req.params.memberId)
   if (index < 0) return res.status(404).json({ message: '团队成员不存在' })
-  if (organization.members[index].userId === organization.ownerUserId) return res.status(400).json({ message: '团队所有者不能移除' })
-  organization.members.splice(index, 1)
+  const [removedMember] = organization.members.splice(index, 1)
+  if (removedMember.userId === organization.ownerUserId) return res.status(400).json({ message: '团队所有者不能移除' })
+  const operator = accountUserById(session.user.id) || session.user
+  const operatorName = displayAccountName(operator)
+  const removedUser = accountUserById(removedMember.userId)
+  const notifiedInApp = Boolean(addAccountMessage(removedMember.userId, {
+    category: 'other',
+    eventType: 'teamRemoved',
+    title: '你已被移出团队空间',
+    body: `${operatorName}已将你移出团队“${organization.name}”，团队内的共享文件将不再对你展示。如需重新加入，请联系团队所有者重新邀请。`,
+  }))
+  if (removedUser) {
+    removedUser.organizationId = ''
+    removedUser.organizationRole = ''
+    removedUser.updatedAt = new Date().toISOString()
+    upsertAccountUser(removedUser)
+    syncAccountUserSessions(removedUser)
+  }
   organization.updatedAt = new Date().toISOString()
   persistMetadata()
-  res.json(accountWorkspacePayload(session.user))
+  recordAuditLog({ type: 'team', action: '移除团队成员', userId: session.user.id, targetId: removedMember.userId, details: { organizationId: organization.id, notifiedInApp } })
+  res.json({ ...accountWorkspacePayload(session.user), removedMemberId: removedMember.id, notifiedInApp })
 })
 
 app.get('/api/account/upgrade-orders', (req, res) => {
@@ -920,44 +949,87 @@ app.post('/api/account/upgrade-orders/:orderId/pay-status', async (req, res) => 
   }
 })
 
+app.post('/api/admin/login', (req, res) => {
+  const ip = clientIpFromRequest(req)
+  if (adminLoginRateLimited(ip)) {
+    return res.status(429).json({ message: '登录尝试过于频繁，请稍后再试' })
+  }
+  const username = trimRecordString(req.body?.username, 120)
+  const password = typeof req.body?.password === 'string' ? req.body.password : ''
+  if (!username || !password) return res.status(400).json({ message: '请输入管理员账号和密码' })
+  const matched = safeEqualString(username, ADMIN_ACCOUNT_USERNAME) & safeEqualString(password, ADMIN_ACCOUNT_PASSWORD)
+  if (!matched) {
+    recordAdminLoginFailure(ip)
+    recordAuditLog({ type: 'admin', action: '后台登录失败', ip: requestIp(req), details: { username: username.slice(0, 40) } })
+    return res.status(401).json({ message: '管理员账号或密码不正确' })
+  }
+  clearAdminLoginFailures(ip)
+  const adminSession = createAdminSession(req)
+  setAdminCookie(res, adminSession.token, req)
+  recordAuditLog({ type: 'admin', action: '后台登录成功', userId: `admin:${adminSession.username}`, ip: requestIp(req) })
+  res.json({ admin: adminSessionDescriptor(adminSession), overview: buildAdminOverview() })
+})
+
+app.post('/api/admin/logout', (req, res) => {
+  const adminSession = adminSessionFromRequest(req)
+  removeAdminSession(req)
+  clearAdminCookie(res, req)
+  if (adminSession) recordAuditLog({ type: 'admin', action: '后台退出登录', userId: `admin:${adminSession.username}`, ip: requestIp(req) })
+  res.json({ ok: true })
+})
+
+app.get('/api/admin/session', (req, res) => {
+  const adminSession = adminSessionFromRequest(req)
+  if (adminSession) return res.json({ authenticated: true, admin: adminSessionDescriptor(adminSession), mode: 'credential' })
+  const session = authSessionFromRequest(req)
+  if (session && isAdminUser(session.user)) {
+    return res.json({
+      authenticated: true,
+      mode: 'kunqiong',
+      admin: { username: displayAccountName(session.user), userId: session.user.id, expiresAt: new Date(session.expiresAt).toISOString() },
+    })
+  }
+  res.json({ authenticated: false, admin: null })
+})
+
 app.get('/api/admin/overview', (req, res) => {
-  const session = requireAdminSession(req, res)
-  if (!session) return
+  const auth = requireAdminSession(req, res)
+  if (!auth) return
   res.json(buildAdminOverview())
 })
 
 app.post('/api/admin/cleanup', (req, res) => {
-  const session = requireAdminSession(req, res)
-  if (!session) return
+  const auth = requireAdminSession(req, res)
+  if (!auth) return
   const result = runMaintenanceCleanup()
-  recordAuditLog({ type: 'admin', action: '手动执行存储清理', userId: session.user.id, details: result })
+  recordAuditLog({ type: 'admin', action: '手动执行存储清理', userId: auth.user.id, details: result })
   res.json({ ...result, overview: buildAdminOverview() })
 })
 
 app.patch('/api/admin/config', (req, res) => {
-  const session = requireAdminSession(req, res)
-  if (!session) return
+  const auth = requireAdminSession(req, res)
+  if (!auth) return
   metadata.systemConfig = normalizeSystemConfig({
     ...metadata.systemConfig,
     ...req.body,
     planOverrides: req.body?.planOverrides || metadata.systemConfig.planOverrides,
   })
   persistMetadata()
-  recordAuditLog({ type: 'admin', action: '更新系统配置', userId: session.user.id, details: metadata.systemConfig })
+  recordAuditLog({ type: 'admin', action: '更新系统配置', userId: auth.user.id, details: metadata.systemConfig })
   res.json({ config: metadata.systemConfig })
 })
 
 app.patch('/api/admin/users/:userId', (req, res) => {
-  const session = requireAdminSession(req, res)
-  if (!session) return
+  const auth = requireAdminSession(req, res)
+  if (!auth) return
   const user = accountUserById(req.params.userId)
   if (!user) return res.status(404).json({ message: '用户不存在' })
   const status = req.body?.status ? String(req.body.status) : user.status || 'active'
   const planId = normalizePlanId(req.body?.planId || user.planId)
   if (!['active', 'disabled'].includes(status)) return res.status(400).json({ message: '用户状态不支持' })
-  if (user.id === session.user.id && status === 'disabled') return res.status(400).json({ message: '不能禁用当前管理员账号' })
-  user.status = status
+  if (user.id === auth.user.id && status === 'disabled') return res.status(400).json({ message: '不能禁用当前管理员账号' })
   user.planId = planId
+  user.status = status
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'planExpiresAt')) {
     user.planExpiresAt = normalizeRecordDate(req.body.planExpiresAt)
   }
@@ -967,13 +1039,13 @@ app.patch('/api/admin/users/:userId', (req, res) => {
   }
   syncAccountUserSessions(user)
   persistMetadata()
-  recordAuditLog({ type: 'admin', action: '更新用户状态或权益', userId: session.user.id, targetId: user.id, details: { status, planId } })
+  recordAuditLog({ type: 'admin', action: '更新用户状态或权益', userId: auth.user.id, targetId: user.id, details: { status, planId } })
   res.json({ user: adminUserSummary(user) })
 })
 
 app.delete('/api/admin/resources/:kind/:id', (req, res) => {
-  const session = requireAdminSession(req, res)
-  if (!session) return
+  const auth = requireAdminSession(req, res)
+  if (!auth) return
   const kind = String(req.params.kind)
   const id = String(req.params.id)
   if (kind === 'share') {
@@ -995,14 +1067,14 @@ app.delete('/api/admin/resources/:kind/:id', (req, res) => {
 })
 
 app.patch('/api/admin/resources/:kind/:id/review', (req, res) => {
-  const session = requireAdminSession(req, res)
-  if (!session) return
+  const auth = requireAdminSession(req, res)
+  if (!auth) return
   const resource = findAdminResource(req.params.kind, req.params.id)
   if (!resource) return res.status(404).json({ message: '文件资源不存在' })
   markResourceReviewStatus(resource.kind, resource.item, 'approved')
   resource.item.updatedAt = new Date().toISOString()
   persistMetadata()
-  recordAuditLog({ type: 'admin', action: '通过文件资源审核', userId: session.user.id, targetId: resource.id, details: { kind: resource.kind } })
+  recordAuditLog({ type: 'admin', action: '通过文件资源审核', userId: auth.user.id, targetId: resource.id, details: { kind: resource.kind } })
   res.json({ ok: true, overview: buildAdminOverview() })
 })
 
@@ -1961,17 +2033,114 @@ function isAdminUser(user = {}) {
   return Boolean(user?.id && ADMIN_USER_IDS.has(String(user.id)))
 }
 
-function requireAdminSession(req, res) {
-  const session = authSessionFromRequest(req)
-  if (!session) {
-    res.status(401).json({ message: '请先登录管理员账号' })
-    return null
+// —— 后台管理员会话（账号密码登录，独立于鲲穹 OAuth 会话）——
+function cleanupExpiredAdminSessions() {
+  const now = Date.now()
+  for (const [token, session] of adminSessions.entries()) {
+    if (session.expiresAt <= now) adminSessions.delete(token)
   }
-  if (!isAdminUser(session.user)) {
-    res.status(403).json({ message: '当前账号没有后台管理权限' })
-    return null
+}
+
+function createAdminSession(req) {
+  cleanupExpiredAdminSessions()
+  const token = createToken(48)
+  const session = {
+    token,
+    username: ADMIN_ACCOUNT_USERNAME,
+    createdAt: new Date().toISOString(),
+    expiresAt: Date.now() + ADMIN_SESSION_TTL_MS,
+    lastIp: clientIpFromRequest(req),
   }
+  adminSessions.set(token, session)
   return session
+}
+
+function adminSessionDescriptor(session) {
+  if (!session) return null
+  return {
+    username: session.username,
+    userId: `admin:${session.username}`,
+    createdAt: session.createdAt,
+    expiresAt: new Date(session.expiresAt).toISOString(),
+  }
+}
+
+function adminSessionFromRequest(req) {
+  cleanupExpiredAdminSessions()
+  const token = readCookie(req, ADMIN_COOKIE_NAME)
+  if (!token) return null
+  return adminSessions.get(token) || null
+}
+
+function removeAdminSession(req) {
+  const token = readCookie(req, ADMIN_COOKIE_NAME)
+  if (token) adminSessions.delete(token)
+}
+
+function setAdminCookie(res, token, req) {
+  res.setHeader('Set-Cookie', serializeCookie(ADMIN_COOKIE_NAME, token, {
+    httpOnly: true,
+    maxAge: Math.floor(ADMIN_SESSION_TTL_MS / 1000),
+    path: '/',
+    sameSite: 'Lax',
+    secure: isSecureRequest(req),
+  }))
+}
+
+function clearAdminCookie(res, req) {
+  res.setHeader('Set-Cookie', serializeCookie(ADMIN_COOKIE_NAME, '', {
+    httpOnly: true,
+    maxAge: 0,
+    path: '/',
+    sameSite: 'Lax',
+    secure: isSecureRequest(req),
+  }))
+}
+
+function clientIpFromRequest(req) {
+  return firstHeader(req.get('x-forwarded-for'))?.split(',')[0]?.trim() || req.ip || ''
+}
+
+function adminLoginRateLimited(ip) {
+  const now = Date.now()
+  const record = adminLoginAttempts.get(ip)
+  if (!record || now - record.startedAt > ADMIN_LOGIN_WINDOW_MS) return false
+  return record.count >= ADMIN_LOGIN_MAX_ATTEMPTS
+}
+
+function recordAdminLoginFailure(ip) {
+  const now = Date.now()
+  const record = adminLoginAttempts.get(ip)
+  if (!record || now - record.startedAt > ADMIN_LOGIN_WINDOW_MS) {
+    adminLoginAttempts.set(ip, { count: 1, startedAt: now })
+    return
+  }
+  record.count += 1
+}
+
+function clearAdminLoginFailures(ip) {
+  adminLoginAttempts.delete(ip)
+}
+
+function safeEqualString(a, b) {
+  const left = Buffer.from(String(a ?? ''), 'utf8')
+  const right = Buffer.from(String(b ?? ''), 'utf8')
+  if (left.length !== right.length) return false
+  return crypto.timingSafeEqual(left, right)
+}
+
+// 返回 { session } 表示通过管理员口令校验；返回 null 时已写出错误响应。
+function requireAdminSession(req, res) {
+  const adminSession = adminSessionFromRequest(req)
+  if (adminSession) return { type: 'credential', session: adminSession, user: { id: `admin:${adminSession.username}`, name: adminSession.username } }
+  const session = authSessionFromRequest(req)
+  if (session && isAdminUser(session.user)) return { type: 'kunqiong', session, user: session.user }
+  if (session) {
+    res.status(403).json({ message: '当前账号没有后台管理权限，请使用管理员口令登录' })
+    return null
+  }
+  res.status(401).json({ message: '请先登录管理员账号' })
+  return null
 }
 
 function assertServiceWritable(req) {
@@ -2722,11 +2891,16 @@ function normalizeAccountUser(user = {}) {
     .map((value) => String(value || '').trim().toLowerCase())
     .filter(Boolean)
   const testEnterpriseOverride = testEnterpriseForAllUsers
-    || (process.env.NODE_ENV === 'test' && testEnterpriseKeys.some((value) => TEST_ENTERPRISE_USER_KEYS.has(value)))
-  const planId = testEnterpriseOverride ? 'enterprise' : normalizePlanId(user.planId || base.planId || 'free')
+    || (testEnforceEnterpriseAllowlist && testEnterpriseKeys.some((value) => TEST_ENTERPRISE_USER_KEYS.has(value)))
+  // 测试服按白名单强制收敛权益：不在 KUNQIONG_TEST_ENTERPRISE_USER_KEYS 内的账号一律回落基础版，
+  // 避免历史数据或手工改库残留的高等级权益（升级需走充值流程）。
+  const testEnforceFree = testEnforceEnterpriseAllowlist
+    && !testEnterpriseOverride
+    && normalizePlanId(user.planId || base.planId || 'free') !== 'free'
+  const planId = testEnterpriseOverride ? 'enterprise' : testEnforceFree ? 'free' : normalizePlanId(user.planId || base.planId || 'free')
   const plan = configuredAccountPlan(planId)
   const planExpiresAt = plan.permanent ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
-  if (testEnterpriseOverride || (plan.permanent && (user.planExpiresAt || base.planExpiresAt))) metadataNeedsPersist = true
+  if (testEnterpriseOverride || testEnforceFree || (plan.permanent && (user.planExpiresAt || base.planExpiresAt))) metadataNeedsPersist = true
   const now = new Date().toISOString()
   return {
     ...base,
