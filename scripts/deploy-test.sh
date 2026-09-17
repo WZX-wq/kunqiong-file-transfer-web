@@ -94,6 +94,28 @@ preserve_existing_config() {
 }
 
 preserve_existing_config
+
+normalize_gitea_env_values() {
+  local name value
+  for name in \
+    KUNQIONG_SMTP_HOST KUNQIONG_SMTP_PORT KUNQIONG_SMTP_SECURE KUNQIONG_SMTP_USER \
+    KUNQIONG_SMTP_PASSWORD KUNQIONG_SMTP_FROM KUNQIONG_TENCENT_SECRET_ID \
+    KUNQIONG_TENCENT_SECRET_KEY KUNQIONG_TENCENT_SMS_SDK_APP_ID KUNQIONG_TENCENT_SMS_SIGN_NAME \
+    KUNQIONG_TENCENT_SMS_REGION KUNQIONG_TENCENT_SMS_TEMPLATE_BIND_CODE_ID \
+    KUNQIONG_TENCENT_SMS_TEMPLATE_LOGIN_CODE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_PASSWORD_CODE_ID \
+    KUNQIONG_TENCENT_SMS_TEMPLATE_WORKSPACE_INVITE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_FILE_SHARE_ID \
+    KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_ACTIVATED_ID KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_EXPIRING_ID
+  do
+    value="${!name:-}"
+    if [[ "$value" == "%!t(string="*")" ]]; then
+      value="${value#'%!t(string='}"
+      value="${value%)}"
+      export "$name=$value"
+    fi
+  done
+}
+
+normalize_gitea_env_values
 write_env_file "$ENV_FILE"
 
 healthcheck_docker() {
@@ -140,9 +162,9 @@ deploy_with_docker() {
   cp "$ENV_FILE" "$COMPOSE_DIR/.env"
   chmod 600 "$COMPOSE_DIR/.env" 2>/dev/null || true
 
-  # 清掉历史遗留的裸 docker run 容器（非 compose 管理），避免容器名冲突
+  # 清掉历史遗留容器或其它 compose 项目创建的同名容器，避免容器名冲突。
   existing_proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$APP_NAME" 2>/dev/null || true)"
-  if [ "$existing_proj" = "<no value>" ]; then
+  if [ -n "$existing_proj" ] && [ "$existing_proj" != "$APP_NAME" ]; then
     docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
   fi
 
@@ -249,12 +271,13 @@ running_in_container() {
   [ -f /.dockerenv ] || { [ -r /proc/1/cgroup ] && grep -qaE 'docker|containerd|kubepods' /proc/1/cgroup; }
 }
 
-if deploy_with_docker; then
-  exit 0
+if docker info >/dev/null 2>&1; then
+  deploy_with_docker
+  exit $?
 fi
 
 if running_in_container; then
-  echo "Docker is not available inside the CI container, so the service cannot be deployed persistently from this job." >&2
+  echo "Docker deployment failed or Docker is not available inside the CI container, so the service cannot be deployed persistently from this job." >&2
   exit 1
 fi
 
