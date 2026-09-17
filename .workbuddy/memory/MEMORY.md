@@ -31,8 +31,12 @@
   `syncOrganizationMemberProfile(user)` 负责同步，挂在两处：`PATCH /api/auth/profile` 与 `createAuthSession`。
   规则：只补「有值且变了」的字段，账号侧为空时保留 roster 历史值，绝不抹掉已有信息。
   改动涉及成员资料展示时务必回归这条链路。
-- **团队邀请链接**：`/e/<slug>/share/`，两个入口渲染 —— `/workspace` 团队卡片内（`workspace-invite-link`）、
+- **团队邀请链接**：`/e/<slug>/share/`（**不带 token**），两个入口渲染 —— `/workspace` 团队卡片内（`workspace-invite-link`）、
   `/team` 页顶部（`team-invite-link-card`，仅 canManage）。都带复制按钮（`copyTextToClipboard`）。
+  ⚠️ 不带 token 的企业路径（`/e/<slug>/share/`、`/e/<slug>/collect/`、`/e/<slug>/`、`/e/<slug>`）由 **`TeamInvitePage`** 渲染
+  （hero 卡片 + `TeamJoinRequestCard`）；带 token 才走 SharePage / CollectionSubmitPage。
+  早期 `App()` 要求 `parts[2]==='share' && parts[3]`，导致邀请链接落到 WorkspaceApp 兜底、**访客看不到任何入团入口**（已修）。
+  改动路由分支时必须回归 `_verify_invite.mjs`。
 - 管理后台 /admin：**账号口令登录**（默认 ljxkjadmin / jxljxkj009900，env 可覆盖），
   cookie `kunqiong_admin_session`，TTL 12h，timingSafeEqual 比对 + 8 次/10 分钟限流；
   同时兼容鲲穹管理员账号（ADMIN_USER_IDS）。requireAdminSession 返回 { type, session, user }
@@ -89,6 +93,19 @@
 | `_verify_layout.mjs` | CSS 契约 + breakpoint 配平 + jsdom 渲染 | `_layout.log` | 39 |
 | `_verify_served.mjs` | 直接执行 dist 产物做 DOM 断言 | `_served.log` | 21 |
 | `_verify_layout_real.mjs` | **真实 Chrome 布局测量** | `_verify_layout_real.txt` | 46 |
+| `_verify_invite.mjs` | 邀请链接路由（真实产物，子进程渲染）+ 入团接口全链路 | `_invite.log` | 38 |
+| `_verify_invite_browser.mjs` | **真实 Chrome** 打开邀请落地页，双视口截图 | `_invite_browser.txt` | 12 |
+
+### ⚠️ 渲染 dist 产物必须放子进程
+产物是 ESM，同进程内重复 `import` 会被**模块缓存**命中（第二次 import 直接返回缓存，React 不再重新挂载）；
+用 `?v=xxx` 绕缓存又会让 Vite 的 URL 处理拿到脏路径而崩。
+→ 一个路由一个子进程，用 `execFileSync(process.execPath, [child.mjs, urlPath, outFile])`，结果写 JSON 回读。
+
+### ⚠️ CSS 优先级：width 与 max-width 是两回事
+`.team-join-card`（line 899）写在 `.public-card`（line 1168）**之前**，同特异性（都 0,1,0），
+**后写的赢** → `.public-card` 的 `width: min(570px,100%)` 把卡片硬顶成 570px。
+只在外层写 `max-width: none` **管不住 width**，必须显式 `width: 100%`。
+**排查「元素比预期窄」时先看 `width` 而不是只盯 `max-width`，并核对两条规则的先后顺序。**
 
 ### ⚠️ jsdom ≠ 布局引擎
 jsdom **不做真实布局**。它能断言 DOM 结构（父子/兄弟关系），
@@ -121,6 +138,15 @@ jsdom **不做真实布局**。它能断言 DOM 结构（父子/兄弟关系）�
 断言要描述**期望行为**，不要描述**当时的实现**。
 我曾把「team-card 通栏 grid-column:1/-1」写成断言，结果这行正是 bug 根源，
 修 bug 时反被自己的测试拦住。改用 `_verify_layout_real.mjs` 后立刻复现了真问题。
+另一条同源教训：**产物经 minify 后函数名会被 mangle**，不能断言标识符名（如 `TeamInvitePage`），
+只能断言字符串字面量与 className。
+
+### fetch stub 的纪律
+stub 的返回体必须**结构完整**：页面读 `data.share.files.length`，就得回 `{share:{files:[...]}}` 而不是 `{}`，
+否则 control 组直接抛 TypeError、整个脚本崩在开头，真实结论一条都读不到。
+另外注入脚本里别做 `JSON.stringify(JSON.stringify(obj))` 双重序列化 —— 注入后是字符串不是对象，
+表现为「组件渲染了但状态全空」，很容易误判成代码 bug。
+排查手法：先在真实浏览器里记录 `window.fetch` 实际收到的 URL 与响应，别靠猜。
 
 ## 注意事项
 - CI yml 中明文提交了 OAUTH_CLIENT_SECRET / DB 口令 / 腾讯云密钥，属安全隐患，待提醒用户迁到 Secrets
