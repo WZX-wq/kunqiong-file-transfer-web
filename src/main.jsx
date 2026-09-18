@@ -4140,8 +4140,14 @@ function WorkspacePage() {
   const selectedPlan = plans.find((item) => item.id === selectedPlanId) || plan
   const capacity = workspace?.capacity || {}
   const organization = workspace?.organization
+  // teamEntitlement 是「借用的团队侧能力」，与个人套餐分开：
+  // 成员加入团队后可共享团队空间，但个人套餐保持原样（基础版仍是基础版）。
+  const teamEntitlement = workspace?.teamEntitlement || {}
   const hasTeamPlan = Boolean(plan.team)
-  const canManageTeam = Boolean(hasTeamPlan && workspace?.canManage)
+  const canUseTeamSpace = Boolean(teamEntitlement.canUseTeamSpace)
+  const teamSpaceBytes = Number(teamEntitlement.teamSpaceBytes || plan.teamSpaceBytes || 0)
+  const teamRole = teamEntitlement.role || ''
+  const canManageTeam = Boolean(workspace?.canManage)
   const members = organization?.members || []
   const ownerMember = members.find((member) => member.role === 'owner') || members[0] || null
   const selectedTotalBytes = Number(selectedPlan.totalBytes || capacity.totalBytes || 0)
@@ -4202,13 +4208,16 @@ function WorkspacePage() {
                     </div>
                   )}
                 </div>
-                {organization ? <span className="workspace-status">团队所有者</span> : <span className="workspace-status muted team-required-tag" title={canManageTeam ? '当前权益可以创建团队空间。' : '该功能需要升级团队版权限才可解锁。'}>{canManageTeam ? '可创建' : '需团队版'}</span>}
+                {organization
+                  ? <span className="workspace-status">{teamRole === 'owner' ? '团队所有者' : '团队成员'}</span>
+                  : <span className="workspace-status muted team-required-tag" title={canManageTeam ? '当前权益可以创建团队空间。' : '该功能需要升级团队版权限才可解锁。'}>{canManageTeam ? '可创建' : '需团队版'}</span>}
               </div>
               {!organization ? (
                 hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
               ) : (
                 <>
-                  {!canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
+                  {teamRole === 'owner' && !canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
+                  {teamRole === 'member' && <div className="workspace-share-notice"><Users size={18} /><div><strong>你已加入「{organization.name}」，正在共享团队空间</strong><span>团队空间的容量由团队所有者提供，你个人的空间与权益保持不变。</span></div></div>}
                   <div className="workspace-team-body">
                     <div className="workspace-team-block">
                       <p className="workspace-block-label">团队所有者</p>
@@ -4216,11 +4225,23 @@ function WorkspacePage() {
                     </div>
                     <div className="workspace-team-block">
                       <p className="workspace-block-label"><Link2 size={14} /> 团队邀请链接</p>
-                      <p className="workspace-block-hint">把它发给同事，对方登录后即可申请加入，申请会出现在团队空间里由你审批。</p>
-                      <div className="workspace-invite-link-row">
-                        <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
-                        <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={14} /> 复制</button>
-                      </div>
+                      {teamRole === 'owner' ? (
+                        <>
+                          <p className="workspace-block-hint">把它发给同事，对方登录后即可申请加入，申请会出现在团队空间里由你审批。</p>
+                          <div className="workspace-invite-link-row">
+                            <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
+                            <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={14} /> 复制</button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p className="workspace-block-hint">邀请链接由团队所有者管理，如需邀请同事请联系所有者。</p>
+                          <div className="workspace-invite-link-row">
+                            <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
+                            <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={14} /> 复制</button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="workspace-team-foot">
@@ -4230,7 +4251,7 @@ function WorkspacePage() {
                 </>
               )}
             </div>
-            <div className="public-card workspace-side-card workspace-status-card"><div className="workspace-side-heading"><ListChecks size={22} /><strong>当前状态</strong></div><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan ? 'on' : 'off'}>{hasTeamPlan ? <Check size={13} /> : <X size={13} />} 团队协作与成员管理</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 分享链接入团申请</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
+            <div className="public-card workspace-side-card workspace-status-card"><div className="workspace-side-heading"><ListChecks size={22} /><strong>当前状态</strong></div><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan || canUseTeamSpace ? 'on' : 'off'}>{hasTeamPlan || canUseTeamSpace ? <Check size={13} /> : <X size={13} />} {teamRole === 'member' && !hasTeamPlan ? '共享团队空间' : '团队协作与成员管理'}</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 分享链接入团申请</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
             </div>
         </div>
       </section>
@@ -4689,6 +4710,14 @@ function AccountCapacityCard({ user }) {
         <span>{capacity.fileCount || 0} 个文件</span>
       </div>
       <div className="account-plan-meta"><strong>{plan.label || '基础版'}</strong><span>{validity}</span><span>{formatPlanPrice(plan)}</span></div>
+      {user?.teamEntitlement?.organizationName && (
+        <p className="account-team-hint">
+          <Users size={13} />
+          {user.teamEntitlement.role === 'owner'
+            ? `你是「${user.teamEntitlement.organizationName}」的所有者，团队空间容量 ${formatBytes(user.teamEntitlement.teamSpaceBytes || 0)}`
+            : `已加入「${user.teamEntitlement.organizationName}」，共享团队空间 ${formatBytes(user.teamEntitlement.teamSpaceBytes || 0)}，个人套餐不受影响`}
+        </p>
+      )}
     </div>
   )
 }

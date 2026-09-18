@@ -1164,8 +1164,7 @@ app.post('/api/account/upgrade-orders/:orderId/pay-status', async (req, res) => 
 })
 
 app.post('/api/admin/login', (req, res) => {
-  const ip = clientIpFromRequest(req)
-  if (adminLoginRateLimited(ip)) {
+  if (adminLoginRateLimited(req)) {
     return res.status(429).json({ message: '登录尝试过于频繁，请稍后再试' })
   }
   const username = trimRecordString(req.body?.username, 120)
@@ -1173,11 +1172,11 @@ app.post('/api/admin/login', (req, res) => {
   if (!username || !password) return res.status(400).json({ message: '请输入管理员账号和密码' })
   const matched = safeEqualString(username, ADMIN_ACCOUNT_USERNAME) & safeEqualString(password, ADMIN_ACCOUNT_PASSWORD)
   if (!matched) {
-    recordAdminLoginFailure(ip)
+    recordAdminLoginFailure(req)
     recordAuditLog({ type: 'admin', action: '后台登录失败', ip: requestIp(req), details: { username: username.slice(0, 40) } })
     return res.status(401).json({ message: '管理员账号或密码不正确' })
   }
-  clearAdminLoginFailures(ip)
+  clearAdminLoginFailures(req)
   const adminSession = createAdminSession(req)
   setAdminCookie(res, adminSession.token, req)
   recordAuditLog({ type: 'admin', action: '后台登录成功', userId: `admin:${adminSession.username}`, ip: requestIp(req) })
@@ -1236,7 +1235,13 @@ app.patch('/api/admin/users/:userId', (req, res) => {
   const status = req.body?.status ? String(req.body.status) : user.status || 'active'
   const planId = normalizePlanId(req.body?.planId || user.planId)
   if (!['active', 'disabled'].includes(status)) return res.status(400).json({ message: '用户状态不支持' })
-  if (user.id === auth.user.id && status === 'disabled') return res.status(400).json({ message: '不能禁用当前管理员账号' })
+  // auth.user.id 形如 `admin:ljxkjadmin`，不是鲲穹账号 id，所以用账号名比对才有效。
+  // 原先写 `user.id === auth.user.id` 永远为 false，等于没有这层保护。
+  const adminUsername = String(auth.user.id || '').replace(/^admin:/, '')
+  const isSelfAccount = adminUsername && (user.username === adminUsername || user.id === adminUsername)
+  if (isSelfAccount && status === 'disabled') {
+    return res.status(400).json({ message: '不能禁用当前登录的管理员账号' })
+  }
   user.planId = planId
   user.status = status
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'planExpiresAt')) {
@@ -1271,7 +1276,9 @@ app.delete('/api/admin/resources/:kind/:id', (req, res) => {
     return res.status(400).json({ message: '资源类型不支持' })
   }
   persistMetadata()
-  recordAuditLog({ type: 'admin', action: '删除文件资源', userId: session.user.id, targetId: id, details: { kind } })
+  // 此前这里写的是 `session.user.id`，但本作用域内没有 session（应为 auth），
+  // 会在资源已经 splice 掉之后抛 ReferenceError → 接口 500、审计日志丢失。
+  recordAuditLog({ type: 'admin', action: '删除文件资源', userId: auth.user.id, targetId: id, details: { kind } })
   res.json({ ok: true, overview: buildAdminOverview() })
 })
 
@@ -2237,16 +2244,46 @@ function accountPlanForUser(user = {}) {
   return plan
 }
 
-function accountEffectivePlanForUser(user = {}) {
-  const userId = typeof user === 'string' ? user : user?.id
+// 个人套餐 = 用户**自己**订购的套餐，只取决于 user.planId，与团队归属无关。
+// 这是个人空间容量、永久保存、单文件上限等「个人权益」的唯一依据。
+function accountPersonalPlanForUser(user = {}) {
   const directUser = typeof user === 'string' ? accountUserById(user) || {} : user
-  const directPlan = accountPlanForUser(directUser)
-  if (directPlan.id !== 'free') return directPlan
+  return accountPlanForUser(directUser)
+}
+
+// 团队权益 = 用户所在团队空间**所有者**的套餐所提供的协作能力（团队空间容量、
+// 成员管理、企业专属入口）。加入别人的团队只共享这些团队侧能力。
+//
+// ⚠️ 关键约束：**加入团队不得提升个人套餐**。
+// 此前 accountEffectivePlanForUser 会在「个人是 free」时直接返回所有者的套餐，
+// 导致基础版用户加入企业版团队后，个人账户被误判成企业版
+// （个人空间 20GB 变 2048GB、临时保存变永久保存、后台用户列表也显示企业版）。
+// 现在个人套餐与团队权益彻底分离：个人套餐永远只看自己。
+function accountTeamEntitlementForUser(user = {}) {
+  const userId = typeof user === 'string' ? user : user?.id
+  const personal = accountPersonalPlanForUser(user)
+  // 自己就是团队所有者：团队权益即自己套餐的团队能力
   const organization = accountOrganizationForUser(userId)
-  if (organization && organization.ownerUserId !== userId) {
-    return accountPlanForUser(accountUserById(organization.ownerUserId) || {})
-  }
-  return directPlan
+  if (!organization) return personal
+  if (organization.ownerUserId === userId) return personal
+  // 普通成员：借用所有者套餐里的**团队侧**能力，但仅限 teamSpaceBytes / team 开关，
+  // 绝不把 owner 的 totalBytes / permanent / label 套到成员头上。
+  const ownerPlan = accountPersonalPlanForUser(accountUserById(organization.ownerUserId) || {})
+  if (!ownerPlan.team) return personal
+  return { ...personal, team: true, teamSpaceBytes: Number(ownerPlan.teamSpaceBytes || 0) }
+}
+
+// 对外语义的「当前权益」：个人套餐为主，叠加团队协作能力。
+// 用于前端展示与需要「既看个人又看团队」的判定。
+function accountEffectivePlanForUser(user = {}) {
+  return accountTeamEntitlementForUser(user)
+}
+
+// 团队空间容量：唯一来源是**所有者**的套餐（团队空间属于所有者）。
+function organizationTeamSpaceBytes(organization) {
+  if (!organization) return 0
+  const ownerPlan = accountPersonalPlanForUser(accountUserById(organization.ownerUserId) || {})
+  return ownerPlan.team ? Number(ownerPlan.teamSpaceBytes || 0) : 0
 }
 
 function isAdminUser(user = {}) {
@@ -2321,25 +2358,48 @@ function clientIpFromRequest(req) {
   return firstHeader(req.get('x-forwarded-for'))?.split(',')[0]?.trim() || req.ip || ''
 }
 
-function adminLoginRateLimited(ip) {
-  const now = Date.now()
-  const record = adminLoginAttempts.get(ip)
-  if (!record || now - record.startedAt > ADMIN_LOGIN_WINDOW_MS) return false
-  return record.count >= ADMIN_LOGIN_MAX_ATTEMPTS
+// 限流用的客户端标识。
+//
+// ⚠️ app.set('trust proxy', true) 会让 x-forwarded-for 被无条件信任，
+// 攻击者只要每次请求换一个伪造的 XFF 值，就能把限流计数摊到无数个「IP」上 ——
+// 后台口令登录的 8 次/10 分钟形同虚设，等于给了无限次暴力破解机会。
+// 因此这里**不采用 XFF 作为限流键**，而是用真实 socket 地址；
+// 同时再挂一个全局桶兜底，防止伪造/代理场景下按 IP 完全绕开。
+function adminRateLimitKeys(req) {
+  const socketIp = String(req.socket?.remoteAddress || '').trim()
+  const proxyIp = clientIpFromRequest(req)
+  const keys = [`socket:${socketIp || 'unknown'}`]
+  if (proxyIp && proxyIp !== socketIp) keys.push(`proxy:${proxyIp}`)
+  // 全局兜底桶：无论怎么伪造上游头，总量都受限，避免完全敞开
+  keys.push('global')
+  return keys
 }
 
-function recordAdminLoginFailure(ip) {
+function adminLoginRateLimited(req) {
   const now = Date.now()
-  const record = adminLoginAttempts.get(ip)
-  if (!record || now - record.startedAt > ADMIN_LOGIN_WINDOW_MS) {
-    adminLoginAttempts.set(ip, { count: 1, startedAt: now })
-    return
+  return adminRateLimitKeys(req).some((key) => {
+    const record = adminLoginAttempts.get(key)
+    if (!record || now - record.startedAt > ADMIN_LOGIN_WINDOW_MS) return false
+    // 全局桶给更宽松的额度，以免正常用户被少量失败拖累
+    const limit = key === 'global' ? ADMIN_LOGIN_MAX_ATTEMPTS * 6 : ADMIN_LOGIN_MAX_ATTEMPTS
+    return record.count >= limit
+  })
+}
+
+function recordAdminLoginFailure(req) {
+  const now = Date.now()
+  for (const key of adminRateLimitKeys(req)) {
+    const record = adminLoginAttempts.get(key)
+    if (!record || now - record.startedAt > ADMIN_LOGIN_WINDOW_MS) {
+      adminLoginAttempts.set(key, { count: 1, startedAt: now })
+      continue
+    }
+    record.count += 1
   }
-  record.count += 1
 }
 
-function clearAdminLoginFailures(ip) {
-  adminLoginAttempts.delete(ip)
+function clearAdminLoginFailures(req) {
+  for (const key of adminRateLimitKeys(req)) adminLoginAttempts.delete(key)
 }
 
 function safeEqualString(a, b) {
@@ -2521,10 +2581,19 @@ function syncOrganizationMemberProfile(user = {}) {
 
 function accountWorkspacePayload(user) {
   const stored = accountUserById(user.id) || user
-  const plan = accountEffectivePlanForUser(stored)
   const organization = accountOrganizationForUser(user.id)
+  // plan 仍是「个人套餐」，加入团队不改变它；团队侧能力单独放在 teamEntitlement。
+  const plan = accountPersonalPlanForUser(stored)
   return {
     plan,
+    teamEntitlement: {
+      organizationId: organization?.id || '',
+      organizationName: organization?.name || '',
+      role: organization ? (organization.ownerUserId === stored.id ? 'owner' : 'member') : '',
+      canManage: Boolean(organization && organization.ownerUserId === stored.id),
+      teamSpaceBytes: organizationTeamSpaceBytes(organization),
+      canUseTeamSpace: Boolean(organization && accountEffectivePlanForUser(stored).team),
+    },
     planStartedAt: stored.planStartedAt || null,
     planExpiresAt: plan.permanent ? null : stored.planExpiresAt || null,
     plans: configuredAccountPlans(),
@@ -2536,9 +2605,11 @@ function accountWorkspacePayload(user) {
 }
 
 function adminUserSummary(user) {
-  const plan = accountEffectivePlanForUser(user)
   const usage = accountUsageForUser(user.id)
   const organization = accountOrganizationForUser(user.id)
+  // 后台用户列表展示的是**个人套餐** —— 加入团队不应让这个用户看起来被升级了。
+  // 团队归属另用 organizationName 表达，两者互不混淆。
+  const plan = accountPersonalPlanForUser(user)
   return {
     id: user.id,
     username: user.username,
@@ -2550,6 +2621,7 @@ function adminUserSummary(user) {
     planLabel: plan.label,
     planExpiresAt: user.planExpiresAt || null,
     organizationName: organization?.name || '',
+    organizationRole: organization ? (organization.ownerUserId === user.id ? 'owner' : 'member') : '',
     usageBytes: usage.usedBytes,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -3157,14 +3229,27 @@ function publicUser(user = {}) {
 
 function publicAccountUser(user = {}) {
   const stored = accountUserById(user.id) || normalizeAccountUser(user) || publicUser(user)
+  const organization = accountOrganizationForUser(stored.id)
+  const personalPlan = accountPersonalPlanForUser(stored)
   return {
     ...publicUser(stored),
     capacity: accountUsageForUser(stored.id),
     benefits: accountBenefitsForUser(stored),
-    plan: accountEffectivePlanForUser(stored),
+    // plan = 个人套餐（自己的空间与权益），加入团队不会改变它。
+    plan: personalPlan,
+    // teamEntitlement = 借用的团队侧能力（团队空间容量/成员协作），与个人套餐分开表达。
+    teamEntitlement: {
+      organizationId: organization?.id || '',
+      organizationName: organization?.name || '',
+      role: organization ? (organization.ownerUserId === stored.id ? 'owner' : 'member') : '',
+      canManage: Boolean(organization && organization.ownerUserId === stored.id),
+      teamSpaceBytes: organizationTeamSpaceBytes(organization),
+      // 成员可用团队空间上传；这是共享能力，不代表个人升级
+      canUseTeamSpace: Boolean(organization && accountTeamEntitlementForUser(stored).team),
+    },
     // 不再下发 isAdmin：后台入口由账号口令控制，不由鲲穹账号身份决定。
     // 前端顶栏据此不再给白名单账号显示「后台管理」按钮，避免误导。
-    organization: publicOrganization(accountOrganizationForUser(stored.id), stored.id),
+    organization: publicOrganization(organization, stored.id),
     notificationSettings: accountNotificationSettingsForUser(stored.id),
   }
 }
@@ -3480,7 +3565,8 @@ function verifyAuthCode(target, value, scene) {
 function accountUsageForUser(userId) {
   const key = accountRecordOwnerKey(userId)
   const user = accountUserById(key) || {}
-  const plan = accountEffectivePlanForUser(user)
+  // 个人用量必须按**个人套餐**算容量：加入团队不能把个人空间撑大。
+  const plan = accountPersonalPlanForUser(user)
   const ownedShares = metadata.shares.filter((share) => share.ownerUserId === key && !share.teamResource && !share.cleanedAt)
   const ownedCollections = metadata.collections.filter((task) => task.ownerUserId === key && !task.cleanedAt)
   const shareBytes = ownedShares.reduce((sum, share) => sum + fileListSize(share.files), 0)
@@ -3504,7 +3590,9 @@ function accountUsageForUser(userId) {
 
 function accountTeamUsageForOrganization(organization) {
   const owner = accountUserById(organization?.ownerUserId) || {}
-  const plan = accountEffectivePlanForUser(owner)
+  // 团队空间容量取自所有者套餐（成员不贡献容量），用 personal 而非 effective，
+  // 避免所有者本身也是别的团队成员时被套上别人的 teamSpaceBytes。
+  const plan = accountPersonalPlanForUser(owner)
   const shares = metadata.shares.filter((share) => share.teamResource && share.teamOrganizationId === organization?.id && share.status === 'active')
   const usedBytes = shares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const totalBytes = Number(plan.teamSpaceBytes || 0)
@@ -3566,7 +3654,10 @@ function formatByteSize(bytes) {
 }
 
 function accountBenefitsForUser(user = {}) {
-  const plan = accountEffectivePlanForUser(user)
+  const stored = typeof user === 'string' ? accountUserById(user) || {} : user
+  const plan = accountPersonalPlanForUser(stored)
+  const organization = accountOrganizationForUser(stored.id)
+  const isMember = Boolean(organization && organization.ownerUserId !== stored.id)
   return [
     { label: '鲲穹登录', detail: '继续使用官方统一登录完成账号认证', enabled: true },
     { label: '跨设备记录', detail: '收发记录和文件中心跟随账号同步', enabled: true },
@@ -3574,7 +3665,11 @@ function accountBenefitsForUser(user = {}) {
     { label: '账号绑定', detail: '可绑定邮箱或手机号用于消息匹配', enabled: true },
     { label: '账号容量', detail: `${plan.label}提供 ${formatByteSize(plan.totalBytes)} 空间`, enabled: true },
     { label: '永久保存', detail: plan.permanent ? '当前权益支持永久保存分享' : '升级会员后可开启永久保存', enabled: plan.permanent },
-    { label: '团队空间', detail: plan.team ? '可创建团队空间并管理成员' : '团队空间需要团队版或企业版', enabled: plan.team },
+    // 团队空间：所有者看自己套餐是否具备；成员看「已加入团队空间」，
+    // 但明确标注为团队共享能力，避免误导成个人已升级。
+    isMember
+      ? { label: '团队空间', detail: `已加入「${organization.name}」，共享其团队空间容量`, enabled: true }
+      : { label: '团队空间', detail: plan.team ? '可创建团队空间并管理成员' : '团队空间需要团队版或企业版', enabled: plan.team },
   ]
 }
 

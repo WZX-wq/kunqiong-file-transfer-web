@@ -796,6 +796,15 @@ h1, h2, p { margin-top: 0; }
 .workspace-upgrade-notice div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .workspace-upgrade-notice strong { color: #55776e; font-size: 14px; }
 .workspace-upgrade-notice span { color: #96a9a3; font-size: 13px; line-height: 1.7; }
+/* 成员视角：已加入团队空间（共享能力，非个人升级），配色与升级提示区分开 */
+.workspace-share-notice { display: flex; align-items: flex-start; gap: 10px; margin-top: 18px; padding: 13px; color: #4f7d72; background: #f2faf6; border: 1px solid #d5ebe0; border-radius: 8px; }
+.workspace-share-notice > svg { flex: none; color: var(--accent); }
+.workspace-share-notice div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.workspace-share-notice strong { color: #3f6d62; font-size: 14px; }
+.workspace-share-notice span { color: #7d9a92; font-size: 13px; line-height: 1.7; }
+/* 账号面板：团队共享说明 */
+.account-team-hint { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; padding-top: 10px; color: #7d9a92; border-top: 1px solid #e4efeb; font-size: 11px; line-height: 1.6; }
+.account-team-hint svg { flex: none; color: var(--accent); }
 .workspace-message { margin: 14px 0 0; color: var(--accent-dark); font-size: 13px; text-align: center; }
 .workspace-toast { position: fixed; right: 26px; bottom: 26px; z-index: 12; width: min(360px, calc(100vw - 32px)); animation: toastIn .18s ease-out; }
 .plan-current-tag { display: block; min-height: 13px; color: #a9bcb5; font-size: 9px; font-style: normal; font-weight: 800; letter-spacing: .04em; }

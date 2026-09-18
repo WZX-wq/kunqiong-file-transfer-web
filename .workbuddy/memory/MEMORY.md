@@ -19,6 +19,25 @@
 - 记录(records)：scope 四类（我发的/发给我的/我收集的/收集给我的），本地 localStorage + 服务端同步
 - 账户：OAuth2 授权码模式对接 login.kunqiongai.com，session cookie (kunqiong_session)；分享访问密码用短期 cookie (15min)；绑定手机/邮箱走验证码
 - 组织/企业：/e/:slug/... 路径，工作台成员管理；套餐 free/member/team/enterprise（ACCOUNT_PLANS + ACCOUNT_PLAN_RANK）
+- **⚠️ 套餐模型：个人套餐与团队权益彻底分离（核心不变量，勿破坏）**
+  - `accountPersonalPlanForUser(user)` = 用户**自己**的套餐，只看 `user.planId`，与团队归属无关。
+    个人空间容量、永久保存、分享有效期、单文件上限的**唯一依据**。
+  - `accountTeamEntitlementForUser(user)` = 借用的团队侧能力，**只覆盖 `team` / `teamSpaceBytes`**，
+    `totalBytes` / `permanent` / `label` 一律保留成员自己的。
+  - `accountEffectivePlanForUser(user)` 保留原名，内部转发到 teamEntitlement（减少改动面）。
+  - `organizationTeamSpaceBytes(org)` = 团队空间容量，唯一来源是**所有者**的个人套餐。
+  - **历史 Bug（用户报障）**：旧实现里 `accountEffectivePlanForUser` 在「个人是 free」时
+    直接 `return 所有者的套餐` → 基础版用户加入企业版团队后个人账户被误判为企业版：
+    容量 20GB→2048GB、临时保存→永久保存、`payload.canReopen` 误 open、
+    后台用户列表显示企业版、**且想购买会员版会被误判「已享有企业版权益」而拒绝**。
+  - 因此 `accountUsageForUser` / `accountTeamUsageForOrganization` / `adminUserSummary` /
+    `accountWorkspacePayload` / `publicAccountUser` / `accountBenefitsForUser` **全部改用 personal**。
+  - 对外 payload 新增 `teamEntitlement: { organizationId, organizationName, role, canManage,
+    teamSpaceBytes, canUseTeamSpace }`；前端据此区分「个人套餐」与「共享团队空间」。
+  - 新注册用户默认 `free`：`normalizeAccountUser` 的 `planId: user.planId || null` +
+    `normalizePlanId(null) → 'free'`，`mergeAccountUser` 也有 `|| 'free'` 兜底。
+  - 回归：`node _verify_plan_isolation.mjs`（33 项）+ `_verify_member_ui.mjs`（9 项，真实浏览器）
+
 - 入团申请：分享链接页（/e/:slug/share|collect/:token）内嵌 `TeamJoinRequestCard`，可直接申请加入。
   **复用 organization.members 并新增第三态 `status:'requested'`**（不另建 joinRequests 表），
   member 新增 `joinRequestId/joinSource/joinMessage/requestedAt/reviewedAt`。
@@ -39,6 +58,10 @@
   改动路由分支时必须回归 `_verify_invite.mjs`。
 - 管理后台 /admin：**只认账号口令登录**（默认 ljxkjadmin / jxljxkj009900，env `KUNQIONG_ADMIN_USERNAME`/`KUNQIONG_ADMIN_PASSWORD` 可覆盖），
   cookie `kunqiong_admin_session`，TTL 12h，timingSafeEqual 比对 + 8 次/10 分钟限流。
+  ⚠️ **限流键不可用 X-Forwarded-For**：`app.set('trust proxy', true)` 下 XFF 可被任意伪造，
+  用 XFF 当限流键等于把限流作废（无限次暴力破解）。现用 `adminRateLimitKeys(req)` 返回
+  `socket 真实地址` + `proxy 地址` + `global 全局兜底桶`，任一超限即拦（全局桶额度 ×6）。
+  三个限流函数签名是 `(req)` 不是 `(ip)`。改这里必须回归 `_verify_admin_audit.mjs`。
   ⚠️ **后台只有这一条鉴权通道，永远不要给 `KUNQIONG_ADMIN_USER_IDS` 白名单开第二条**：
   曾经 `/api/admin/session` 与 `requireAdminSession` 各有一个 `mode:'kunqiong'` 分支，
   白名单账号一登录就能**跳过密码直接进后台**（用户反馈「部分账号还能进去」的真因）。
@@ -111,6 +134,20 @@
 | `_verify_admin_ui.mjs` | 独立 server + 真实 Chrome 验 /admin 弹窗与居中 | `_admin_ui.txt` | 17 |
 | `_verify_admin_live.mjs` | **线上**真实 Chrome 验收 /admin（居中/口令/后台） | `_admin_live.txt` | 12 |
 | `_probe_live_admin.mjs` | **线上接口**鉴权实测（未登录全 401 等） | `_admin_live_api.txt` | 18 |
+| `_verify_plan_isolation.mjs` | **个人套餐 vs 团队权益**分离（核心业务不变量） | `_plan.log` | 33 |
+| `_verify_admin_audit.mjs` | 后台安全审计（删除/自禁用/限流绕过） | `_admin_audit.log` | 24 |
+| `_verify_member_ui.mjs` | **真实 Chrome** 验基础版成员工作台界面 | `_member_ui.txt` | 9 |
+
+### ⚠️ 本机环境三个新坑（都已踩过，务必规避）
+1. **`fs.cpSync(目录, 目录, {recursive:true})` 会静默杀掉整个 node 进程**（exit 127、零输出、无异常）。
+   沙箱里复制 `dist/` 必踩。→ 自写 `copyTree` 递归逐文件 `copyFileSync`。
+   排查手法：`fs.appendFileSync` 分步写日志定位到具体语句。**别凭直觉归因成 spawn 不可用**
+   （实测单独 `spawn` Chrome 完全正常）。
+2. **`server.mjs` 不导出 app**（`Object.keys(mod)` 为空），靠 side effect 自行 listen。
+   验证脚本里**不要**自己 `server.listen()`，否则抛错静默退出。
+   正确做法：设 `process.env.PORT` → `await import(sandbox/server.mjs)` → 轮询 `/api/health` 等就绪。
+3. **测试顺序会互相污染**：消耗配额/改变状态的用例（如限流测试）必须放在校验类用例**之后**。
+   我把「空账号密码→400」放在限流测试后就吃过假失败（额度已耗尽，被 429 抢答）。
 
 ### ⚠️ 探针路由必须从 server.mjs 核对，别猜
 第一版线上探针我写了 `GET /api/admin/users/:userId`，实测 **404 接口不存在**（不是 401，我差点当成鉴权缺陷）。

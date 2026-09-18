@@ -11,6 +11,11 @@ _invite_browser.txt
 _admin_ui.txt
 _admin_live.txt
 _admin_live_api.txt
+_member_ui.txt
+_plan.log
+_admin_audit.log
+# 验证脚本的隔离沙箱（每个脚本自建自清，异常退出可能残留）
+_*_sandbox/
 _chrome_*/
 # 邀请验证脚本的路由渲染探针产物（_invite_child.mjs 生成）
 _inv_*.json
