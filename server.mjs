@@ -904,6 +904,104 @@ app.post('/api/account/workspace/leave', (req, res) => {
   res.json({ ...accountWorkspacePayload(account), leftOrganizationId: organization.id, notifiedInApp })
 })
 
+// 转让团队所有权：所有者指定一位正式成员接管团队。
+// 转让后原所有者降级为普通成员，可随时退出团队空间；团队权益（容量、成员管理）跟随「当前所有者的个人套餐」，
+// 因此若新所有者没有团队版/企业版权益，团队空间功能会停用（成员个人套餐与文件不受影响），通知里会明确提示。
+app.post('/api/account/workspace/transfer-ownership', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const organization = accountOrganizationForUser(session.user.id)
+  if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
+  if (organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以转让团队' })
+  const targetMemberId = trimRecordString(req.body?.targetMemberId, 40)
+  if (!targetMemberId) return res.status(400).json({ message: '请指定要接管的成员' })
+  const targetMember = organization.members.find((member) => member.id === targetMemberId)
+  if (!targetMember || targetMember.status !== 'active') return res.status(400).json({ message: '只能转让给已加入团队的正式成员' })
+  if (targetMember.userId === session.user.id) return res.status(400).json({ message: '你已经是团队所有者' })
+  const previousOwner = accountUserById(session.user.id) || session.user
+  const nextOwner = accountUserById(targetMember.userId)
+  if (!nextOwner) return res.status(404).json({ message: '接管成员的账号不存在' })
+  const now = new Date().toISOString()
+  const previousOwnerName = displayAccountName(previousOwner)
+  const nextOwnerName = displayAccountName(nextOwner)
+
+  organization.ownerUserId = nextOwner.id
+  targetMember.role = 'owner'
+  targetMember.displayName = nextOwnerName
+  const previousOwnerMember = organization.members.find((member) => member.userId === previousOwner.id)
+  if (previousOwnerMember) previousOwnerMember.role = 'member'
+  previousOwner.organizationRole = 'member'
+  previousOwner.updatedAt = now
+  upsertAccountUser(previousOwner)
+  syncAccountUserSessions(previousOwner)
+  nextOwner.organizationRole = 'owner'
+  nextOwner.updatedAt = now
+  upsertAccountUser(nextOwner)
+  syncAccountUserSessions(nextOwner)
+  organization.updatedAt = now
+  persistMetadata()
+
+  const nextOwnerCanUseTeamSpace = Boolean(accountEffectivePlanForUser(nextOwner.id).team)
+  addAccountMessage(nextOwner.id, {
+    category: 'other',
+    eventType: 'teamOwnership',
+    title: '你已成为团队所有者',
+    body: `${previousOwnerName}已将团队“${organization.name}”的所有权转让给你。${nextOwnerCanUseTeamSpace ? '团队空间容量与成员管理由你的套餐权益提供。' : '注意：你当前套餐不含团队版权益，团队空间功能将停用；升级套餐或再次转让后即可恢复。'}`,
+  })
+  recordAuditLog({
+    type: 'team',
+    action: '转让团队所有权',
+    userId: previousOwner.id,
+    targetId: nextOwner.id,
+    details: { organizationId: organization.id, nextOwnerCanUseTeamSpace },
+  })
+  res.json({ ...accountWorkspacePayload(previousOwner), transferred: true, nextOwnerName, nextOwnerCanUseTeamSpace })
+})
+
+// 解散团队：所有者专属的最高危操作，解散后所有成员立即失去团队空间访问权。
+// 成员的个人文件、个人空间与套餐不受影响（与退出/移除同一语义）；团队分享、收集与站内归属一并清除。
+app.post('/api/account/workspace/dissolve', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const organization = accountOrganizationForUser(session.user.id)
+  if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
+  if (organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以解散团队' })
+  const now = new Date().toISOString()
+  const ownerName = displayAccountName(accountUserById(session.user.id) || session.user)
+  const activeMembers = organization.members.filter((member) => member.status === 'active')
+  let notifiedCount = 0
+  for (const member of organization.members) {
+    const account = accountUserById(member.userId)
+    // 归属清理只动「归属就是本团队」的账号，防止脏数据误伤其他团队
+    if (account && account.organizationId === organization.id) {
+      account.organizationId = ''
+      account.organizationRole = ''
+      account.updatedAt = now
+      upsertAccountUser(account)
+      syncAccountUserSessions(account)
+    }
+    if (member.status === 'active' && member.userId !== session.user.id) {
+      if (addAccountMessage(member.userId, {
+        category: 'other',
+        eventType: 'teamDissolved',
+        title: '所在团队空间已解散',
+        body: `${ownerName}已解散团队“${organization.name}”，你已自动退出。你个人的文件、空间容量与套餐权益不受任何影响。`,
+      })) notifiedCount += 1
+    }
+  }
+  delete metadata.organizations[organization.id]
+  recordAuditLog({
+    type: 'team',
+    action: '解散团队',
+    userId: session.user.id,
+    targetId: organization.id,
+    details: { organizationId: organization.id, organizationName: organization.name, memberCount: activeMembers.length, notifiedCount },
+  })
+  persistMetadata()
+  const self = accountUserById(session.user.id) || session.user
+  res.json({ ...accountWorkspacePayload(self), dissolvedOrganizationId: organization.id, notifiedCount })
+})
+
 // 入团申请：公开查询入口。分享/收集链接带 ?organization=slug 时会调用它，决定是否展示「申请加入团队」。
 app.get('/api/organizations/:slug/join-request', (req, res) => {
   const organization = organizationBySlug(req.params.slug)

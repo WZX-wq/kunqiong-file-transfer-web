@@ -548,6 +548,13 @@ h1, h2, p { margin-top: 0; }
 .page-footer button:hover { color: var(--accent-dark); }
 .page-footer a.footer-manual-link { padding: 0; color: #8ea39d; font-size: inherit; text-decoration: none; }
 .page-footer a.footer-manual-link:hover { color: var(--accent-dark); }
+.team-management-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.team-danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 14px 16px; border: 1px dashed #e5b8b8; border-radius: 12px; background: #fdf6f6; }
+.team-danger-zone strong { display: block; font-size: 13px; color: #a33a3a; }
+.team-danger-zone small { display: block; margin-top: 3px; font-size: 12px; line-height: 1.5; color: #a38484; }
+.team-dissolve-button { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 8px 14px; border: 1px solid #e0b4b4; border-radius: 9px; background: #fff; color: #a33a3a; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.team-dissolve-button:hover { background: #a33a3a; border-color: #a33a3a; color: #fff; }
+.team-dissolve-button:disabled { opacity: .55; cursor: not-allowed; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 20px; background: rgba(27, 46, 42, .28); backdrop-filter: blur(5px); }
 .modal { width: min(450px, 100%); background: #fff; border: 1px solid #e0ebe7; border-radius: 14px; box-shadow: 0 28px 80px rgba(27, 65, 55, .2); }
 .retrieve-modal { width: min(560px, calc(100vw - 40px)); max-height: min(86dvh, 760px); display: flex; flex-direction: column; overflow: hidden; }
