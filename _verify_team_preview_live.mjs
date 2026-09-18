@@ -277,17 +277,26 @@ try {
         if (btns[1]) btns[1].click();
         return !!btns[1];
       })()`)
-      await sleep(2000)
-
-      const modal = await evalJs(`(function(){
-        const m = document.querySelector('.preview-modal');
+      // 线上资源可能是几 MB 的大图，不能固定 sleep 后采样一次就断言
+      // （会误报成「加载失败」）。改为轮询等待 img.complete。
+      const modal = await evalJs(`(async function(){
+        const wait = (ms) => new Promise(r => setTimeout(r, ms));
+        let m = null;
+        for (let i = 0; i < 40; i++) { m = document.querySelector('.preview-modal'); if (m) break; await wait(250) }
         if (!m) return { open: false };
         const img = m.querySelector('img.preview-image');
+        if (img) {
+          for (let i = 0; i < 60; i++) {
+            if (img.complete && img.naturalWidth > 0) break;
+            await wait(300);
+          }
+        }
         return {
           open: true,
           title: m.querySelector('h2')?.textContent?.trim() || '',
           imgSrc: img ? img.getAttribute('src') : null,
           imgOk: img ? (img.complete && img.naturalWidth > 0) : null,
+          imgW: img ? img.naturalWidth : null,
         };
       })()`)
       check('★ 线上选中后打开预览弹窗', Boolean(modal.value?.open), JSON.stringify(modal.value))
