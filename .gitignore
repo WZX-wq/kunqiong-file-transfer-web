@@ -65,6 +65,7 @@ _ui_server.log
 _team_upload.txt
 _team_upload_ui.txt
 _team_upload_ui_crash.txt
+_probe_team_live.txt
 
 .env
 .env.*
