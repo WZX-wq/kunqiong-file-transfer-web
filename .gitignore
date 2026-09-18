@@ -9,6 +9,8 @@ qa-*.png
 _verify_*.txt
 _invite_browser.txt
 _admin_ui.txt
+_admin_live.txt
+_admin_live_api.txt
 _chrome_*/
 # 邀请验证脚本的路由渲染探针产物（_invite_child.mjs 生成）
 _inv_*.json

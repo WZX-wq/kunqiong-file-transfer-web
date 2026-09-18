@@ -37,9 +37,18 @@
   （hero 卡片 + `TeamJoinRequestCard`）；带 token 才走 SharePage / CollectionSubmitPage。
   早期 `App()` 要求 `parts[2]==='share' && parts[3]`，导致邀请链接落到 WorkspaceApp 兜底、**访客看不到任何入团入口**（已修）。
   改动路由分支时必须回归 `_verify_invite.mjs`。
-- 管理后台 /admin：**账号口令登录**（默认 ljxkjadmin / jxljxkj009900，env 可覆盖），
-  cookie `kunqiong_admin_session`，TTL 12h，timingSafeEqual 比对 + 8 次/10 分钟限流；
-  同时兼容鲲穹管理员账号（ADMIN_USER_IDS）。requireAdminSession 返回 { type, session, user }
+- 管理后台 /admin：**只认账号口令登录**（默认 ljxkjadmin / jxljxkj009900，env `KUNQIONG_ADMIN_USERNAME`/`KUNQIONG_ADMIN_PASSWORD` 可覆盖），
+  cookie `kunqiong_admin_session`，TTL 12h，timingSafeEqual 比对 + 8 次/10 分钟限流。
+  ⚠️ **后台只有这一条鉴权通道，永远不要给 `KUNQIONG_ADMIN_USER_IDS` 白名单开第二条**：
+  曾经 `/api/admin/session` 与 `requireAdminSession` 各有一个 `mode:'kunqiong'` 分支，
+  白名单账号一登录就能**跳过密码直接进后台**（用户反馈「部分账号还能进去」的真因）。
+  两处都必须同时保留/同时移除 —— 它们是双保险，只关一个另一个仍放行。
+  `isAdminUser()` **仍然存在，但只用于维护模式等服务端豁免，不参与后台鉴权**。
+  `assertServiceWritable` 里必须同时豁免「口令会话」与「白名单账号」，否则管理员登录后台后反而不能传文件。
+  `publicAccountUser` **不再下发 `isAdmin`**，顶栏也不再按账号身份显示「后台管理」按钮。
+  ⚠️ env 未配置时空字符串是 falsy 会**静默回落内置默认口令**，已加启动告警。改这里必须回归
+  `_verify_admin_auth.mjs`（27，沙箱内**故意配置白名单**以证明漏洞已堵）+ `_verify_admin_ui.mjs`（17）
+  + `_verify_admin_live.mjs`（12，线上真实浏览器居中校验）+ `_probe_live_admin.mjs`（18，线上接口）
 - **工作台 /workspace 栅格布局**：12 列 CSS Grid（`.workspace-grid`）。
   hero、`.workspace-benefits-card`、`.workspace-lower-row` 均为 `grid-column: 1 / -1` 通栏。
   团队卡 + 状态卡**并排**装在 `.workspace-lower-row` 内（通栏 + 内部 `minmax(0,1.6fr) minmax(0,1fr)`）。
@@ -77,7 +86,9 @@
 - dev: npm run dev（server 8045 + vite 4173）
 - prod: npm run build && npm start，同源 8045，server 托管 dist/；有 Dockerfile
 - CI: Gitea Actions（.gitea/workflows/deploy-test.yml），push main 自动部署测试服 43.154.197.96:8045
-  ⚠️ 实测触发有延迟/可能排队（观察到 11~20+ 分钟不等）。**验证部署靠  的  字段与提交 SHA 比对**，别用固定等待时间。
+  ⚠️ 实测触发有延迟/可能排队（观察到 20 秒 ~ 20+ 分钟不等，取决于 runner 是否空闲）。
+  **验证部署靠 `/api/health` 的 `release` 字段与提交 SHA 比对**，别用固定等待时间。
+  实测 `5367362` 只用了约 20 秒 —— 所以长时间没更新表示在排队，不代表链路坏了。
 - **部署脚本关键约束**：测试机 8045 由 compose 管理的容器持有端口绑定，
   不能对同名容器一律 `docker rm -f`（会导致 CI 绿但线上旧）。按 compose 项目归属分流处理。
   脚本已内置部署后 release 校验（比对容器内 /api/health 的 release 与提交 SHA）
@@ -96,6 +107,20 @@
 | `_verify_layout_real.mjs` | **真实 Chrome 布局测量** | `_verify_layout_real.txt` | 46 |
 | `_verify_invite.mjs` | 邀请链接路由（真实产物，子进程渲染）+ 入团接口全链路 | `_invite.log` | 38 |
 | `_verify_invite_browser.mjs` | **真实 Chrome** 打开邀请落地页，双视口截图 | `_invite_browser.txt` | 12 |
+| `_verify_admin_auth.mjs` | **后台鉴权绕过回归**（沙箱内故意配白名单） | `_admin.log` | 27 |
+| `_verify_admin_ui.mjs` | 独立 server + 真实 Chrome 验 /admin 弹窗与居中 | `_admin_ui.txt` | 17 |
+| `_verify_admin_live.mjs` | **线上**真实 Chrome 验收 /admin（居中/口令/后台） | `_admin_live.txt` | 12 |
+| `_probe_live_admin.mjs` | **线上接口**鉴权实测（未登录全 401 等） | `_admin_live_api.txt` | 18 |
+
+### ⚠️ 探针路由必须从 server.mjs 核对，别猜
+第一版线上探针我写了 `GET /api/admin/users/:userId`，实测 **404 接口不存在**（不是 401，我差点当成鉴权缺陷）。
+后台只有 `PATCH /api/admin/users/:userId`。
+→ 先 `grep "app\.\(get\|post\|patch\|delete\)('/api/admin"` 拿到真实注册表再写探针；
+**404「接口不存在」说明探针自己写错了，与鉴权无关**，别混为一谈。
+
+### ⚠️ 修安全漏洞时的验证纪律
+要证明「漏洞已堵」，测试环境必须**保留原本会触发漏洞的配置**（这里就是 `KUNQIONG_ADMIN_USER_IDS`）。
+只在默认配置下跑，等于什么也没验证。
 
 ### ⚠️ 渲染 dist 产物必须放子进程
 产物是 ESM，同进程内重复 `import` 会被**模块缓存**命中（第二次 import 直接返回缓存，React 不再重新挂载）；
