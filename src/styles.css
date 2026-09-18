@@ -247,6 +247,11 @@ h1, h2, p { margin-top: 0; }
 .ghost-icon { display: grid; place-items: center; width: 32px; height: 32px; color: #9aacA7; background: transparent; border-radius: 7px; }
 .ghost-icon:hover { color: var(--accent-dark); background: #eef6f3; }
 .ghost-icon:disabled { cursor: wait; opacity: .45; transform: none; }
+/* 「不可用」与「正在处理」是两种不同的禁用语义：
+   前者是该操作对这个对象根本不适用（应显示 not-allowed），
+   后者才是真的在跑（wait 光标）。
+   混用会让用户以为按钮卡在加载中（曾把团队资源预览按钮表现为「一直转圈」）。 */
+.ghost-icon:disabled.icon-inapplicable { cursor: not-allowed; }
 .file-list { max-height: 244px; overflow: auto; padding-right: 4px; }
 .file-row { display: flex; align-items: center; gap: 12px; padding: 13px 4px; border-bottom: 1px solid #edf2f0; }
 .file-type { width: 34px; height: 34px; display: grid; place-items: center; color: #5c9c8d; background: #ecf7f3; border-radius: 8px; }

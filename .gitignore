@@ -67,6 +67,11 @@ _team_upload_ui.txt
 _team_upload_ui_crash.txt
 _probe_team_live.txt
 
+# 团队资源多文件预览修复轮：验证/复现脚本入库，报告/截图不入库
+_team_preview_*.txt
+_repro_team_preview*.mjs
+_probe_team_preview.mjs
+
 .env
 .env.*
 !.env.example
