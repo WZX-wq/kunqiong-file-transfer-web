@@ -8,8 +8,13 @@
 // 「未登录 / 未加入团队」这类**前置条件**，而**不能**是「永久保存需要会员版或更高权益」。
 // 若旧代码仍在线上，会先命中 permanent 校验并抛 403 权益错误。
 import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
 
 const BASE = 'http://43.154.197.96:8045'
+// 线上 release 必须与仓库 main 分支一致 —— 不写死哈希，否则每推一次新提交就误报。
+const expectRelease = (() => {
+  try { return execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim() } catch { return '' }
+})()
 const out = []
 const log = (s) => { out.push(s); console.log(s) }
 let pass = 0, fail = 0
@@ -20,9 +25,15 @@ const FORBIDDEN = '永久保存需要会员版或更高权益'
 try {
   log('===== 线上验收：团队资源上传权限修复 =====')
 
-  // 1) release 必须是本次提交
+  // 1) release 必须是仓库 main 分支指向的提交（部署未跑或落后时这里会红）
   const h = await fetch(`${BASE}/api/health`).then((r) => r.json())
-  check('线上 release 为本次提交 603ca9f', String(h.release || '').startsWith('603ca9f'), `release=${h.release}`)
+  const release = String(h.release || '')
+  if (expectRelease) {
+    check(`线上 release 与仓库 main 一致（${expectRelease.slice(0, 7)}）`,
+      release === expectRelease, `release=${release.slice(0, 7)} expect=${expectRelease.slice(0, 7)}`)
+  } else {
+    check('线上 release 非空（未能读取仓库 main，跳过一致性断言）', release.length >= 7, `release=${release}`)
+  }
   check('服务健康', h.ok === true)
 
   // 2) 未登录 + 团队资源 + 永久：不得抛「永久保存需要会员版或更高权益」
