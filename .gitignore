@@ -40,6 +40,9 @@ _visual_shots/
 _fixes_live.txt
 *.tmp
 
+# 用户手册：截图素材与构建脚本入库（可复现），预览抽查产物不入库
+_manual_preview/
+
 .env
 .env.*
 !.env.example
