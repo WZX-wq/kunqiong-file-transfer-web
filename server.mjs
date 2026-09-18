@@ -862,6 +862,48 @@ app.delete('/api/account/workspace/members/:memberId', (req, res) => {
   res.json({ ...accountWorkspacePayload(session.user), removedMemberId: removedMember.id, notifiedInApp })
 })
 
+// 成员主动退出团队空间。
+// 与「移除成员」的区别：这条不需要团队版权益、也不需要管理员身份 ——
+// 退出是自己的权利，只要你是该团队的普通成员即可执行。团队所有者不能退出（需先解散/转让）。
+app.post('/api/account/workspace/leave', (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const organization = accountOrganizationForUser(session.user.id)
+  if (!organization) return res.status(404).json({ message: '你当前不在任何团队空间中' })
+  if (organization.ownerUserId === session.user.id) {
+    return res.status(400).json({ message: '团队所有者不能退出团队空间，请先转让或解散团队' })
+  }
+  const index = organization.members.findIndex((member) => member.userId === session.user.id && member.status !== 'invited')
+  if (index < 0) return res.status(404).json({ message: '你在该团队空间中没有有效的成员记录' })
+  const [leftMember] = organization.members.splice(index, 1)
+  // 清掉账号上的团队归属，个人套餐与个人空间不受影响（个人套餐从来只取决于 user.planId）。
+  const account = accountUserById(session.user.id) || session.user
+  account.organizationId = ''
+  account.organizationRole = ''
+  account.updatedAt = new Date().toISOString()
+  upsertAccountUser(account)
+  syncAccountUserSessions(account)
+  organization.updatedAt = new Date().toISOString()
+  persistMetadata()
+
+  const leaverName = displayAccountName(account)
+  const notifiedInApp = Boolean(addAccountMessage(organization.ownerUserId, {
+    category: 'other',
+    eventType: 'teamMemberLeft',
+    title: '有成员退出了团队空间',
+    body: `${leaverName}已退出团队“${organization.name}”，其团队文件访问权限已收回。`,
+  }))
+  recordAuditLog({
+    type: 'team',
+    action: '退出团队空间',
+    userId: session.user.id,
+    targetId: organization.id,
+    details: { organizationId: organization.id, memberId: leftMember.id, notifiedInApp },
+  })
+  // 退出后已不再是团队上下文，工作台按"无团队"返回即可。
+  res.json({ ...accountWorkspacePayload(account), leftOrganizationId: organization.id, notifiedInApp })
+})
+
 // 入团申请：公开查询入口。分享/收集链接带 ?organization=slug 时会调用它，决定是否展示「申请加入团队」。
 app.get('/api/organizations/:slug/join-request', (req, res) => {
   const organization = organizationBySlug(req.params.slug)
@@ -1940,11 +1982,25 @@ function emptyMetadata() {
   }
 }
 
+function readMetadataFileFrom(targetPath) {
+  const raw = fs.readFileSync(targetPath, 'utf8')
+  if (!raw.trim()) throw new Error('元数据文件为空')
+  return JSON.parse(raw)
+}
+
 function loadLocalMetadata() {
+  // 原子写已保证正常路径下不会读到半截文件；这里额外做一次损坏回退：
+  // 万一主机异常（断电等）留下坏文件，可用上次 rename 前的备份还原，避免静默清空全部数据。
   try {
-    return JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
-  } catch {
-    return emptyMetadata()
+    return readMetadataFileFrom(metadataPath)
+  } catch (error) {
+    try {
+      const recovered = readMetadataFileFrom(`${metadataPath}.bak`)
+      console.warn(`元数据文件损坏（${error.message || error}），已从备份还原`)
+      return recovered
+    } catch {
+      return emptyMetadata()
+    }
   }
 }
 
@@ -2092,7 +2148,18 @@ function findUpgradeOrder(orderId, userId) {
 }
 
 function persistMetadata() {
-  fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf8')
+  // 原子落盘：先写临时文件再 rename。直接 writeFileSync 会先截断目标文件，
+  // 并发读（含服务重启、其他进程）可能读到「已截断但未写完」的半截 JSON。
+  const tempPath = `${metadataPath}.tmp`
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(metadata, null, 2), 'utf8')
+    fs.renameSync(tempPath, metadataPath)
+  } catch (error) {
+    console.error(`本地元数据保存失败：${error.message || error}`)
+    try {
+      if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true })
+    } catch {}
+  }
   if (!databasePool) return
   const payload = JSON.stringify(metadata)
   metadataWriteQueue = metadataWriteQueue

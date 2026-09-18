@@ -830,10 +830,10 @@ h1, h2, p { margin-top: 0; }
 .team-page-actions button { min-height: 38px; }
 .team-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
 .team-kpi { display: flex; min-height: 112px; flex-direction: column; justify-content: space-between; padding: 16px; background: #fff; border: 1px solid #dfeae6; border-radius: 10px; box-shadow: 0 13px 38px rgba(40, 84, 74, .05); }
-.team-kpi span { display: flex; align-items: center; gap: 7px; color: #78928a; font-size: 11px; font-weight: 800; }
+.team-kpi span { display: flex; align-items: center; gap: 7px; color: #78928a; font-size: 13px; font-weight: 800; }
 .team-kpi span svg { color: var(--accent); }
-.team-kpi strong { color: var(--ink); font-family: 'DM Sans', 'Noto Sans SC', sans-serif; font-size: 24px; }
-.team-kpi small { color: #9aada7; font-size: 10px; }
+.team-kpi strong { color: var(--ink); font-family: 'DM Sans', 'Noto Sans SC', sans-serif; font-size: 26px; }
+.team-kpi small { color: #9aada7; font-size: 12px; }
 .team-overview-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-bottom: 14px; }
 .team-bottom-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr); gap: 14px; align-items: stretch; }
 .team-tabs-shell { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
@@ -853,7 +853,7 @@ h1, h2, p { margin-top: 0; }
 .team-capacity-number strong { color: var(--accent-dark); font-family: 'DM Sans', 'Noto Sans SC', sans-serif; font-size: 30px; }
 .team-capacity-number span { color: #8ca19b; font-size: 13px; }
 .team-capacity-panel .capacity-bar { height: 11px; }
-.team-capacity-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 15px; color: #8ca19b; font-size: 11px; }
+.team-capacity-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 15px; color: #8ca19b; font-size: 12px; }
 .team-member-usage { display: flex; flex-direction: column; gap: 15px; }
 .team-member-usage-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .team-member-usage-row > div { min-width: 0; }
@@ -939,14 +939,22 @@ h1, h2, p { margin-top: 0; }
 .workspace-team-foot .team-manage-link { flex: none; }
 /* 团队邀请链接：工作台卡片内与团队空间页共用同一套样式 */
 .workspace-invite-link-row, .team-invite-link-row { display: flex; align-items: center; gap: 8px; }
-.workspace-invite-link-row code, .team-invite-link-row code { flex: 1; min-width: 0; overflow: hidden; padding: 8px 10px; color: #4b6f65; background: #fff; border: 1px solid #dbe8e4; border-radius: 7px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-invite-link-row code, .team-invite-link-row code { flex: 1; min-width: 0; overflow: hidden; padding: 9px 11px; color: #4b6f65; background: #fff; border: 1px solid #dbe8e4; border-radius: 7px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-invite-link-row .copy-button, .team-invite-link-row .copy-button { flex: none; }
 .team-invite-link-card { display: flex; flex-direction: column; gap: 11px; width: 100%; margin-bottom: 16px; }
+/* 成员视图：共享说明 + 退出团队空间 */
+.team-leave-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%; margin-bottom: 16px; padding: 18px 21px; }
+.team-leave-body { display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
+.team-leave-body > svg { flex: none; margin-top: 1px; color: var(--accent); }
+.team-leave-body > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.team-leave-body strong { color: #3f6058; font-size: 14px; }
+.team-leave-body span { color: #8ba39d; font-size: 12px; line-height: 1.65; }
+.team-leave-button { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 15px; font-size: 12px; }
 .team-invite-link-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .team-invite-link-head > svg { flex: none; color: var(--accent); }
 .team-invite-link-head > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
-.team-invite-link-head strong { color: #3f6058; font-size: 12px; }
-.team-invite-link-head small { color: #8ba39d; font-size: 10px; line-height: 1.55; }
+.team-invite-link-head strong { color: #3f6058; font-size: 14px; }
+.team-invite-link-head small { color: #8ba39d; font-size: 12px; line-height: 1.6; }
 .team-invite-wrap { position: relative; margin-bottom: 13px; }.team-inline-search { margin-bottom: 0; }
 .team-inline-search svg { margin-left: 10px; flex: none; color: var(--accent); }
 .team-inline-search input { border: 0; }
@@ -1097,17 +1105,17 @@ h1, h2, p { margin-top: 0; }
 .admin-search input { width: 100%; min-width: 0; height: 40px; color: var(--ink); background: transparent; border: 0; outline: 0; font-size: 12px; }
 .admin-search input::placeholder { color: #a4b7b1; }
 .admin-table { display: flex; flex-direction: column; }
-.admin-table-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; align-items: center; gap: 12px; min-height: 70px; padding: 10px 0; border-bottom: 1px solid #edf3f0; }
+.admin-table-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; min-height: 70px; padding: 10px 0; border-bottom: 1px solid #edf3f0; }
 .admin-table-row:last-child { border-bottom: 0; }
-.admin-table-row > div { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
-.admin-table-row > div strong { overflow: hidden; color: #4b6f65; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.admin-table-row > div span { overflow: hidden; color: #9aada7; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.admin-table-row select { height: 34px; padding: 0 8px; color: #56766d; background: #f8fbfa; border: 1px solid #dbe8e4; border-radius: 6px; outline: 0; font-size: 11px; }
-.admin-table-row select:focus { border-color: #76b6a5; }
-.admin-table-row .admin-plan-expiry { width: 132px; height: 34px; padding: 0 8px; color: #56766d; background: #f8fbfa; border: 1px solid #dbe8e4; border-radius: 6px; outline: 0; font-size: 11px; }
-.admin-table-row .admin-plan-expiry:focus { border-color: #76b6a5; }
-.admin-table-row > small { color: #91a69f; font-size: 10px; white-space: nowrap; }
-.admin-table-row .secondary-button { min-height: 34px; padding: 0 10px; font-size: 10px; white-space: nowrap; }
+.admin-user-identity { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.admin-user-identity strong { overflow: hidden; color: #4b6f65; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.admin-user-identity span { overflow: hidden; color: #9aada7; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+/* 右侧操作区：统一高度 + 基线对齐，避免各控件高低不齐 */
+.admin-user-actions { display: flex; align-items: center; gap: 10px; }
+.admin-table-row .admin-user-plan { height: 34px; min-width: 92px; padding: 0 8px; color: #56766d; background: #f8fbfa; border: 1px solid #dbe8e4; border-radius: 6px; outline: 0; font-size: 11px; }
+.admin-table-row .admin-user-plan:focus { border-color: #76b6a5; }
+.admin-user-actions > .secondary-button { display: inline-flex; align-items: center; justify-content: center; height: 34px; min-height: 34px; padding: 0 14px; font-size: 10px; white-space: nowrap; }
+.admin-user-usage { min-width: 96px; color: #91a69f; font-size: 10px; text-align: right; white-space: nowrap; }
 .admin-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid #edf3f0; }
 .admin-pagination > span { color: #8fa39d; font-size: 11px; }
 .admin-pagination > div { display: flex; gap: 8px; }
@@ -1503,6 +1511,8 @@ h1, h2, p { margin-top: 0; }
   .plan-comparison > button { min-height: 116px; padding: 12px 10px; }
   .workspace-team-card, .workspace-link-card, .workspace-status-card { min-height: 0; }
   .workspace-invite-link-row, .team-invite-link-row { flex-wrap: wrap; }
+  .team-leave-card { align-items: stretch; flex-direction: column; gap: 14px; }
+  .team-leave-button { width: 100%; justify-content: center; }
   .workspace-invite-link-row code, .team-invite-link-row code { order: 2; width: 100%; flex: 1 1 100%; }
   .workspace-invite-link-row .copy-button, .team-invite-link-row .copy-button { order: 1; }
   .workspace-side-card { padding: 18px; }
@@ -1526,12 +1536,12 @@ h1, h2, p { margin-top: 0; }
   .admin-kpi strong { font-size: 18px; }
   .admin-columns { grid-template-columns: 1fr; }
   .admin-panel { padding: 18px; }
-  .admin-table-row { display: flex; align-items: stretch; flex-wrap: wrap; gap: 8px; padding: 13px 0; }
-  .admin-table-row > div { width: 100%; }
-  .admin-table-row select { flex: 1; min-width: 0; }
-  .admin-table-row .admin-plan-expiry { flex: 1; width: auto; min-width: 0; }
-  .admin-table-row > small { flex: 1 1 100%; }
-  .admin-table-row .secondary-button { flex: 1; }
+  .admin-table-row { display: flex; align-items: stretch; flex-direction: column; gap: 10px; padding: 13px 0; }
+  .admin-user-identity { width: 100%; }
+  .admin-user-actions { width: 100%; flex-wrap: wrap; }
+  .admin-table-row .admin-user-plan { flex: 1; min-width: 0; }
+  .admin-user-actions > .secondary-button { flex: 1; }
+  .admin-user-usage { flex: 1 1 100%; min-width: 0; text-align: left; }
   .admin-pagination { align-items: stretch; flex-direction: column; }
   .admin-pagination > div { width: 100%; }
   .admin-pagination .secondary-button { flex: 1; }

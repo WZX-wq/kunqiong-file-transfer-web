@@ -33,6 +33,10 @@ _avatar_restart.txt
 _avatar_e2e.txt
 _avatar_e2e_trace.txt
 _avatar_live.txt
+_fixes.txt
+_atomic_store.txt
+_visual.txt
+_visual_shots/
 *.tmp
 
 .env

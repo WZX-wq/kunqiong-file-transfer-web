@@ -63,6 +63,22 @@
     + `_verify_avatar_e2e.mjs`（15，真实 server 三度重启 + 模拟 OAuth 重登）
     + `_verify_avatar.mjs`（14，基础链路）+ `_probe_avatar_live.mjs`（12，线上）
 
+- **⚠️ metadata 落盘必须原子（核心不变量，勿破坏）**
+  - `persistMetadata` 用**临时文件 + `renameSync`** 原子替换，绝不直接 `writeFileSync(metadataPath)` ——
+    直接写会先截断目标文件，并发读（重启、其他进程、测试脚本）可能读到半截 JSON
+    （真实撞过：回归测试报「Unexpected end of JSON input」）。
+  - `loadLocalMetadata` 解析失败时**先尝试 `${metadataPath}.bak` 还原并 console.warn**，
+    都失败才返回空库 —— 绝不能静默吞掉损坏（最坏情况：服务重启按空库启动，全部用户/团队/记录丢失）。
+  - 回归：`node _verify_atomic_store.mjs`（12，40 写 + 400 并发读零撕裂）。
+
+- **⚠️ 团队页权限门控（核心不变量，勿破坏）**
+  - `/team` 页四个页签中「团队成员 manage」「入团申请 requests」**页签和面板都必须 `data.canManage` 门控**；
+    成员只能看「成员观察 members」「团队资源 resources」+ 退出团队卡片。
+  - 面板渲染用 `visibleTab`（无权页签归一化回落 'members'），页签高亮仍用 `activeTab`。
+  - 历史 Bug：manage 页签与面板都漏了门控，任何成员都能看到完整成员名单和移除按钮（真实 Chrome 复核确认）。
+  - 退出团队：`POST /api/account/workspace/leave`（所有者 400、未登录 401、不在团 404、成员 200；
+    清 `organizationId/organizationRole`、写审计、通知所有者；**不需要团队权益或管理权限**——退出是成员自身权利）。
+
 - 入团申请：分享链接页（/e/:slug/share|collect/:token）内嵌 `TeamJoinRequestCard`，可直接申请加入。
   **复用 organization.members 并新增第三态 `status:'requested'`**（不另建 joinRequests 表），
   member 新增 `joinRequestId/joinSource/joinMessage/requestedAt/reviewedAt`。
@@ -166,6 +182,9 @@
 | `_verify_avatar_restart.mjs` | **抽取真实函数**验重启归一化 7 场景（头像粘性） | `_avatar_restart.txt` | 17 |
 | `_verify_avatar_e2e.mjs` | **真实 server 三度重启** + 模拟 OAuth 重登 | `_avatar_e2e.txt` | 15 |
 | `_probe_avatar_live.mjs` | **线上**头像修复验收 + 后台鉴权未受影响 | `_avatar_live.txt` | 12 |
+| `_verify_fixes.mjs` | 五项 UI 改动静态契约 + 退出团队真实 HTTP 全链路 | `_fixes.txt` | 50 |
+| `_verify_atomic_store.mjs` | **metadata 落盘原子性**（并发读写压力 + 损坏回退） | `_atomic_store.txt` | 12 |
+| `_verify_visual_fixes.mjs` | **真实 Chrome** 复核五项 UI（字号/对齐/门控/弹窗） | `_visual.txt` | 27 |
 | `_run_regression.mjs` | 一键跑全部离线套件并汇总（跳过需线上/长时的） | `_regression.txt` | — |
 
 ### ⚠️ 本机环境三个新坑（都已踩过，务必规避）
