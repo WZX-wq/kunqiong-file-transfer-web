@@ -119,6 +119,17 @@
 3. 子元素有显式 `grid-column` 后，**900px 断点必须显式复位成 `1 / -1`**，否则窄屏把状态卡压成窄条
 - 回归 `_verify_layout_real.mjs`(46，真实 Chrome) + `_verify_layout.mjs`(39) / `_verify_served.mjs`(21)；⚠️ 改此区后必须确认 `dist/` 已重建
 
+### 3.11 团队资源「预览」是分享维度，不是文件维度
+- 团队资源行渲染的是**分享**：`name = files[0].name`，副标题「{fileCount} 个文件」，`files` 是完整数组。
+  因此「多文件分享」是**正常对象**，任何按 `files.length !== 1` 禁用按钮的写法都是错的。
+- 预览按钮可用性只看 **`resource.files.some(canPreviewFile)`**；多个可预览文件时
+  **复用 `RecordPreviewChooser`** 弹选择器（与「记录」页一致），不要自己造选择 UI。
+- 后端 `/api/shares/:id/files/:idx/preview` **本来就支持任意下标**（0..n-1 均 200）。
+  排查「预览不好使」时先 curl 该接口，200 就说明是纯前端判断问题。
+- ⚠️ `.ghost-icon:disabled` 是 `cursor: wait` —— **「不适用」必须另加 `.icon-inapplicable`**
+  把光标改成 `not-allowed`。用 `wait` 表达「不可用」会被用户读成「一直在转圈加载」。
+- 回归 `_verify_team_preview.mjs`(16，沙箱+真实 Chrome) + `_verify_team_preview_live.mjs`(21，线上真实数据)
+
 ## 4. metadata 内部字段名（易踩错）
 - 用户表：`metadata.users`（对象 map，key=userId）—— **不是** `accountUsers`
 - 消息：`metadata.messages[userId] = [...]`；会话：`metadata.sessions`，形状 `{id, user, expiresAt}`
@@ -174,13 +185,17 @@
 - `_verify_team_upload.mjs`(23)→`_team_upload.txt` 团队资源上传权限 + 反向对照
 - `_verify_team_upload_ui.mjs`(14) 🌐 基础版成员 /team 完整上传链路
 - `_verify_team_upload_live.mjs`(6)→`_probe_team_live.txt` ☁ 团队上传权限 + release 一致性
+- `_verify_team_preview.mjs`(16)→`_team_preview_fix.txt` 🌐 团队资源多文件预览（沙箱+真实 Chrome 全链路）
+- `_verify_team_preview_live.mjs`(21)→`_team_preview_live.txt` 🌐☁ **线上真实数据验收**（签发真实会话→真实团队资源→真实 Chrome）
+- `_verify_impersonate.mjs`(7)→`_impersonate_smoke.txt` ☁验收会话端点三重安全约束
+- `_repro_team_preview.mjs`(13) / `_repro_team_preview_ui.mjs`(10) 修复前复现（保留作对照）
 
 ## 7. 环境与工具约束（本机 Windows）
 - **Bash 工具不可用**：缺 `ls`/`cat`/`head`/`sleep`/`cut`/`grep`/`tail`(bash 路由到被禁用的 WSL) → 用**绝对路径 Node** + `node -e` 或临时 `.mjs`；语法校验用 `PortableGit\...\bash.exe -n`
 - ⚠️ `node -e "..."` 里**别用反引号**(Bash 先做命令替换 → SyntaxError)；复杂脚本写成临时 `.mjs`
 - **PowerShell 工具 stdout 会被吞** → 重定向到文件后用 Read 读
 - **Bash `rm -f` 可能静默失败**(safe-bin shim 报 `dirname: command not found` 后不删) → 用 **PowerShell `Remove-Item -Force`** 或 Node `fs.unlinkSync`，再用 `git status` 复核
-- **Bash 下 node 脚本 exit code 不可信**：包装器自身返回 127(shim 缺 `dirname`)，与脚本真实退出码无关 → 判成功看**脚本自己写的日志文件**或 `echo NODE_EXIT=$?`
+- **Bash 下 node 脚本 exit code 不可信**：包装器自身返回 127(shim 缺 `dirname`)，与脚本真实退出码无关 → 判成功看**脚本自己写的日志文件**或 `echo NODE_EXIT=$?`。同理 `ls`/`tail` 等返回 127 时别当成「文件不存在」
 - **脚本内 spawn exit 127 且零输出**(沙箱限制)。测服务端要**同进程内**：拷 `server.mjs` 到临时沙箱 + node_modules junction + **先写 `storage/metadata.json` 快照再 import**(server 启动即加载)，`await import(pathToFileURL(沙箱/server.mjs).href)` 起 Express 再 fetch。Windows 绝对路径必须 `pathToFileURL()`。快照 `sessions[].user` 要带完整 nickname/email，只写 `{id}` 会让 `displayAccountName` 回落「鲲穹用户」造成假阳性
 - 例外：需**真实 HTTP 到独立端口**(如真实浏览器套件)时用 `spawn` 并在其 `cwd` 内跑，但**必须消费 stdout/stderr**(见 §8 死锁)
 - **`fs.cpSync(目录,目录,{recursive:true})` 会静默杀掉整个 node 进程**(exit 127、零输出) → 自写 `copyTree` 递归 `copyFileSync`，或优先 `fs.symlinkSync(真实 node_modules, 沙箱/node_modules, 'junction')`
@@ -212,6 +227,16 @@
 - **UI 断言「成功提示」必须轮询等待**：上传完成会触发一次 `load()` 刷新，toast 渲染有延迟；固定 `sleep` 取样会误判失败(真实踩到：后端已落库 + 无报错，仅 toast 未捕获) → 循环 sleep 轮询目标条件，命中即 break
 - **`spawn` 子进程只 pipe 不读 = 死锁**：`stdio:['ignore','pipe','pipe']` 却只监听 `stderr`，子进程 stdout 缓冲写满后阻塞在 write，表现为**脚本卡在「子进程已启动」零输出**。同一脚本先前能跑通只是缓冲还没写满 —— 偶发性陷阱 → **每个 pipe 出来的流都必须消费**
 - **脚本里写死 commit 哈希 = 每轮部署都误报**：`_verify_team_upload_live.mjs` 曾断言 `release.startsWith('603ca9f')`，下次推送即红 → **断言目标要从仓库动态取**(`git rev-parse origin/main`，取不到就 `git fetch` 一次)，并对「差异仅为非运行时代码」放宽(见 §5)
+- **同一端口先后起两个实例 = 后一个静默失败**：曾先后以 `production`/`test` 起同一端口，前进程未释放端口，
+  后进程绑定失败但**旧进程仍应答**，表现为「改了 `NODE_ENV` 判定却没生效」。
+  极易误判成代码问题 → **不同场景用不同端口**，且 `kill` 后**等子进程真正退出**(轮询 `exitCode`/`signalCode`)再起下一个。
+- **种子数据的形状必须照抄真实结构**：`metadata.users`/`records`/`messages` 是**以 userId 为键的对象**而非数组
+  (`accountUserById → metadata.users[key]`)。写成数组 → 端点恒 404，看着像路由没注册。**造种子前先读对应 lookup 函数**
+- **线上断言大文件渲染要轮询，不能固定 sleep 后采一次**：线上团队资源多为 2MB+ 大图，
+  `sleep(2000)` 后读一次 `img.complete` 会偶发 `false` → 误报「预览失败」。
+  改为轮询等待 `img.complete`(上限 ~20s)，断言「最终能渲染」而非「某瞬间加载完了」
+- **线上端到端要拿真实会话，别 mock `/api/auth/me`**：伪造用户不属于任何团队 → 拿不到真实团队资源 →
+  UI 断言只能跳过，「线上是否真修好」无法证明。测试服可用 `POST /api/admin/impersonate` 签发真实会话(见 §9 风险)
 
 ### 真实浏览器测试模板（可复用）
 Chrome：`C:\Program Files\Google\Chrome\Application\chrome.exe`。无 puppeteer/playwright，
@@ -233,5 +258,8 @@ Chrome：`C:\Program Files\Google\Chrome\Application\chrome.exe`。无 puppeteer
 
 ## 9. 待办 / 风险
 - ⚠️ **`.gitea/workflows/deploy-test.yml` 明文硬编码凭据**(第 20 行 `KUNQIONG_OAUTH_CLIENT_SECRET`，另有 `OAUTH_CLIENT_ID`/`ADMIN_USER_IDS`/`TEST_ENTERPRISE_USER_KEYS`)，而该 Gitea 仓库匿名可访问 → **建议迁到 Gitea Secrets**。需用户确认后再动
+- ⚠️ **`POST /api/admin/impersonate` 是测试服专用后门**：仅 `NODE_ENV==='test'` 存在(其余 404)，且必须持管理员口令会话。
+  它能为任意已存在用户签发登录态 —— **生产环境部署时务必确认 `NODE_ENV` 不是 `test`**，否则等于绕开用户密码。
+  回归 `_verify_impersonate.mjs`(7) 逐条覆盖「生产 404 / 未登录 401 / 用户不存在 404 / 缺参 400」。
 - 短信通知为模拟；SMTP 未配置时邮件通知只留本地记录
 - `_run_regression.mjs` 全套串行跑时并发 Chrome 互相争抢，会导致个别套件超时/假 FAIL(`_verify_member_ui`/`_verify_message_expand`/`_verify_transfer_dissolve`/`_verify_transfer_ui` 曾出现，单独重跑均通过)。看整套结果先单独复跑异常套件再下结论
