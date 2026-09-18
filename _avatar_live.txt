@@ -1,0 +1,17 @@
+===== 线上验收：头像持久化修复 =====
+  PASS  线上版本 = ac06795（含头像修复） — ac06795c8d5f43ec814dbd6acbbdc0586284c10a
+  PASS  健康检查 ok — true
+  PASS  未登录访问后台 → 401 — status=401
+  PASS  后台错误口令 → 401 — status=401
+-- 真实账号：登录态头像读写 --
+  PASS  未登录 /api/auth/me → user 为 null — null
+  PASS  未登录改头像 → 401 — status=401
+-- 静态契约：服务端应下发 avatarSource / providerAvatar --
+  PASS  publicUser 下发 avatarSource — ok
+  PASS  publicUser 下发 providerAvatar — ok
+  PASS  自定义头像为粘性字段（含 restoreRequested 判断） — ok
+  PASS  意图标记不落库（delete merged.avatarRestoreRequested） — ok
+  PASS  upsertAccountUser 传原始输入 — ok
+  PASS  会话快照合并传原始输入 — ok
+
+结果：12/12 通过

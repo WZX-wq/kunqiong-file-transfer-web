@@ -38,6 +38,31 @@
     `normalizePlanId(null) → 'free'`，`mergeAccountUser` 也有 `|| 'free'` 兜底。
   - 回归：`node _verify_plan_isolation.mjs`（33 项）+ `_verify_member_ui.mjs`（9 项，真实浏览器）
 
+- **⚠️ 头像模型：`avatar` 是「粘性」字段（核心不变量，勿破坏）**
+  - 三个字段分工：`avatar`（当前展示图，data URL 或 provider URL）、`avatarSource`（`'custom'` = 用户自传 / `''` = 用 provider）、
+    `providerAvatar`（上游 OAuth 头像，**独立保存**，用于「恢复登录头像」）。
+  - `publicUser` 计算：`providerAvatar = user.providerAvatar || (!avatarSource ? user.avatar : null) || null`。
+  - **规则**：一旦 `avatarSource === 'custom'`，任何"没表态"输入都**不得**改动它。
+    只有两种操作能改：① `PATCH /api/auth/profile {avatar: <dataURL>}`（重新上传 → custom）；
+    ② `{avatar: null}`（恢复登录头像 → 回落 provider）。
+  - ⚠️ **「恢复登录头像」必须靠显式标记 `avatarRestoreRequested: true`，不能用 `avatar === null` 判断** ——
+    恢复时 `avatar` 会被填成 provider 地址（truthy），不是 null。标记在 `mergeAccountUser` 末尾
+    `delete merged.avatarRestoreRequested`，**绝不落库/下发**（`publicUser` 也不认识这个键）。
+  - ⚠️ **`upsertAccountUser` / `normalizeAccountUserStore` 必须把「原始输入」交给 `mergeAccountUser`**，
+    不能先过 `normalizeAccountUser` —— 后者只输出持久化白名单字段，会把意图标记吞掉
+    （这是第二个隐藏缺陷，曾让「恢复登录头像」静默失效，靠插桩才看清）。
+  - ⚠️ **`mergeAccountUser` 不能有 `if (!existing) return normalizeAccountUser(incoming)` 短路**，
+    否则首条记录合并丢失标记。
+  - ⚠️ **`PATCH /api/auth/profile` 与 `POST /api/account/bind` 以「用户表」为准合并，不要整体覆盖 `session.user`**：
+    `session.user` 是可能过期的快照，整体覆盖会造成「保存昵称顺手把头像改没了」。
+  - **历史 Bug（用户报障「上传过、下次登录就没了」）**：旧实现用
+    `avatarSourceExplicit = hasOwnProperty(incoming,'avatarSource')`（**有没有这个键**）判断"是否表态"，
+    但 OAuth 登录快照 / 会话快照 / 后台改库都会带**显式 `avatarSource: ''`** →
+    `normalizeAccountUserStore` 在**每次重启**把 `metadata.sessions[].user` 合并回用户表时抹掉 custom。
+  - 回归：`node _verify_avatar_restart.mjs`（17，抽取真实函数跑 7 场景）
+    + `_verify_avatar_e2e.mjs`（15，真实 server 三度重启 + 模拟 OAuth 重登）
+    + `_verify_avatar.mjs`（14，基础链路）+ `_probe_avatar_live.mjs`（12，线上）
+
 - 入团申请：分享链接页（/e/:slug/share|collect/:token）内嵌 `TeamJoinRequestCard`，可直接申请加入。
   **复用 organization.members 并新增第三态 `status:'requested'`**（不另建 joinRequests 表），
   member 新增 `joinRequestId/joinSource/joinMessage/requestedAt/reviewedAt`。
@@ -137,6 +162,11 @@
 | `_verify_plan_isolation.mjs` | **个人套餐 vs 团队权益**分离（核心业务不变量） | `_plan.log` | 33 |
 | `_verify_admin_audit.mjs` | 后台安全审计（删除/自禁用/限流绕过） | `_admin_audit.log` | 24 |
 | `_verify_member_ui.mjs` | **真实 Chrome** 验基础版成员工作台界面 | `_member_ui.txt` | 9 |
+| `_verify_avatar.mjs` | 头像保存→落盘→重登合并基础链路 | `_avatar_probe.txt` | 14 |
+| `_verify_avatar_restart.mjs` | **抽取真实函数**验重启归一化 7 场景（头像粘性） | `_avatar_restart.txt` | 17 |
+| `_verify_avatar_e2e.mjs` | **真实 server 三度重启** + 模拟 OAuth 重登 | `_avatar_e2e.txt` | 15 |
+| `_probe_avatar_live.mjs` | **线上**头像修复验收 + 后台鉴权未受影响 | `_avatar_live.txt` | 12 |
+| `_run_regression.mjs` | 一键跑全部离线套件并汇总（跳过需线上/长时的） | `_regression.txt` | — |
 
 ### ⚠️ 本机环境三个新坑（都已踩过，务必规避）
 1. **`fs.cpSync(目录, 目录, {recursive:true})` 会静默杀掉整个 node 进程**（exit 127、零输出、无异常）。
@@ -148,6 +178,16 @@
    正确做法：设 `process.env.PORT` → `await import(sandbox/server.mjs)` → 轮询 `/api/health` 等就绪。
 3. **测试顺序会互相污染**：消耗配额/改变状态的用例（如限流测试）必须放在校验类用例**之后**。
    我把「空账号密码→400」放在限流测试后就吃过假失败（额度已耗尽，被 429 抢答）。
+4. **沙箱化真实 server 优先用 `fs.symlinkSync(真实node_modules, 沙箱/node_modules, 'junction')`** ——
+   780MB 目录秒建，比 `copyTree` 快几个数量级，且不受坑 1 影响。
+5. **脚本卡住先怀疑前面那步耗时过长**：一次 `_verify_avatar_e2e.mjs` "零输出"的真因是
+   开头 `fs.rmSync(旧沙箱)` 清理耗时约 87s 触发工具超时，**不是** junction 或 spawn 的问题。
+   定位手段永远是**分步 `trace()` 写文件**，别靠猜。
+6. **从源码抽取函数做单测时**：`src.indexOf('function name(')` 只命中**声明行**；
+   真实签名常跨行（`function f(a = {}) {` 的 `{` 在下一行）→
+   先找 `'\nfunction name('`，再 `indexOf(')')` 定位签名末尾，从签名末尾往后找第一个 `{` 开始配平。
+   抽出来的函数往往依赖几十个自由变量，需要补一层最小桩（`metadata` / `configuredAccountPlan` /
+   `accountUserById` 等），并在桩里用 `let metadataNeedsPersist` 而非 `const`（函数会赋值）。
 
 ### ⚠️ 探针路由必须从 server.mjs 核对，别猜
 第一版线上探针我写了 `GET /api/admin/users/:userId`，实测 **404 接口不存在**（不是 401，我差点当成鉴权缺陷）。
