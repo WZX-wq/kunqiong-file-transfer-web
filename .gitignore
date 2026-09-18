@@ -44,6 +44,17 @@ _transfer_ui_trace.txt
 
 # 用户手册：截图素材与构建脚本入库（可复现），预览抽查产物不入库
 _manual_preview/
+# 消息中心修复轮：诊断/截图/运行产物（验证脚本 _verify_message_expand.mjs 入库）
+_diag_*.mjs
+_msgdiag_*.png
+_msgui_*
+_build_check.txt
+_email_trace.txt
+_manual_trace*.txt
+_check_manual*.mjs
+_preview_manual.mjs
+_recapture_*.mjs
+_avatar_diag.txt
 
 .env
 .env.*

@@ -97,7 +97,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .message-item-icon.other { color: #5885bd; background: #e7f0fc; }
 .message-item-content { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding-right: 8px; }
 .message-item-content strong { color: #4b6e65; font-size: 12px; }
-.message-item-content span { display: -webkit-box; overflow: hidden; color: #8da39c; font-size: 11px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.message-item-content span { display: block; overflow: hidden; max-height: 36px; white-space: normal; color: #8da39c; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent 100%); mask-image: linear-gradient(180deg, #000 55%, transparent 100%); }
+.message-item-content span.expanded { max-height: none; -webkit-mask-image: none; mask-image: none; color: #5f7a72; }
 .message-item-content small { color: #b0beb9; font-size: 10px; }
 .message-item-dot { position: absolute; top: 15px; right: 50px; width: 6px; height: 6px; border: 0; }
 .message-invite-actions { display: flex; grid-column: 1; gap: 7px; margin: 9px 0 0 40px; }

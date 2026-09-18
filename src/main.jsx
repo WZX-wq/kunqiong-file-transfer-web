@@ -4961,6 +4961,16 @@ function LoadingBlock() { return <div className="state-block"><span className="l
 function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
 function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin, onInvitationAction }) {
   const unreadCount = messages.filter((message) => message.unread).length
+  // 长消息默认两行截断，点击展开/收起完整正文（展开的同时保留标已读行为）
+  const [expandedIds, setExpandedIds] = useState(() => new Set())
+  const toggleExpanded = (message) => {
+    setExpandedIds((current) => {
+      const next = new Set(current)
+      if (next.has(message.id)) next.delete(message.id)
+      else next.add(message.id)
+      return next
+    })
+  }
 
   useEffect(() => {
     if (!open) return undefined
@@ -4986,9 +4996,9 @@ function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, on
             <div className="message-list">
               {messages.map((message) => (
                 <div key={message.id} className={`message-item ${message.unread ? 'unread' : ''}`}>
-                  <button className="message-item-main" onClick={() => onMarkRead(message)}>
+                  <button className="message-item-main" onClick={() => { onMarkRead(message); toggleExpanded(message) }} aria-expanded={expandedIds.has(message.id)}>
                   <span className={`message-item-icon ${message.category}`}><MessageIcon category={message.category} /></span>
-                  <span className="message-item-content"><strong>{message.title}</strong><span>{message.body}</span><small>{formatMessageTime(message.createdAt)}</small></span>
+                  <span className="message-item-content"><strong>{message.title}</strong><span className={expandedIds.has(message.id) ? 'expanded' : ''}>{message.body}</span><small>{formatMessageTime(message.createdAt)}{message.body.length > 60 ? ` · ${expandedIds.has(message.id) ? '点击收起' : '点击展开'}` : ''}</small></span>
                   {message.unread && <i className="message-item-dot" />}
                   </button>
                   {message.actionType === 'workspace_invite' && <div className="message-invite-actions"><button type="button" className="secondary-button" onClick={() => onInvitationAction?.(message, 'decline')}>拒绝</button><button type="button" className="primary-button" onClick={() => onInvitationAction?.(message, 'accept')}>接受加入</button></div>}
