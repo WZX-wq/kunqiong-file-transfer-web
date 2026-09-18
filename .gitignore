@@ -37,6 +37,7 @@ _fixes.txt
 _atomic_store.txt
 _visual.txt
 _visual_shots/
+_fixes_live.txt
 *.tmp
 
 .env
