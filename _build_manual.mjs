@@ -4,7 +4,9 @@ import path from 'node:path'
 
 const ROOT = process.cwd()
 const SHOTS = path.join(ROOT, 'manual_shots')
-const OUT = path.join(ROOT, '鲲穹文件传输-用户使用手册.html')
+// 输出到 vite public/：build 时自动拷入 dist/，dev server 与生产 express 均可直接访问 /user-manual.html
+const OUT_DIR = path.join(ROOT, 'public')
+const OUT = path.join(OUT_DIR, 'user-manual.html')
 
 const img64 = (name) => `data:image/png;base64,${fs.readFileSync(path.join(SHOTS, `${name}.png`)).toString('base64')}`
 const fig = (name, caption, num) => `<figure class="shot"><img src="${img64(name)}" alt="${caption}" loading="lazy" /><figcaption>图 ${num}　${caption}</figcaption></figure>`
@@ -450,6 +452,7 @@ ${fig('25-admin-config', '系统配置 —— 分享天数、上传上限与站�
 </body>
 </html>`
 
+fs.mkdirSync(OUT_DIR, { recursive: true })
 fs.writeFileSync(OUT, html)
 console.log(`手册已生成: ${OUT}`)
 console.log(`大小: ${(fs.statSync(OUT).size / 1024 / 1024).toFixed(2)} MB`)

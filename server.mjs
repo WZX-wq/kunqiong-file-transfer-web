@@ -1917,7 +1917,8 @@ if (fs.existsSync(distRoot)) {
     maxAge: '7d',
     immutable: true,
     setHeaders(res, filePath) {
-      if (path.basename(filePath) === 'index.html') {
+      // HTML 入口（index.html、user-manual.html 等）不缓存，发版后立即生效；其余静态资源 7 天强缓存
+      if (filePath.endsWith('.html')) {
         res.setHeader('Cache-Control', 'no-cache')
       }
     },

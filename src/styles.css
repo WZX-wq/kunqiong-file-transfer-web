@@ -546,6 +546,8 @@ h1, h2, p { margin-top: 0; }
 .page-footer div { display: flex; gap: 18px; }
 .page-footer button { padding: 0; color: #8ea39d; background: transparent; }
 .page-footer button:hover { color: var(--accent-dark); }
+.page-footer a.footer-manual-link { padding: 0; color: #8ea39d; font-size: inherit; text-decoration: none; }
+.page-footer a.footer-manual-link:hover { color: var(--accent-dark); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 20px; background: rgba(27, 46, 42, .28); backdrop-filter: blur(5px); }
 .modal { width: min(450px, 100%); background: #fff; border: 1px solid #e0ebe7; border-radius: 14px; box-shadow: 0 28px 80px rgba(27, 65, 55, .2); }
 .retrieve-modal { width: min(560px, calc(100vw - 40px)); max-height: min(86dvh, 760px); display: flex; flex-direction: column; overflow: hidden; }

@@ -1130,7 +1130,7 @@ function WorkspaceApp() {
 
       <footer className="page-footer">
         <span>鲲穹文件传输 · 临时传输，轻装上阵</span>
-        <div><button onClick={() => setFooterContentKey('help')}>帮助中心</button><button onClick={() => setFooterContentKey('terms')}>服务协议</button><button onClick={() => setFooterContentKey('privacy')}>隐私政策</button></div>
+        <div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a><button onClick={() => setFooterContentKey('help')}>帮助中心</button><button onClick={() => setFooterContentKey('terms')}>服务协议</button><button onClick={() => setFooterContentKey('privacy')}>隐私政策</button></div>
       </footer>
 
       {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} user={authUser} onClose={() => setSettingsOpen(false)} onSave={() => { setSettingsOpen(false); setToast('分享设置已保存') }} />}
@@ -4891,7 +4891,7 @@ function NoticeToggle({ label, detail, checked, onChange }) {
 }
 
 function PublicShell({ children }) {
-  return <div className="app-shell public-shell"><header className="topbar"><div className="brand"><span className="brand-mark"><Cloud size={20} /></span><span className="brand-copy"><strong>鲲穹</strong><em>文件传输</em></span></div><span className="public-safe"><ShieldCheck size={15} /> 安全临时空间</span></header><main className="public-page">{children}</main><footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span></footer></div>
+  return <div className="app-shell public-shell"><header className="topbar"><div className="brand"><span className="brand-mark"><Cloud size={20} /></span><span className="brand-copy"><strong>鲲穹</strong><em>文件传输</em></span></div><span className="public-safe"><ShieldCheck size={15} /> 安全临时空间</span></header><main className="public-page">{children}</main><footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span><div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a></div></footer></div>
 }
 
 function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }
