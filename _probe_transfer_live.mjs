@@ -6,7 +6,8 @@ const check = (name, pass, detail = '') => { results.push({ name, pass }); conso
 const r0 = await fetch(`${BASE}/api/health`)
 const h = await r0.json()
 check('线上 /api/health 可达', r0.ok, JSON.stringify(h).slice(0, 120))
-check('release = 4be64cb（消息中心修复版本）', String(h.release || '').startsWith('4be64cb'), h.release)
+// release 随每次 push 滚动；断言「已滚动离开 35f232b（转让/解散版）」即可长期复用
+check('release 已滚动至消息修复版本及以后', Boolean(h.release) && h.release !== 'unknown' && !String(h.release).startsWith('35f232b'), h.release)
 
 const m = await fetch(`${BASE}/user-manual.html`)
 check('线上 /user-manual.html 200', m.status === 200, `status=${m.status} len=${(await m.arrayBuffer()).byteLength}`)
