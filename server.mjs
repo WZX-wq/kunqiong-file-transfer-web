@@ -1363,6 +1363,30 @@ app.get('/api/admin/overview', (req, res) => {
   res.json(buildAdminOverview())
 })
 
+// 测试服验收专用：用管理员口令会话为指定用户签发一个登录会话，
+// 便于在真实数据上做端到端验收（此前只能靠浏览器里 monkey-patch /api/auth/me，
+// 那种做法拿不到该用户的真实团队/资源，UI 断言会被跳过）。
+//
+// 安全约束（三条缺一不可）：
+//   1) 必须是已有的管理员口令会话（requireAdminSession）；
+//   2) 仅测试服可用（NODE_ENV === 'test'），生产环境直接 404，连端点都不存在；
+//   3) 只允许给「已存在」的用户签发，不能凭此创建新用户。
+// 返回的 sessionId 等同于该用户的登录态，因此不落审计 details，
+// 只记录「谁给谁签发了验收会话」这一事实。
+app.post('/api/admin/impersonate', (req, res) => {
+  if (process.env.NODE_ENV !== 'test') return res.status(404).json({ message: 'Not found' })
+  const auth = requireAdminSession(req, res)
+  if (!auth) return
+  const userId = String(req.body?.userId || '').trim()
+  if (!userId) return res.status(400).json({ message: '缺少 userId' })
+  const user = accountUserById(userId)
+  if (!user) return res.status(404).json({ message: '用户不存在' })
+  if (user.status === 'disabled') return res.status(400).json({ message: '该用户已被禁用，无法签发验收会话' })
+  const session = createAuthSession({ user: publicUser(user), expires_in: 3600 })
+  recordAuditLog({ type: 'admin', action: '签发验收会话', userId: auth.user.id, targetId: user.id })
+  res.json({ sessionId: session.id, user: adminUserSummary(user) })
+})
+
 app.post('/api/admin/cleanup', (req, res) => {
   const auth = requireAdminSession(req, res)
   if (!auth) return

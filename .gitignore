@@ -75,3 +75,19 @@ _probe_team_preview.mjs
 .env
 .env.*
 !.env.example
+
+# 验收会话端点冒烟：脚本入库，报告/沙箱不入库
+_impersonate_smoke.txt
+_impersonate_sandbox/
+_team_preview_live.txt
+_team_preview_live_chrome/
+_ci_now.json
+_health_now.json
+_live_index.html
+_live_bundle.js
+_live_bundle.css
+_admin_sess.txt
+_admin_login.json
+_admin_cookies.txt
+_admin_shares.json
+_admin_ov.json
