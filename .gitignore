@@ -56,6 +56,16 @@ _preview_manual.mjs
 _recapture_*.mjs
 _avatar_diag.txt
 
+# 收集页「登录后提交」轮：验证脚本入库，报告/截图/沙箱不入库
+_collect_login.txt
+_collect_login_ui.txt
+_ui_server.log
+
+# 团队空间上传修复轮：验证脚本入库，报告/沙箱不入库
+_team_upload.txt
+_team_upload_ui.txt
+_team_upload_ui_crash.txt
+
 .env
 .env.*
 !.env.example

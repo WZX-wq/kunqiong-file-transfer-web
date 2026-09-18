@@ -39,7 +39,16 @@ fs.writeFileSync(path.join(SANDBOX, 'storage', 'metadata.json'), JSON.stringify(
     [APPLICANT]: mkUser(APPLICANT, '陈美术', 'chen@kunqiong.com', 'free', ''),
   },
   sessions: [OWNER, MEMBER, APPLICANT].map((id, i) => ({
-    id: `sess_m_${i}`, expiresAt: new Date(Date.now() + 86400000).toISOString(), createdAt: now, apiWebToken: '', user: { id },
+    id: `sess_m_${i}`, expiresAt: new Date(Date.now() + 86400000).toISOString(), createdAt: now, apiWebToken: '',
+    // ⚠️ 会话快照必须是完整用户对象：只写 {id} 会让启动合并时 publicUser 的 nickname 兜底
+    //    「鲲穹用户」覆盖真实昵称，截图与 displayAccountName 会全部显示错。
+    user: mkUser(
+      id,
+      { [OWNER]: '林设计', [MEMBER]: '王小张', [APPLICANT]: '陈美术' }[id],
+      { [OWNER]: 'lin@kunqiong.com', [MEMBER]: 'zhang@kunqiong.com', [APPLICANT]: 'chen@kunqiong.com' }[id],
+      [OWNER, MEMBER, APPLICANT][i] === OWNER ? 'enterprise' : 'free',
+      '',
+    ),
   })),
   organizations: {
     [ORG]: {
@@ -120,16 +129,17 @@ if (!colRes.ok) throw new Error(`创建收集失败 ${colRes.status} ${JSON.stri
 const COL_TOKEN = colData.collection.token, COL_MANAGE = colData.manageToken
 trace(`收集任务 token=${COL_TOKEN}`)
 
-async function submit(token, name, files) {
+async function submit(token, name, files, sessionId = '') {
   const fd = new FormData()
   fd.append('participantName', name)
   files.forEach((f) => fd.append('files', f))
-  const r = await api(`/api/collections/${token}/submissions`, '', { method: 'POST', body: fd })
+  const r = await api(`/api/collections/${token}/submissions`, sessionId, { method: 'POST', body: fd })
   if (!r.ok) throw new Error(`提交失败 ${r.status}: ${await r.text()}`)
 }
-await submit(COL_TOKEN, '王小张', [file('王小张-首页设计稿.png', 'image/png'), file('王小张-文案说明.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')])
+// 一份登录提交（带账号来源）+ 一份匿名提交，供管理端「账号提交 / 匿名提交」徽标截图对照
+await submit(COL_TOKEN, '王小张', [file('王小张-首页设计稿.png', 'image/png'), file('王小张-文案说明.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')], 'sess_m_1')
 await submit(COL_TOKEN, '李视觉', [file('李视觉-banner设计.png', 'image/png')])
-trace('2 份提交完成')
+trace('2 份提交完成（1 份账号提交 + 1 份匿名提交）')
 
 // 注意：入团申请移到 Chrome 阶段（先拍申请表单态，再提交），见下方 chromePhase 标记
 
@@ -260,6 +270,16 @@ try {
   await shoot('10-collect-create')
   await goto(`${BASE}/collect/manage/${COL_MANAGE}`)
   await shoot('11-collect-manage')
+  // 提交页两种身份态：登录后（账号身份卡）/ 未登录（匿名表单）
+  await setSess('sess_m_1')
+  await goto(`${BASE}/collect/${COL_TOKEN}`)
+  await sleep(800)
+  await shoot('11b-collect-submit-logged-in')
+  await clearCookies()
+  await goto(`${BASE}/collect/${COL_TOKEN}`)
+  await sleep(800)
+  await shoot('11c-collect-submit-anonymous')
+  await setSess('sess_m_0')
   await goto(`${BASE}/?view=records`)
   await shoot('12-records')
   await goto(`${BASE}/workspace`)

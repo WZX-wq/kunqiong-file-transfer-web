@@ -1968,7 +1968,15 @@ function CollectionFilesPanel({ data, onClose, onRefresh, onManageSettings, onCl
           {data.submissions.map((submission) => (
             <div className="collection-submission" key={submission.id}>
               <div className="collection-submission-heading">
-                <div><strong>{submission.participantName}</strong><span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span></div>
+                <div>
+                  <div className="collection-submission-who">
+                    <strong>{submission.participantName}</strong>
+                    {submission.submitter
+                      ? <span className="submission-account-badge" title={`鲲穹账号：${submission.submitter.displayName || submission.submitter.id}`}><UserRound size={12} /> 账号提交</span>
+                      : <span className="submission-anon-badge">匿名提交</span>}
+                  </div>
+                  <span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span>
+                </div>
                 <div className="submission-heading-actions">
                   <span className="submission-badge">已提交</span>
                   <button className="submission-download-button" onClick={() => downloadSubmissionItem(submission)} disabled={downloadBusy}><Download size={14} /> 下载此提交</button>
@@ -2275,21 +2283,31 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const submitRunRef = useRef(0)
   const [collection, setCollection] = useState(null)
   const [files, setFiles] = useState([])
+  const [user, setUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
   const [name, setName] = useState('')
   const [progress, setProgress] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
+  // 登录后提交：提交者身份由账号决定，不需要也不能手填；
+  // 未登录时保留手填入口（匿名提交仍然可用）。
+  const signedIn = Boolean(user?.id)
   useEffect(() => {
     const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
     apiRequest(`/api/collections/${token}${query}`).then((data) => {
       setCollection(data.collection)
       saveLocalRecord(createCollectionRecord(data.collection, 'collect_from_me'))
     }).catch((err) => setMessage(err.message))
-    apiRequest('/api/auth/me').then(({ user }) => {
-      if (!user) return
-      setName((current) => current.trim() ? current : (user.nickname || user.username || ''))
-    }).catch(() => {})
+    apiRequest('/api/auth/me').then(({ user: current }) => {
+      setUser(current || null)
+      if (current) setName((existing) => existing.trim() ? existing : (current.nickname || current.username || ''))
+    }).catch(() => {}).finally(() => setAuthChecked(true))
   }, [token, enterpriseSlug])
+
+  const startLogin = () => {
+    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`
+    window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
+  }
 
   const firstInvalidFile = (selectedFiles) => {
     const limitMb = Number(collection?.maxFileSizeMb || 0)
@@ -2325,8 +2343,12 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   }
 
   const submit = () => {
-    const participantName = name.trim()
-    if (!participantName || !files.length) { setMessage('请填写提交人名称并选择文件'); return }
+    // 登录后提交者名取账号显示名，服务端也会以会话为准覆写，二者保持一致。
+    const participantName = signedIn ? (displayUserName(user) || name.trim()) : name.trim()
+    if (!participantName || !files.length) {
+      setMessage(signedIn ? '请选择要提交的文件' : '请填写提交人名称并选择文件')
+      return
+    }
     const invalidFile = firstInvalidFile(files)
     if (invalidFile) {
       setMessage(`${invalidFile.name} 不符合当前收集任务的文件限制`)
@@ -2373,7 +2395,32 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
             <p className="public-copy">{collection.description}</p>
             <div className="deadline-line"><Clock3 size={15} /> 截止 {formatDate(collection.deadline)}</div>
             <CollectionLimitInfo allowedTypes={collection.allowedTypes} maxFileSizeMb={collection.maxFileSizeMb} />
-            <label className="public-label">提交人名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：张三 / 市场部" /></label>
+            {authChecked && (
+              signedIn ? (
+                <div className="collection-identity signed-in">
+                  <span className="collection-identity-avatar"><UserAvatar user={user} /></span>
+                  <div className="collection-identity-copy">
+                    <small>提交人</small>
+                    <strong>{displayUserName(user)}</strong>
+                    <span>本次提交会记录你的鲲穹账号，收集方可以核对是谁提交的</span>
+                  </div>
+                  <button type="button" className="collection-identity-switch" onClick={() => setUser(null)}>改用其他名称</button>
+                </div>
+              ) : (
+                <div className="collection-identity anonymous">
+                  <span className="collection-identity-avatar"><UserRound size={17} /></span>
+                  <div className="collection-identity-copy">
+                    <small>提交人</small>
+                    <strong>当前未登录</strong>
+                    <span>登录后提交会带上你的账号信息，方便收集方识别；也可以直接填写名称匿名提交</span>
+                  </div>
+                  <button type="button" className="secondary-button collection-identity-login" onClick={startLogin}><UserRound size={15} /> 登录后提交</button>
+                </div>
+              )
+            )}
+            {(!signedIn || !authChecked) && (
+              <label className="public-label">提交人名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：张三 / 市场部" /></label>
+            )}
             <div className="public-drop" onClick={() => inputRef.current?.click()}>
               <input ref={inputRef} type="file" multiple hidden accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => handleSelectFiles(event.target.files)} />
               <UploadCloud size={24} />
@@ -2539,7 +2586,12 @@ function CollectionManagePage({ token }) {
           {data.submissions.length ? data.submissions.map((submission) => (
             <div className="manage-submission" key={submission.id}>
               <div>
-                <strong>{submission.participantName}</strong>
+                <div className="collection-submission-who">
+                  <strong>{submission.participantName}</strong>
+                  {submission.submitter
+                    ? <span className="submission-account-badge" title={`鲲穹账号：${submission.submitter.displayName || submission.submitter.id}`}><UserRound size={12} /> 账号提交</span>
+                    : <span className="submission-anon-badge">匿名提交</span>}
+                </div>
                 <span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span>
                 <div className="manage-file-names">{submission.files.map((file, fileIndex) => <span className="manage-file-chip" key={`${submission.id}-${file.relativePath}`}>{canPreviewFile(file) && <button className="manage-file-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={13} /></button>}<button onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><FileText size={13} /> <FileFormatBadge file={file} /> {file.name}</button></span>)}</div>
               </div>
@@ -5090,6 +5142,8 @@ function compactRecordSubmissions(submissions = []) {
   return submissions.map((submission) => ({
     id: String(submission?.id || '').trim(),
     participantName: String(submission?.participantName || '').trim(),
+    submitterUserId: String(submission?.submitterUserId || '').trim(),
+    submitterName: String(submission?.submitterName || '').trim(),
     submittedAt: submission?.submittedAt || '',
     files: compactRecordFiles(submission?.files),
   })).filter((submission) => submission.id || submission.files.length)

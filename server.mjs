@@ -1520,12 +1520,14 @@ app.post('/api/upload-sessions', (req, res) => {
   const ownerSession = authSessionFromRequest(req)
   let collectionTask = null
   let teamOrganization = null
+  let collectionSubmitter = null
   if (req.body.mode === 'collection') {
     collectionTask = metadata.collections.find((item) => item.token === String(req.body.collectionToken || ''))
     if (!collectionTask) return res.status(404).json({ message: '收集任务不存在' })
     const access = validateCollection(collectionTask)
     if (!access.ok) return res.status(access.status).json({ message: access.message })
-    if (!String(req.body.participantName || '').trim()) return res.status(400).json({ message: '请填写提交人名称' })
+    collectionSubmitter = resolveCollectionSubmitter(req)
+    if (!collectionSubmitter.participantName) return res.status(400).json({ message: '请先登录，或填写提交人名称' })
     const invalidCollectionFile = normalizedFiles.find((file) => file.size > collectionTask.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.name, collectionTask.allowedTypes))
     if (invalidCollectionFile) return res.status(413).json({ message: `${invalidCollectionFile.name} 不符合当前收集任务的文件限制` })
   }
@@ -1545,14 +1547,18 @@ app.post('/api/upload-sessions', (req, res) => {
   const sessionId = createToken(18)
   const sessionDirectory = path.join(tempRoot, 'upload-sessions', sessionId)
   fs.mkdirSync(sessionDirectory, { recursive: true })
+  const isTeamResourceSession = req.body.mode === 'team_resource'
   const session = {
     id: sessionId,
     files: normalizedFiles,
-    options: readShareOptions(req.body, ownerSession?.user),
-    mode: req.body.mode === 'collection' ? 'collection' : req.body.mode === 'team_resource' ? 'team_resource' : 'share',
+    // 团队资源走团队空间权益，不校验上传者的个人 permanent。
+    options: readShareOptions(req.body, ownerSession?.user, isTeamResourceSession),
+    mode: isTeamResourceSession ? 'team_resource' : (req.body.mode === 'collection' ? 'collection' : 'share'),
     organizationId: teamOrganization?.id || '',
     collectionToken: collectionTask?.token || '',
-    participantName: String(req.body.participantName || '').trim(),
+    participantName: collectionSubmitter ? collectionSubmitter.participantName : String(req.body.participantName || '').trim(),
+    submitterUserId: collectionSubmitter?.submitterUserId || '',
+    submitterName: collectionSubmitter?.submitterName || '',
     relativePaths: Array.isArray(req.body.relativePaths) ? req.body.relativePaths : [],
     directory: sessionDirectory,
     createdAt: new Date().toISOString(),
@@ -1651,7 +1657,14 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
         fs.renameSync(file.tempPath, path.join(submissionDirectory, file.storedName))
         return { name: file.name, relativePath: file.relativePath, storedName: file.storedName, size: file.size, mimeType: file.mimeType, reviewStatus: 'approved' }
       })
-      const submission = { id: submissionId, participantName, submittedAt: new Date().toISOString(), files: submissionFiles }
+      const submission = {
+        id: submissionId,
+        participantName,
+        submitterUserId: session.submitterUserId || '',
+        submitterName: session.submitterName || participantName,
+        submittedAt: new Date().toISOString(),
+        files: submissionFiles,
+      }
       task.submissions.push(submission)
       addCollectionSubmissionMessage(task, submission, req)
       persistMetadata()
@@ -1854,10 +1867,11 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
       cleanupUploadedFiles(req.files)
       return res.status(access.status).json({ message: access.message })
     }
-    const participantName = String(req.body.participantName || '').trim()
+    const submitter = resolveCollectionSubmitter(req)
+    const participantName = submitter.participantName
     if (!participantName) {
       cleanupUploadedFiles(req.files)
-      return res.status(400).json({ message: '请填写提交人名称' })
+      return res.status(400).json({ message: '请先登录，或填写提交人名称' })
     }
     const uploadedFiles = req.files || []
     if (!uploadedFiles.length) {
@@ -1881,7 +1895,14 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
       fs.renameSync(file.path, path.join(submissionDirectory, storedName))
       return { name: file.originalname, relativePath, storedName, size: file.size, mimeType: file.mimetype || 'application/octet-stream', reviewStatus: file.reviewStatus || 'approved' }
     })
-    const submission = { id: submissionId, participantName, submittedAt: new Date().toISOString(), files }
+    const submission = {
+      id: submissionId,
+      participantName,
+      submitterUserId: submitter.submitterUserId,
+      submitterName: submitter.submitterName || participantName,
+      submittedAt: new Date().toISOString(),
+      files,
+    }
     task.submissions.push(submission)
     addCollectionSubmissionMessage(task, submission, req)
     persistMetadata()
@@ -4135,11 +4156,15 @@ function addShareDownloadedMessage(share) {
 
 function addCollectionSubmissionMessage(task, submission, req) {
   if (!task.ownerUserId) return null
+  // 登录提交时明确标注「账号提交」，与匿名提交在通知里一眼可分。
+  const who = submission.submitterUserId
+    ? `${submission.participantName || '提交者'}（已登录账号提交）`
+    : `${submission.participantName || '提交者'}（匿名提交）`
   return addAccountMessage(task.ownerUserId, {
     category: 'other',
     eventType: 'collectionSubmitted',
     title: '收集任务收到新提交',
-    body: `${submission.participantName || '提交者'} 向「${task.title}」提交了 ${submission.files.length} 个文件。`,
+    body: `${who} 向「${task.title}」提交了 ${submission.files.length} 个文件。`,
     actionUrl: `${getOrigin(req)}/collect/manage/${task.manageToken}`,
   })
 }
@@ -4311,6 +4336,8 @@ function normalizeRecordSubmissions(submissions) {
   return submissions.slice(0, MAX_RECORD_SUBMISSIONS).map((submission) => ({
     id: trimRecordString(submission?.id, 120),
     participantName: trimRecordString(submission?.participantName, 80),
+    submitterUserId: trimRecordString(submission?.submitterUserId, 120),
+    submitterName: trimRecordString(submission?.submitterName, 80),
     submittedAt: normalizeRecordDate(submission?.submittedAt),
     files: normalizeRecordFiles(submission?.files),
   })).filter((submission) => submission.id || submission.files.length)
@@ -4728,8 +4755,46 @@ function publicSubmission(submission) {
   return {
     id: submission.id,
     participantName: submission.participantName,
+    // 提交者账号信息：登录提交时记录，管理端据此区分「谁提交的」。
+    // 匿名/历史提交没有这段，管理端回落到 participantName。
+    submitter: publicSubmissionSubmitter(submission),
     submittedAt: submission.submittedAt,
     files: submission.files.map(publicFile),
+  }
+}
+
+function publicSubmissionSubmitter(submission = {}) {
+  const id = trimRecordString(submission.submitterUserId, 120)
+  if (!id) return null
+  const user = accountUserById(id) || {}
+  return {
+    id,
+    nickname: trimRecordString(user.nickname, 80),
+    username: trimRecordString(user.username, 80),
+    // 显示名优先取账号昵称；账号已被删除时回落提交当时的快照名。
+    displayName: trimRecordString(user.nickname || user.username, 80) || trimRecordString(submission.submitterName, 80),
+    avatar: user.avatar || null,
+    avatarSource: String(user.avatarSource || ''),
+    providerAvatar: user.providerAvatar || (!user.avatarSource ? user.avatar : null) || null,
+    email: normalizeEmailValue(user.email),
+    phone: normalizePhoneValue(user.phone),
+  }
+}
+
+// 收集任务提交者身份：登录用户优先（以服务端会话为准，客户端无法伪造），
+// 未登录时回落请求体中的 participantName（保留匿名提交能力）。
+function resolveCollectionSubmitter(req) {
+  const session = authSessionFromRequest(req)
+  const user = session?.user?.id ? accountUserById(session.user.id) : null
+  if (!user) {
+    return { submitterUserId: '', submitterName: '', participantName: String(req.body?.participantName || '').trim() }
+  }
+  const name = displayAccountName(user)
+  return {
+    submitterUserId: String(user.id || ''),
+    submitterName: name,
+    // 登录用户不再采信客户端传的名称，统一记为账号显示名 —— 否则统计口径会被前端参数带偏。
+    participantName: name,
   }
 }
 
@@ -4804,11 +4869,15 @@ async function createShareFromTempFiles(tempFiles, options, req) {
   }
 }
 
-function readShareOptions(body = {}, user = null) {
+// 读取分享参数。isTeamResource=true 表示文件进入团队空间：
+// 团队资源的「永久保存」由团队空间本身决定（团队容量属于所有者），
+// **不**受上传者个人套餐的 permanent 限制 —— 否则基础版/未升级成员加入企业版团队后
+// 会因个人 permanent=false 而无法往团队空间上传文件。
+function readShareOptions(body = {}, user = null, isTeamResource = false) {
   const config = normalizeSystemConfig(metadata.systemConfig)
   const requestedExpiryDays = String(body.expiryDays || config.defaultShareDays)
   const maxShareDays = config.maxShareDays
-  if (requestedExpiryDays === '0' && !accountEffectivePlanForUser(user || {}).permanent) {
+  if (requestedExpiryDays === '0' && !isTeamResource && !accountEffectivePlanForUser(user || {}).permanent) {
     throw httpError(403, '永久保存需要会员版或更高权益')
   }
   return {
@@ -4817,6 +4886,7 @@ function readShareOptions(body = {}, user = null) {
     password: String(body.password || ''),
     codeLength: Number(body.codeLength || 6),
     recipients: parseRecipients(body.recipients),
+    teamResource: Boolean(isTeamResource),
   }
 }
 
