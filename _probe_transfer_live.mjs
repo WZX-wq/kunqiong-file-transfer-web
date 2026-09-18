@@ -1,4 +1,4 @@
-// 线上验收：最新 release、手册与页脚链接、转让/解散接口已部署
+// 线上验收：最新 release、手册与页脚链接、转让/解散接口、消息中心修复已部署
 const BASE = 'http://43.154.197.96:8045'
 const results = []
 const check = (name, pass, detail = '') => { results.push({ name, pass }); console.log(`${pass ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`) }
@@ -6,7 +6,7 @@ const check = (name, pass, detail = '') => { results.push({ name, pass }); conso
 const r0 = await fetch(`${BASE}/api/health`)
 const h = await r0.json()
 check('线上 /api/health 可达', r0.ok, JSON.stringify(h).slice(0, 120))
-check('release = 35f232b（转让/解散版本）', String(h.release || '').startsWith('35f232b'), h.release)
+check('release = 4be64cb（消息中心修复版本）', String(h.release || '').startsWith('4be64cb'), h.release)
 
 const m = await fetch(`${BASE}/user-manual.html`)
 check('线上 /user-manual.html 200', m.status === 200, `status=${m.status} len=${(await m.arrayBuffer()).byteLength}`)
@@ -22,6 +22,7 @@ if (jsMatch) {
   check('bundle 含转让接口调用', bundle.includes('/api/account/workspace/transfer-ownership'))
   check('bundle 含解散接口调用', bundle.includes('/api/account/workspace/dissolve'))
   check('bundle 含解散危险区样式类', bundle.includes('team-danger-zone'))
+  check('bundle 含消息展开交互（点击展开）', bundle.includes('点击展开'), '长消息截断修复已上线')
 }
 
 // 未登录访问新接口 → 401 说明路由已部署且鉴权正常
