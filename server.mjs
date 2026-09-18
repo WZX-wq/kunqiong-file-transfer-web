@@ -80,8 +80,16 @@ const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
 const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
 // 运营后台账号密码登录。优先读环境变量，未配置时回落到内置默认账号，保证后台开箱可用。
+//
+// ⚠️ 后台**只认这组账号口令**（cookie kunqiong_admin_session）。
+// KUNQIONG_ADMIN_USER_IDS 白名单已不再构成后台入口，仅用于维护模式豁免。
+// 注意：空字符串是 falsy，会静默回落到下面的默认值 —— 部署时若 secret 没配好，
+// 表现就是「用默认口令仍能登录」，所以这里显式打一条告警，别让配置问题沉默。
 const ADMIN_ACCOUNT_USERNAME = String(process.env.KUNQIONG_ADMIN_USERNAME || 'ljxkjadmin').trim()
 const ADMIN_ACCOUNT_PASSWORD = String(process.env.KUNQIONG_ADMIN_PASSWORD || 'jxljxkj009900')
+if (!process.env.KUNQIONG_ADMIN_USERNAME || !process.env.KUNQIONG_ADMIN_PASSWORD) {
+  console.warn('[admin] KUNQIONG_ADMIN_USERNAME/PASSWORD 未配置，后台正在使用内置默认口令，请尽快在部署环境配置 secret。')
+}
 const ADMIN_COOKIE_NAME = 'kunqiong_admin_session'
 const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000
 const ADMIN_LOGIN_MAX_ATTEMPTS = 8
@@ -1185,16 +1193,11 @@ app.post('/api/admin/logout', (req, res) => {
 })
 
 app.get('/api/admin/session', (req, res) => {
+  // 后台只认账号口令会话。此前这里允许 KUNQIONG_ADMIN_USER_IDS 白名单里的
+  // 鲲穹账号直接通过（mode:'kunqiong'），后果是那个账号一登录就绕过密码弹窗，
+  // 表现为「部分账号还能直接进后台」。白名单通道已彻底移除。
   const adminSession = adminSessionFromRequest(req)
   if (adminSession) return res.json({ authenticated: true, admin: adminSessionDescriptor(adminSession), mode: 'credential' })
-  const session = authSessionFromRequest(req)
-  if (session && isAdminUser(session.user)) {
-    return res.json({
-      authenticated: true,
-      mode: 'kunqiong',
-      admin: { username: displayAccountName(session.user), userId: session.user.id, expiresAt: new Date(session.expiresAt).toISOString() },
-    })
-  }
   res.json({ authenticated: false, admin: null })
 })
 
@@ -2347,21 +2350,23 @@ function safeEqualString(a, b) {
 }
 
 // 返回 { session } 表示通过管理员口令校验；返回 null 时已写出错误响应。
+//
+// 后台**只认管理员账号口令**（cookie kunqiong_admin_session）。
+// 鲲穹账号通道（KUNQIONG_ADMIN_USER_IDS 白名单）已移除：它让白名单账号
+// 无需密码即可进入后台，是权限绕过。注意 isAdminUser 仍保留，
+// 它只用于维护模式等服务端豁免，不再参与后台鉴权。
 function requireAdminSession(req, res) {
   const adminSession = adminSessionFromRequest(req)
   if (adminSession) return { type: 'credential', session: adminSession, user: { id: `admin:${adminSession.username}`, name: adminSession.username } }
-  const session = authSessionFromRequest(req)
-  if (session && isAdminUser(session.user)) return { type: 'kunqiong', session, user: session.user }
-  if (session) {
-    res.status(403).json({ message: '当前账号没有后台管理权限，请使用管理员口令登录' })
-    return null
-  }
-  res.status(401).json({ message: '请先登录管理员账号' })
+  res.status(401).json({ message: '请先使用管理员账号密码登录后台' })
   return null
 }
 
 function assertServiceWritable(req) {
   if (!normalizeSystemConfig(metadata.systemConfig).maintenanceMode) return
+  // 维护模式豁免：管理员口令会话（后台登录后的同一个浏览器）与白名单鲲穹账号都放行。
+  // 只认白名单会导致「管理员从后台登录后反而不能传文件」——口令会话必须一并豁免。
+  if (adminSessionFromRequest(req)) return
   if (isAdminUser(authSessionFromRequest(req)?.user)) return
   throw httpError(503, '系统维护中，暂时不能创建或提交文件')
 }
@@ -3157,7 +3162,8 @@ function publicAccountUser(user = {}) {
     capacity: accountUsageForUser(stored.id),
     benefits: accountBenefitsForUser(stored),
     plan: accountEffectivePlanForUser(stored),
-    isAdmin: isAdminUser(stored),
+    // 不再下发 isAdmin：后台入口由账号口令控制，不由鲲穹账号身份决定。
+    // 前端顶栏据此不再给白名单账号显示「后台管理」按钮，避免误导。
     organization: publicOrganization(accountOrganizationForUser(stored.id), stored.id),
     notificationSettings: accountNotificationSettingsForUser(stored.id),
   }

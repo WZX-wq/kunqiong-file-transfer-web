@@ -1068,7 +1068,8 @@ function WorkspaceApp() {
             </button>
           ) : null}
           <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); setMessageOpen((current) => !current) }} onClose={() => setMessageOpen(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} />
-          {authUser?.isAdmin && <button className="merchant-button" onClick={() => { window.location.href = '/admin' }}><ShieldCheck size={15} /> 后台管理</button>}
+          {/* 后台入口不再按账号身份显示（白名单通道已移除，后台只认账号口令）。
+              需要直接进后台时访问 /admin，未登录会弹出管理员账号密码弹窗。 */}
           <button className="merchant-button" onClick={() => { window.location.href = '/workspace' }}><Sparkles size={15} /> 会员与企业版</button>
           <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
           <button className="mobile-menu" aria-label="打开菜单"><Menu size={20} /></button>
@@ -4582,8 +4583,10 @@ function AdminPage() {
       setError(err.message || '清理失败')
     }
   }
-  if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开后台</h1><p>正在检查管理员权限。</p></div></PublicShell>
-  if (!authenticated) return <AdminLoginModal onSubmit={submitLogin} busy={loginBusy} error={loginError} onBackHome={() => { window.location.href = '/' }} />
+  if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开后台</h1><p>正在检查管理员登录状态。</p></div></PublicShell>
+  // 后台一律先过口令登录。此前这里会因鲲穹白名单账号已登录而直接放行，
+  // 表现为「部分账号能直接进后台」—— 白名单通道已移除，访问 /admin 恒定弹登录框。
+  if (!authenticated) return <PublicShell><AdminLoginModal onSubmit={submitLogin} busy={loginBusy} error={loginError} onBackHome={() => { window.location.href = '/' }} /></PublicShell>
   if (error && !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p><button className="primary-button" onClick={load}><RefreshCw size={16} /> 重新加载</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button><a className="secondary-button" href="/">返回首页</a></div></PublicShell>
   if (!data) return null
   const stats = data.stats || {}
