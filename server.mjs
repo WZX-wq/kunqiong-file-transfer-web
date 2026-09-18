@@ -327,24 +327,39 @@ app.patch('/api/auth/profile', (req, res) => {
   const hasAvatar = Object.prototype.hasOwnProperty.call(body, 'avatar')
   if (!hasNickname && !hasAvatar) return res.status(400).json({ message: '没有可保存的资料' })
 
+  // ⚠️ session.user 是**快照**，可能已经落后于用户表（例如这次登录后另一台设备刚改过头像）。
+  // 用快照整体覆盖 upsertAccountUser 会把过期的 avatar / avatarSource 一并写回，
+  // 造成"保存昵称顺手把头像改没了"或"恢复登录头像不生效"。
+  // 因此这里始终以**用户表**为准来做合并。
+  const stored = accountUserById(session.user.id) || {}
+  const patch = { ...stored }
+
   if (hasNickname) {
     const nickname = String(body.nickname || '').trim()
     if (!nickname) return res.status(400).json({ message: '昵称不能为空' })
     if (nickname.length > 40) return res.status(400).json({ message: '昵称最多 40 个字符' })
-    session.user = { ...session.user, nickname }
+    patch.nickname = nickname
   }
   if (hasAvatar) {
     const avatar = body.avatar === null ? null : String(body.avatar || '')
     if (avatar && (!/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(avatar) || Buffer.byteLength(avatar, 'utf8') > 600000)) {
       return res.status(400).json({ message: '头像格式不支持或图片过大，请上传 2 MB 以内的图片' })
     }
-    session.user = {
-      ...session.user,
-      avatar: avatar || session.user.providerAvatar || null,
-      avatarSource: avatar ? 'custom' : '',
+    // 显式写入 avatar 与 avatarSource，mergeAccountUser 才会认为"用户表了态"：
+    // avatar 有值 → custom；avatar 为 null → 恢复登录头像（回落 provider）。
+    const providerAvatar = stored.providerAvatar || session.user.providerAvatar || null
+    patch.avatar = avatar || providerAvatar || null
+    if (avatar) {
+      patch.avatarSource = 'custom'
+    } else {
+      // 「恢复登录头像」：必须显式清空 avatarSource，并带上一个可识别的标记，
+      // 否则 mergeAccountUser 会把这次操作误判成"没有表态的旧快照"而保留 custom。
+      patch.avatarSource = ''
+      patch.avatarRestoreRequested = true
     }
   }
-  const user = upsertAccountUser(session.user)
+
+  const user = upsertAccountUser(patch)
   syncAccountUserSessions(user)
   // 改名/换头像后同步团队 roster，否则团队空间会一直显示入团时的旧快照。
   syncOrganizationMemberProfile(user)
@@ -479,10 +494,12 @@ app.post('/api/account/bind', (req, res) => {
     if ((existingUser && existingUser.id !== session.user.id) || boundByAnotherAccount) {
       return res.status(409).json({ message: target.type === 'email' ? '该邮箱已绑定其他账号' : '该手机号已绑定其他账号' })
     }
+    // 同样以用户表为准：绑定手机/邮箱不应把 session 快照里可能过期的头像写回去。
+    const stored = accountUserById(session.user.id) || session.user
     const user = upsertAccountUser({
-      ...session.user,
+      ...stored,
       [target.type]: target.value,
-      loginMethods: mergeLoginMethods(session.user.loginMethods, [boundMethodForTargetType(target.type)]),
+      loginMethods: mergeLoginMethods(stored.loginMethods, [boundMethodForTargetType(target.type)]),
     })
     syncAccountUserSessions(user)
     persistMetadata()
@@ -3259,13 +3276,14 @@ function normalizeAccountUserStore(value = {}, sessions = []) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     for (const user of Object.values(value)) {
       const normalized = normalizeAccountUser(user)
-      if (normalized?.id) store[normalized.id] = mergeAccountUser(store[normalized.id], normalized)
+      if (normalized?.id) store[normalized.id] = mergeAccountUser(store[normalized.id], user)
     }
   }
   for (const session of sessions) {
     const normalized = normalizeAccountUser(session.user)
     if (!normalized?.id) continue
-    store[normalized.id] = mergeAccountUser(store[normalized.id], normalized)
+    // 传原始快照（而非归一化结果），保留 mergeAccountUser 需要的意图标记。
+    store[normalized.id] = mergeAccountUser(store[normalized.id], session.user)
     session.user = publicUser(store[normalized.id])
   }
   return store
@@ -3312,52 +3330,70 @@ function normalizeAccountUser(user = {}) {
 }
 
 function mergeAccountUser(existing = null, incoming = {}) {
-  if (!existing) return normalizeAccountUser(incoming)
+  // 即便还没有既有记录，也要走完整合并流程：否则「首次保存 = 恢复登录头像」
+  // 这类只靠 avatarRestoreRequested 表达意图的调用会被 normalizeAccountUser 直接吞掉标记。
   const normalized = normalizeAccountUser(incoming)
-  if (!normalized) return existing
-  const avatarSourceExplicit = Object.prototype.hasOwnProperty.call(incoming, 'avatarSource')
-  const nextProviderAvatar = normalized.providerAvatar || (!normalized.avatarSource && normalized.avatar) || existing.providerAvatar || null
+  if (!normalized) return existing || null
+  const base = existing || normalized
+  // 自定义头像一旦保存，就是用户的明确意愿，属于"粘性"字段：
+  // 只有「用户主动恢复登录头像」或「重新上传」才允许变更。
+  // 此前逻辑用 `avatarSourceExplicit`（incoming 是否带该键）判断"用户是否表态"，
+  // 但 OAuth 登录快照、会话快照、后台改库都会带一个显式 avatarSource:''，
+  // 于是每次重启归一化 / 重新登录都会把已保存的自定义头像抹成 provider 头像 —— 即"头像丢"。
+  // 注意：不能简单用"avatar 为 null"判断恢复，因为恢复时 avatar 会被填成 provider 地址。
+  // 因此由调用方通过 avatarRestoreRequested 显式标记"用户就是要恢复登录头像"。
+  const restoreRequested = incoming.avatarRestoreRequested === true
+  const nextProviderAvatar = normalized.providerAvatar || (!normalized.avatarSource && normalized.avatar) || base.providerAvatar || null
   const nextAvatarSource = normalized.avatarSource === 'custom'
     ? 'custom'
-    : avatarSourceExplicit
-      ? ''
-      : existing.avatarSource || ''
+    : base.avatarSource === 'custom' && !restoreRequested
+      ? 'custom'
+      : ''
   const nextAvatar = nextAvatarSource === 'custom'
     ? normalized.avatarSource === 'custom'
-      ? normalized.avatar || existing.avatar || null
-      : existing.avatar || null
-    : nextProviderAvatar
-  return {
-    ...existing,
+      ? normalized.avatar || base.avatar || null
+      : base.avatar || null
+    : restoreRequested
+      ? (base.providerAvatar || nextProviderAvatar || null)
+      : nextProviderAvatar
+  const merged = {
+    ...base,
     ...normalized,
-    nickname: normalized.nickname || existing.nickname,
-    email: normalized.email || existing.email,
-    phone: normalized.phone || existing.phone,
+    nickname: normalized.nickname || base.nickname,
+    email: normalized.email || base.email,
+    phone: normalized.phone || base.phone,
     avatar: nextAvatar,
     avatarSource: nextAvatarSource,
     providerAvatar: nextProviderAvatar,
-    provider: normalized.provider || existing.provider,
-    loginMethods: mergeLoginMethods(existing.loginMethods, normalized.loginMethods),
+    provider: normalized.provider || base.provider,
+    loginMethods: mergeLoginMethods(base.loginMethods, normalized.loginMethods),
     // Do not let a stale upstream free record downgrade a locally confirmed paid plan.
-    planId: existing.planId && existing.planId !== 'free' && normalized.planId === 'free'
-      ? existing.planId
-      : normalized.planId || existing.planId || 'free',
-    planStartedAt: normalized.planStartedAt || existing.planStartedAt || null,
-    planExpiresAt: normalized.planExpiresAt || existing.planExpiresAt || null,
-    organizationId: normalized.organizationId || existing.organizationId,
-    organizationRole: normalized.organizationRole || existing.organizationRole,
-    status: existing.status === 'disabled' ? 'disabled' : normalized.status || existing.status || 'active',
-    fileCleanup: normalized.fileCleanup || existing.fileCleanup || DEFAULT_FILE_CLEANUP_SETTINGS,
-    createdAt: existing.createdAt || normalized.createdAt,
+    planId: base.planId && base.planId !== 'free' && normalized.planId === 'free'
+      ? base.planId
+      : normalized.planId || base.planId || 'free',
+    planStartedAt: normalized.planStartedAt || base.planStartedAt || null,
+    planExpiresAt: normalized.planExpiresAt || base.planExpiresAt || null,
+    organizationId: normalized.organizationId || base.organizationId,
+    organizationRole: normalized.organizationRole || base.organizationRole,
+    status: base.status === 'disabled' ? 'disabled' : normalized.status || base.status || 'active',
+    fileCleanup: normalized.fileCleanup || base.fileCleanup || DEFAULT_FILE_CLEANUP_SETTINGS,
+    createdAt: base.createdAt || normalized.createdAt,
     updatedAt: new Date().toISOString(),
   }
+  // 意图标记只在合并过程中有意义，绝不能落库/下发。
+  delete merged.avatarRestoreRequested
+  return merged
 }
 
 function upsertAccountUser(user = {}) {
+  // ⚠️ 必须把**原始** user 交给 mergeAccountUser（而不是先 normalizeAccountUser 的结果）：
+  // mergeAccountUser 需要读取 avatarRestoreRequested 这类"意图标记"来决定合并方向，
+  // 而 normalizeAccountUser 只输出持久化字段，会把标记吞掉。
+  // 之前这里先归一化再合并，导致「恢复登录头像」等显式操作无法生效。
   const normalized = normalizeAccountUser(user)
   if (!normalized?.id) return publicUser(user)
   if (!metadata.users || typeof metadata.users !== 'object' || Array.isArray(metadata.users)) metadata.users = {}
-  metadata.users[normalized.id] = mergeAccountUser(metadata.users[normalized.id], normalized)
+  metadata.users[normalized.id] = mergeAccountUser(metadata.users[normalized.id], user)
   return metadata.users[normalized.id]
 }
 

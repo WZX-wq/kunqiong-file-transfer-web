@@ -26,6 +26,14 @@ _requirements_render/
 _docx_extract*/
 登录/
 
+# 回归汇总与本地产物（验证脚本本身入库，报告不入库）
+_regression.txt
+_avatar_probe.txt
+_avatar_restart.txt
+_avatar_e2e.txt
+_avatar_e2e_trace.txt
+*.tmp
+
 .env
 .env.*
 !.env.example
