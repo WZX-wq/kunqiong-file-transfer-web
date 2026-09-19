@@ -5190,6 +5190,8 @@ function writeRecords(records) {
   } catch (error) {
     console.warn('本地记录保存失败（存储不可用）', error)
   }
+  // 调用方（saveLocalRecord 等）依赖返回值更新 state，必须返回写入后的数组。
+  return next
 }
 
 function saveLocalRecord(record, currentRecords) {
