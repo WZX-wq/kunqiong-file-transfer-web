@@ -17,9 +17,12 @@ const expectRelease = (() => {
   const read = (ref) => {
     try { return execFileSync('git', ['rev-parse', ref], { encoding: 'utf8' }).trim() } catch { return '' }
   }
-  let sha = read('origin/main')
+  // 本机坑：沙箱环境下 git 对 refs/remotes/* 的写入（fetch/update-ref）可能静默丢失，
+  // origin/main 跟踪引用可能停留在旧值 —— 所以优先读本地 main（本脚本跑在开发仓库，
+  // 本地 main 就是事实源），origin/main 仅作兜底。
+  let sha = read('main') || read('origin/main')
   if (!sha) {
-    try { execFileSync('git', ['fetch', 'origin', 'main', '-q'], { stdio: 'ignore' }) } catch {}
+    try { execFileSync('git', ['fetch', 'origin', '-q'], { stdio: 'ignore' }) } catch {}
     sha = read('origin/main') || read('FETCH_HEAD')
   }
   return sha
