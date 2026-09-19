@@ -44,6 +44,9 @@ _transfer_ui_trace.txt
 
 # 用户手册：截图素材与构建脚本入库（可复现），预览抽查产物不入库
 _manual_preview/
+
+# UI 打磨轮：真浏览器效果截图属验证产物，不入库
+_ui_before_after/
 # 消息中心修复轮：诊断/截图/运行产物（验证脚本 _verify_message_expand.mjs 入库）
 _diag_*.mjs
 _msgdiag_*.png

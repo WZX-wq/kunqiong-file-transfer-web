@@ -1,6 +1,7 @@
 # 鲲穹文件传输 Web — 项目记忆
 
-> 本文件是**精炼索引**：只记「不变量 / 约定 / 坑」。细节与当日过程见同目录 `YYYY-MM-DD.md`。
+> **精炼索引**：只记「不变量 / 约定 / 坑」。当日过程见同目录 `YYYY-MM-DD.md`；
+> 验证脚本清单、本机环境约束、测试排查纪律见 **`TESTING.md`**。
 
 ## 1. 项目概览
 企业级文件传输/收集 Web 应用（kunqiong-transfer-demo v0.1.0），对接鲲穹统一登录。
@@ -51,7 +52,7 @@
   否则基础版成员在团队里就能开个人永久分享
 - 对照：团队资源不计入个人用量(`accountUsageForUser` 已滤 `teamResource`)；容量走 `accountTeamUsageForOrganization`(所有者 `teamSpaceBytes`)
 - 前端 `/team` 上传按钮门控只看「是否 active 成员」，与个人套餐无关(本就正确)
-- 回归 `_verify_team_upload.mjs`(23) + `_verify_team_upload_ui.mjs`(14，真实 Chrome) + `_verify_team_upload_live.mjs`(6，线上)
+- 回归 `_verify_team_upload.mjs`(23) + `_verify_team_upload_ui.mjs`(14) + `_verify_team_upload_live.mjs`(6)
 
 ### 3.2 `avatar` 是「粘性」字段
 - 三字段 `avatar`(当前展示)、`avatarSource`(`'custom'`=自传/`''`=provider)、`providerAvatar`(上游 OAuth，独立保存)
@@ -94,7 +95,7 @@
 - ⚠️ `normalizeRecordSubmissions` 必须保留这两字段，否则记录同步会丢
 - ⚠️ 提交页登录态**隐藏手填框**(`.collection-identity`)、显示账号身份卡；未登录保留手填 + 「登录后提交」入口。管理端按 `submission.submitter` 渲染「账号提交/匿名提交」徽标(`.submission-account-badge`/`.submission-anon-badge`)
 - ⚠️ `/api/collections/manage/:manageToken` **是 bearer 凭证，不校验登录身份**，非所有者 200 是**预期行为**，别写成 403 断言
-- 回归 `_verify_collect_login.mjs`(43) + `_verify_collect_login_ui.mjs`(14，真实 Chrome)
+- 回归 `_verify_collect_login.mjs`(43) + `_verify_collect_login_ui.mjs`(14)
 
 ### 3.8 团队邀请链接
 - 形态 `/e/<slug>/share/`(**不带 token**)，入口：`/workspace` 团队卡片(`.workspace-invite-link`)、`/team` 顶部(`.team-invite-link-card`，仅 canManage)；都带复制按钮
@@ -128,138 +129,58 @@
   排查「预览不好使」时先 curl 该接口，200 就说明是纯前端判断问题。
 - ⚠️ `.ghost-icon:disabled` 是 `cursor: wait` —— **「不适用」必须另加 `.icon-inapplicable`**
   把光标改成 `not-allowed`。用 `wait` 表达「不可用」会被用户读成「一直在转圈加载」。
-- 回归 `_verify_team_preview.mjs`(16，沙箱+真实 Chrome) + `_verify_team_preview_live.mjs`(21，线上真实数据)
+- 回归 `_verify_team_preview.mjs`(16) + `_verify_team_preview_live.mjs`(21，线上真实数据)
+
+### 3.12 文字对比度与图标（UI 约定）
+- **所有前景色必须对「自身背景」** ≥ 4.5:1(白底正文)；低于 4.5 一律按 **HSV 只降 V、保住 H/S** 修，
+  取值满足双阈值 `cr(c,bg)>=4.55 && cr(c,'#fff')>=4.3`。
+  ⚠️ 只对彩底(`#e6f4ef` 这类淡彩)达标会一路压到纯黑 —— 同一色值复用在不同底色上，必须双阈值。
+- `--muted` = `#567570`(5.03:1)；文本层级底线是 `#5f7873`(≈5.0)，**不要再更浅**。
+- 图标统一 **lucide-react**，尺寸 13~17，按钮内由 `inline-flex + gap` 自动居中；
+  无 flex 的按钮(`.page-footer button`/`.message-mark-all`)记得补 `inline-flex`，否则图标与文字不齐。
+- 套餐分层图标 `ACCOUNT_PLAN_ICON = {free:HardDrive, member:Sparkles, team:Users, enterprise:Crown}`
+  + `accountPlanIcon(id)`，用于 `.plan-title-line`(权益对比条) 与 `.upgrade-plan-icon`(升级弹层)。
+- `/records` 的视图切换页签**刻意不带图标**(文字+计数徽标)，不是遗漏。
+- 追加式微调统一放 `styles.css` 末尾「设计增强层」，避免改动既有规则。
 
 ## 4. metadata 内部字段名（易踩错）
 - 用户表：`metadata.users`（对象 map，key=userId）—— **不是** `accountUsers`
 - 消息：`metadata.messages[userId] = [...]`；会话：`metadata.sessions`，形状 `{id, user, expiresAt}`
 - 组织：`metadata.organizations`；审计：`metadata.auditLogs`
+- ⚠️ 种子数据的形状必须照抄真实结构（上面三个都是**以 id 为键的对象**而非数组）；种子 `sessions[].user`
+  必须带**完整**用户快照(nickname/email/avatar)，只写 `{id}` 会让 `displayAccountName` 回落「鲲穹用户」
 
 ## 5. 开发 / 部署
 - dev：`npm run dev`（server 8045 + vite 4173）；prod：`npm run build && npm start`，同源 8045，server 托管 `dist/`；有 Dockerfile
 - **双远端**：`origin` = Gitee `zhanlinhai/kunqiong-file-transfer-web`；
   `gitea` = `http://43.154.197.96/giteaadmin/kunqiong-file-transfer-web.git`。**两个都要推。**
 - CI：Gitea Actions（`.gitea/workflows/deploy-test.yml`），push main 自动部署测试服 `43.154.197.96:8045`。
-  ⚠️ 触发有延迟/可能排队（20 秒 ~ 20+ 分钟，取决于 runner 空闲度）。
+  ⚠️ 触发有延迟/可能排队（20 秒 ~ 20+ 分钟）。CI 日志无需登录可读：
+  `/giteaadmin/<repo>/actions/runs/<id>/jobs/0/logs`（页面按 `<div class="flex-item tw-items-center">` 切块解析）
 - **验证部署的正确方法**：比对 `/api/health` 的 `release` 与**仓库 main**。
-  ⚠️ 但 release 只反映 commit，**不反映运行时代码是否变化**：
-  仅测试脚本/文档变动的提交，`server.mjs`+`src/` 未变 → Vite 产物哈希不变 → 容器无需重建，
-  此时「对外 release 落后于 main」是**正常现象**。判断部署是否真生效应比对
-  `git diff --name-only <线上release> <main>` 是否触及 `server.mjs` / `src/` / `index.html` / `package.json`。
-- CI 日志无需登录可读：`/giteaadmin/<repo>/actions/runs/<id>/jobs/0/logs`；
-  运行列表页面按 `<div class="flex-item tw-items-center">` 切块解析（`title=` / `data-tooltip-content=` / `commit/<sha>`）。
+  ⚠️ 但 release 只反映 commit，**不反映运行时代码是否变化**：仅测试脚本/文档变动的提交，
+  `server.mjs`+`src/` 未变 → Vite 产物哈希不变 → 容器无需重建，此时「对外 release 落后于 main」是**正常现象**。
+  判断是否真生效应比对 `git diff --name-only <线上release> <main>` 是否触及 `server.mjs`/`src/`/`index.html`/`package.json`
 - 部署脚本：测试机 8045 由 compose 管理的容器持有端口绑定，**不能对同名容器一律 `docker rm -f`**
   （会 CI 绿但线上旧）；按 compose 项目归属分流。脚本已内置部署后 release 校验。
 - 测试服权益收敛：`KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST=true` 时仅
-  `KUNQIONG_TEST_ENTERPRISE_USER_KEYS`（`wx_Ba7AZPo6U9`）保留企业版，其余强制回落 free。
+  `KUNQIONG_TEST_ENTERPRISE_USER_KEYS`（`wx_Ba7AZPo6U9`）保留企业版，其余强制回落 free
 - Windows 一键启动：`start.bat` / `start.ps1` / `start.vbs`
 
-## 6. 验证脚本（根目录 `_verify_*.mjs` / `_probe_*.mjs`，一键 `node _run_regression.mjs` → `_regression.txt`）
-| 脚本 | 覆盖 | 输出 | 项 |
-格式：`脚本 (项数) → 输出文件`；标 🌐 者依赖真实 Chrome，标 ☁ 者打线上。
+## 6. 本机演示环境（做截图 / 手册 / 走查时用）
+- 隔离起服务：`KUNQIONG_DB_ENABLED=false`(否则连远程 MySQL 覆盖本地)；
+  且 `KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST=false`(**test 模式默认 true，会把所有非白名单用户压成 free**)
+- Bash `VAR=x node server.mjs &` **不传 env** → 写 `xxx.mjs` 先 `process.env.PORT='8045'` 再 `await import(pathToFileURL('server.mjs'))`
+- 拿真实会话：`POST /api/admin/impersonate`(仅 `NODE_ENV=test` 存在) → 用 Node fetch + `headers.getSetCookie()`
+  （curl `-c` cookie-jar 曾 exit 23 写坏 cookie）
+- 演示数据脚本：`_seed_manual_demo.mjs`（3 用户/1 团队/10 分享/5 收集/记录），文件由
+  `kq项目/使用手册/_build/make_transfer_demo_files.py` 生成；跑完**务必备份并还原** `storage/metadata.json`(`.manualbak`)
+- 手册生成链：`kq项目/使用手册/_build/` → `kit.py`(Word 库) + `figs.py`/`figs_transfer.py`(PIL 示意图) + `gen07_transfer.py`(正文)
 
-- `_verify_flow.mjs`(48)→`_flow.log` 真实 HTTP 端到端，完整入团链路
-- `_verify_nickname.mjs`(19)→`_nick.log` roster 昵称/联系方式同步
-- `_verify_link.mjs`(23)→`_link.log` 邀请链接静态契约 + jsdom
-- `_verify_layout.mjs`(39)→`_layout.log` CSS 契约 + breakpoint 配平 + jsdom
-- `_verify_layout_real.mjs`(46) 🌐 真实 Chrome 布局测量
-- `_verify_served.mjs`(21)→`_served.log` 直接执行 dist 产物做 DOM 断言
-- `_verify_invite.mjs`(38)→`_invite.log` 邀请链接路由(产物子进程渲染) + 入团接口
-- `_verify_invite_browser.mjs`(12) 🌐 邀请落地页双视口截图
-- `_verify_admin_auth.mjs`(27)→`_admin.log` **后台鉴权绕过回归**(沙箱内故意配白名单)
-- `_verify_admin_ui.mjs`(17) 🌐 /admin 弹窗居中
-- `_verify_admin_live.mjs`(12) 🌐☁ 线上验收 /admin
-- `_probe_live_admin.mjs`(18)→`_admin_live_api.txt` ☁ 线上接口鉴权实测
-- `_verify_admin_audit.mjs`(24)→`_admin_audit.log` 删除/自禁用/限流绕过
-- `_verify_plan_isolation.mjs`(33)→`_plan.log` **个人套餐 vs 团队权益**分离
-- `_verify_member_ui.mjs`(9) 🌐 基础版成员工作台
-- `_verify_avatar.mjs`(14)→`_avatar_probe.txt` 头像保存→落盘→重登
-- `_verify_avatar_restart.mjs`(17) 抽取真实函数验重启归一化 7 场景
-- `_verify_avatar_e2e.mjs`(15) 真实 server 三度重启 + 模拟 OAuth 重登
-- `_probe_avatar_live.mjs`(12)→`_avatar_live.txt` ☁ 线上头像验收
-- `_verify_fixes.mjs`(50)→`_fixes.txt` 五项 UI 契约 + 退出团队全链路
-- `_verify_atomic_store.mjs`(12) metadata 落盘原子性(40 写 + 400 并发读)
-- `_verify_visual_fixes.mjs`(27)→`_visual.txt` 🌐 复核五项 UI
-- `_verify_collect_login.mjs`(43)→`_collect_login.txt` 收集提交登录态
-- `_verify_collect_login_ui.mjs`(14) 🌐 收集提交页两种身份态 + 窄屏
-- `_verify_team_upload.mjs`(23)→`_team_upload.txt` 团队资源上传权限 + 反向对照
-- `_verify_team_upload_ui.mjs`(14) 🌐 基础版成员 /team 完整上传链路
-- `_verify_team_upload_live.mjs`(6)→`_probe_team_live.txt` ☁ 团队上传权限 + release 一致性
-- `_verify_team_preview.mjs`(16)→`_team_preview_fix.txt` 🌐 团队资源多文件预览（沙箱+真实 Chrome 全链路）
-- `_verify_team_preview_live.mjs`(21)→`_team_preview_live.txt` 🌐☁ **线上真实数据验收**（签发真实会话→真实团队资源→真实 Chrome）
-- `_verify_impersonate.mjs`(7)→`_impersonate_smoke.txt` ☁验收会话端点三重安全约束
-- `_repro_team_preview.mjs`(13) / `_repro_team_preview_ui.mjs`(10) 修复前复现（保留作对照）
-
-## 7. 环境与工具约束（本机 Windows）
-- **Bash 工具不可用**：缺 `ls`/`cat`/`head`/`sleep`/`cut`/`grep`/`tail`(bash 路由到被禁用的 WSL) → 用**绝对路径 Node** + `node -e` 或临时 `.mjs`；语法校验用 `PortableGit\...\bash.exe -n`
-- ⚠️ `node -e "..."` 里**别用反引号**(Bash 先做命令替换 → SyntaxError)；复杂脚本写成临时 `.mjs`
-- **PowerShell 工具 stdout 会被吞** → 重定向到文件后用 Read 读
-- **Bash `rm -f` 可能静默失败**(safe-bin shim 报 `dirname: command not found` 后不删) → 用 **PowerShell `Remove-Item -Force`** 或 Node `fs.unlinkSync`，再用 `git status` 复核
-- **Bash 下 node 脚本 exit code 不可信**：包装器自身返回 127(shim 缺 `dirname`)，与脚本真实退出码无关 → 判成功看**脚本自己写的日志文件**或 `echo NODE_EXIT=$?`。同理 `ls`/`tail` 等返回 127 时别当成「文件不存在」
-- **脚本内 spawn exit 127 且零输出**(沙箱限制)。测服务端要**同进程内**：拷 `server.mjs` 到临时沙箱 + node_modules junction + **先写 `storage/metadata.json` 快照再 import**(server 启动即加载)，`await import(pathToFileURL(沙箱/server.mjs).href)` 起 Express 再 fetch。Windows 绝对路径必须 `pathToFileURL()`。快照 `sessions[].user` 要带完整 nickname/email，只写 `{id}` 会让 `displayAccountName` 回落「鲲穹用户」造成假阳性
-- 例外：需**真实 HTTP 到独立端口**(如真实浏览器套件)时用 `spawn` 并在其 `cwd` 内跑，但**必须消费 stdout/stderr**(见 §8 死锁)
-- **`fs.cpSync(目录,目录,{recursive:true})` 会静默杀掉整个 node 进程**(exit 127、零输出) → 自写 `copyTree` 递归 `copyFileSync`，或优先 `fs.symlinkSync(真实 node_modules, 沙箱/node_modules, 'junction')`
-- **`server.mjs` 不导出 app**(`Object.keys(mod)` 为空)，靠 side effect 自行 listen。验证脚本**不要**自己 `server.listen()`(抛错静默退出)；应设 `process.env.PORT` → import → 轮询 `/api/health`
-- **测试顺序会互相污染**：消耗配额/改状态的用例(如限流)必须放在校验类用例**之后**
-- **脚本"卡住零输出"先怀疑前面某步耗时过长**：一次 `_verify_avatar_e2e.mjs` 零输出真因是开头 `fs.rmSync(旧沙箱)` 耗时 ~87s 触发工具超时。**定位手段永远是分步 `trace()` 写文件，别靠猜**
-- **从源码抽取函数做单测**：`src.indexOf('function name(')` 只命中声明行(真实签名常跨行) → 先找 `'\nfunction name('`，再 `indexOf(')')` 定位签名末尾，从末尾往后找第一个 `{` 配平。抽出函数依赖几十个自由变量，需补最小桩，桩里用 `let metadataNeedsPersist`(函数会赋值)
-- 隔离测试必须显式 `KUNQIONG_DB_ENABLED=false`(`.env` 默认 `true`，本地会连远程 MySQL 并覆盖本地改动)
-- 探针路由**必须从 server.mjs 核对，别猜**：后台只有 `PATCH /api/admin/users/:userId`，没有 GET 单用户。**404「接口不存在」= 探针写错了，与鉴权无关**
-
-## 8. 测试与排查纪律
-- **断言要描述期望行为，不要描述当时的实现**：曾把「team-card 通栏」写进断言，而它正是 bug 根源，修 bug 时反被自己的测试拦住。产物 minify 后**函数名会被 mangle**，只能断言字符串字面量与 className
-- **jsdom 不做真实布局**：能断言结构，但「结构对 ≠ 视觉对」。「位置/宽度/是否同一行」必须用**真实浏览器**测
-- **CSS `width` 与 `max-width` 是两回事**：`.team-join-card` 写在 `.public-card` 之前且同特异性 → 后者赢，`width: min(570px,100%)` 把卡片硬顶成 570px。只写 `max-width: none` 管不住 width，必须显式 `width: 100%`
-- **负向断言必须精确到特征串**：`!/该团队/.test(html)` 会误命中正常说明句 → 假阳性
-- **兜底文案在「对象不存在」路径上会变成误导**：`state.organizationName || '该团队'` 在团队已删除时变成「加入『该团队』团队空间」且无按钮。**对象不存在的分支要显式渲染「不可用」状态，不要回落默认值**(邀请页已改为 `reason==='unavailable'`)
-- **fetch stub 返回体必须结构完整**：页面读 `data.share.files.length` 就得回 `{share:{files:[...]}}`；stub 注入脚本里别做 `JSON.stringify(JSON.stringify(obj))`(表现为「组件渲染了但状态全空」)
-- **验证脚本的依赖组件必须入库**：`_verify_invite.mjs` 依赖 `_invite_child.mjs`，曾误删导致 18 项 MODULE_NOT_FOUND。**清理临时文件前先确认没有脚本 import 它**
-- **修安全漏洞的验证纪律**：要证明「漏洞已堵」，测试环境必须**保留原本会触发漏洞的配置**；只在默认配置下跑等于什么也没验证
-- **渲染 dist 产物必须放子进程**：产物是 ESM，同进程重复 `import` 命中模块缓存(React 不再挂载)，用 `?v=` 绕缓存又会让 Vite URL 处理崩 → 一个路由一个子进程 `execFileSync(process.execPath, [child.mjs, urlPath, outFile])`，结果写 JSON 回读
-- **「改了没生效」排查顺序**：产物 CSS → 产物 JS → 构建时间 vs 源码时间 → 本地起 server 验返回 hash → **真实浏览器断言几何**。前四步都过而几何仍不对，那就是真 bug(别急着归因缓存)
-- **断言响应结构前先读源码**：管理端 collection 返回 `{collection:{submissions}}` 而非 `{task:{submissions}}`；猜错结构得一堆假 FAIL
-- **写断言前先确认产品意图**：曾想把「非所有者访问 manage 链接应 403」写成断言，但该链路设计就是 **token 即凭证**(非所有者 200 是正确行为)。把「我以为的权限模型」当成期望行为，会写出与产品冲突的测试
-- **改库后内存态不重载**：服务启动即加载 `metadata.json`，脚本手工改库必须**重启服务**才生效
-- **会话快照会覆盖 users 表**：`normalizeAccountUserStore` 用 `metadata.sessions[].user` 合并进用户表，快照的 nickname 覆盖 users。验证「显示名跟随账号」必须走真实接口 `PATCH /api/auth/profile`(会同步快照)，直接改库会被覆盖 → 假失败
-- **种子 session 必须写完整用户快照**(踩过两次)：`_capture_manual_shots.mjs` 只写 `user:{id}`，截图里提交者显示成「鲲穹用户」。**所有写 metadata 种子的地方都要统一检查**
-- **「权限类 Bug」先复现再改，别读代码猜**：团队上传 403 的全部信息就是一句 toast，真因(`readShareOptions` 用个人 `permanent` 校验团队资源)靠**沙箱复现**才锚定；复现脚本第一步就把 403 原样打出来，改完立刻变 201 —— 前后对照即证据
-- **修复要限定在出问题的那条路径**：团队资源放宽 permanent 时，必须同时断言「基础版成员**个人**永久分享仍 403」。放宽一个条件很容易连带放开相邻语义，每个不变量都要有反向对照断言
-- **UI 断言「成功提示」必须轮询等待**：上传完成会触发一次 `load()` 刷新，toast 渲染有延迟；固定 `sleep` 取样会误判失败(真实踩到：后端已落库 + 无报错，仅 toast 未捕获) → 循环 sleep 轮询目标条件，命中即 break
-- **`spawn` 子进程只 pipe 不读 = 死锁**：`stdio:['ignore','pipe','pipe']` 却只监听 `stderr`，子进程 stdout 缓冲写满后阻塞在 write，表现为**脚本卡在「子进程已启动」零输出**。同一脚本先前能跑通只是缓冲还没写满 —— 偶发性陷阱 → **每个 pipe 出来的流都必须消费**
-- **脚本里写死 commit 哈希 = 每轮部署都误报**：`_verify_team_upload_live.mjs` 曾断言 `release.startsWith('603ca9f')`，下次推送即红 → **断言目标要从仓库动态取**(`git rev-parse origin/main`，取不到就 `git fetch` 一次)，并对「差异仅为非运行时代码」放宽(见 §5)
-- **同一端口先后起两个实例 = 后一个静默失败**：曾先后以 `production`/`test` 起同一端口，前进程未释放端口，
-  后进程绑定失败但**旧进程仍应答**，表现为「改了 `NODE_ENV` 判定却没生效」。
-  极易误判成代码问题 → **不同场景用不同端口**，且 `kill` 后**等子进程真正退出**(轮询 `exitCode`/`signalCode`)再起下一个。
-- **种子数据的形状必须照抄真实结构**：`metadata.users`/`records`/`messages` 是**以 userId 为键的对象**而非数组
-  (`accountUserById → metadata.users[key]`)。写成数组 → 端点恒 404，看着像路由没注册。**造种子前先读对应 lookup 函数**
-- **线上断言大文件渲染要轮询，不能固定 sleep 后采一次**：线上团队资源多为 2MB+ 大图，
-  `sleep(2000)` 后读一次 `img.complete` 会偶发 `false` → 误报「预览失败」。
-  改为轮询等待 `img.complete`(上限 ~20s)，断言「最终能渲染」而非「某瞬间加载完了」
-- **线上端到端要拿真实会话，别 mock `/api/auth/me`**：伪造用户不属于任何团队 → 拿不到真实团队资源 →
-  UI 断言只能跳过，「线上是否真修好」无法证明。测试服可用 `POST /api/admin/impersonate` 签发真实会话(见 §9 风险)
-
-### 真实浏览器测试模板（可复用）
-Chrome：`C:\Program Files\Google\Chrome\Application\chrome.exe`。无 puppeteer/playwright，
-用 **CDP over 原生 WebSocket**（Node 22 内置 `WebSocket`）：
-1. `spawn chrome --headless=new --remote-debugging-port=PORT --user-data-dir=<临时> --disable-extensions`，
-   轮询 `GET http://127.0.0.1:PORT/json/version` 直到就绪
-2. 连 **browser 级** ws（`version.webSocketDebuggerUrl`），调 `Target.createTarget {url:'about:blank'}`
-   ⚠️ `/json/list` 初始可能只有 background_page，**必须自己建 target**
-3. 从 `/json/list` 找该 `targetId` 的 `webSocketDebuggerUrl`，连**页面级** ws
-4. `Page.enable` + `Runtime.enable`
-5. **注入登录态**（关键）：`Page.addScriptToEvaluateOnNewDocument` 覆写 `window.fetch`，
-   让 `/api/auth/me` 返回已登录用户、`/api/account/workspace` 返回团队数据，
-   否则 `/workspace` 只渲染「登录后使用团队空间」，量不到目标元素
-6. `Emulation.setDeviceMetricsOverride {width,height,deviceScaleFactor:1}` → `Page.navigate` → 等 ~2s →
-   `Runtime.evaluate` 读 `getBoundingClientRect()` / `getComputedStyle()`
-7. `Page.captureScreenshot {format:'png', captureBeyondViewport:true}` 出 PNG 肉眼复核
-8. 收尾：`chrome.kill()` + 删临时 `--user-data-dir`
-   （`spawn` 时记得消费 stdout/stderr，见 §8 死锁坑）
-
-## 9. 待办 / 风险
+## 7. 待办 / 风险
 - ⚠️ **`.gitea/workflows/deploy-test.yml` 明文硬编码凭据**(第 20 行 `KUNQIONG_OAUTH_CLIENT_SECRET`，另有 `OAUTH_CLIENT_ID`/`ADMIN_USER_IDS`/`TEST_ENTERPRISE_USER_KEYS`)，而该 Gitea 仓库匿名可访问 → **建议迁到 Gitea Secrets**。需用户确认后再动
 - ⚠️ **`POST /api/admin/impersonate` 是测试服专用后门**：仅 `NODE_ENV==='test'` 存在(其余 404)，且必须持管理员口令会话。
-  它能为任意已存在用户签发登录态 —— **生产环境部署时务必确认 `NODE_ENV` 不是 `test`**，否则等于绕开用户密码。
-  回归 `_verify_impersonate.mjs`(7) 逐条覆盖「生产 404 / 未登录 401 / 用户不存在 404 / 缺参 400」。
+  它能为任意已存在用户签发登录态 —— **生产部署务必确认 `NODE_ENV` 不是 `test`**，否则等于绕开用户密码。
+  回归 `_verify_impersonate.mjs`(7) 覆盖「生产 404 / 未登录 401 / 用户不存在 404 / 缺参 400」
 - 短信通知为模拟；SMTP 未配置时邮件通知只留本地记录
 - `_run_regression.mjs` 全套串行跑时并发 Chrome 互相争抢，会导致个别套件超时/假 FAIL(`_verify_member_ui`/`_verify_message_expand`/`_verify_transfer_dissolve`/`_verify_transfer_ui` 曾出现，单独重跑均通过)。看整套结果先单独复跑异常套件再下结论

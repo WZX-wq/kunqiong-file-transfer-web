@@ -64,6 +64,16 @@ import {
   Crown,
   X,
   Zap,
+  Save,
+  HelpCircle,
+  FileWarning,
+  BadgeCheck,
+  MailCheck,
+  UserCheck,
+  UserX,
+  Eraser,
+  ScanLine,
+  Wallet,
 } from 'lucide-react'
 import './styles.css'
 
@@ -1130,7 +1140,7 @@ function WorkspaceApp() {
 
       <footer className="page-footer">
         <span>鲲穹文件传输 · 临时传输，轻装上阵</span>
-        <div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a><button onClick={() => setFooterContentKey('help')}>帮助中心</button><button onClick={() => setFooterContentKey('terms')}>服务协议</button><button onClick={() => setFooterContentKey('privacy')}>隐私政策</button></div>
+        <div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a><button onClick={() => setFooterContentKey('help')}><HelpCircle size={13} /> 帮助中心</button><button onClick={() => setFooterContentKey('terms')}><ShieldCheck size={13} /> 服务协议</button><button onClick={() => setFooterContentKey('privacy')}><LockKeyhole size={13} /> 隐私政策</button></div>
       </footer>
 
       {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} user={authUser} onClose={() => setSettingsOpen(false)} onSave={() => { setSettingsOpen(false); setToast('分享设置已保存') }} />}
@@ -1314,7 +1324,7 @@ function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }) {
         {result.enterpriseUrl && <div className="share-link enterprise-link"><Building2 size={15} /><span>{result.enterpriseUrl}</span><button onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制企业专属链接"><Copy size={15} /></button></div>}
         {result.deliveryRecipients?.length > 0 && <ShareNotificationStatus result={result} />}
         <div className="result-actions">
-          <button className="secondary-button" onClick={onReset}>继续发送</button>
+          <button className="secondary-button" onClick={onReset}><RotateCcw size={15} /> 继续发送</button>
           <button className="primary-button" onClick={() => onCopy(`${result.shareUrl} · 取件码 ${result.code}`)}><Link2 size={15} /> 分享信息</button>
         </div>
         {settings.passwordEnabled && <p className="result-security"><LockKeyhole size={14} /> 已开启提取密码保护</p>}
@@ -1428,7 +1438,7 @@ function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome }) {
         </div>
         {error && <p className="admin-login-error" role="alert"><XCircle size={14} /> {error}</p>}
         <div className="modal-footer confirm-modal-footer admin-login-footer">
-          <button type="button" className="secondary-button" onClick={onBackHome}>返回首页</button>
+          <button type="button" className="secondary-button" onClick={onBackHome}><ChevronLeft size={15} /> 返回首页</button>
           <button type="submit" className="primary-button" disabled={busy || !username.trim() || !password}>
             {busy ? <><span className="button-spinner" /> 正在验证…</> : <><KeyRound size={15} /> 登录后台</>}
           </button>
@@ -1494,7 +1504,7 @@ function ContentModal({ content, onClose }) {
           ))}
         </div>
         <div className="modal-footer">
-          <button className="primary-button" onClick={onClose}>我知道了</button>
+          <button className="primary-button" onClick={onClose}><Check size={15} /> 我知道了</button>
         </div>
       </div>
     </div>
@@ -2156,7 +2166,7 @@ function SharePage({ token, enterpriseSlug = '' }) {
         {data.requiresPassword && !share.files?.length ? (
           <div className="public-password">
             <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入提取密码" />
-            <button className="primary-button" onClick={findShare}>验证密码</button>
+            <button className="primary-button" onClick={findShare}><KeyRound size={15} /> 验证密码</button>
           </div>
         ) : (
           <>
@@ -2404,7 +2414,7 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                     <strong>{displayUserName(user)}</strong>
                     <span>本次提交会记录你的鲲穹账号，收集方可以核对是谁提交的</span>
                   </div>
-                  <button type="button" className="collection-identity-switch" onClick={() => setUser(null)}>改用其他名称</button>
+                  <button type="button" className="collection-identity-switch" onClick={() => setUser(null)}><UserRound size={14} /> 改用其他名称</button>
                 </div>
               ) : (
                 <div className="collection-identity anonymous">
@@ -2712,7 +2722,7 @@ function SettingsModal({ settings, setSettings, user, onClose, onSave }) {
           <div className="switch-row"><div><strong>提取密码</strong><span>取件时需要额外输入密码</span></div><button className={`switch ${settings.passwordEnabled ? 'on' : ''}`} aria-label={settings.passwordEnabled ? '关闭提取密码' : '开启提取密码'} onClick={() => setSettings({ ...settings, passwordEnabled: !settings.passwordEnabled })}><span /></button></div>
           {settings.passwordEnabled && <label className="password-field"><span>密码内容</span><input className="modal-inline-input" type="password" value={settings.password} onChange={(event) => setSettings({ ...settings, password: event.target.value })} placeholder="例如：QK2026" /></label>}
         </div>
-        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" onClick={onSave}>保存设置</button></div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" onClick={onSave}><Save size={15} /> 保存设置</button></div>
       </div>
     </div>
   )
@@ -3411,7 +3421,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
             <div className="file-expiry-alert">
               <Clock3 size={18} />
               <div><strong>{expiringItems.length} 个项目将在 1 天内过期</strong><span>可进入管理设置延期、关闭或清理记录。</span></div>
-              <button className="secondary-button" onClick={() => setExpiringOnly(true)}>查看即将过期</button>
+              <button className="secondary-button" onClick={() => setExpiringOnly(true)}><FileWarning size={15} /> 查看即将过期</button>
             </div>
           )}
 
@@ -3679,17 +3689,17 @@ function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSav
                   <div className="settings-avatar-actions">
                     <UserAvatar user={user} overrideSrc={avatarPreview} />
                     <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={saveAvatarFile} />
-                    <button className="settings-row-action" onClick={() => avatarInputRef.current?.click()} disabled={savingAvatar}>{savingAvatar ? '保存中' : '上传头像'}</button>
+                    <button className="settings-row-action" onClick={() => avatarInputRef.current?.click()} disabled={savingAvatar}>{savingAvatar ? '保存中' : <><ImageIcon size={14} /> 上传头像</>}</button>
                   </div>
                 </div>
                 {avatarError && <p className="settings-form-error">{avatarError}</p>}
-                <div className="settings-avatar-note"><span>未上传时默认显示鲲穹账号的登录头像。</span>{user.avatarSource === 'custom' && <button className="settings-row-action" onClick={restoreProviderAvatar} disabled={savingAvatar}>恢复登录头像</button>}</div>
+                <div className="settings-avatar-note"><span>未上传时默认显示鲲穹账号的登录头像。</span>{user.avatarSource === 'custom' && <button className="settings-row-action" onClick={restoreProviderAvatar} disabled={savingAvatar}><RotateCcw size={14} /> 恢复登录头像</button>}</div>
                 <form className="settings-profile-edit" onSubmit={saveNickname}>
                   <label className="settings-input-field">
                     <span>昵称</span>
                     <input value={nickname} maxLength={40} onChange={(event) => setNickname(event.target.value)} placeholder="请输入昵称" />
                   </label>
-                  <button className="primary-button" type="submit" disabled={savingProfile || !nickname.trim()}>{savingProfile ? '保存中' : '保存昵称'}</button>
+                  <button className="primary-button" type="submit" disabled={savingProfile || !nickname.trim()}>{savingProfile ? '保存中' : <><Save size={15} /> 保存昵称</>}</button>
                 </form>
                 {profileError && <p className="settings-form-error">{profileError}</p>}
                 <SettingsInfoRow label="登录账号" value={user.username || user.id || '未设置'} />
@@ -4358,7 +4368,7 @@ function WorkspacePage() {
             <div className="public-card workspace-section workspace-benefits-card">
               <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(plan)}</p></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
               <div className="workspace-capacity"><div><span>已使用空间 · {selectedPlan.label || currentPlanLabel}</span><strong>{formatBytes(capacity.usedBytes || 0)} / {formatBytes(selectedTotalBytes)}</strong></div><div className="capacity-bar" title={`已使用 ${ratio}%`} role="progressbar" aria-valuenow={ratio} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${ratio}%` }} /></div><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务 · {capacity.fileCount || 0} 个文件</small></div>
-              <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id ? 'true' : 'false'}><em className="plan-current-tag">{item.id === plan.id ? '当前' : item.team ? '推荐' : ''}</em><strong>{item.label}</strong><PlanSpaceSummary plan={item} /><small className="plan-price-summary">{formatPlanPrice(item)}</small></button>)}</div>
+              <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id ? 'true' : 'false'}><em className="plan-current-tag">{item.id === plan.id ? '当前' : item.team ? '推荐' : ''}</em><span className="plan-title-line">{(() => { const PlanIcon = accountPlanIcon(item.id); return <PlanIcon size={15} /> })()}<strong>{item.label}</strong></span><PlanSpaceSummary plan={item} /><small className="plan-price-summary">{formatPlanPrice(item)}</small></button>)}</div>
               <div className="workspace-benefits-cta"><span>{plan.id === 'enterprise' ? '你已拥有最高企业版权益。' : '需要更多空间、永久保存或团队协作？'}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {plan.id === 'enterprise' ? '查看权益详情' : '升级权益'}</button></div>
             </div>
             <div className="workspace-lower-row">
@@ -4439,6 +4449,8 @@ const UPGRADE_ORDER_STATUS_LABELS = {
 }
 const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, enterprise: 3 }
 const accountPlanRank = (planId) => ACCOUNT_PLAN_RANK[planId] ?? 0
+const ACCOUNT_PLAN_ICON = { free: HardDrive, member: Sparkles, team: Users, enterprise: Crown }
+const accountPlanIcon = (planId) => ACCOUNT_PLAN_ICON[planId] || HardDrive
 
 async function upgradeApiRequest(url, options = {}) {
   const { headers = {}, ...fetchOptions } = options
@@ -4606,14 +4618,14 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
                 <div><dt>创建时间</dt><dd>{formatDate(orderView.createdAt)}</dd></div>
                 <div><dt>应付金额</dt><dd>{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '价格以支付通道为准'}</dd></div>
               </dl>
-              {!payment && <div className="upgrade-pay-type" role="group" aria-label="支付方式"><button type="button" className={payType === 1 ? 'selected' : ''} onClick={() => setPayType(1)}>微信扫码</button><button type="button" className={payType === 2 ? 'selected' : ''} onClick={() => setPayType(2)}>支付宝</button></div>}
+              {!payment && <div className="upgrade-pay-type" role="group" aria-label="支付方式"><button type="button" className={payType === 1 ? 'selected' : ''} onClick={() => setPayType(1)}><ScanLine size={15} /> 微信扫码</button><button type="button" className={payType === 2 ? 'selected' : ''} onClick={() => setPayType(2)}><Wallet size={15} /> 支付宝</button></div>}
               {payment?.qrcode_img_url && <div className="upgrade-payment-qr"><img src={payment.qrcode_img_url} alt="微信支付二维码" /><span>请使用微信扫码支付</span></div>}
               {payment?.alipaysubmit_html && <div className="upgrade-payment-qr upgrade-payment-alipay"><div className="upgrade-payment-alipay-frame"><iframe title="支付宝收银台" scrolling="no" srcDoc={payment.alipaysubmit_html} /></div><span>请使用支付宝扫码支付</span></div>}
               <div className="upgrade-order-note"><Clock3 size={15} /><span>{notice || '请选择支付方式并完成支付，支付成功后会员权益会自动开通。'}</span></div>
               <div className="upgrade-order-actions">
                 <button className="primary-button" onClick={continuePay} disabled={busy}><Zap size={15} /> {busy ? '正在处理…' : '继续支付'}</button>
-                {payment && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}>刷新支付状态</button>}
-                <button className="secondary-button" onClick={cancelOrder} disabled={busy}>取消订单</button>
+                {payment && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</button>}
+                <button className="secondary-button" onClick={cancelOrder} disabled={busy}><X size={15} /> 取消订单</button>
               </div>
             </div>
           ) : (
@@ -4629,7 +4641,7 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
                     disabled={isIncludedPlan(item)}
                     aria-pressed={item.id === selectedPlanId}
                   >
-                    <span className="upgrade-plan-top"><strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
+                    <span className="upgrade-plan-top">{(() => { const PlanIcon = accountPlanIcon(item.id); return <span className="upgrade-plan-icon"><PlanIcon size={16} /></span> })()}<strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
                     <PlanSpaceSummary plan={item} compact />
                     <span className="upgrade-plan-tags"><strong className="upgrade-plan-price">{formatPlanPrice(item)}</strong><span className="upgrade-plan-detail">{item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</span></span>
                     <ul className="upgrade-plan-features">
@@ -4999,7 +5011,7 @@ function AccountBindModal({ type, currentValue, onClose, onComplete }) {
               <span>验证码</span>
               <input value={code} maxLength={6} onChange={(event) => { setCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setError('') }} placeholder="6 位验证码" />
             </label>
-            <button className="secondary-button" type="button" onClick={sendCode} disabled={sending || resendSeconds > 0}>{sending ? '发送中' : resendSeconds > 0 ? `${resendSeconds}秒后重发` : debugCode ? '重新发送' : '获取验证码'}</button>
+            <button className="secondary-button" type="button" onClick={sendCode} disabled={sending || resendSeconds > 0}>{sending ? '发送中' : resendSeconds > 0 ? `${resendSeconds}秒后重发` : debugCode ? '重新发送' : '获取验证码'}<Send size={15} /></button>
           </div>
           {debugCode && <div className="account-bind-debug"><KeyRound size={14} /> 演示验证码：<strong>{debugCode}</strong></div>}
           {message && <p className="account-bind-message">{message}</p>}
@@ -5007,7 +5019,7 @@ function AccountBindModal({ type, currentValue, onClose, onComplete }) {
         </div>
         <div className="modal-footer">
           <button className="secondary-button" type="button" onClick={onClose}>取消</button>
-          <button className="primary-button" type="submit" disabled={binding}>{binding ? '绑定中' : '确认绑定'}</button>
+          <button className="primary-button" type="submit" disabled={binding}><BadgeCheck size={15} /> {binding ? '绑定中' : '确认绑定'}</button>
         </div>
       </form>
     </div>
@@ -5058,7 +5070,7 @@ function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, on
         <div className="message-center" role="dialog" aria-label="消息中心" onClick={(event) => event.stopPropagation()}>
           <div className="message-center-header">
             <div><strong>消息中心</strong><span>{unreadCount ? `${unreadCount} 条未读消息` : '没有未读消息'}</span></div>
-            {user ? <div className="message-header-actions"><button className="message-mark-all" onClick={onMarkAllRead} disabled={!unreadCount}>全部已读</button><button className="message-mark-all danger" onClick={onClearAll} disabled={!messages.length}>清除全部</button></div> : null}
+            {user ? <div className="message-header-actions"><button className="message-mark-all" onClick={onMarkAllRead} disabled={!unreadCount}><MailCheck size={14} /> 全部已读</button><button className="message-mark-all danger" onClick={onClearAll} disabled={!messages.length}><Eraser size={14} /> 清除全部</button></div> : null}
           </div>
           {!user ? (
             <div className="message-empty"><MessageCircle size={22} /><strong>登录后查看消息</strong><span>登录后可以接收系统、官方和他人发送的消息。</span><button className="secondary-button" onClick={onLogin}><UserRound size={15} /> 前往登录</button></div>
@@ -5071,7 +5083,7 @@ function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, on
                   <span className="message-item-content"><strong>{message.title}</strong><span className={expandedIds.has(message.id) ? 'expanded' : ''}>{message.body}</span><small>{formatMessageTime(message.createdAt)}{message.body.length > 60 ? ` · ${expandedIds.has(message.id) ? '点击收起' : '点击展开'}` : ''}</small></span>
                   {message.unread && <i className="message-item-dot" />}
                   </button>
-                  {message.actionType === 'workspace_invite' && <div className="message-invite-actions"><button type="button" className="secondary-button" onClick={() => onInvitationAction?.(message, 'decline')}>拒绝</button><button type="button" className="primary-button" onClick={() => onInvitationAction?.(message, 'accept')}>接受加入</button></div>}
+                  {message.actionType === 'workspace_invite' && <div className="message-invite-actions"><button type="button" className="secondary-button" onClick={() => onInvitationAction?.(message, 'decline')}><UserX size={15} /> 拒绝</button><button type="button" className="primary-button" onClick={() => onInvitationAction?.(message, 'accept')}><UserCheck size={15} /> 接受加入</button></div>}
                   <button className="message-item-delete" aria-label={`删除消息：${message.title}`} title="删除消息" onClick={(event) => { event.stopPropagation(); onDelete(message) }}><Trash2 size={14} /></button>
                 </div>
               ))}
