@@ -16,6 +16,8 @@
 - **布局** `_verify_layout_real.mjs`(46)🌐；`_verify_layout.mjs`(39)→`_layout.log`；`_verify_served.mjs`(21)→`_served.log`
 - **UI 契约** `_verify_fixes.mjs`(50)→`_fixes.txt`；`_verify_visual_fixes.mjs`(27)→`_visual.txt`🌐
 - **验收会话** `_verify_impersonate.mjs`(7)→`_impersonate_smoke.txt`
+- **安全验收(2026-09-19 新增)** `_verify_team_token_leak.mjs`(7)；`_verify_rate_limits.mjs`(3,验证码/取件码限流)
+- ⚠️ `_run_regression.mjs` 统计口径已改为**优先解析「结果：x/y」声明行**(fail=y−x)，无声明行才回退 `\bPASS\b`/`\bFAIL\b` 计数（旧正则会把声明行也计入，FAIL 虚高）
 
 ## B. 环境与工具约束（本机 Windows）
 - **Bash 工具不可用**：缺 `ls`/`cat`/`head`/`sleep`/`cut`/`grep`/`tail`(路由到被禁用的 WSL) → 用**绝对路径 Node** + `node -e` 或临时 `.mjs`；语法校验用 `PortableGit\...\bash.exe -n`
@@ -44,6 +46,8 @@
 - **负向断言必须精确到特征串**：`!/该团队/.test(html)` 会误命中正常说明句 → 假阳性
 - **从源码抽取函数做单测**：`src.indexOf('function name(')` 只命中声明行(真实签名常跨行) → 先找 `'\nfunction name('`，再 `indexOf(')')` 定位签名末尾，从末尾往后找第一个 `{` 配平。抽出函数依赖几十个自由变量，需补最小桩
 - **脚本"卡住零输出"先怀疑前面某步耗时过长**：一次 `_verify_avatar_e2e.mjs` 零输出真因是开头 `fs.rmSync(旧沙箱)` 耗时 ~87s 触发工具超时。**定位手段永远是分步 `trace()` 写文件，别靠猜**
+- **UI 套件两种输出形态，stdout 尾部无「结果」≠ 失败**：stdout 型（admin_ui/collect_login_ui）直接打「结果：x/y」；写文件型（layout_real→`_verify_layout_real.txt`、member_ui→`_member_ui.txt`、visual_fixes→`_visual.txt`、team_upload_ui→`_team_upload_ui.txt`、team_preview→`_team_preview_fix.txt`）stdout 只剩服务启动日志，**结果看对应 .txt 的 mtime 判断新旧**
+- **for 循环串行跑多个 Chrome 套件会偶发卡死**：一次 team_upload_ui 在循环里卡 20+ 分钟（无输出、无 Chrome 进程、结果文件不更新），TaskStop 后**单独重跑 46 秒全绿** → 套件卡死先单独复跑再下结论，别当场归因为代码问题
 - **`spawn` 子进程只 pipe 不读 = 死锁**：`stdio:['ignore','pipe','pipe']` 却只监听 `stderr`，子进程 stdout 缓冲写满后阻塞在 write，表现为**脚本卡在「子进程已启动」零输出**。同一脚本先前能跑通只是缓冲还没写满 —— 偶发性陷阱 → **每个 pipe 出来的流都必须消费**
 - **同一端口先后起两个实例 = 后一个静默失败**：前进程未释放端口，后进程绑定失败但**旧进程仍应答**，表现为「改了 `NODE_ENV` 判定却没生效」。极易误判成代码问题 → **不同场景用不同端口**，且 `kill` 后**等子进程真正退出**(轮询 `exitCode`/`signalCode`)再起下一个
 - **jsdom 不做真实布局**：能断言结构，但「结构对 ≠ 视觉对」。「位置/宽度/是否同一行」必须用**真实浏览器**测
