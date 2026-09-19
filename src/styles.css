@@ -1337,7 +1337,7 @@ h1, h2, p { margin-top: 0; }
   .team-context-copy, .team-context-button > svg { display: none; }
   .login-button { padding: 8px; }
   .login-button.signed-in { min-width: 38px; min-height: 38px; padding: 4px; }
-  .auth-menu { right: -40px; }
+  .auth-menu { right: 0; }
   .mobile-menu { display: grid; place-items: center; }
   .main-nav { margin-left: auto; }
   .nav-item { padding: 0 8px; font-size: 12px; }

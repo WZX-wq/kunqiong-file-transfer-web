@@ -128,7 +128,7 @@ const FOOTER_CONTENT = {
         items: [
           '在“发文件”页面选择文件或文件夹，也可以直接拖拽到上传区域。',
           '上传完成后系统会生成取件码、分享链接和二维码，对方无需注册即可提取。',
-          '单次最多 100 个文件，单文件最大 5 GB；大文件会自动分片上传，异常中断后可重试。',
+          '单次最多 100 个文件；登录后单文件最大 5 GB，未登录 500 MB。大文件会自动分片上传，异常中断后可重试。',
         ],
       },
       {
@@ -1048,7 +1048,7 @@ function WorkspaceApp() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand" onClick={() => navigateMainView('send')} role="button" tabIndex={0}>
+        <div className="brand" onClick={() => navigateMainView('send')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigateMainView('send') } }} role="button" tabIndex={0} aria-label="返回发文件首页">
           <span className="brand-mark"><Cloud size={20} strokeWidth={2.3} /></span>
           <span className="brand-copy"><strong>鲲穹</strong><em>文件传输</em></span>
         </div>
@@ -1082,7 +1082,8 @@ function WorkspaceApp() {
               需要直接进后台时访问 /admin，未登录会弹出管理员账号密码弹窗。 */}
           <button className="merchant-button" onClick={() => { window.location.href = '/workspace' }}><Sparkles size={15} /> 会员与企业版</button>
           <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
-          <button className="mobile-menu" aria-label="打开菜单"><Menu size={20} /></button>
+          {/* 移动端菜单按钮：与账号下拉同一状态源，点击展开账号菜单（此前无 onClick，点了没反应） */}
+          <button className="mobile-menu" aria-label="打开菜单" aria-haspopup="menu" aria-expanded={authMenuOpen} onClick={(event) => { event.stopPropagation(); setMessageOpen(false); setAuthMenuOpen((current) => !current) }}><Menu size={20} /></button>
         </div>
       </header>
 
@@ -1197,7 +1198,7 @@ function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, 
     <>
       <section className="hero-layout">
         <aside className="side-rail side-rail-left">
-          <FeatureOrb icon={Cloud} value="5 GB" label="单文件上限" tone="blue" />
+          <FeatureOrb icon={Cloud} value="5 GB" label="登录后单文件上限" tone="blue" />
           <FeatureOrb icon={Zap} value="不限速" label="原生带宽传输" tone="green" />
         </aside>
         <div className="transfer-column">
@@ -1212,7 +1213,7 @@ function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, 
           <div className={`upload-panel ${isDragging ? 'dragging' : ''} ${files.length || shareResult ? 'has-files' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
             <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
             <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
-            {!files.length && !shareResult && <div className="empty-upload"><div className="upload-icon"><UploadCloud size={30} /></div><h2>把文件拖到这里</h2><p>支持多文件与文件夹，单次最多 100 个文件</p><div className="upload-choice"><button className="primary-button" onClick={() => inputRef.current?.click()}><FolderOpen size={17} /> 选择文件</button><button className="secondary-button" onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> 选择文件夹</button></div><span className="upload-note">最大支持 5 GB · 分片续传 · 上传后自动生成取件码</span></div>}
+            {!files.length && !shareResult && <div className="empty-upload"><div className="upload-icon"><UploadCloud size={30} /></div><h2>把文件拖到这里</h2><p>支持多文件与文件夹，单次最多 100 个文件</p><div className="upload-choice"><button className="primary-button" onClick={() => inputRef.current?.click()}><FolderOpen size={17} /> 选择文件</button><button className="secondary-button" onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> 选择文件夹</button></div><span className="upload-note">登录后单文件最大 5 GB（未登录 500 MB）· 分片续传 · 上传后自动生成取件码</span></div>}
             {files.length > 0 && !shareResult && (
               <div className="file-queue">
                 <div className="queue-heading">
@@ -1235,7 +1236,7 @@ function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, 
           <FeatureOrb icon={Gauge} value="快" label="上传下载不限速" tone="violet" />
         </aside>
       </section>
-      <section className="value-strip"><ValueItem icon={LockKeyhole} title="无需注册" detail="即开即用，免登录发送" /><ValueItem icon={Link2} title="多种分享" detail="链接、取件码、二维码" /><ValueItem icon={Clock3} title="到期清理" detail="文件自动销毁，不留负担" /><ValueItem icon={FolderOpen} title="文件夹直传" detail="保留目录结构，不必压缩" /></section>
+      <section className="value-strip"><ValueItem icon={LockKeyhole} title="无需注册" detail="即开即用，免登录发送" /><ValueItem icon={Link2} title="多种分享" detail="链接、取件码、二维码" /><ValueItem icon={Clock3} title="到期清理" detail="文件到期可自动清理，可在设置开启" /><ValueItem icon={FolderOpen} title="文件夹直传" detail="保留目录结构，不必压缩" /></section>
     </>
   )
 }
@@ -2162,18 +2163,21 @@ function SharePage({ token, enterpriseSlug = '' }) {
         <span className="public-icon"><Download size={24} /></span>
         <p className="eyebrow">鲲穹临时分享</p>
         <h1>有人给你发来了文件</h1>
-        <p className="public-copy">{share.files.length} 个文件 · {formatBytes(share.files.reduce((sum, file) => sum + file.size, 0))} · {formatExpiry(share.expiresAt)}</p>
         {data.requiresPassword && !share.files?.length ? (
-          <div className="public-password">
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入提取密码" />
-            <button className="primary-button" onClick={findShare}><KeyRound size={15} /> 验证密码</button>
-          </div>
+          <>
+            <p className="public-copy">此分享受提取密码保护，验证密码后即可查看文件内容。</p>
+            <div className="public-password">
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入提取密码" />
+              <button className="primary-button" onClick={findShare}><KeyRound size={15} /> 验证密码</button>
+            </div>
+          </>
         ) : (
           <>
+            <p className="public-copy">{share.files?.length || 0} 个文件 · {formatBytes((share.files || []).reduce((sum, file) => sum + (Number(file.size) || 0), 0))} · {formatExpiry(share.expiresAt)}</p>
             <div className="public-files">
-              {share.files.map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={downloadBusy} />)}
+              {(share.files || []).map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={downloadBusy} />)}
             </div>
-            <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy}><Download size={17} /> {share.files.length > 1 ? '下载全部文件' : '下载文件'}</button>
+            <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy || !(share.files || []).length}><Download size={17} /> {(share.files || []).length > 1 ? '下载全部文件' : '下载文件'}</button>
             <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
           </>
         )}
@@ -2455,7 +2459,7 @@ function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
 function CollectionManagePage({ token }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
-  const [destroyed, setDestroyed] = useState(false)
+  // destroyed 状态已移除：销毁收集任务在记录页完成（DELETE 后管理页 GET 会 404，走 error 分支）
   const [editing, setEditing] = useState(false)
   const [actionError, setActionError] = useState('')
   const [actionMessage, setActionMessage] = useState('')
@@ -2565,7 +2569,6 @@ function CollectionManagePage({ token }) {
   const downloadFile = (submission, fileIndex) => startDownload(createSubmissionFileDownloadConfig(data, submission, fileIndex))
   const previewFile = (submission, fileIndex) => setPreviewItem(createSubmissionFilePreviewConfig(data, submission, fileIndex))
   if (error) return <PublicShell><StateBlock title="管理链接不可用" detail={error} /></PublicShell>
-  if (destroyed) return <PublicShell><StateBlock title="收集任务已销毁" detail="收集链接和已提交文件均已失效。" /></PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   const isActive = data.status === 'active'
   const manageTarget = { kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data }
@@ -2678,7 +2681,7 @@ function RetrieveModal({ code, setCode, result, onClose, onFind }) {
                   {share.files.map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) && !result.requiresPassword ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={downloadBusy || result.requiresPassword} />)}
                 </div>
               )}
-              {!result.requiresPassword && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> {share.files.length > 1 ? '下载全部文件' : '下载文件'}</button>}
+              {!result.requiresPassword && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy || !(share?.files || []).length}><Download size={16} /> {(share?.files || []).length > 1 ? '下载全部文件' : '下载文件'}</button>}
               <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
               {error && <p className="public-message">{error}</p>}
               {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
@@ -4193,7 +4196,7 @@ function TeamPage() {
           {data.canManage && <button className={activeTab === 'requests' ? 'active' : ''} role="tab" aria-selected={activeTab === 'requests'} onClick={() => setActiveTab('requests')}><ClipboardCheck size={15} /> 入团申请 <span>{joinRequests.length}</span></button>}
         </div>
         {visibleTab === 'members' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">成员观察</p><h2>成员使用量</h2></div><span>{filteredMembers.length} / {members.length} 位成员</span></div>{data.canManage && <div className="team-invite-wrap"><form className="team-invite-form" onSubmit={inviteMember}><label className="team-invite-input"><Search size={15} /><input value={memberTarget} onChange={(event) => setMemberTarget(event.target.value)} placeholder="输入邮箱、手机号或鲲穹账号，直接邀请成员" disabled={savingMember} /></label><button className="primary-button" disabled={savingMember || !memberTarget.trim()}><UserPlus size={14} /> 邀请</button></form>{memberSuggestions.length > 0 && <div className="team-suggestions">{memberSuggestions.map((candidate) => <button type="button" key={candidate.id} onClick={() => { setMemberTarget(candidate.email || candidate.phone || candidate.username || candidate.id); setMemberSuggestions([]) }}><span className="workspace-member-avatar">{(candidate.displayName || '成').slice(0, 1)}</span><span><strong>{candidate.displayName || candidate.username || candidate.id}</strong><small>{candidate.username || candidate.email || candidate.phone || candidate.id}</small></span></button>)}</div>}</div>}<label className="team-search"><Search size={15} /><input value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-member-usage">{visibleMemberUsage.map((member) => { const memberBytes = Math.max(0, Number(member.usedBytes) || 0); const memberShare = usedBytes > 0 ? Math.min(100, Math.max(0, (memberBytes / usedBytes) * 100)) : 0; const hasUsage = memberBytes > 0; return <div className="team-member-usage-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><div className="team-usage-line"><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'} · {member.fileCount} 个文件</small></div><div className={`team-usage-bar ${hasUsage ? '' : 'is-empty'}`} title={hasUsage ? `占团队已用空间 ${memberShare.toFixed(memberShare < 1 ? 2 : 1)}%` : '暂未占用团队空间'} role="progressbar" aria-valuenow={Number(memberShare.toFixed(1))} aria-valuemin="0" aria-valuemax="100" aria-label={`${member.displayName || '待加入成员'}空间占用`}><i style={{ width: `${hasUsage ? Math.max(memberShare, 1.5) : 0}%` }} /></div></div><span className="team-usage-value"><b>{formatBytes(memberBytes)}</b><em>{hasUsage ? `${memberShare.toFixed(memberShare < 1 ? 2 : 1)}%` : '未使用'}</em></span></div> })}</div>{!filteredMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的成员</span></div>}<AdminPagination page={safeMemberUsagePage} pageCount={memberUsagePageCount} total={filteredMembers.length} pageSize={teamPageSize} onPageChange={setMemberUsagePage} /></div>}
-        {visibleTab === 'resources' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队资源</p><h2>专属团队文件</h2></div><span>{filteredResources.length} / {resources.length} 个文件</span></div><div className="team-resource-toolbar"><label className="team-search"><Search size={15} /><input value={resourceQuery} onChange={(event) => setResourceQuery(event.target.value)} placeholder="检索文件名或上传成员" /></label><input ref={teamUploadInputRef} type="file" multiple hidden onChange={(event) => { addTeamFiles(event.target.files); event.target.value = '' }} />{data.organization?.members?.some((member) => member.userId === user.id && member.status === 'active') && <button type="button" className="primary-button" onClick={() => teamUploadInputRef.current?.click()} disabled={teamUploading}><UploadCloud size={15} /> 上传到团队空间</button>}</div>{teamFiles.length > 0 && <div className="team-upload-draft"><div><strong>待上传 {teamFiles.length} 个文件</strong><span>{formatBytes(teamFiles.reduce((sum, file) => sum + file.size, 0))} · 同名文件会被拒绝</span></div><div><button type="button" className="primary-button" onClick={uploadTeamFiles} disabled={teamUploading}><UploadCloud size={14} /> {teamUploading ? '上传中' : '开始上传'}</button><button type="button" className="ghost-icon" onClick={() => setTeamFiles([])} aria-label="清除待上传文件" title="清除待上传文件"><X size={15} /></button></div></div>}{teamUploadState.status !== 'idle' && <div className="team-upload-progress"><div><span>{teamUploadState.phase || '上传处理中'}</span><b>{teamUploadState.progress || 0}%</b></div><div className="capacity-bar"><span style={{ width: `${teamUploadState.progress || 0}%` }} /></div></div>}<div className="team-resource-table">{filteredResources.length ? visibleTeamResources.map((resource) => <div className="team-resource-row" key={`${resource.kind}-${resource.id}`}><span className="team-resource-icon"><FileText size={15} /></span><div><strong>{resource.name}</strong><small>{memberName(resource.ownerUserId)} · {resource.fileCount} 个文件</small></div><span className={`team-resource-status ${resource.status}`}>{statusLabel(resource.status)}</span><small className="team-resource-size">{formatBytes(resource.totalSize)}</small><div className="team-resource-actions"><button className={`ghost-icon${resourcePreviewable(resource) ? '' : ' icon-inapplicable'}`} type="button" onClick={() => previewResource(resource)} disabled={!resourcePreviewable(resource)} aria-label={`预览 ${resource.name}`} title={resourcePreviewable(resource) ? (resource.files.length === 1 ? '预览文件' : `选择要预览的文件（共 ${resource.files.length} 个）`) : '该资源没有可在线预览的文件'}><Eye size={15} /></button><button className="ghost-icon" type="button" onClick={() => downloadResource(resource)} disabled={downloadBusy} aria-label={`下载 ${resource.name}`} title="下载文件"><Download size={15} /></button><a className="ghost-icon" href={resource.manageUrl} target="_blank" rel="noreferrer" aria-label={`管理 ${resource.name}`} title="管理分享"><Settings2 size={15} /></a></div></div>) : <div className="empty-manage"><Database size={25} /><span>{resourceQuery ? '没有匹配的团队文件' : '暂无团队文件，请从专属入口上传'}</span></div>}</div><AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={filteredResources.length} pageSize={teamPageSize} onPageChange={setTeamResourcePage} /></div>}
+        {visibleTab === 'resources' && <div className="public-card team-panel team-tab-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队资源</p><h2>专属团队文件</h2></div><span>{filteredResources.length} / {resources.length} 个文件</span></div><div className="team-resource-toolbar"><label className="team-search"><Search size={15} /><input value={resourceQuery} onChange={(event) => setResourceQuery(event.target.value)} placeholder="检索文件名或上传成员" /></label><input ref={teamUploadInputRef} type="file" multiple hidden onChange={(event) => { addTeamFiles(event.target.files); event.target.value = '' }} />{data.organization?.members?.some((member) => member.userId === user.id && member.status === 'active') && <button type="button" className="primary-button" onClick={() => teamUploadInputRef.current?.click()} disabled={teamUploading}><UploadCloud size={15} /> 上传到团队空间</button>}</div>{teamFiles.length > 0 && <div className="team-upload-draft"><div><strong>待上传 {teamFiles.length} 个文件</strong><span>{formatBytes(teamFiles.reduce((sum, file) => sum + file.size, 0))} · 同名文件会被拒绝</span></div><div><button type="button" className="primary-button" onClick={uploadTeamFiles} disabled={teamUploading}><UploadCloud size={14} /> {teamUploading ? '上传中' : '开始上传'}</button><button type="button" className="ghost-icon" onClick={() => setTeamFiles([])} aria-label="清除待上传文件" title="清除待上传文件"><X size={15} /></button></div></div>}{teamUploadState.status !== 'idle' && <div className="team-upload-progress"><div><span>{teamUploadState.phase || '上传处理中'}</span><b>{teamUploadState.progress || 0}%</b></div><div className="capacity-bar"><span style={{ width: `${teamUploadState.progress || 0}%` }} /></div></div>}<div className="team-resource-table">{filteredResources.length ? visibleTeamResources.map((resource) => <div className="team-resource-row" key={`${resource.kind}-${resource.id}`}><span className="team-resource-icon"><FileText size={15} /></span><div><strong>{resource.name}</strong><small>{memberName(resource.ownerUserId)} · {resource.fileCount} 个文件</small></div><span className={`team-resource-status ${resource.status}`}>{statusLabel(resource.status, resource.closeReason)}</span><small className="team-resource-size">{formatBytes(resource.totalSize)}</small><div className="team-resource-actions"><button className={`ghost-icon${resourcePreviewable(resource) ? '' : ' icon-inapplicable'}`} type="button" onClick={() => previewResource(resource)} disabled={!resourcePreviewable(resource)} aria-label={`预览 ${resource.name}`} title={resourcePreviewable(resource) ? (resource.files.length === 1 ? '预览文件' : `选择要预览的文件（共 ${resource.files.length} 个）`) : '该资源没有可在线预览的文件'}><Eye size={15} /></button><button className="ghost-icon" type="button" onClick={() => downloadResource(resource)} disabled={downloadBusy} aria-label={`下载 ${resource.name}`} title="下载文件"><Download size={15} /></button><a className="ghost-icon" href={resource.manageUrl} target="_blank" rel="noreferrer" aria-label={`管理 ${resource.name}`} title="管理分享"><Settings2 size={15} /></a></div></div>) : <div className="empty-manage"><Database size={25} /><span>{resourceQuery ? '没有匹配的团队文件' : '暂无团队文件，请从专属入口上传'}</span></div>}</div><AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={filteredResources.length} pageSize={teamPageSize} onPageChange={setTeamResourcePage} /></div>}
         {visibleTab === 'manage' && data.canManage && <div className="public-card team-panel team-tab-panel team-members-panel"><div className="team-panel-heading"><div><p className="eyebrow">团队成员</p><h2>成员权限</h2></div><span>{filteredManageMembers.length} / {members.length} 位成员</span></div><label className="team-search team-management-search"><Search size={15} /><input value={manageMemberQuery} onChange={(event) => setManageMemberQuery(event.target.value)} placeholder="检索成员姓名、账号、手机号或邮箱" /></label><div className="team-management-list">{visibleTeamMembers.map((member) => <div className="team-management-row" key={member.id}><span className="workspace-member-avatar">{(member.displayName || '团').slice(0, 1)}</span><div><strong>{member.displayName || '待加入成员'}</strong><small>{member.role === 'owner' ? '所有者' : member.status === 'invited' ? '待加入' : '成员'}</small></div><span className={`workspace-member-state ${member.status === 'invited' ? 'pending' : 'active'}`}>{member.status === 'invited' ? '待加入' : member.role === 'owner' ? '所有者' : '已加入'}</span>{data.canManage && member.role !== 'owner' && <div className="team-management-actions">{member.status === 'active' && <button className="ghost-icon" type="button" onClick={() => transferOwnership(member)} disabled={savingMember} aria-label={`转让给${member.displayName || '成员'}`} title="转让所有权给该成员"><Crown size={15} /></button>}<button className="ghost-icon" type="button" onClick={() => removeMember(member)} disabled={savingMember} aria-label={`移除${member.displayName || '成员'}`} title="移除成员"><X size={15} /></button></div>}</div>)}</div>{!filteredManageMembers.length && <div className="empty-manage"><Search size={25} /><span>没有匹配的团队成员</span></div>}<AdminPagination page={safeTeamMemberPage} pageCount={teamMemberPageCount} total={filteredManageMembers.length} pageSize={teamPageSize} onPageChange={setTeamMemberPage} /><div className="team-danger-zone"><div><strong>解散团队</strong><small>解散后全部成员立即失去团队空间访问权，团队无法恢复。各成员的个人文件与套餐权益不受影响。</small></div><button type="button" className="team-dissolve-button" onClick={dissolveTeam} disabled={dissolvingTeam}><Trash2 size={14} /> {dissolvingTeam ? '解散中…' : '解散团队'}</button></div></div>}
         {visibleTab === 'requests' && data.canManage && <div className="public-card team-panel team-tab-panel team-requests-panel">
           <div className="team-panel-heading"><div><p className="eyebrow">入团申请</p><h2>待处理申请</h2></div><span>{joinRequests.length} 条待处理</span></div>
@@ -4677,19 +4680,6 @@ function AdminPage() {
   const [loginError, setLoginError] = useState('')
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
 
-  const loadSession = async () => {
-    try {
-      const session = await apiRequest('/api/admin/session')
-      setAuthenticated(Boolean(session.authenticated))
-      setAdminInfo(session.admin || null)
-      return Boolean(session.authenticated)
-    } catch {
-      setAuthenticated(false)
-      setAdminInfo(null)
-      return false
-    }
-  }
-
   const load = async () => {
     setLoading(true)
     setError('')
@@ -4794,7 +4784,7 @@ function AdminPage() {
   if (error && !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p><button className="primary-button" onClick={load}><RefreshCw size={16} /> 重新加载</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button><a className="secondary-button" href="/">返回首页</a></div></PublicShell>
   if (!data) return null
   const stats = data.stats || {}
-  const dashboardCards = [['注册用户', stats.users || 0, Users], ['活跃用户', stats.activeUsers || 0, UserRound], ['分享', stats.shares || 0, Link2], ['收集任务', stats.collections || 0, Inbox], ['占用空间', formatBytes(stats.totalBytes || 0), HardDrive], ['待清理', stats.pendingCleanup || 0, RefreshCw]]
+  const dashboardCards = [['注册用户', stats.users || 0, Users], ['未禁用用户', stats.activeUsers || 0, UserRound], ['分享', stats.shares || 0, Link2], ['收集任务', stats.collections || 0, Inbox], ['占用空间', formatBytes(stats.totalBytes || 0), HardDrive], ['待清理', stats.pendingCleanup || 0, RefreshCw]]
   const trend = data.trend || []
   const trendMax = Math.max(1, ...trend.flatMap((item) => [item.activeUsers, item.uploads, item.downloads]))
   return (
@@ -4804,7 +4794,7 @@ function AdminPage() {
         <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button className={tab === key ? 'active' : ''} key={key} onClick={() => setTab(key)}><Icon size={16} /> {label}</button>)}</nav>
         {error && <p className="public-message">{error}</p>}
         <div className="admin-content">
-          {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-list">{trend.map((item) => <div className="admin-trend-row" key={item.date}><span>{item.label}</span><div><i style={{ width: `${(item.activeUsers / trendMax) * 100}%` }} title={`活跃用户 ${item.activeUsers}`} /><i className="upload" style={{ width: `${(item.uploads / trendMax) * 100}%` }} title={`上传 ${item.uploads}`} /><i className="download" style={{ width: `${(item.downloads / trendMax) * 100}%` }} title={`下载 ${item.downloads}`} /></div><small>{item.activeUsers} / {item.uploads} / {item.downloads}</small></div>)}</div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot review" /> 待审核资源 <strong>{stats.reviewResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
+          {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-list">{trend.map((item) => <div className="admin-trend-row" key={item.date}><span>{item.label}</span><div><i style={{ width: `${(item.activeUsers / trendMax) * 100}%` }} title={`活跃用户 ${item.activeUsers}`} /><i className="upload" style={{ width: `${(item.uploads / trendMax) * 100}%` }} title={`上传 ${item.uploads}`} /><i className="download" style={{ width: `${(item.downloads / trendMax) * 100}%` }} title={`下载 ${item.downloads}`} /></div><small>{item.activeUsers} / {item.uploads} / {item.downloads}</small></div>)}</div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot muted" /> 资源审核未启用 <strong>—</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
           {tab === 'users' && <AdminUsers users={data.users} onUpdate={updateUser} />}
           {tab === 'security' && <AdminLogs logs={data.auditLogs} />}
           {tab === 'config' && <AdminConfig config={data.config} saving={savingConfig} onSubmit={saveConfig} />}
@@ -4949,11 +4939,13 @@ function AccountBindModal({ type, currentValue, onClose, onComplete }) {
   }, [onClose])
   useEffect(() => {
     if (resendSeconds <= 0) return undefined
+    // 只在倒计时启动/结束时创建、清理定时器，避免每秒销毁重建 interval
     const timer = window.setInterval(() => {
       setResendSeconds((current) => Math.max(0, current - 1))
     }, 1000)
     return () => window.clearInterval(timer)
-  }, [resendSeconds])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resendSeconds > 0])
 
   const sendCode = async () => {
     if (!target.trim()) {
@@ -5192,8 +5184,12 @@ function readRecords() {
 
 function writeRecords(records) {
   const next = normalizeRecords(records).slice(0, MAX_LOCAL_RECORDS)
-  window.localStorage.setItem(RECORD_STORAGE_KEY, JSON.stringify(next))
-  return next
+  // 隐私模式 / 存储配额满时 setItem 会抛异常，不能让本地上报中断上传/分享主流程。
+  try {
+    window.localStorage.setItem(RECORD_STORAGE_KEY, JSON.stringify(next))
+  } catch (error) {
+    console.warn('本地记录保存失败（存储不可用）', error)
+  }
 }
 
 function saveLocalRecord(record, currentRecords) {
@@ -6156,7 +6152,10 @@ function getManageToken(value) {
 }
 function recordAgeLabel(createdAt) {
   if (!createdAt) return '已更新'
-  const elapsedMinutes = Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000)
+  const elapsed = Date.now() - new Date(createdAt).getTime()
+  // 无效日期（解析为 NaN）兜底，避免渲染「NaN 分钟前创建」
+  if (!Number.isFinite(elapsed)) return '已更新'
+  const elapsedMinutes = Math.floor(elapsed / 60000)
   if (elapsedMinutes < 1) return '刚刚创建'
   if (elapsedMinutes < 60) return `${elapsedMinutes} 分钟前创建`
   const elapsedHours = Math.floor(elapsedMinutes / 60)
@@ -6615,9 +6614,11 @@ function safeDownloadName(value) {
 }
 
 function formatBytes(bytes = 0) {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  const value = Number(bytes) || 0
+  if (value < 1024) return `${Math.max(0, Math.round(value))} B`
+  if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 function formatAllowedTypes(types) {
   const normalized = normalizeCollectionTypes(types)

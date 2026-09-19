@@ -343,7 +343,7 @@ app.patch('/api/auth/profile', (req, res) => {
   if (hasAvatar) {
     const avatar = body.avatar === null ? null : String(body.avatar || '')
     if (avatar && (!/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(avatar) || Buffer.byteLength(avatar, 'utf8') > 600000)) {
-      return res.status(400).json({ message: '头像格式不支持或图片过大，请上传 2 MB 以内的图片' })
+      return res.status(400).json({ message: '头像格式不支持或图片过大，请上传 600 KB 以内的图片' })
     }
     // 显式写入 avatar 与 avatarSource，mergeAccountUser 才会认为"用户表了态"：
     // avatar 有值 → custom；avatar 为 null → 恢复登录头像（回落 provider）。
@@ -388,12 +388,51 @@ app.put('/api/account/file-cleanup-settings', updateFileCleanupSettings)
 app.patch('/api/account/file-cleanup-settings', updateFileCleanupSettings)
 app.post('/api/account/file-cleanup-settings', updateFileCleanupSettings)
 
+// 验证码发送限流：同一目标 60s 1 次、同一来源 IP 每小时 10 次，防止刷短信/邮件造成资损。
+const VERIFICATION_TARGET_COOLDOWN_MS = 60 * 1000
+const VERIFICATION_IP_WINDOW_MS = 60 * 60 * 1000
+const VERIFICATION_IP_MAX = 10
+const verificationTargetLastSent = new Map()
+const verificationIpAttempts = new Map()
+
+function verificationSendBlocked(target, req) {
+  const now = Date.now()
+  const targetKey = `${target.type}:${target.value}`
+  const ipKey = `socket:${String(req.socket?.remoteAddress || '').trim() || 'unknown'}`
+  if (verificationTargetLastSent.size + verificationIpAttempts.size > 5000) {
+    for (const [key, at] of verificationTargetLastSent) {
+      if (now - at > VERIFICATION_TARGET_COOLDOWN_MS) verificationTargetLastSent.delete(key)
+    }
+    for (const [key, entry] of verificationIpAttempts) {
+      if (now - entry.startedAt > VERIFICATION_IP_WINDOW_MS) verificationIpAttempts.delete(key)
+    }
+  }
+  const lastSent = verificationTargetLastSent.get(targetKey)
+  if (lastSent && now - lastSent < VERIFICATION_TARGET_COOLDOWN_MS) {
+    return '验证码发送过于频繁，请 1 分钟后再试'
+  }
+  const ipEntry = verificationIpAttempts.get(ipKey)
+  if (ipEntry && now - ipEntry.startedAt <= VERIFICATION_IP_WINDOW_MS && ipEntry.count >= VERIFICATION_IP_MAX) {
+    return '验证码发送过于频繁，请稍后再试'
+  }
+  verificationTargetLastSent.set(targetKey, now)
+  const current = verificationIpAttempts.get(ipKey)
+  if (!current || now - current.startedAt > VERIFICATION_IP_WINDOW_MS) {
+    verificationIpAttempts.set(ipKey, { count: 1, startedAt: now })
+  } else {
+    current.count += 1
+  }
+  return null
+}
+
 app.post('/api/auth/code', async (req, res) => {
   try {
     const session = requireAuthSession(req, res)
     if (!session) return
     const target = normalizeContactTarget(req.body?.target)
     if (!target) return res.status(400).json({ message: '请输入正确的邮箱或手机号' })
+    const blockedMessage = verificationSendBlocked(target, req)
+    if (blockedMessage) return res.status(429).json({ message: blockedMessage })
     const debugCode = createVerificationCode(target, 'bind')
     if (target.type === 'email') {
       const transporter = getEmailTransporter()
@@ -650,6 +689,9 @@ app.get('/api/account/team/overview', (req, res) => {
       lastActivityAt: shares.map((item) => item.updatedAt || item.createdAt).filter(Boolean).sort().pop() || null,
     }
   })
+  // 团队概览的资源列表：manageToken 是 bearer 管理凭证（可改密/删除分享，且管理接口
+  // 不校验登录身份），绝不能下发给非管理成员 —— 否则成员可越权控制他人分享。
+  const canManageTeam = isOrganizationManager(organization, session.user.id)
   const resources = [
     ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && memberIds.has(item.ownerUserId)).map((item) => ({
       id: item.id,
@@ -658,18 +700,21 @@ app.get('/api/account/team/overview', (req, res) => {
       files: item.files.map(publicFile),
       ownerUserId: item.ownerUserId,
       status: currentShareStatus(item),
+      closeReason: item.closeReason || null,
       fileCount: item.files?.length || 0,
       totalSize: fileListSize(item.files),
       downloadCount: item.downloadCount || 0,
       createdAt: item.createdAt,
       expiresAt: item.expiresAt || null,
-      manageToken: item.manageToken,
-      manageUrl: `${getOrigin(req)}/share/manage/${item.manageToken}`,
+      ...(canManageTeam ? {
+        manageToken: item.manageToken,
+        manageUrl: `${getOrigin(req)}/share/manage/${item.manageToken}`,
+      } : {}),
     })),
   ].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   res.json({
     organization: publicOrganization(organization, session.user.id),
-    canManage: isOrganizationManager(organization, session.user.id),
+    canManage: canManageTeam,
     plan: accountEffectivePlanForUser(organization.ownerUserId),
     capacity: accountTeamUsageForOrganization(organization),
     memberUsage,
@@ -838,8 +883,10 @@ app.delete('/api/account/workspace/members/:memberId', (req, res) => {
   if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以管理成员' })
   const index = organization.members.findIndex((member) => member.id === req.params.memberId)
   if (index < 0) return res.status(404).json({ message: '团队成员不存在' })
+  // 先校验再修改：所有者保护必须发生在 splice 之前，否则 400 返回后内存里
+  // 成员已被移除，会被后续任意请求的 persistMetadata 落盘，造成团队数据损坏。
+  if (organization.members[index].userId === organization.ownerUserId) return res.status(400).json({ message: '团队所有者不能移除' })
   const [removedMember] = organization.members.splice(index, 1)
-  if (removedMember.userId === organization.ownerUserId) return res.status(400).json({ message: '团队所有者不能移除' })
   const operator = accountUserById(session.user.id) || session.user
   const operatorName = displayAccountName(operator)
   const removedUser = accountUserById(removedMember.userId)
@@ -1059,7 +1106,8 @@ app.post('/api/organizations/:slug/join-request', (req, res) => {
   }
   if (existing?.status === 'invited') return res.status(409).json({ message: '你已收到该团队的邀请，请先在消息中心处理邀请' })
 
-  const ip = clientIpFromRequest(req)
+  // 限流键用真实 socket 地址：trust proxy=true 下 XFF 可伪造，等于没有限流。
+  const ip = String(req.socket?.remoteAddress || '').trim() || 'unknown'
   if (isJoinRequestRateLimited(ip, viewer.id)) {
     return res.status(429).json({ message: '申请提交过于频繁，请稍后再试' })
   }
@@ -1626,6 +1674,21 @@ app.post('/api/upload-sessions/:sessionId/chunks', upload.single('chunk'), (req,
   }
 })
 
+// 分片合并用流式追加：单个分片可能很大，readFileSync 整片进内存会打爆进程。
+function appendFileChunk(outputFd, chunkPath) {
+  const input = fs.openSync(chunkPath, 'r')
+  try {
+    const buffer = Buffer.allocUnsafe(1024 * 1024)
+    for (;;) {
+      const read = fs.readSync(input, buffer, 0, buffer.length, null)
+      if (read <= 0) break
+      fs.writeSync(outputFd, buffer, 0, read)
+    }
+  } finally {
+    fs.closeSync(input)
+  }
+}
+
 app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
   try {
     const session = uploadSessions.get(req.params.sessionId)
@@ -1646,7 +1709,7 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
         for (let chunkIndex = 0; chunkIndex < file.totalChunks; chunkIndex += 1) {
           const chunkPath = path.join(chunksDirectory, `${chunkIndex}.part`)
           if (!fs.existsSync(chunkPath)) throw new Error(`${file.name} 分片缺失，请重试上传`)
-          fs.writeSync(output, fs.readFileSync(chunkPath))
+          appendFileChunk(output, chunkPath)
         }
       } finally {
         fs.closeSync(output)
@@ -1715,7 +1778,36 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
   }
 })
 
+// 取件码查询限流：取件码空间小（最短 4 位），不限流可被枚举。
+// 与后台登录同理，不能用 XFF 做键（trust proxy=true 可伪造），用真实 socket 地址 + 全局兜底。
+const SHARE_LOOKUP_WINDOW_MS = 10 * 60 * 1000
+const SHARE_LOOKUP_MAX_PER_WINDOW = 30
+const SHARE_LOOKUP_GLOBAL_MAX = 300
+const shareLookupAttempts = new Map()
+
+function shareLookupRateLimited(req) {
+  const socketIp = String(req.socket?.remoteAddress || '').trim() || 'unknown'
+  const now = Date.now()
+  if (shareLookupAttempts.size > 5000) {
+    for (const [key, entry] of shareLookupAttempts) {
+      if (now - entry.startedAt > SHARE_LOOKUP_WINDOW_MS) shareLookupAttempts.delete(key)
+    }
+  }
+  const bump = (key) => {
+    const entry = shareLookupAttempts.get(key)
+    if (!entry || now - entry.startedAt > SHARE_LOOKUP_WINDOW_MS) {
+      shareLookupAttempts.set(key, { count: 1, startedAt: now })
+      return 1
+    }
+    entry.count += 1
+    return entry.count
+  }
+  return bump(`socket:${socketIp}`) > SHARE_LOOKUP_MAX_PER_WINDOW
+    || bump('global') > SHARE_LOOKUP_GLOBAL_MAX
+}
+
 app.get('/api/shares/lookup/:code', (req, res) => {
+  if (shareLookupRateLimited(req)) return res.status(429).json({ message: '查询过于频繁，请稍后再试' })
   const share = findShareByCode(req.params.code)
   if (!share) return res.status(404).json({ message: '取件码不存在或已失效' })
   const access = validateShare(share, undefined, { allowMissingPassword: true })
@@ -1725,6 +1817,7 @@ app.get('/api/shares/lookup/:code', (req, res) => {
 })
 
 app.post('/api/shares/lookup/:code', (req, res) => {
+  if (shareLookupRateLimited(req)) return res.status(429).json({ message: '查询过于频繁，请稍后再试' })
   const share = findShareByCode(req.params.code)
   if (!share) return res.status(404).json({ message: '取件码不存在或已失效' })
   const access = validateShare(share, req.body.password)
@@ -3079,6 +3172,7 @@ function publicShare(share, req, includeFiles = true, includeManage = false) {
     qrDataUrl: share.qrDataUrl,
     enterpriseUrl: organization ? `${getOrigin(req)}/e/${organization.slug}/share/${share.id}` : '',
     requiresPassword: Boolean(share.passwordHash),
+    closeReason: share.closeReason || null,
     deliveryRecipients: share.deliveryRecipients || [],
     notificationLog: share.notificationLog || [],
     status,
@@ -3681,6 +3775,7 @@ function normalizeVerificationCodes(value = []) {
     target: trimRecordString(item?.target, 160),
     scene: normalizeVerificationScene(item?.scene),
     codeHash: trimRecordString(item?.codeHash, 80),
+    attempts: Math.max(0, Math.min(99, Math.floor(Number(item?.attempts) || 0))),
     createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
     expiresAt: normalizeRecordDate(item?.expiresAt),
   })).filter((item) => item.target && item.codeHash && item.expiresAt && new Date(item.expiresAt).getTime() > now).slice(0, MAX_VERIFICATION_CODES)
@@ -3803,9 +3898,22 @@ function hmac(key, value) {
 function verifyAuthCode(target, value, scene) {
   cleanupVerificationCodes()
   const codeHash = hashSecret(trimRecordString(value, 12))
-  const index = metadata.verificationCodes.findIndex((item) => item.type === target.type && item.target === target.value && item.scene === scene && item.codeHash === codeHash)
+  const list = metadata.verificationCodes
+  const index = list.findIndex((item) => item.type === target.type && item.target === target.value && item.scene === scene)
   if (index < 0) throw httpError(400, '验证码不正确或已过期')
-  metadata.verificationCodes.splice(index, 1)
+  // 校验失败计数：同一验证码连续错 5 次立即作废，防止 6 位码被暴力枚举。
+  if (list[index].codeHash !== codeHash) {
+    const attempts = (list[index].attempts || 0) + 1
+    if (attempts >= 5) {
+      list.splice(index, 1)
+      persistMetadata()
+      throw httpError(400, '错误次数过多，验证码已失效，请重新获取')
+    }
+    list[index].attempts = attempts
+    persistMetadata()
+    throw httpError(400, '验证码不正确')
+  }
+  list.splice(index, 1)
   persistMetadata()
 }
 
@@ -4090,7 +4198,8 @@ async function notifyShareRecipients(share, req, ownerUser = null) {
         }
       }
     } else if (target?.type === 'phone' && !deliveredUserIds.length) {
-      statusParts.push('短信通道未配置')
+      // 该手机号未匹配到平台账号：短信验证码类通道本来就不给陌生人发，如实说明。
+      statusParts.push('该手机号未匹配到平台账号，未发送短信通知')
     }
     if (!statusParts.length) statusParts.push('未匹配账号')
     return {
@@ -4899,7 +5008,9 @@ async function createShareFromTempFiles(tempFiles, options, req) {
 // 会因个人 permanent=false 而无法往团队空间上传文件。
 function readShareOptions(body = {}, user = null, isTeamResource = false) {
   const config = normalizeSystemConfig(metadata.systemConfig)
-  const requestedExpiryDays = String(body.expiryDays || config.defaultShareDays)
+  // 兼容数字 0：'0'/'0'（永久）是合法值，不能被 || 吞掉回落默认天数。
+  const rawExpiryDays = body.expiryDays
+  const requestedExpiryDays = String(rawExpiryDays === 0 || rawExpiryDays === '0' ? '0' : (rawExpiryDays || config.defaultShareDays))
   const maxShareDays = config.maxShareDays
   if (requestedExpiryDays === '0' && !isTeamResource && !accountEffectivePlanForUser(user || {}).permanent) {
     throw httpError(403, '永久保存需要会员版或更高权益')
@@ -4909,7 +5020,8 @@ function readShareOptions(body = {}, user = null, isTeamResource = false) {
     downloadLimit: String(body.downloadLimit || 'unlimited'),
     password: String(body.password || ''),
     codeLength: Number(body.codeLength || 6),
-    recipients: parseRecipients(body.recipients),
+    // 收件人上限：防止一次创建触发海量外发邮件（邮件放大/发信域名被封）。
+    recipients: parseRecipients(body.recipients, { max: 50 }),
     teamResource: Boolean(isTeamResource),
   }
 }
@@ -5031,12 +5143,14 @@ function httpError(status, message) {
   return error
 }
 
-function parseRecipients(value) {
-  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean)
-  return String(value || '')
-    .split(/[\n,，;；\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
+function parseRecipients(value, { max = Infinity } = {}) {
+  const list = Array.isArray(value)
+    ? value.map(String).map((item) => item.trim()).filter(Boolean)
+    : String(value || '')
+      .split(/[\n,，;；\s]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  return max === Infinity ? list : list.slice(0, max)
 }
 
 function findShareByCode(code) {
