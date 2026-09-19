@@ -83,3 +83,58 @@ Chrome：`C:\Program Files\Google\Chrome\Application\chrome.exe`。无 puppeteer
 
 > Playwright 亦可直接用于截图：`...\node_modules\@playwright\cli\node_modules\playwright-core`，
 > chromium `C:\Users\admin\AppData\Local\ms-playwright\chromium-1228\chrome-win64\chrome.exe`
+
+## D. Git / 部署（双远程 + 事故恢复）
+
+### D.1 双远程与部署链路
+| remote | 地址 | 作用 |
+|---|---|---|
+| `origin` | `https://gitee.com/zhanlinhai/kunqiong-file-transfer-web.git` | 代码镜像，**不触发部署** |
+| `gitea` | `http://43.154.197.96/giteaadmin/...` | **推这里才触发 CI**（`.gitea/workflows/deploy-test.yml`） |
+
+- 触发条件：`push` 到 `main` 或手动 `workflow_dispatch`；CI 在 runner 上 `git clone` → 跑 `scripts/deploy-test.sh`
+- ⚠️ **CI 必须 `runs-on: linux`**（固定本机 runner）。写成 `ubuntu-latest` 会被 `43.138.35.163` 上的同名 runner 抢走任务 → 看似成功实则部署到别处
+- 部署生效判据：`http://43.154.197.96:8045/` 返回的 `assets/index-*.{css,js}` **hash 变了**。轮询 ~20s 一次，通常 1~3 分钟生效
+- 验证线上产物用**宽松正则**：minifier 会改属性顺序、`rgba()` 转 hex、压缩变量名 →
+  直接搜 `accountPlanIcon` 会 MISS。改搜 `.page-footer button{display:inline-flex`、
+  文案字面量（`保存昵称`）等**压缩后仍保留**的特征
+
+### D.2 ⚠️⚠️ rebase 被 SIGTERM 强杀会毁掉 `.git/objects`
+**2026-09-19 真实事故**：`git rebase <sha>` 在 Bash 工具里超时 → 被 SIGTERM →
+`.git/objects` 与 `refs/heads/main` **被清空**，`.git` 从 ~13MB 缩到 37KB。
+
+- **症状**：`PWD` 与 `.git\HEAD` 都能读，但**任何 git 命令都报 `fatal: not a git repository`**
+- **根因**：Bash 工具运行 git 时 `cd` 未真正生效 + rebase 中断的双重作用
+- **兜底事实**：**工作区文件 100% 完好**（rebase 不动工作区）→ 损失可控，别慌
+
+**恢复流程**（已实测有效）：
+1. 先验证工作区完整：关键文件在、我的改动特征串在（如 `设计增强层 v1`）
+2. 备份我的改动文件到项目外（`shutil.copy2`）
+3. `git clone <gitea-url> <桌面临时目录>` 拿干净 `.git`
+4. 对比远端与工作区：**按 `\r\n`→`\n` 归一化后再比 md5** —— 否则 CRLF 差异会让人误判「远端版本是错的」
+5. 移走损坏 `.git`（留作备份）→ 移入克隆的 `.git`
+6. 重建 remote 配置（克隆来的只有 `origin` 指向 Gitea）：
+   ```
+   git remote set-url origin <gitee-url>
+   git remote add gitea <gitea-url>
+   git config core.autocrlf false && git config core.eol lf
+   ```
+7. ⚠️ **把被 rebase 改坏的文件 `git checkout --` 还原**：本次 `.gitea/workflows/deploy-test.yml`
+   的工作区版本被回退成 `ubuntu-latest`，**必须还原**，否则部署跑错机器
+8. ⚠️ **把 CRLF 转回 LF**：rebase 会把工作区文件转成 CRLF，导致 diff 显示「整文件重写」
+   （`main.jsx` 虚报 13522 行）。逐字节 `b.replace(b'\r\n', b'\n')` 写回
+9. 复核 `git diff --stat` 是否回到真实改动量，再提交
+
+**预防**：
+- 跑 `git rebase` / `git merge` 这类可能进交互或耗时的命令，**别用默认超时**，
+  给它显式大超时；Bash 工具的 `cd` 在该环境不可靠，**能用 `subprocess(cwd=R)` 就不要靠 `cd`**
+- 冲突面小时可考虑 `git merge` 或 `cherry-pick` 替代 rebase
+- **推送前先备份 `.git`**（`robocopy /E` 或 `shutil.copytree`），13MB 成本极低
+
+### D.3 推送被拒的正确判断顺序
+1. `git fetch <remote> main` → 若 remote 是**全新引用**且 `git diff` 为空，**先别急着 pull**
+2. 用 `git ls-remote <remote>` 拿**真实远端 sha**（`fetch` 有时拿不到）
+3. `git cat-file -t <sha>` + `git log --oneline <sha>` 看远端到底有什么
+4. `git merge-base HEAD <sha>` 找共同祖先 → 据此判断是 **fast-forward / 平行线 / 真正冲突**
+5. 平行线且**改动文件无交集** → rebase（或 merge）；有交集 → 老老实实 merge 解冲突
+
