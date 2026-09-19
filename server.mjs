@@ -68,6 +68,11 @@ const SHARE_ACCESS_COOKIE_PREFIX = 'kunqiong_share_access_'
 const SHARE_ACCESS_TTL_SECONDS = 15 * 60
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 const UPLOAD_SESSION_TTL_MS = 12 * 60 * 60 * 1000
+// 分片直写模式：会话级分片大小固定，服务端按 chunkIndex*chunkSize 定位写入，
+// complete 阶段零合并（旧实现 readSync/writeSync 同步合并会阻塞整个事件循环）。
+const UPLOAD_CHUNK_MIN_BYTES = 1 * 1024 * 1024
+const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024
+const UPLOAD_CHUNK_DEFAULT_BYTES = 8 * 1024 * 1024
 const MAX_ACCOUNT_RECORDS = 200
 const MAX_ACCOUNT_MESSAGES = 120
 const MAX_RECORD_FILES = 120
@@ -1622,6 +1627,7 @@ app.post('/api/upload-sessions', (req, res) => {
   const isTeamResourceSession = req.body.mode === 'team_resource'
   const session = {
     id: sessionId,
+    chunkSize: normalizeUploadChunkSize(req.body.chunkSize),
     files: normalizedFiles,
     // 团队资源走团队空间权益，不校验上传者的个人 permanent。
     options: readShareOptions(req.body, ownerSession?.user, isTeamResourceSession),
@@ -1636,10 +1642,11 @@ app.post('/api/upload-sessions', (req, res) => {
     createdAt: new Date().toISOString(),
   }
   uploadSessions.set(sessionId, session)
+  persistUploadSession(session)
   res.status(201).json({ sessionId, uploaded: session.files.map((file) => ({ name: file.name, chunks: [] })) })
 })
 
-app.post('/api/upload-sessions/:sessionId/chunks', upload.single('chunk'), (req, res, next) => {
+app.post('/api/upload-sessions/:sessionId/chunks', upload.single('chunk'), async (req, res, next) => {
   try {
     const session = uploadSessions.get(req.params.sessionId)
     if (!session) {
@@ -1662,9 +1669,35 @@ app.post('/api/upload-sessions/:sessionId/chunks', upload.single('chunk'), (req,
       cleanupUploadedFiles(req.file ? [req.file] : [])
       return res.status(409).json({ message: '分片总数发生变化，请重新开始上传' })
     }
-    const chunksDirectory = path.join(session.directory, String(fileIndex))
-    fs.mkdirSync(chunksDirectory, { recursive: true })
-    fs.renameSync(req.file.path, path.join(chunksDirectory, `${chunkIndex}.part`))
+    // 分片位置与会话配置强校验：offset 只能由 chunkIndex*chunkSize 推出，
+    // 大小必须是 min(chunkSize, 文件剩余)。旧客户端不带 chunkSize 时按默认 8MB 兼容。
+    const expectedOffset = chunkIndex * session.chunkSize
+    const expectedSize = Math.min(session.chunkSize, Math.max(0, file.size - expectedOffset))
+    if ((file.size > 0 && expectedOffset >= file.size) || req.file.size !== expectedSize) {
+      cleanupUploadedFiles(req.file ? [req.file] : [])
+      return res.status(400).json({ message: '分片大小与上传会话配置不一致，请重新开始上传' })
+    }
+    // 内容校验：客户端带 SHA-256 时必须匹配，防止静默损坏/串片。
+    const chunkBuffer = await fs.promises.readFile(req.file.path)
+    if (req.body.chunkHash) {
+      const actualHash = crypto.createHash('sha256').update(chunkBuffer).digest('hex')
+      if (actualHash !== String(req.body.chunkHash).toLowerCase()) {
+        cleanupUploadedFiles(req.file ? [req.file] : [])
+        return res.status(400).json({ message: '分片校验失败，将自动重试' })
+      }
+    }
+    // 分片直写：按 offset 定位写入目标文件（pwrite，乱序到达也安全），complete 阶段零合并。
+    const targetPath = path.join(session.directory, `${fileIndex}.target`)
+    const target = await fs.promises.open(targetPath, fs.constants.O_RDWR | fs.constants.O_CREAT, 0o644)
+    try {
+      await target.write(chunkBuffer, 0, chunkBuffer.length, expectedOffset)
+    } finally {
+      await target.close()
+    }
+    await fs.promises.unlink(req.file.path).catch(() => {})
+    const markerDirectory = path.join(session.directory, String(fileIndex))
+    fs.mkdirSync(markerDirectory, { recursive: true })
+    fs.writeFileSync(path.join(markerDirectory, `${chunkIndex}.done`), '')
     file.totalChunks = totalChunks
     file.chunks.add(chunkIndex)
     res.json({ ok: true, fileIndex, chunkIndex, uploadedChunks: file.chunks.size })
@@ -1674,47 +1707,134 @@ app.post('/api/upload-sessions/:sessionId/chunks', upload.single('chunk'), (req,
   }
 })
 
-// 分片合并用流式追加：单个分片可能很大，readFileSync 整片进内存会打爆进程。
-function appendFileChunk(outputFd, chunkPath) {
-  const input = fs.openSync(chunkPath, 'r')
+// 会话级分片大小：客户端在创建会话时声明，服务端收敛到 [1MB, 16MB]，
+// 未携带（旧客户端）回落默认 8MB —— 与旧版前端固定分片值保持一致。
+function normalizeUploadChunkSize(value) {
+  const size = Math.round(Number(value))
+  if (!Number.isFinite(size) || size <= 0) return UPLOAD_CHUNK_DEFAULT_BYTES
+  return Math.min(UPLOAD_CHUNK_MAX_BYTES, Math.max(UPLOAD_CHUNK_MIN_BYTES, size))
+}
+
+// 会话清单落盘：重启后可从 session.json + {fileIndex}/{chunkIndex}.done 标记恢复
+// 续传状态（uploadSessions 是内存 Map，重启即失；清单让 12h TTL 真正跨重启生效）。
+function persistUploadSession(session) {
   try {
-    const buffer = Buffer.allocUnsafe(1024 * 1024)
-    for (;;) {
-      const read = fs.readSync(input, buffer, 0, buffer.length, null)
-      if (read <= 0) break
-      fs.writeSync(outputFd, buffer, 0, read)
+    const manifest = {
+      id: session.id,
+      chunkSize: session.chunkSize,
+      files: session.files.map((file) => ({ name: file.name, relativePath: file.relativePath, size: file.size, mimeType: file.mimeType })),
+      options: session.options,
+      mode: session.mode,
+      organizationId: session.organizationId,
+      collectionToken: session.collectionToken,
+      participantName: session.participantName,
+      submitterUserId: session.submitterUserId,
+      submitterName: session.submitterName,
+      relativePaths: session.relativePaths,
+      createdAt: session.createdAt,
     }
-  } finally {
-    fs.closeSync(input)
+    const manifestPath = path.join(session.directory, 'session.json')
+    const tmpPath = `${manifestPath}.tmp`
+    fs.writeFileSync(tmpPath, JSON.stringify(manifest))
+    fs.renameSync(tmpPath, manifestPath)
+  } catch (error) {
+    console.warn('上传会话清单写入失败', error?.message || error)
   }
 }
+
+function restoreUploadSessions() {
+  const root = path.join(tempRoot, 'upload-sessions')
+  let entries = []
+  try {
+    entries = fs.readdirSync(root)
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    const directory = path.join(root, entry)
+    const manifestPath = path.join(directory, 'session.json')
+    try {
+      if (!fs.existsSync(manifestPath)) {
+        removeDirectory(directory)
+        continue
+      }
+      const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+      if (raw?.id !== entry || !Array.isArray(raw.files) || !Number.isFinite(Number(raw.chunkSize))) {
+        removeDirectory(directory)
+        continue
+      }
+      const session = {
+        ...raw,
+        directory,
+        chunkSize: normalizeUploadChunkSize(raw.chunkSize),
+        files: raw.files.map((file) => ({ ...file, totalChunks: 0, chunks: new Set() })),
+      }
+      let broken = false
+      session.files.forEach((file, fileIndex) => {
+        const targetPath = path.join(directory, `${fileIndex}.target`)
+        if (!fs.existsSync(targetPath)) {
+          broken = true
+          return
+        }
+        const markerDirectory = path.join(directory, String(fileIndex))
+        let markers = []
+        try {
+          markers = fs.readdirSync(markerDirectory)
+        } catch {
+          markers = []
+        }
+        for (const name of markers) {
+          const match = /^(\d+)\.done$/.exec(name)
+          if (match) file.chunks.add(Number(match[1]))
+        }
+      })
+      if (broken) {
+        removeDirectory(directory)
+        continue
+      }
+      uploadSessions.set(session.id, session)
+    } catch {
+      removeDirectory(directory)
+    }
+  }
+}
+
+app.get('/api/upload-sessions/:sessionId', (req, res) => {
+  const session = uploadSessions.get(req.params.sessionId)
+  if (!session) return res.status(404).json({ message: '上传会话不存在，请重新开始上传' })
+  res.json({
+    sessionId: session.id,
+    chunkSize: session.chunkSize,
+    createdAt: session.createdAt,
+    files: session.files.map((file, fileIndex) => ({
+      name: file.name,
+      size: file.size,
+      totalChunks: Math.max(1, Math.ceil(file.size / session.chunkSize)),
+      uploadedChunks: Array.from(file.chunks).sort((a, b) => a - b),
+      targetReady: fs.existsSync(path.join(session.directory, `${fileIndex}.target`)),
+    })),
+  })
+})
 
 app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
   try {
     const session = uploadSessions.get(req.params.sessionId)
     if (!session) return res.status(404).json({ message: '上传会话不存在，请重新开始上传' })
+    // 分片直写模式：这里只做完整性校验（逐 index 齐片 + 目标文件大小），
+    // 不再合并 —— 旧版同步合并 5GB 文件会阻塞事件循环 10~35 秒。
     for (let fileIndex = 0; fileIndex < session.files.length; fileIndex += 1) {
       const file = session.files[fileIndex]
-      const expectedChunks = Number(file.totalChunks || Math.max(1, Math.ceil(file.size / Number(req.body.chunkSize || 1))))
-      if (file.chunks.size < expectedChunks) {
+      const expectedChunks = Math.max(1, Math.ceil(file.size / session.chunkSize))
+      const hasAllChunks = file.chunks.size === expectedChunks && Array.from({ length: expectedChunks }, (_, index) => index).every((index) => file.chunks.has(index))
+      if (!hasAllChunks) {
         return res.status(409).json({ message: `${file.name} 还有分片未上传完成` })
       }
     }
 
     const mergedFiles = session.files.map((file, fileIndex) => {
-      const mergedPath = path.join(session.directory, `${fileIndex}-merged`)
-      const output = fs.openSync(mergedPath, 'w')
-      const chunksDirectory = path.join(session.directory, String(fileIndex))
-      try {
-        for (let chunkIndex = 0; chunkIndex < file.totalChunks; chunkIndex += 1) {
-          const chunkPath = path.join(chunksDirectory, `${chunkIndex}.part`)
-          if (!fs.existsSync(chunkPath)) throw new Error(`${file.name} 分片缺失，请重试上传`)
-          appendFileChunk(output, chunkPath)
-        }
-      } finally {
-        fs.closeSync(output)
-      }
-      if (fs.statSync(mergedPath).size !== file.size) {
+      const targetPath = path.join(session.directory, `${fileIndex}.target`)
+      if (!fs.existsSync(targetPath)) throw httpError(400, `${file.name} 分片缺失，请重试上传`)
+      if (fs.statSync(targetPath).size !== file.size) {
         throw httpError(400, `${file.name} 文件大小校验失败，请重新上传`)
       }
       return {
@@ -1722,7 +1842,7 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
         relativePath: file.relativePath,
         size: file.size,
         mimeType: file.mimeType,
-        tempPath: mergedPath,
+        tempPath: targetPath,
       }
     })
     assertSafeUploadFiles(mergedFiles)
@@ -2182,6 +2302,7 @@ const cleanupTimer = setInterval(() => {
   cleanupUploadSessions()
 }, 60 * 1000)
 cleanupTimer.unref()
+restoreUploadSessions()
 cleanupExpired()
 cleanupUploadSessions()
 

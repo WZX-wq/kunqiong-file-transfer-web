@@ -5890,8 +5890,81 @@ function createUploadSessionState() {
   }
 }
 
+// 分片大小选择：会话创建时确定，服务端按同一配置定位写入。
+// 弱网/省流量 → 2MB 减少单片失败代价；大批量 → 16MB 减少请求数；默认 8MB。
+function pickUploadChunkSize(files) {
+  const totalBytes = files.reduce((sum, item) => sum + item.size, 0)
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {}
+  if (connection.saveData || ['slow-2g', '2g', '3g'].includes(connection.effectiveType)) return 2 * 1024 * 1024
+  if (totalBytes >= 512 * 1024 * 1024) return 16 * 1024 * 1024
+  return 8 * 1024 * 1024
+}
+
+// 分片 SHA-256：非 secure context（http 局域网地址）下 crypto.subtle 不存在，跳过校验降级传输。
+async function sha256Hex(buffer) {
+  if (!globalThis.crypto?.subtle) return ''
+  const digest = await crypto.subtle.digest('SHA-256', buffer)
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+const UPLOAD_RESUME_KEY = 'kunqiong_upload_resume'
+const UPLOAD_RESUME_TTL_MS = 11 * 60 * 60 * 1000
+
+function uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions) {
+  return JSON.stringify({
+    chunkSize,
+    files: files.map((item) => ({ name: item.name, size: item.size, relativePath: item.relativePath || '', mimeType: item.file?.type || item.mimeType || '' })),
+    options: shareOptions,
+    mode: uploadConfig.sessionBody || {},
+  })
+}
+
+function readUploadResume() {
+  try { return JSON.parse(localStorage.getItem(UPLOAD_RESUME_KEY) || 'null') } catch { return null }
+}
+
+function saveUploadResume(files, chunkSize, uploadConfig, shareOptions, sessionId) {
+  try {
+    localStorage.setItem(UPLOAD_RESUME_KEY, JSON.stringify({ sessionId, chunkSize, savedAt: Date.now(), signature: uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions) }))
+  } catch { /* 存储满/隐私模式忽略，退化为普通续传 */ }
+}
+
+function clearUploadResume() {
+  try { localStorage.removeItem(UPLOAD_RESUME_KEY) } catch { /* 忽略 */ }
+}
+
+// 跨刷新续传：刷新/重启后用 localStorage 里的会话指纹换回已传分片清单，
+// 文件清单、分片配置、分享参数任一变化即放弃续传重新开session。
+async function tryResumeUploadSession(files, chunkSize, uploadConfig, shareOptions, session) {
+  const entry = readUploadResume()
+  if (!entry?.sessionId) return false
+  try {
+    if (Date.now() - Number(entry.savedAt) > UPLOAD_RESUME_TTL_MS) throw new Error('上传会话已过期')
+    if (Number(entry.chunkSize) !== chunkSize || entry.signature !== uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions)) throw new Error('文件清单变化')
+    const data = await apiRequest(`/api/upload-sessions/${entry.sessionId}`)
+    if (Number(data.chunkSize) !== chunkSize || !Array.isArray(data.files) || data.files.length !== files.length) throw new Error('服务端会话不一致')
+    const resumedChunks = new Map()
+    let resumedBytes = 0
+    for (let index = 0; index < data.files.length; index += 1) {
+      const remote = data.files[index]
+      const local = files[index]
+      if (remote.name !== local.name || Number(remote.size) !== local.size) throw new Error('文件清单变化')
+      const done = Array.isArray(remote.uploadedChunks) ? remote.uploadedChunks : []
+      resumedChunks.set(index, done)
+      for (const chunkIndex of done) resumedBytes += Math.min(chunkSize, Math.max(0, local.size - chunkIndex * chunkSize))
+    }
+    session.sessionId = data.sessionId || entry.sessionId
+    session.resumedChunks = resumedChunks
+    session.uploadedBytes = Math.min(resumedBytes, session.totalBytes)
+    return true
+  } catch {
+    clearUploadResume()
+    return false
+  }
+}
+
 async function uploadShareInChunks(files, settings, uploadRef, onState, uploadConfig = {}) {
-  const chunkSize = 8 * 1024 * 1024
+  const chunkSize = pickUploadChunkSize(files)
   const concurrency = Math.min(4, Math.max(2, Number(navigator.hardwareConcurrency || 4) >= 8 ? 4 : 2))
   const session = uploadRef.current
   session.totalBytes = files.reduce((sum, item) => sum + item.size, 0)
@@ -5900,24 +5973,34 @@ async function uploadShareInChunks(files, settings, uploadRef, onState, uploadCo
 
   if (!session.sessionId) {
     onState({ status: 'uploading', phase: '创建上传会话', progress: 0, totalBytes: session.totalBytes, uploadedBytes: 0, speedBps: 0, etaSeconds: null, currentFile: '', retryCount: 0, error: '' })
-    const response = await apiRequest('/api/upload-sessions', {
-      method: 'POST',
-      body: JSON.stringify({
-        files: files.map((item) => ({ name: item.name, relativePath: item.relativePath, size: item.size, mimeType: item.file.type })),
-        ...shareOptions,
-        ...(uploadConfig.sessionBody || {}),
-      }),
-    })
-    session.sessionId = response.sessionId
+    const resumed = await tryResumeUploadSession(files, chunkSize, uploadConfig, shareOptions, session)
+    if (resumed) {
+      onState(uploadStateFromProgress(session, session.uploadedBytes, '已恢复上次上传进度', '', 0))
+    } else {
+      const response = await apiRequest('/api/upload-sessions', {
+        method: 'POST',
+        body: JSON.stringify({
+          files: files.map((item) => ({ name: item.name, relativePath: item.relativePath, size: item.size, mimeType: item.file.type })),
+          chunkSize,
+          ...shareOptions,
+          ...(uploadConfig.sessionBody || {}),
+        }),
+      })
+      session.sessionId = response.sessionId
+      saveUploadResume(files, chunkSize, uploadConfig, shareOptions, session.sessionId)
+    }
   }
 
   for (let fileIndex = session.fileIndex; fileIndex < files.length; fileIndex += 1) {
     const item = files[fileIndex]
     const totalChunks = Math.max(1, Math.ceil(item.size / chunkSize))
+    const resumedDone = session.resumedChunks instanceof Map ? (session.resumedChunks.get(fileIndex) || []) : []
+    const completedChunks = new Set(resumedDone)
     const startChunk = fileIndex === session.fileIndex ? session.chunkIndex : 0
-    const completedChunks = new Set()
+    let nextChunk = Math.max(startChunk, 0)
+    while (completedChunks.has(nextChunk)) nextChunk += 1
+    let lowestIncomplete = nextChunk
     const inFlightProgress = new Map()
-    let nextChunk = startChunk
     let firstError = null
     const worker = async () => {
       while (!firstError) {
@@ -5927,7 +6010,8 @@ async function uploadShareInChunks(files, settings, uploadRef, onState, uploadCo
         nextChunk += 1
         const start = chunkIndex * chunkSize
         const end = Math.min(item.size, start + chunkSize)
-        const chunk = item.file.slice(start, end)
+        const chunkData = await item.file.slice(start, end).arrayBuffer()
+        const chunkHash = await sha256Hex(chunkData)
         let attempt = 0
         while (attempt < 3) {
           try {
@@ -5936,7 +6020,8 @@ async function uploadShareInChunks(files, settings, uploadRef, onState, uploadCo
               fileIndex,
               chunkIndex,
               totalChunks,
-              chunk,
+              chunkData,
+              chunkHash,
               filename: item.name,
             }, {
               uploadRef,
@@ -5947,8 +6032,9 @@ async function uploadShareInChunks(files, settings, uploadRef, onState, uploadCo
             })
             inFlightProgress.delete(chunkIndex)
             completedChunks.add(chunkIndex)
+            while (completedChunks.has(lowestIncomplete)) lowestIncomplete += 1
+            session.chunkIndex = lowestIncomplete
             session.uploadedBytes += end - start
-            session.chunkIndex = Math.min(...Array.from({ length: totalChunks }, (_, index) => index).filter((index) => !completedChunks.has(index)), totalChunks)
             onState(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, 0))
             break
           } catch (error) {
@@ -5960,30 +6046,31 @@ async function uploadShareInChunks(files, settings, uploadRef, onState, uploadCo
               firstError = error
               throw error
             }
-            await wait(450 * attempt)
+            // 指数退避 + 抖动：500ms/1s/2s…封顶 8s，避免集体重试踩踏
+            await wait(Math.min(8000, 500 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 250))
           }
         }
       }
     }
-    const workers = Array.from({ length: Math.min(concurrency, totalChunks - startChunk) }, () => worker())
+    const workers = Array.from({ length: Math.max(0, Math.min(concurrency, totalChunks - nextChunk)) }, () => worker())
     try {
       await Promise.all(workers)
     } catch (error) {
       if (error.name === 'UploadPausedError' || session.paused) throw new UploadPausedError()
       throw firstError || error
     }
-    session.fileIndex = fileIndex
-    session.chunkIndex = totalChunks
-    onState(uploadStateFromProgress(session, session.uploadedBytes, `上传 ${item.name}`, item.name, 0))
     session.fileIndex = fileIndex + 1
     session.chunkIndex = 0
+    onState(uploadStateFromProgress(session, session.uploadedBytes, `上传 ${item.name}`, item.name, 0))
   }
 
   onState({ status: 'finalizing', phase: '正在生成分享信息', progress: 100, uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: currentSpeed(session, session.totalBytes), etaSeconds: 0, currentFile: '', retryCount: 0, error: '' })
-  return apiRequest(`/api/upload-sessions/${session.sessionId}/complete`, {
+  const result = await apiRequest(`/api/upload-sessions/${session.sessionId}/complete`, {
     method: 'POST',
     body: JSON.stringify({ chunkSize, ...(uploadConfig.completeBody || {}) }),
   })
+  clearUploadResume()
+  return result
 }
 
 function uploadStateFromProgress(session, loadedBytes, phase, currentFile, retryCount = 0, error = '') {
@@ -6008,7 +6095,7 @@ function currentSpeed(session, loadedBytes) {
   return loadedBytes / elapsedSeconds
 }
 
-function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunk, filename }, { uploadRef, onProgress }) {
+function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkData, chunkHash, filename }, { uploadRef, onProgress }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     const uploadState = uploadRef.current
@@ -6016,7 +6103,8 @@ function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunk, filena
     body.append('fileIndex', String(fileIndex))
     body.append('chunkIndex', String(chunkIndex))
     body.append('totalChunks', String(totalChunks))
-    body.append('chunk', chunk, filename)
+    body.append('chunk', new Blob([chunkData], { type: 'application/octet-stream' }), filename)
+    if (chunkHash) body.append('chunkHash', chunkHash)
     const activeXhrs = uploadState.activeXhrs || new Set()
     uploadState.activeXhrs = activeXhrs
     activeXhrs.add(xhr)
