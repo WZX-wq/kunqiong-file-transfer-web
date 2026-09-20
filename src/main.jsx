@@ -1496,6 +1496,7 @@ function ConfirmModal({ state, onCancel, onConfirm }) {
         <div className="confirm-modal-icon"><Icon size={20} /></div>
         <p className="eyebrow">{state.eyebrow || '操作确认'}</p>
         <h2>{state.title || '确认操作'}</h2>
+        {state.subject && <p className="confirm-modal-subject" title={state.subject}>{state.subject}</p>}
         {state.detail && <p>{state.detail}</p>}
         <div className="modal-footer confirm-modal-footer">
           <button className="secondary-button" onClick={onCancel}>{state.cancelText || '取消'}</button>
@@ -3539,7 +3540,7 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
       )}
       {renameTarget && <RenameRecordModal record={renameTarget} onClose={() => setRenameTarget(null)} onSave={saveRename} />}
       {shareExpiryTarget && <ShareExpiryModal record={shareExpiryTarget} canUsePermanent={Boolean(user?.plan?.permanent)} onClose={() => setShareExpiryTarget(null)} onSave={async (payload) => { const saved = await onSaveShareExpiry?.(shareExpiryTarget, payload); if (saved) setShareExpiryTarget(null); return saved }} />}
-      {previewChoices && <RecordPreviewChooser previews={previewChoices} onClose={() => setPreviewChoices(null)} onSelect={(preview) => { setPreviewChoices(null); setPreviewItem(preview) }} />}
+      {previewChoices && <RecordPreviewChooser previews={previewChoices} onClose={() => setPreviewChoices(null)} onSelect={(preview) => setPreviewItem(preview)} />}
       {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startRecordPreviewDownload(previewItem.downloadConfig)} downloadDisabled={previewDownloadBusy} />}
       {qrPreview && <QrPreviewModal title={qrPreview.title} detail={qrPreview.detail || '扫码打开提交入口'} qrDataUrl={qrPreview.qrDataUrl} targetUrl={qrPreview.targetUrl} onClose={() => setQrPreview(null)} onCopyImage={() => onCopyQrImage?.(qrPreview.qrDataUrl, qrPreview.targetUrl)} onCopyLink={() => onCopy?.(qrPreview.targetUrl)} />}
       <div className="records-footnote"><HardDrive size={16} /> {syncing ? '账号记录同步中...' : user?.id ? '已登录，记录会同步到账号并可跨设备查看。' : '游客记录仅保留在当前设备，登录后可跨设备同步。'}</div>
@@ -4258,7 +4259,7 @@ function TeamPage() {
       </div>
     </section>
     {notice && <div className={`toast ${notice.tone || 'success'}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}><span className="toast-icon">{notice.tone === 'error' ? <X size={18} /> : <Check size={18} />}</span><span>{notice.message}</span></div>}
-    {previewChoices && <RecordPreviewChooser previews={previewChoices} onClose={() => setPreviewChoices(null)} onSelect={(preview) => { setPreviewChoices(null); setPreviewItem(preview) }} />}
+    {previewChoices && <RecordPreviewChooser previews={previewChoices} onClose={() => setPreviewChoices(null)} onSelect={(preview) => setPreviewItem(preview)} />}
     {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
     {/* 下载进度与上方团队卡片同宽：包一层受限宽容器，避免被 .public-page 的居中网格压缩。 */}
     <div className="team-page team-download-slot"><DownloadProgressPanel task={downloadTask} onRetry={retryDownload} /></div>
@@ -4278,6 +4279,8 @@ function WorkspacePage() {
   const [saving, setSaving] = useState(false)
   const [selectedPlanId, setSelectedPlanId] = useState('')
   const [upgradeOpen, setUpgradeOpen] = useState(false)
+  // 远端主站套餐实价：工作台展示价与升级弹窗/订单支付同源，拉不到时回落本地配置价
+  const remotePricing = useRemotePlanPricing(user?.id)
 
   const load = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true)
@@ -4358,7 +4361,8 @@ function WorkspacePage() {
     return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和入团申请会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
   }
   const plan = workspace?.plan || {}
-  const plans = workspace?.plans || []
+  const plans = (workspace?.plans || []).map((item) => mergePlanPricing(item, remotePricing))
+  const planDisplay = mergePlanPricing(plan, remotePricing)
   const orders = workspace?.orders || []
   const pendingOrder = orders.find((order) => order.status === 'pending_payment') || null
   const selectedPlan = plans.find((item) => item.id === selectedPlanId) || plan
@@ -4409,7 +4413,7 @@ function WorkspacePage() {
               <button className="secondary-button workspace-back-button" onClick={goBack}><ArrowLeft size={15} /> 返回</button>
             </div>
             <div className="public-card workspace-section workspace-benefits-card">
-              <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(plan)}</p></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
+              <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
               <div className="workspace-capacity"><div><span>已使用空间 · {selectedPlan.label || currentPlanLabel}</span><strong>{formatBytes(capacity.usedBytes || 0)} / {formatBytes(selectedTotalBytes)}</strong></div><div className="capacity-bar" title={`已使用 ${ratio}%`} role="progressbar" aria-valuenow={ratio} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${ratio}%` }} /></div><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务 · {capacity.fileCount || 0} 个文件</small></div>
               <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id ? 'true' : 'false'}><em className="plan-current-tag">{item.id === plan.id ? '当前' : item.team ? '推荐' : ''}</em><span className="plan-title-line">{(() => { const PlanIcon = accountPlanIcon(item.id); return <PlanIcon size={15} /> })()}<strong>{item.label}</strong></span><PlanSpaceSummary plan={item} /><small className="plan-price-summary">{formatPlanPrice(item)}</small></button>)}</div>
               <div className="workspace-benefits-cta"><span>{plan.id === 'enterprise' ? '你已拥有最高企业版权益。' : '需要更多空间、永久保存或团队协作？'}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {plan.id === 'enterprise' ? '查看权益详情' : '升级权益'}</button></div>
@@ -4507,12 +4511,34 @@ async function upgradeApiRequest(url, options = {}) {
   return data
 }
 
+// 远端主站套餐实价（与订单支付同源）：拉取失败或非远端来源时返回 null，调用方沿用本地展示价兜底。
+function useRemotePlanPricing(enabledId) {
+  const [remotePricing, setRemotePricing] = useState(null)
+  useEffect(() => {
+    if (!enabledId) return undefined
+    let cancelled = false
+    upgradeApiRequest('/api/account/upgrade-pricing').then((data) => {
+      if (!cancelled && data?.source === 'remote') setRemotePricing(data.pricing || {})
+    }).catch(() => { /* 拉不到远端价就沿用本地展示价 */ })
+    return () => { cancelled = true }
+  }, [enabledId])
+  return remotePricing
+}
+
+// 把远端实价合并进套餐对象（只改展示字段，不动 permanent/team 等权益字段；
+// remotePriced 标记供 formatPlanPrice 区分「天数跟随主站」与本地兜底展示）
+function mergePlanPricing(plan, remotePricing) {
+  const pricing = remotePricing?.[plan?.id]
+  if (!plan || !pricing) return plan
+  return { ...plan, monthlyPrice: pricing.priceCents, validityDays: pricing.validityDays, remotePriced: true, remotePackageName: pricing.packageName || '' }
+}
+
 function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
   const plan = workspace?.plan || {}
-  const plans = (workspace?.plans || []).filter((item) => item.id !== 'free')
+  const localPlans = (workspace?.plans || []).filter((item) => item.id !== 'free')
   const pendingOrder = (workspace?.orders || []).find((order) => order.status === 'pending_payment') || null
   const currentPlanRank = accountPlanRank(plan.id)
-  const defaultPlanId = plans.find((item) => accountPlanRank(item.id) > currentPlanRank)?.id || ''
+  const defaultPlanId = localPlans.find((item) => accountPlanRank(item.id) > currentPlanRank)?.id || ''
   const [selectedPlanId, setSelectedPlanId] = useState(defaultPlanId)
   const [orderView, setOrderView] = useState(pendingOrder)
   const [busy, setBusy] = useState(false)
@@ -4520,6 +4546,9 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
   const [notice, setNotice] = useState('')
   const [payType, setPayType] = useState(1)
   const [payment, setPayment] = useState(pendingOrder?.payment || null)
+  // 远端主站套餐实价：与订单创建/支付同源，避免「展示价 ≠ 下单应付金额」
+  const remotePricing = useRemotePlanPricing(true)
+  const plans = localPlans.map((item) => mergePlanPricing(item, remotePricing))
 
   useEffect(() => {
     if (pendingOrder) setOrderView(pendingOrder)
@@ -4718,8 +4747,16 @@ function AdminPage() {
   const [adminInfo, setAdminInfo] = useState(null)
   const [loginBusy, setLoginBusy] = useState(false)
   const [loginError, setLoginError] = useState('')
-  const [cleanupNotice, setCleanupNotice] = useState('')
+  const [notice, setNotice] = useState(null)
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
+
+  // 与用户端一致的右下角 toast 提示
+  const showToast = (message, tone = 'success') => setNotice({ message, tone })
+  useEffect(() => {
+    if (!notice) return undefined
+    const timer = window.setTimeout(() => setNotice(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
 
   const load = async () => {
     setLoading(true)
@@ -4771,11 +4808,11 @@ function AdminPage() {
   }
   const updateUser = async (user, patch) => {
     try {
-      setError('')
       const result = await apiRequest(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
       setData((current) => ({ ...current, users: current.users.map((item) => item.id === user.id ? result.user : item) }))
+      showToast(patch.status === 'disabled' ? `已禁用 ${user.nickname || user.username || user.id}，其登录会话已全部下线` : patch.status === 'active' ? `已启用 ${user.nickname || user.username || user.id}` : `已更新 ${user.nickname || user.username || user.id} 的套餐权益`)
     } catch (err) {
-      setError(err.message || '用户更新失败')
+      showToast(err.message || '用户更新失败', 'error')
     }
   }
   const saveConfig = async (event) => {
@@ -4783,7 +4820,6 @@ function AdminPage() {
     setSavingConfig(true)
     try {
       const form = new FormData(event.currentTarget)
-      setError('')
       const planOverrides = {}
       ;['free', 'member', 'team', 'enterprise'].forEach((planId) => {
         planOverrides[planId] = {
@@ -4803,8 +4839,9 @@ function AdminPage() {
         planOverrides,
       }) })
       setData((current) => ({ ...current, config: result.config }))
+      showToast('系统配置已保存，新配置立即生效')
     } catch (err) {
-      setError(err.message || '系统配置保存失败')
+      showToast(err.message || '系统配置保存失败', 'error')
     } finally {
       setSavingConfig(false)
     }
@@ -4818,7 +4855,6 @@ function AdminPage() {
     })
     if (!confirmed) return
     try {
-      setError('')
       const result = await apiRequest('/api/admin/cleanup', { method: 'POST' })
       setData(result.overview)
       const parts = []
@@ -4827,9 +4863,9 @@ function AdminPage() {
       const orphanCount = (result.orphaned?.shares || 0) + (result.orphaned?.collections || 0)
       if (orphanCount) parts.push(`孤儿目录 ${orphanCount} 个`)
       if (result.removedAuditLogs) parts.push(`过期日志 ${result.removedAuditLogs} 条`)
-      setCleanupNotice(parts.length ? `清理完成：已删除 ${parts.join('、')}` : '清理完成：没有需要清理的资源')
+      showToast(parts.length ? `清理完成：已删除 ${parts.join('、')}` : '清理完成：没有需要清理的资源')
     } catch (err) {
-      setError(err.message || '清理失败')
+      showToast(err.message || '清理失败', 'error')
     }
   }
   if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开后台</h1><p>正在检查管理员登录状态。</p></div></PublicShell>
@@ -4848,16 +4884,16 @@ function AdminPage() {
         <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、安全日志、运行配置和系统概览。</p></div><div className="admin-heading-actions">{adminInfo?.username && <span className="admin-identity" title={`当前登录管理员：${adminInfo.username}`}><ShieldCheck size={14} /> {adminInfo.username}</span>}<button className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</button><button className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button></div></div>
         <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['resources', '资源管理', Database], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button className={tab === key ? 'active' : ''} key={key} onClick={() => setTab(key)}><Icon size={16} /> {label}</button>)}</nav>
         {error && <p className="public-message">{error}</p>}
-        {cleanupNotice && <p className="public-message">{cleanupNotice}</p>}
         <div className="admin-content">
-          {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-list">{trend.map((item) => <div className="admin-trend-row" key={item.date}><span>{item.label}</span><div><i style={{ width: `${(item.activeUsers / trendMax) * 100}%` }} title={`活跃用户 ${item.activeUsers}`} /><i className="upload" style={{ width: `${(item.uploads / trendMax) * 100}%` }} title={`上传 ${item.uploads}`} /><i className="download" style={{ width: `${(item.downloads / trendMax) * 100}%` }} title={`下载 ${item.downloads}`} /></div><small>{item.activeUsers} / {item.uploads} / {item.downloads}</small></div>)}</div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot muted" /> 资源审核未启用 <strong>—</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
-          {tab === 'resources' && <AdminResources resources={data.resources} total={data.totals?.resources ?? data.resources.length} requestConfirm={requestConfirm} onChanged={(message) => { load(); if (message) setCleanupNotice(message) }} />}
+          {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-list">{trend.map((item) => <div className="admin-trend-row" key={item.date}><span>{item.label}</span><div><i style={{ width: `${(item.activeUsers / trendMax) * 100}%` }} title={`活跃用户 ${item.activeUsers}`} /><i className="upload" style={{ width: `${(item.uploads / trendMax) * 100}%` }} title={`上传 ${item.uploads}`} /><i className="download" style={{ width: `${(item.downloads / trendMax) * 100}%` }} title={`下载 ${item.downloads}`} /></div><small>{item.activeUsers} / {item.uploads} / {item.downloads}</small></div>)}</div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
+          {tab === 'resources' && <AdminResources resources={data.resources} total={data.totals?.resources ?? data.resources.length} requestConfirm={requestConfirm} onChanged={(message, tone, overview) => { if (overview) { setData((current) => ({ ...current, ...overview })) } else { load() } if (message) showToast(message, tone) }} />}
           {tab === 'users' && <AdminUsers users={data.users} total={data.totals?.users ?? data.users.length} onUpdate={updateUser} />}
           {tab === 'security' && <AdminLogs logs={data.auditLogs} total={data.totals?.auditLogs ?? data.auditLogs.length} />}
           {tab === 'config' && <AdminConfig config={data.config} saving={savingConfig} onSubmit={saveConfig} />}
         </div>
       </section>
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
+      {notice && <div className={`toast ${notice.tone || 'success'}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}><span className="toast-icon">{notice.tone === 'error' ? <X size={18} /> : <Check size={18} />}</span><span>{notice.message}</span></div>}
     </PublicShell>
   )
 }
@@ -4874,10 +4910,10 @@ function AdminResources({ resources = [], total = 0, requestConfirm, onChanged }
   const [page, setPage] = useState(1)
   const [query, setQuery] = useState('')
   const [busyId, setBusyId] = useState('')
-  const [error, setError] = useState('')
+  const [copiedId, setCopiedId] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const filteredResources = normalizedQuery
-    ? resources.filter((item) => [item.name, item.id, item.ownerUserId].some((value) => String(value || '').toLowerCase().includes(normalizedQuery)))
+    ? resources.filter((item) => [item.name, item.id, item.code, item.ownerUserId].some((value) => String(value || '').toLowerCase().includes(normalizedQuery)))
     : resources
   const pageCount = Math.max(1, Math.ceil(filteredResources.length / pageSize))
   const safePage = Math.min(page, pageCount)
@@ -4885,9 +4921,17 @@ function AdminResources({ resources = [], total = 0, requestConfirm, onChanged }
   useEffect(() => { setPage(1) }, [resources.length, normalizedQuery])
   const kindLabel = (item) => (item.kind === 'share' ? '分享' : '收集任务')
   const statusLabel = (status) => (status === 'active' ? '活跃' : status === 'expired' ? '已过期' : '已关闭')
+  const copyResourceId = async (item) => {
+    try {
+      await copyTextToClipboard(item.id)
+      setCopiedId(item.id)
+      setTimeout(() => setCopiedId((current) => (current === item.id ? '' : current)), 1600)
+    } catch {}
+  }
   const removeResource = async (item) => {
     const confirmed = await requestConfirm({
-      title: `删除${kindLabel(item)}「${item.name}」`,
+      title: `删除${kindLabel(item)}？`,
+      subject: item.name,
       detail: `将永久删除该资源及其全部文件（${item.fileCount || 0} 个文件，${formatBytes(item.totalSize || 0)}），用户记录中指向它的条目会一并移除${item.status === 'active' ? '；该资源当前仍活跃，删除后提取链接立即失效' : ''}。确定继续吗？`,
       confirmText: '删除资源',
       tone: 'danger',
@@ -4895,15 +4939,16 @@ function AdminResources({ resources = [], total = 0, requestConfirm, onChanged }
     if (!confirmed) return
     setBusyId(item.id)
     try {
-      await apiRequest(`/api/admin/resources/${item.kind}/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
-      onChanged?.(`已删除${kindLabel(item)}「${item.name}」`)
+      // DELETE 响应已携带最新 overview，直接上屏，避免整页退回「正在打开后台」loading
+      const result = await apiRequest(`/api/admin/resources/${item.kind}/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
+      onChanged?.(`已删除${kindLabel(item)}「${item.name}」`, undefined, result?.overview)
     } catch (err) {
-      setError(err.message || '删除失败')
+      onChanged?.(err.message || '删除失败', 'error')
     } finally {
       setBusyId('')
     }
   }
-  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">分享与收集</p><h2>资源管理</h2></div><span>共 {total} 个资源{total > resources.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索资源名称、ID 或归属用户" /></label>{error && <p className="public-message">{error}</p>}<div className="admin-table">{filteredResources.length ? visibleResources.map((item) => <div className="admin-table-row" key={`${item.kind}-${item.id}`}><div className="admin-user-identity"><strong>{kindLabel(item)} · {item.name}</strong><span>{statusLabel(item.status)} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)} · 归属 {item.ownerUserId || '匿名'} · 建于 {formatDate(item.createdAt)}</span></div><div className="admin-user-actions"><small className="admin-user-usage">{item.expiresAt ? `截止 ${formatDate(item.expiresAt)}` : '永久有效'}</small><button className="secondary-button danger-lite" disabled={busyId === item.id} onClick={() => removeResource(item)}><Trash2 size={14} /> {busyId === item.id ? '删除中' : '删除'}</button></div></div>) : <div className="empty-manage"><Database size={25} /><span>没有匹配的资源</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredResources.length} pageSize={pageSize} onPageChange={setPage} /></div>
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">分享与收集</p><h2>资源管理</h2></div><span>共 {total} 个资源{total > resources.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索资源名称、ID、提取码或归属用户" /></label><div className="admin-table">{filteredResources.length ? visibleResources.map((item) => <div className="admin-table-row" key={`${item.kind}-${item.id}`}><div className="admin-user-identity"><strong>{kindLabel(item)} · {item.name}</strong><span>{statusLabel(item.status)} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)} · 归属 {item.ownerUserId || '匿名'} · 建于 {formatDate(item.createdAt)}</span><span className="admin-resource-id-row"><button type="button" className="admin-resource-id" title={`资源 ID（${item.kind === 'share' ? '即分享链接 /share/ 末段' : '即收集链接 /collect/ 末段'}），点击复制`} onClick={() => copyResourceId(item)}>{copiedId === item.id ? <Check size={11} /> : <Copy size={11} />}<i>{item.id}</i>{copiedId === item.id ? '已复制' : ''}</button>{item.code ? <em className="admin-resource-code" title="提取码">提取码 {item.code}</em> : null}</span></div><div className="admin-user-actions"><small className="admin-user-usage">{item.expiresAt ? `截止 ${formatDate(item.expiresAt)}` : '永久有效'}</small><button className="secondary-button danger-lite" disabled={busyId === item.id} onClick={() => removeResource(item)}><Trash2 size={14} /> {busyId === item.id ? '删除中' : '删除'}</button></div></div>) : <div className="empty-manage"><Database size={25} /><span>没有匹配的资源</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredResources.length} pageSize={pageSize} onPageChange={setPage} /></div>
 }
 
 function AdminUsers({ users = [], total = 0, onUpdate }) {
@@ -4958,8 +5003,11 @@ function SettingsInfoRow({ label, value }) {
 }
 
 function AccountCapacityCard({ user }) {
+  // 设置页套餐价与升级弹窗/工作台同源（远端主站实价），拉不到时回落本地配置价
+  const remotePricing = useRemotePlanPricing(user?.id)
   const capacity = user?.capacity || {}
   const plan = user?.plan || {}
+  const planDisplay = mergePlanPricing(plan, remotePricing)
   const usedBytes = Number(capacity.usedBytes || 0)
   const totalBytes = Number(capacity.totalBytes || 0)
   const ratio = totalBytes ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0
@@ -4976,7 +5024,7 @@ function AccountCapacityCard({ user }) {
         <span>{capacity.collectionCount || 0} 个收集任务</span>
         <span>{capacity.fileCount || 0} 个文件</span>
       </div>
-      <div className="account-plan-meta"><strong>{plan.label || '基础版'}</strong><span>{validity}</span><span>{formatPlanPrice(plan)}</span></div>
+      <div className="account-plan-meta"><strong>{plan.label || '基础版'}</strong><span>{validity}</span><span>{formatPlanPrice(planDisplay)}</span></div>
       {user?.teamEntitlement?.organizationName && (
         <p className="account-team-hint">
           <Users size={13} />
@@ -6241,7 +6289,7 @@ function wait(ms) { return new Promise((resolve) => window.setTimeout(resolve, m
 
 async function syncRecords(records) {
   const updates = await Promise.all(normalizeRecords(records).map(syncRecord))
-  return normalizeRecords(updates)
+  return normalizeRecords(updates.filter(Boolean))
 }
 
 async function syncRecord(record) {
@@ -6263,6 +6311,8 @@ async function syncShareRecord(record) {
     refreshed.updatedAt = record.updatedAt || refreshed.updatedAt
     return mergeRecord(record, refreshed)
   } catch (error) {
+    // 404 = 资源已被物理删除（过期不会 404）：条目是死链，直接移除而非标记状态
+    if (error.status === 404) return null
     return markRecordUnavailable(record, error.message)
   }
 }
@@ -6288,6 +6338,8 @@ async function syncCollectionRecord(record) {
     refreshed.updatedAt = record.updatedAt || refreshed.updatedAt
     return mergeRecord(record, refreshed)
   } catch (error) {
+    // 同步探测 404 = 资源已被物理删除，记录条目随之移除
+    if (error.status === 404) return null
     return markRecordUnavailable(record, error.message)
   }
 }
@@ -6342,7 +6394,11 @@ async function apiRequest(url, options = {}) {
   const { headers = {}, ...fetchOptions } = options
   const response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'Content-Type': 'application/json', ...headers } })
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.message || '请求失败')
+  if (!response.ok) {
+    const error = new Error(data.message || '请求失败')
+    error.status = response.status
+    throw error
+  }
   return data
 }
 
@@ -6830,10 +6886,12 @@ function formatPlanPrice(plan = {}) {
   const amount = Number(plan.monthlyPrice)
   if (plan.id === 'free' || amount === 0) return '免费使用'
   if (!Number.isFinite(amount) || amount < 0) return '价格以主站为准'
+  const days = Number(plan.validityDays)
+  // 有主站实价时有效期完全跟随主站套餐（null=买断永久），避免「展示永久、实付年费」反向不一致
+  if (plan.remotePriced && Number.isFinite(days) && days > 0) return `¥${(amount / 100).toFixed(2)} / ${days}天`
   if (plan.permanent || plan.validityDays === null || plan.validityDays === undefined) {
     return `¥${(amount / 100).toFixed(2)} / 永久`
   }
-  const days = Number(plan.validityDays)
   return Number.isFinite(days) && days > 0
     ? `¥${(amount / 100).toFixed(2)} / ${days}天`
     : `¥${(amount / 100).toFixed(2)}`

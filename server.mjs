@@ -144,12 +144,14 @@ const ACCOUNT_PLANS = {
     features: ['20 GB 存储空间', '文件临时保存，到期自动失效', '分享码 / 链接 / 二维码取件', '文件收集任务'],
   },
   member: {
-    id: 'member', label: '会员版', totalBytes: 100 * 1024 * 1024 * 1024, permanent: true, team: false,
-    tagline: '个人永久空间', monthlyPrice: 1, validityDays: 30,
-    features: ['100 GB 存储空间', '文件永久保存', '完整分享与收集能力', '会员专属标识'],
+    id: 'member', label: '会员版', totalBytes: 100 * 1024 * 1024 * 1024, permanent: false, team: false,
+    // monthlyPrice 仅作「主站实价拉不到时」的兜底展示价，尽量对齐主站当前挂牌价（轻享月卡 ¥19）；
+    // 真实下单/支付金额始终以主站 pay_amount 为准（createWebMemberPaymentOrder 会覆盖 order.amount）。
+    tagline: '个人会员空间', monthlyPrice: 1900, validityDays: 30,
+    features: ['100 GB 存储空间', '会员期内文件持续保存', '完整分享与收集能力', '会员专属标识'],
   },
   team: {
-    id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, teamSpaceBytes: 250 * 1024 * 1024 * 1024, permanent: true, team: true,
+    id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, teamSpaceBytes: 250 * 1024 * 1024 * 1024, permanent: false, team: true,
     tagline: '小团队协作', monthlyPrice: 4900, validityDays: 90,
     features: ['500 GB 个人空间', '250 GB 团队空间', '团队成员邀请与协作', '企业专属分享链接'],
   },
@@ -570,7 +572,7 @@ app.put('/api/account/records', (req, res) => {
   const session = requireAuthSession(req, res)
   if (!session) return
   const key = accountRecordOwnerKey(session.user.id)
-  metadata.records[key] = normalizeAccountRecords(req.body?.records)
+  metadata.records[key] = pruneOrphanRecordEntries(normalizeAccountRecords(req.body?.records))
   persistMetadata()
   res.json({ records: metadata.records[key] })
 })
@@ -1269,6 +1271,14 @@ app.get('/api/account/upgrade-orders', (req, res) => {
   res.json({ orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
 })
 
+// 升级弹窗展示价：与订单创建同源（远端主站套餐实价），避免「展示 ¥0.01、下单 ¥19」的口径分裂
+app.get('/api/account/upgrade-pricing', async (req, res) => {
+  const session = requireAuthSession(req, res)
+  if (!session) return
+  const pricing = await remoteUpgradePricing(session)
+  res.json({ source: Object.keys(pricing).length ? 'remote' : 'local', pricing })
+})
+
 app.post('/api/account/upgrade-orders', async (req, res) => {
   try {
     const session = requireAuthSession(req, res)
@@ -1514,11 +1524,18 @@ app.delete('/api/admin/resources/:kind/:id', (req, res) => {
     if (index < 0) return res.status(404).json({ message: '分享资源不存在' })
     const [share] = metadata.shares.splice(index, 1)
     removeDirectory(path.join(filesRoot, share.id))
+    // 与「执行清理」同口径：资源已物理删除，用户收发记录里指向它的条目一并摘除，避免残留死条目
+    const removedShareKeys = new Set([share.id])
+    if (share.manageToken) removedShareKeys.add(share.manageToken)
+    if (share.code) removedShareKeys.add(share.code)
+    pruneRecordsForPurgedResources(removedShareKeys, new Set())
   } else if (kind === 'collection') {
     const index = metadata.collections.findIndex((item) => item.id === id || item.token === id || item.manageToken === id)
     if (index < 0) return res.status(404).json({ message: '收集资源不存在' })
     const [collection] = metadata.collections.splice(index, 1)
     removeDirectory(path.join(collectionsRoot, collection.id))
+    const removedCollectionKeys = new Set([collection.id, collection.token, collection.manageToken].filter(Boolean))
+    pruneRecordsForPurgedResources(new Set(), removedCollectionKeys)
   } else {
     return res.status(400).json({ message: '资源类型不支持' })
   }
@@ -1526,18 +1543,6 @@ app.delete('/api/admin/resources/:kind/:id', (req, res) => {
   // 此前这里写的是 `session.user.id`，但本作用域内没有 session（应为 auth），
   // 会在资源已经 splice 掉之后抛 ReferenceError → 接口 500、审计日志丢失。
   recordAuditLog({ type: 'admin', action: '删除文件资源', userId: auth.user.id, targetId: id, details: { kind } })
-  res.json({ ok: true, overview: buildAdminOverview() })
-})
-
-app.patch('/api/admin/resources/:kind/:id/review', (req, res) => {
-  const auth = requireAdminSession(req, res)
-  if (!auth) return
-  const resource = findAdminResource(req.params.kind, req.params.id)
-  if (!resource) return res.status(404).json({ message: '文件资源不存在' })
-  markResourceReviewStatus(resource.kind, resource.item, 'approved')
-  resource.item.updatedAt = new Date().toISOString()
-  persistMetadata()
-  recordAuditLog({ type: 'admin', action: '通过文件资源审核', userId: auth.user.id, targetId: resource.id, details: { kind: resource.kind } })
   res.json({ ok: true, overview: buildAdminOverview() })
 })
 
@@ -2315,6 +2320,15 @@ const cleanupTimer = setInterval(() => {
   cleanupUploadSessions()
 }, 60 * 1000)
 cleanupTimer.unref()
+// 审计日志按保留期每日自动清除（只动 auditLogs，不碰资源清理——purgeStaleResources 绝不进定时链路）
+const auditLogTimer = setInterval(() => {
+  try {
+    purgeExpiredAuditLogs()
+  } catch (error) {
+    console.warn('[audit-log-cleanup] failed:', error?.message || error)
+  }
+}, 24 * 60 * 60 * 1000)
+auditLogTimer.unref()
 restoreUploadSessions()
 cleanupExpired()
 cleanupUploadSessions()
@@ -3091,36 +3105,13 @@ function adminResourceSummary(kind, item) {
     id: item.id || item.token,
     kind,
     name: kind === 'share' ? (files[0]?.name || '文件分享') : (item.title || '收集任务'),
+    code: kind === 'share' ? (item.code || '') : '',
     ownerUserId: item.ownerUserId || '',
     status: kind === 'share' ? currentShareStatus(item) : currentCollectionStatus(item),
     fileCount: files.length,
     totalSize: fileListSize(files),
     createdAt: item.createdAt,
     expiresAt: kind === 'share' ? item.expiresAt : item.deadline,
-    reviewStatus: '正常',
-  }
-}
-
-function findAdminResource(kind, id) {
-  const resourceKind = String(kind)
-  const resourceId = String(id || '')
-  if (resourceKind === 'share') {
-    const item = metadata.shares.find((share) => share.id === resourceId || share.manageToken === resourceId)
-    return item ? { kind: 'share', id: item.id, item } : null
-  }
-  if (resourceKind === 'collection') {
-    const item = metadata.collections.find((task) => task.id === resourceId || task.token === resourceId || task.manageToken === resourceId)
-    return item ? { kind: 'collection', id: item.id || item.token, item } : null
-  }
-  return null
-}
-
-function markResourceReviewStatus(kind, item, status) {
-  const files = kind === 'share'
-    ? item.files || []
-    : (item.submissions || []).flatMap((submission) => submission.files || [])
-  for (const file of files) {
-    file.reviewStatus = status
   }
 }
 
@@ -3142,7 +3133,6 @@ function buildAdminOverview() {
       files: resources.reduce((sum, item) => sum + item.fileCount, 0),
       totalBytes,
       activeResources: resources.filter((item) => item.status === 'active').length,
-      reviewResources: resources.filter((item) => item.reviewStatus === '待审核').length,
       activeOrganizations: Object.keys(metadata.organizations || {}).length,
       pendingCleanup: resources.filter((item) => item.status !== 'active' || (item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now())).length,
     },
@@ -3271,6 +3261,34 @@ function pruneRecordsForPurgedResources(shareKeys, collectionKeys) {
   }
 }
 
+// 现存资源引用键全集（id/token/manageToken/code 任一口径，与记录条目的 key 生成保持兼容）
+function existingRecordResourceKeys() {
+  const keys = new Set()
+  for (const share of metadata.shares || []) {
+    if (share.id) keys.add(share.id)
+    if (share.manageToken) keys.add(share.manageToken)
+    if (share.code) keys.add(share.code)
+  }
+  for (const task of metadata.collections || []) {
+    if (task.id) keys.add(task.id)
+    if (task.token) keys.add(task.token)
+    if (task.manageToken) keys.add(task.manageToken)
+  }
+  return keys
+}
+
+// 摘除指向「已不存在资源」的死记录条目：管理员删除资源后，收发记录不应残留死链；
+// 同时堵住客户端 localStorage 同步上报把已摘除条目 merge 回来的复活路径。
+function pruneOrphanRecordEntries(records) {
+  if (!Array.isArray(records) || !records.length) return Array.isArray(records) ? records : []
+  const keys = existingRecordResourceKeys()
+  return records.filter((record) => {
+    const parsed = parseAccountRecordResource(record && record.id)
+    if (!parsed) return true
+    return keys.has(parsed.key)
+  })
+}
+
 // 后台「执行清理」的实质动作：把所有已关闭/过期的非团队资源连同文件彻底移除。
 // ⚠️ 只能由 POST /api/admin/cleanup（带确认弹窗）触发，绝不能挂进 cleanupExpired 定时链路 ——
 // 团队资源关闭后所有者仍可打开/重新开启，自动清理会让「重新开启分享」功能变成摆设。
@@ -3306,21 +3324,28 @@ function purgeStaleResources() {
   return removed
 }
 
+// 按系统配置的保留天数清除过期审计日志；只有真删了才落盘，避免空转写
+function purgeExpiredAuditLogs() {
+  const before = metadata.auditLogs.length
+  const retentionMs = normalizeSystemConfig(metadata.systemConfig).auditLogRetentionDays * 86400000
+  const cutoff = Date.now() - retentionMs
+  metadata.auditLogs = normalizeAuditLogs(metadata.auditLogs).filter((item) => new Date(item.createdAt).getTime() >= cutoff)
+  const removed = Math.max(0, before - metadata.auditLogs.length)
+  if (removed > 0) persistMetadata()
+  return removed
+}
+
 function runMaintenanceCleanup() {
-  const before = { shares: metadata.shares.length, collections: metadata.collections.length, auditLogs: metadata.auditLogs.length }
   cleanupExpired()
   // 真实清除已关闭/过期资源（此前 cleanupExpired 只标记状态不删对象，expiredShares 恒为 0 的假计数由此而来）
   const purged = purgeStaleResources()
   const orphaned = cleanupStorageOrphans()
-  const retentionMs = normalizeSystemConfig(metadata.systemConfig).auditLogRetentionDays * 86400000
-  const cutoff = Date.now() - retentionMs
-  metadata.auditLogs = normalizeAuditLogs(metadata.auditLogs).filter((item) => new Date(item.createdAt).getTime() >= cutoff)
-  persistMetadata()
+  const removedAuditLogs = purgeExpiredAuditLogs()
   return {
     expiredShares: purged.shares,
     expiredCollections: purged.collections,
     orphaned,
-    removedAuditLogs: Math.max(0, before.auditLogs - metadata.auditLogs.length),
+    removedAuditLogs,
   }
 }
 
@@ -3410,7 +3435,9 @@ function publicShare(share, req, includeFiles = true, includeManage = false) {
   if (includeManage) {
     payload.manageToken = share.manageToken
     payload.manageUrl = `${getOrigin(req)}/share/manage/${share.manageToken}`
-    payload.canReopen = Boolean(share.ownerUserId && accountEffectivePlanForUser(share.ownerUserId).permanent)
+    // 重新开启是「会员特权」而非「永久特权」：付费套餐在有效期内即可（到期由 accountPlanForUser 回落 free 自动收回）。
+    const ownerPlanForReopen = share.ownerUserId ? accountEffectivePlanForUser(share.ownerUserId) : null
+    payload.canReopen = Boolean(ownerPlanForReopen && (ownerPlanForReopen.permanent || (ownerPlanForReopen.id && ownerPlanForReopen.id !== 'free')))
   }
   return payload
 }
@@ -4252,7 +4279,7 @@ function accountBenefitsForUser(user = {}) {
     { label: '站内消息', detail: '分享、下载和收集动态进入消息中心', enabled: true },
     { label: '账号绑定', detail: '可绑定邮箱或手机号用于消息匹配', enabled: true },
     { label: '账号容量', detail: `${plan.label}提供 ${formatByteSize(plan.totalBytes)} 空间`, enabled: true },
-    { label: '永久保存', detail: plan.permanent ? '当前权益支持永久保存分享' : '升级会员后可开启永久保存', enabled: plan.permanent },
+    { label: '永久保存', detail: plan.permanent ? '当前权益支持永久保存分享' : plan.id === 'free' ? '升级会员后可开启永久保存' : '会员期内可自定义分享有效期，永久保存为企业版权益', enabled: plan.permanent },
     // 团队空间：所有者看自己套餐是否具备；成员看「已加入团队空间」，
     // 但明确标注为团队共享能力，避免误导成个人已升级。
     isMember
@@ -4588,7 +4615,8 @@ function accountRecordsForUser(userId) {
   if (!key) return []
   if (!metadata.records || typeof metadata.records !== 'object' || Array.isArray(metadata.records)) metadata.records = {}
   if (!Array.isArray(metadata.records[key])) metadata.records[key] = []
-  return metadata.records[key]
+  // 读取时过滤死条目：存量「资源已删但记录还在」的脏数据在此统一拦截
+  return pruneOrphanRecordEntries(metadata.records[key])
 }
 
 function normalizeAccountRecordStore(value = {}) {
@@ -4608,7 +4636,8 @@ function mergeAccountRecords(currentRecords, incomingRecords) {
     const existing = merged.get(record.id)
     merged.set(record.id, existing ? mergeAccountRecord(existing, record) : record)
   })
-  return Array.from(merged.values()).sort(compareAccountRecords).slice(0, MAX_ACCOUNT_RECORDS)
+  // 合并后再过滤：客户端 localStorage 里残留的死条目上报回来也不能复活
+  return pruneOrphanRecordEntries(Array.from(merged.values()).sort(compareAccountRecords).slice(0, MAX_ACCOUNT_RECORDS))
 }
 
 function normalizeAccountRecords(records) {
@@ -4823,6 +4852,17 @@ async function resolveWebMemberPackage(session, planId) {
     const configured = packages.find((item) => Number(item.id) === configuredId)
     if (configured) return { info, package: configured }
   }
+  const matched = matchWebMemberPackageFromPackages(planId, packages)
+  if (!matched) {
+    const planLabel = configuredAccountPlan(planId)?.label || ''
+    throw httpError(502, `会员服务中未找到“${planLabel}”套餐，请配置正确的套餐 ID`)
+  }
+  return { info, package: matched }
+}
+
+// 按套餐 ID 从远端套餐列表里挑出对应套餐（与订单创建同源；远端没有匹配时返回 null，由调用方决定回落策略）
+function matchWebMemberPackageFromPackages(planId, packages) {
+  const list = Array.isArray(packages) ? packages : []
   const planLabel = configuredAccountPlan(planId)?.label || ''
   const normalizePackageName = (value) => String(value || '')
     .replace(/\s+/g, '')
@@ -4835,17 +4875,48 @@ async function resolveWebMemberPackage(session, planId) {
     team: ['团队', '成长', '进阶', '半年', '年卡'],
     enterprise: ['企业', '永久'],
   }
-  const aliasMatched = packages.find((item) => aliases[planId]?.some((alias) => packageName(item).includes(alias)))
+  const aliasMatched = list.find((item) => aliases[planId]?.some((alias) => packageName(item).includes(alias)))
   const durationMatched = planId === 'enterprise'
-    ? packages.find((item) => Number(item.days) >= 365 * 1000)
+    ? list.find((item) => Number(item.days) >= 365 * 1000)
     : planId === 'team'
-      ? packages.find((item) => Number(item.days) >= 90 && Number(item.days) < 365 * 1000)
-      : packages.find((item) => Number(item.days) >= 30 && Number(item.days) < 90)
-  const matched = packages.find((item) => packageName(item).includes(label) || label.includes(packageName(item)))
+      ? list.find((item) => Number(item.days) >= 90 && Number(item.days) < 365 * 1000)
+      : list.find((item) => Number(item.days) >= 30 && Number(item.days) < 90)
+  return list.find((item) => packageName(item).includes(label) || label.includes(packageName(item)))
     || aliasMatched
     || durationMatched
-  if (!matched) throw httpError(502, `会员服务中未找到“${planLabel}”套餐，请配置正确的套餐 ID`)
-  return { info, package: matched }
+    || null
+}
+
+// 远端套餐实价缓存：升级弹窗展示与订单计价必须同源（价格以主站支付套餐为准）
+const remotePricingCache = { at: 0, data: null }
+const REMOTE_PRICING_TTL = 60 * 1000
+
+async function remoteUpgradePricing(session) {
+  const now = Date.now()
+  if (remotePricingCache.data && now - remotePricingCache.at < REMOTE_PRICING_TTL) return remotePricingCache.data
+  const pricing = {}
+  try {
+    const info = await getWebMemberPackageInfo(session)
+    const packages = Array.isArray(info.packages) ? info.packages : []
+    for (const planId of ['member', 'team', 'enterprise']) {
+      const pkg = matchWebMemberPackageFromPackages(planId, packages)
+      const priceYuan = Number(pkg?.price_yuan)
+      const days = normalizeNullablePositiveInteger(pkg?.days)
+      if (!pkg || !Number.isFinite(priceYuan) || priceYuan < 0) continue
+      pricing[planId] = {
+        priceCents: Math.round(priceYuan * 100),
+        // ≥100 年的时长视为永久；其余按天数展示，与激活后权益一致
+        validityDays: days && days < 36500 ? days : null,
+        packageName: trimRecordString(pkg.name, 80),
+        packageId: Number(pkg.id) || null,
+      }
+    }
+  } catch {
+    // 远端不可达/未配置：返回空 pricing，前端回落本地展示价
+  }
+  remotePricingCache.data = pricing
+  remotePricingCache.at = now
+  return pricing
 }
 
 async function createWebMemberPaymentOrder(session, order, payType) {
@@ -5273,11 +5344,15 @@ function applyShareUpdate(share, body = {}, ownerUser = null) {
   // 团队资源的有效期/永久权益由团队决定（与上传路径 readShareOptions(isTeamResource=true) 同口径），
   // 不按上传者个人套餐校验 —— 否则基础版成员上传的团队资源，连团队所有者都无法重新开启或调整有效期。
   const plan = share.teamResource ? { permanent: true } : accountEffectivePlanForUser(ownerUser || {})
+  // 两级特权：会员特权（改有效期/重新开启）= 永久权益或付费订阅在有效期内
+  // （accountPlanForUser 会把到期订阅回落 free，特权随之自动收回）；
+  // 永久特权（永久保存分享）仍仅限 permanent 权益（企业版/团队资源）。
+  const hasMembership = Boolean(plan.permanent || (plan.id && plan.id !== 'free'))
   const wasClosed = currentShareStatus(share) === 'closed'
   if (Object.prototype.hasOwnProperty.call(body, 'expiresAt')) {
     const expiresAt = normalizeExpiryInput(body.expiresAt, '分享有效期')
     const currentExpiresAt = share.expiresAt || null
-    if (expiresAt !== currentExpiresAt && !plan.permanent) {
+    if (expiresAt !== currentExpiresAt && !hasMembership) {
       throw httpError(403, '设置分享截止时间需要会员版或更高权益')
     }
     if (!expiresAt && !plan.permanent) throw httpError(403, '永久保存需要会员版或更高权益')
@@ -5304,7 +5379,7 @@ function applyShareUpdate(share, body = {}, ownerUser = null) {
       if (!fs.existsSync(path.join(filesRoot, share.id))) {
         throw httpError(410, '分享文件已清理，无法重新开启，请重新发送文件')
       }
-      if (wasClosed && !plan.permanent) {
+      if (wasClosed && !hasMembership) {
         throw httpError(403, '重新开启分享需要会员版或更高权益')
       }
       if (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now()) {

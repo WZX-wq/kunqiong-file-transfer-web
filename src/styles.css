@@ -584,8 +584,10 @@ h1, h2, p { margin-top: 0; }
 .confirm-modal-icon { display: grid; place-items: center; width: 42px; height: 42px; margin-bottom: 16px; color: var(--accent-dark); background: #e8f5f1; border-radius: 11px; }
 .confirm-modal.danger .confirm-modal-icon { color: #a7564b; background: #fbefed; }
 .confirm-modal .eyebrow { margin: 0 0 8px; }
-.confirm-modal h2 { margin: 0; color: var(--ink); font-size: 20px; line-height: 1.35; letter-spacing: -0.02em; }
-.confirm-modal > p:not(.eyebrow) { margin: 10px 0 0; color: #627570; font-size: 13px; line-height: 1.7; }
+.confirm-modal h2 { margin: 0; color: var(--ink); font-size: 20px; line-height: 1.35; letter-spacing: -0.02em; overflow-wrap: anywhere; word-break: break-word; }
+.confirm-modal-subject { display: block; margin: 10px 0 0; padding: 8px 11px; color: #3f5d54; background: #f4f9f7; border: 1px solid #e2eeea; border-radius: 8px; font-family: 'DM Sans', 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; word-break: break-word; }
+.confirm-modal.danger .confirm-modal-subject { color: #96503f; background: #fbf4f2; border-color: #f0e0dc; }
+.confirm-modal > p:not(.eyebrow) { margin: 10px 0 0; color: #627570; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; word-break: break-word; }
 .confirm-modal-footer { margin: 22px -26px -26px; align-items: center; }
 .admin-login-backdrop { z-index: 30; }
 .admin-login-modal { width: min(430px, calc(100vw - 40px)); }
@@ -655,8 +657,8 @@ h1, h2, p { margin-top: 0; }
 .office-preview-overlay span:last-child { color: #6b7874; font-size: 12px; line-height: 1.6; }
 .spreadsheet-empty { padding: 42px 24px; color: #6b7874; text-align: center; }
 .preview-error span { color: #6b7874; font-size: 12px; line-height: 1.6; }
-.record-preview-chooser { width: min(520px, calc(100vw - 40px)); overflow: hidden; }
-.record-preview-options { display: flex; flex-direction: column; gap: 8px; padding: 18px 22px 22px; }
+.record-preview-chooser { display: flex; width: min(520px, calc(100vw - 40px)); max-height: calc(100vh - 48px); overflow: hidden; flex-direction: column; }
+.record-preview-options { display: flex; min-height: 0; flex-direction: column; gap: 8px; padding: 18px 22px 22px; overflow-y: auto; overscroll-behavior: contain; }
 .record-preview-option { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 11px 12px; color: #55736b; background: #f7fbf9; border: 1px solid #e0ece8; border-radius: 8px; text-align: left; }
 .record-preview-option:hover { color: var(--accent-dark); background: #edf8f4; border-color: #bfe1d6; }
 .record-preview-option > span:nth-child(2) { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; }
@@ -1143,6 +1145,12 @@ h1, h2, p { margin-top: 0; }
 .admin-user-identity { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
 .admin-user-identity strong { overflow: hidden; color: #4b6f65; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .admin-user-identity span { overflow: hidden; color: #6b7874; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.admin-resource-id-row { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: -2px; }
+.admin-resource-id { display: inline-flex; align-items: center; gap: 5px; max-width: 240px; padding: 2px 8px; color: #56766d; background: #f4f9f7; border: 1px solid #e2eeea; border-radius: 6px; font-family: 'JetBrains Mono', 'DM Sans', monospace; font-size: 10px; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+.admin-resource-id i { min-width: 0; overflow: hidden; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.admin-resource-id:hover { color: #2f6f5f; border-color: #9ccab9; background: #ecf6f2; }
+.admin-resource-id svg { flex: none; color: #7fa396; }
+.admin-resource-code { flex: none; color: #8a6d3f; background: #faf5ea; border: 1px solid #ece1c8; border-radius: 6px; padding: 2px 8px; font-size: 10px; font-style: normal; font-weight: 600; letter-spacing: .04em; }
 /* 右侧操作区：统一高度 + 基线对齐，避免各控件高低不齐 */
 .admin-user-actions { display: flex; align-items: center; gap: 10px; }
 .admin-table-row .admin-user-plan { height: 34px; min-width: 92px; padding: 0 8px; color: #56766d; background: #f8fbfa; border: 1px solid #dbe8e4; border-radius: 6px; outline: 0; font-size: 11px; }
