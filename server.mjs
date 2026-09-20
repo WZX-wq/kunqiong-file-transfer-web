@@ -3132,6 +3132,7 @@ function buildAdminOverview() {
   ].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   const totalBytes = resources.reduce((sum, item) => sum + item.totalSize, 0)
   const trend = adminTrendStats()
+  const auditLogsAll = normalizeAuditLogs(metadata.auditLogs)
   return {
     stats: {
       users: users.length,
@@ -3146,9 +3147,11 @@ function buildAdminOverview() {
       pendingCleanup: resources.filter((item) => item.status !== 'active' || (item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now())).length,
     },
     trend,
+    // 列表接口有 200/100 条截断，totals 保留真实总数供前端提示「仅显示前 N 条」
+    totals: { users: users.length, resources: resources.length, auditLogs: auditLogsAll.length },
     users: users.slice(0, 200),
     resources: resources.slice(0, 200),
-    auditLogs: normalizeAuditLogs(metadata.auditLogs).slice(0, 100),
+    auditLogs: auditLogsAll.slice(0, 100),
     config: normalizeSystemConfig(metadata.systemConfig),
     plans: configuredAccountPlans(),
   }
