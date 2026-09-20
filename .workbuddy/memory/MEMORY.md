@@ -11,6 +11,7 @@
 ## 2. 路由与功能
 - `/` 主应用三视图 `send/collect/records`(`?view=` 持久化)；`/share|collect /:token`(+`/manage`)；`/e/:slug/...` 企业路径(不带 token → `TeamInvitePage`)；`/settings /workspace /team /admin`
 - 发送 ≤100 文件、≤5GB/文件；小文件直传 `/api/shares`，大文件分片 `/api/upload-sessions`(TTL 12h)；**团队资源只能走分片会话**(`mode:'team_resource'`，直传 `/api/shares` 造不出 teamResource)
+- **分片上传 = offset 直写架构**(2026-09-19 重构)：createSession 预分配目标文件，chunk 按 `chunkIndex*chunkSize` pwrite + `.done` 标记 + 可选 SHA-256 校验；complete 只做 size 校验+rename，**绝不能改回「事后合并」**(同步合并曾冻结全进程 10~35s)。会话清单 `session.json` 落盘可重启恢复；`GET /api/upload-sessions/:id` 查已传分片(跨刷新续传对账用)。前端 localStorage 存 sessionId；探针 `_probe_direct_write.mjs`(12 项)
 - 收集限类型(8 类)/大小/截止日期；记录四类 scope；账户 OAuth2 对接 `login.kunqiongai.com`，cookie `kunqiong_session`；分享密码 15min 短期 cookie
 - 套餐 `free`(20GB,永久✗)/`member`(100GB,✓)/`team`(500GB,teamSpace 250GB)/`enterprise`(2048GB,1TB)；`ACCOUNT_PLAN_RANK` 升序
 
@@ -96,6 +97,7 @@
 - 测试服权益收敛：`KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST=true` 时仅白名单(`wx_Ba7AZPo6U9`)保留企业版
 - 本机演示：`KUNQIONG_DB_ENABLED=false` + `KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST=false`；拿会话用 `POST /api/admin/impersonate`(仅 NODE_ENV=test)+`headers.getSetCookie()`(impersonate 不下发 cookie，要自己构造 `kunqiong_session=<sessionId>`)
 - Bash 环境坑：需 `export PATH="/usr/bin:/bin:$PATH"` 前缀，否则 dirname/ls not found
+- **本机 git 坑**：沙箱对 `.git/refs/remotes/*` 新目录写入会**静默丢失**(fetch/update-ref 报成功但引用不变)——核对远端状态用 `git ls-remote`，修引用用 bash 直写 loose ref；live 套件已改为优先读本地 main(c4264a9)
 
 ## 6. 待办 / 风险
 - ⚠️ `.gitea/workflows/deploy-test.yml` **明文硬编码凭据**（OAUTH_CLIENT_SECRET 等），仓库匿名可访问 → 建议迁 Gitea Secrets，需用户确认

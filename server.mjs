@@ -694,8 +694,9 @@ app.get('/api/account/team/overview', (req, res) => {
       lastActivityAt: shares.map((item) => item.updatedAt || item.createdAt).filter(Boolean).sort().pop() || null,
     }
   })
-  // 团队概览的资源列表：manageToken 是 bearer 管理凭证（可改密/删除分享，且管理接口
-  // 不校验登录身份），绝不能下发给非管理成员 —— 否则成员可越权控制他人分享。
+  // 团队概览的资源列表：manageToken 是 bearer 管理凭证（可改密/关闭分享，且管理接口
+  // 不校验登录身份），只下发给资源所有者本人或团队所有者 —— 普通成员拿不到他人的，
+  // 避免越过上传者编辑他人资源（回归见 _verify_team_token_leak.mjs）。
   const canManageTeam = isOrganizationManager(organization, session.user.id)
   const resources = [
     ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && memberIds.has(item.ownerUserId)).map((item) => ({
@@ -711,7 +712,7 @@ app.get('/api/account/team/overview', (req, res) => {
       downloadCount: item.downloadCount || 0,
       createdAt: item.createdAt,
       expiresAt: item.expiresAt || null,
-      ...(canManageTeam ? {
+      ...(item.ownerUserId === session.user.id || canManageTeam ? {
         manageToken: item.manageToken,
         manageUrl: `${getOrigin(req)}/share/manage/${item.manageToken}`,
       } : {}),
@@ -3376,6 +3377,9 @@ function managerCollection(task, req) {
 function validateShareRequest(share, req, options = {}) {
   const viewer = authSessionFromRequest(req)?.user
   const isOwner = options.allowOwner && viewer?.id && share.ownerUserId && viewer.id === share.ownerUserId
+  // 团队资源：关闭分享只应切断公开提取链接，文件本体仍在团队空间。
+  // 所有者本人登录后始终可以打开自己的资源 —— 否则所有者关闭分享后连自己也打不开文件。
+  if (isOwner && share.teamResource && currentShareStatus(share) === 'closed') return { ok: true }
   return validateShare(share, req.get('x-share-password'), {
     ...options,
     skipPassword: isOwner,
@@ -5158,10 +5162,12 @@ function findShareByManageToken(manageToken) {
 }
 
 function applyShareUpdate(share, body = {}, ownerUser = null) {
+  // 团队资源的有效期/永久权益由团队决定（与上传路径 readShareOptions(isTeamResource=true) 同口径），
+  // 不按上传者个人套餐校验 —— 否则基础版成员上传的团队资源，连团队所有者都无法重新开启或调整有效期。
+  const plan = share.teamResource ? { permanent: true } : accountEffectivePlanForUser(ownerUser || {})
   const wasClosed = currentShareStatus(share) === 'closed'
   if (Object.prototype.hasOwnProperty.call(body, 'expiresAt')) {
     const expiresAt = normalizeExpiryInput(body.expiresAt, '分享有效期')
-    const plan = accountEffectivePlanForUser(ownerUser || {})
     const currentExpiresAt = share.expiresAt || null
     if (expiresAt !== currentExpiresAt && !plan.permanent) {
       throw httpError(403, '设置分享截止时间需要会员版或更高权益')
@@ -5190,13 +5196,13 @@ function applyShareUpdate(share, body = {}, ownerUser = null) {
       if (!fs.existsSync(path.join(filesRoot, share.id))) {
         throw httpError(410, '分享文件已清理，无法重新开启，请重新发送文件')
       }
-      if (wasClosed && !accountEffectivePlanForUser(ownerUser || {}).permanent) {
+      if (wasClosed && !plan.permanent) {
         throw httpError(403, '重新开启分享需要会员版或更高权益')
       }
       if (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now()) {
         throw httpError(400, '请先设置未来的截止时间，或选择永久保存')
       }
-      if (!share.expiresAt && !accountEffectivePlanForUser(ownerUser || {}).permanent) {
+      if (!share.expiresAt && !plan.permanent) {
         throw httpError(403, '永久保存需要会员版或更高权益')
       }
       share.closeReason = ''
