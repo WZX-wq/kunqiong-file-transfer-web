@@ -84,6 +84,12 @@
 - 前景色对**自身背景** ≥4.5:1；只降 V 保 H/S；双阈值 `cr(c,bg)>=4.55 && cr(c,'#fff')>=4.3`；`--muted=#567570`，文本底线 `#5f7873`
 - 图标统一 lucide-react 13~17；无 flex 按钮补 `inline-flex`；套餐图标 `ACCOUNT_PLAN_ICON`；`/records` 页签刻意无图标；微调放 styles.css 末尾「设计增强层」
 
+### 3.13 记录删除联动清理（后台统计一致性）
+- `DELETE /api/account/records` 会联动清理记录归属者名下**非活跃**资源（`purgeOwnedStaleResource`：解析 `<scope>:share:<id>`/`<scope>:collection:<token>`，要求 `ownerUserId===user.id`；活跃资源保留否则提取链接断；sent_to_me/collect_from_me 是别人的资源绝不能动）
+- `purgeStaleResources`（清所有非活跃非团队资源+磁盘+记录摘除）**只准挂在 POST /api/admin/cleanup**（带确认弹窗），绝不进 cleanupExpired 定时链路——自动删关闭分享会让「重新开启分享」失效；teamResource 永不自动清理
+- `runMaintenanceCleanup` 返回真实计数（勿再用 before-after 差值，cleanupExpired 不删对象差值恒 0）
+- 回归 `_probe_record_purge`(16)
+
 ## 4. metadata 内部字段名
 - `metadata.users`(对象 map，key=userId)、`messages[userId]=[...]`、`sessions{[{id,user,expiresAt}]}`、`organizations`、`auditLogs`
 - 种子数据必须照抄真实结构；sessions[].user 带完整快照，否则 displayAccountName 回落「鲲穹用户」
@@ -94,6 +100,7 @@
 - 双远端：origin=Gitee、gitea=43.154.197.96，**两个都要推**；CI push main 自动部署测试服
 - 判断是否真生效：比对 `/api/health` release 与 main，且 `git diff --name-only <release> main` 是否触及 server.mjs/src/
 - 部署脚本：测试机 8045 容器持端口，**不能对同名容器一律 rm -f**
+- **改 server.mjs 后必须重启 8045**：诊断「改了没生效」先比对进程 StartTime vs 文件 mtime。⚠️ 沙箱派生的一切进程会被回收（bash 后台任务 ~10s、node detached、cmd //c start、PowerShell Start-Process、schtasks 全部失效；bash→cmd 传中文路径还乱码）——重启 8045 只能让用户在真实终端执行：`taskkill /F /PID <旧pid>` 后项目目录跑 `E:\node\node.exe server.mjs`
 - 测试服权益收敛：`KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST=true` 时仅白名单(`wx_Ba7AZPo6U9`)保留企业版
 - 本机演示：`KUNQIONG_DB_ENABLED=false` + `KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST=false`；拿会话用 `POST /api/admin/impersonate`(仅 NODE_ENV=test)+`headers.getSetCookie()`(impersonate 不下发 cookie，要自己构造 `kunqiong_session=<sessionId>`)
 - Bash 环境坑：需 `export PATH="/usr/bin:/bin:$PATH"` 前缀，否则 dirname/ls not found

@@ -592,14 +592,26 @@ app.delete('/api/account/records', (req, res) => {
   if (!session) return
   const key = accountRecordOwnerKey(session.user.id)
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : []
+  // 记录联动清理：删除记录时，把该用户名下「已关闭/过期」的底层分享/收集任务连同磁盘文件一并清掉，
+  // 否则记录删了、后台统计和磁盘上还挂着僵尸资源（后台「分享/收集任务/待清理」不同步的根源）。
+  // 仍在有效期的资源照旧保留，对方的提取链接不受影响。
+  const purged = []
   if (ids.length) {
     const targets = new Set(ids)
+    for (const id of ids) {
+      const purgedResource = purgeOwnedStaleResource(session.user.id, id)
+      if (purgedResource) purged.push(purgedResource)
+    }
     metadata.records[key] = accountRecordsForUser(session.user.id).filter((record) => !targets.has(record.id))
   } else {
+    for (const record of accountRecordsForUser(session.user.id)) {
+      const purgedResource = purgeOwnedStaleResource(session.user.id, record.id)
+      if (purgedResource) purged.push(purgedResource)
+    }
     metadata.records[key] = []
   }
   persistMetadata()
-  res.json({ records: metadata.records[key] })
+  res.json({ records: metadata.records[key], purged })
 })
 
 app.get('/api/account/messages', (req, res) => {
@@ -3175,16 +3187,19 @@ function cleanupStorageOrphans() {
   const validShareIds = new Set(metadata.shares.map((item) => item.id))
   const validCollectionIds = new Set(metadata.collections.map((item) => item.id))
   const removed = { shares: 0, collections: 0 }
+  const statMtimeMs = (target) => {
+    try { return fs.statSync(target).mtimeMs } catch { return 0 }
+  }
   for (const entry of safeDirectoryEntries(filesRoot)) {
     const target = path.join(filesRoot, entry)
-    if (!validShareIds.has(entry) && fs.statSync(target).mtimeMs < cutoff) {
+    if (!validShareIds.has(entry) && statMtimeMs(target) < cutoff) {
       removeDirectory(target)
       removed.shares += 1
     }
   }
   for (const entry of safeDirectoryEntries(collectionsRoot)) {
     const target = path.join(collectionsRoot, entry)
-    if (!validCollectionIds.has(entry) && fs.statSync(target).mtimeMs < cutoff) {
+    if (!validCollectionIds.has(entry) && statMtimeMs(target) < cutoff) {
       removeDirectory(target)
       removed.collections += 1
     }
@@ -3200,17 +3215,107 @@ function safeDirectoryEntries(directory) {
   }
 }
 
+// 解析收发记录 id → 底层资源引用。记录 id 形如 `<scope>:share:<shareId>` / `<scope>:collection:<token|manageToken|id>`。
+function parseAccountRecordResource(recordId) {
+  const id = String(recordId || '')
+  const separator = id.indexOf(':')
+  if (separator <= 0) return null
+  const scope = id.slice(0, separator)
+  const rest = id.slice(separator + 1)
+  if (rest.startsWith('share:')) return { scope, kind: 'share', key: rest.slice(6) }
+  if (rest.startsWith('collection:')) return { scope, kind: 'collection', key: rest.slice(11) }
+  return null
+}
+
+// 删除记录时联动清理：只处理记录归属者本人的资源（my_sent=自己发出的分享、
+// my_collections=自己的收集任务），sent_to_me / collect_from_me 是别人的资源绝不能动；
+// 且只清「已关闭/过期」的，有效期内的资源保留，提取链接不受影响。
+function purgeOwnedStaleResource(userId, recordId) {
+  const parsed = parseAccountRecordResource(recordId)
+  if (!parsed || !userId || !['my_sent', 'my_collections'].includes(parsed.scope)) return null
+  if (parsed.kind === 'share') {
+    const index = metadata.shares.findIndex((item) => item.id === parsed.key || item.manageToken === parsed.key)
+    if (index < 0) return null
+    const share = metadata.shares[index]
+    if (share.ownerUserId !== userId) return null
+    if (currentShareStatus(share) === 'active') return null
+    metadata.shares.splice(index, 1)
+    removeDirectory(path.join(filesRoot, share.id))
+    return { kind: 'share', id: share.id }
+  }
+  const index = metadata.collections.findIndex((item) => item.id === parsed.key || item.token === parsed.key || item.manageToken === parsed.key)
+  if (index < 0) return null
+  const collection = metadata.collections[index]
+  if (collection.ownerUserId !== userId) return null
+  if (currentCollectionStatus(collection) === 'active') return null
+  metadata.collections.splice(index, 1)
+  removeDirectory(path.join(collectionsRoot, collection.id))
+  return { kind: 'collection', id: collection.id }
+}
+
+// 资源被清掉后，把各用户记录里仍指向这些资源的条目一并摘除，避免记录页出现「点了就 410」的死链。
+function pruneRecordsForPurgedResources(shareKeys, collectionKeys) {
+  if ((!shareKeys || !shareKeys.size) && (!collectionKeys || !collectionKeys.size)) return
+  for (const [userId, records] of Object.entries(metadata.records || {})) {
+    if (!Array.isArray(records) || !records.length) continue
+    const next = records.filter((record) => {
+      const parsed = parseAccountRecordResource(record.id)
+      if (!parsed) return true
+      if (parsed.kind === 'share') return !shareKeys.has(parsed.key)
+      return !collectionKeys.has(parsed.key)
+    })
+    if (next.length !== records.length) metadata.records[userId] = next
+  }
+}
+
+// 后台「执行清理」的实质动作：把所有已关闭/过期的非团队资源连同文件彻底移除。
+// ⚠️ 只能由 POST /api/admin/cleanup（带确认弹窗）触发，绝不能挂进 cleanupExpired 定时链路 ——
+// 团队资源关闭后所有者仍可打开/重新开启，自动清理会让「重新开启分享」功能变成摆设。
+function purgeStaleResources() {
+  const removed = { shares: 0, collections: 0 }
+  // 团队资源关闭后仍归团队空间与所有者管理，不参与清理
+  const staleShares = metadata.shares.filter((share) => !share.teamResource && currentShareStatus(share) !== 'active')
+  if (staleShares.length) {
+    const removedShareKeys = new Set()
+    for (const share of staleShares) {
+      removeDirectory(path.join(filesRoot, share.id))
+      removedShareKeys.add(share.id)
+      if (share.manageToken) removedShareKeys.add(share.manageToken)
+      if (share.code) removedShareKeys.add(share.code)
+    }
+    metadata.shares = metadata.shares.filter((share) => !staleShares.includes(share))
+    removed.shares = staleShares.length
+    pruneRecordsForPurgedResources(removedShareKeys, new Set())
+  }
+  const staleCollections = metadata.collections.filter((task) => currentCollectionStatus(task) !== 'active')
+  if (staleCollections.length) {
+    const removedCollectionKeys = new Set()
+    for (const task of staleCollections) {
+      removeDirectory(path.join(collectionsRoot, task.id))
+      if (task.id) removedCollectionKeys.add(task.id)
+      if (task.token) removedCollectionKeys.add(task.token)
+      if (task.manageToken) removedCollectionKeys.add(task.manageToken)
+    }
+    metadata.collections = metadata.collections.filter((task) => !staleCollections.includes(task))
+    removed.collections = staleCollections.length
+    pruneRecordsForPurgedResources(new Set(), removedCollectionKeys)
+  }
+  return removed
+}
+
 function runMaintenanceCleanup() {
   const before = { shares: metadata.shares.length, collections: metadata.collections.length, auditLogs: metadata.auditLogs.length }
   cleanupExpired()
+  // 真实清除已关闭/过期资源（此前 cleanupExpired 只标记状态不删对象，expiredShares 恒为 0 的假计数由此而来）
+  const purged = purgeStaleResources()
   const orphaned = cleanupStorageOrphans()
   const retentionMs = normalizeSystemConfig(metadata.systemConfig).auditLogRetentionDays * 86400000
   const cutoff = Date.now() - retentionMs
   metadata.auditLogs = normalizeAuditLogs(metadata.auditLogs).filter((item) => new Date(item.createdAt).getTime() >= cutoff)
   persistMetadata()
   return {
-    expiredShares: Math.max(0, before.shares - metadata.shares.length),
-    expiredCollections: Math.max(0, before.collections - metadata.collections.length),
+    expiredShares: purged.shares,
+    expiredCollections: purged.collections,
     orphaned,
     removedAuditLogs: Math.max(0, before.auditLogs - metadata.auditLogs.length),
   }

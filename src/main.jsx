@@ -990,8 +990,8 @@ function WorkspaceApp() {
       const scopeConfirmed = await requestConfirm({
         title: `清空「${label}」记录`,
         detail: authUser?.id
-          ? `将清空当前账号「${label}」分类下的 ${count} 条收发记录，其他分类不受影响，文件资源本身不会被删除。确定继续吗？`
-          : `将清空当前设备「${label}」分类下的 ${count} 条收发记录，其他分类不受影响，文件资源本身不会被删除。确定继续吗？`,
+          ? `将清空当前账号「${label}」分类下的 ${count} 条收发记录，其他分类不受影响；其中已关闭/过期的分享与收集任务及其文件会一并删除，仍在有效期的资源不受影响。确定继续吗？`
+          : `将清空当前设备「${label}」分类下的 ${count} 条收发记录，其他分类不受影响；其中已关闭/过期的分享与收集任务及其文件会一并删除，仍在有效期的资源不受影响。确定继续吗？`,
         confirmText: `清空「${label}」`,
         tone: 'danger',
       })
@@ -1002,8 +1002,8 @@ function WorkspaceApp() {
     const confirmed = await requestConfirm({
       title: '清空全部记录',
       detail: authUser?.id
-        ? '将清空当前账号同步的全部收发记录，文件资源本身不会被删除。确定继续吗？'
-        : '将清空当前设备保存的全部收发记录，文件资源本身不会被删除。确定继续吗？',
+        ? '将清空当前账号同步的全部收发记录；其中已关闭/过期的分享与收集任务及其文件会一并删除，仍在有效期的资源不受影响。确定继续吗？'
+        : '将清空当前设备保存的全部收发记录；其中已关闭/过期的分享与收集任务及其文件会一并删除，仍在有效期的资源不受影响。确定继续吗？',
       confirmText: '清空全部',
       tone: 'danger',
     })
@@ -4718,6 +4718,7 @@ function AdminPage() {
   const [adminInfo, setAdminInfo] = useState(null)
   const [loginBusy, setLoginBusy] = useState(false)
   const [loginError, setLoginError] = useState('')
+  const [cleanupNotice, setCleanupNotice] = useState('')
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
 
   const load = async () => {
@@ -4809,10 +4810,24 @@ function AdminPage() {
     }
   }
   const runCleanup = async () => {
+    const confirmed = await requestConfirm({
+      title: '执行存储清理',
+      detail: '将永久删除所有已关闭/过期的分享与收集任务及其文件（团队空间资源与仍在有效期的资源不受影响），操作不可恢复。确定继续吗？',
+      confirmText: '执行清理',
+      tone: 'danger',
+    })
+    if (!confirmed) return
     try {
       setError('')
       const result = await apiRequest('/api/admin/cleanup', { method: 'POST' })
       setData(result.overview)
+      const parts = []
+      if (result.expiredShares) parts.push(`分享 ${result.expiredShares} 个`)
+      if (result.expiredCollections) parts.push(`收集任务 ${result.expiredCollections} 个`)
+      const orphanCount = (result.orphaned?.shares || 0) + (result.orphaned?.collections || 0)
+      if (orphanCount) parts.push(`孤儿目录 ${orphanCount} 个`)
+      if (result.removedAuditLogs) parts.push(`过期日志 ${result.removedAuditLogs} 条`)
+      setCleanupNotice(parts.length ? `清理完成：已删除 ${parts.join('、')}` : '清理完成：没有需要清理的资源')
     } catch (err) {
       setError(err.message || '清理失败')
     }
@@ -4833,6 +4848,7 @@ function AdminPage() {
         <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、安全日志、运行配置和系统概览。</p></div><div className="admin-heading-actions">{adminInfo?.username && <span className="admin-identity" title={`当前登录管理员：${adminInfo.username}`}><ShieldCheck size={14} /> {adminInfo.username}</span>}<button className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</button><button className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button></div></div>
         <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button className={tab === key ? 'active' : ''} key={key} onClick={() => setTab(key)}><Icon size={16} /> {label}</button>)}</nav>
         {error && <p className="public-message">{error}</p>}
+        {cleanupNotice && <p className="public-message">{cleanupNotice}</p>}
         <div className="admin-content">
           {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-list">{trend.map((item) => <div className="admin-trend-row" key={item.date}><span>{item.label}</span><div><i style={{ width: `${(item.activeUsers / trendMax) * 100}%` }} title={`活跃用户 ${item.activeUsers}`} /><i className="upload" style={{ width: `${(item.uploads / trendMax) * 100}%` }} title={`上传 ${item.uploads}`} /><i className="download" style={{ width: `${(item.downloads / trendMax) * 100}%` }} title={`下载 ${item.downloads}`} /></div><small>{item.activeUsers} / {item.uploads} / {item.downloads}</small></div>)}</div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot muted" /> 资源审核未启用 <strong>—</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
           {tab === 'users' && <AdminUsers users={data.users} onUpdate={updateUser} />}
