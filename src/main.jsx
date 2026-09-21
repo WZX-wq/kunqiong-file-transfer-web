@@ -316,6 +316,9 @@ function WorkspaceApp() {
   const [messageOpen, setMessageOpen] = useState(false)
   const [messages, setMessages] = useState([])
   const [footerContentKey, setFooterContentKey] = useState('')
+  // 未登录传输配额：enabled=true 时展示剩余额度；null 表示已登录或接口不可用。
+  const [guestQuota, setGuestQuota] = useState(null)
+  const [guestQuotaDialog, setGuestQuotaDialog] = useState(null)
 
   useEffect(() => {
     const syncRoute = () => {
@@ -344,6 +347,19 @@ function WorkspaceApp() {
     }
   }
 
+  // 未登录时拉取游客传输配额（顺带让服务端签发游客 cookie），登录后清空。
+  const refreshGuestQuota = () => apiRequest('/api/guest/quota')
+    .then((data) => setGuestQuota(data?.enabled ? data : null))
+    .catch(() => {})
+
+  useEffect(() => {
+    if (authUser?.id || authLoading) {
+      setGuestQuota(null)
+      return undefined
+    }
+    refreshGuestQuota()
+  }, [authUser?.id, authLoading])
+
   const syncAccountRecords = async ({ silent = true } = {}) => {
     if (!authUser?.id) return readRecords()
     setRecordsSyncing(true)
@@ -371,8 +387,7 @@ function WorkspaceApp() {
   }
 
   const refreshMessages = async (user = authUser, { silent = true } = {}) => {
-    if (!user?.id) {
-      setMessages([])
+    if (!user?.id) {      setMessages([])
       return []
     }
     try {
@@ -470,6 +485,19 @@ function WorkspaceApp() {
       inputRef.current?.click()
       return
     }
+    // 未登录预检：额度不够就直接引导注册，不浪费一次上传。
+    if (!authUser?.id && guestQuota?.enabled) {
+      const pendingBytes = files.reduce((sum, item) => sum + item.size, 0)
+      if (guestQuota.remainingBytes < pendingBytes) {
+        setGuestQuotaDialog({
+          usedBytes: guestQuota.usedBytes,
+          limitBytes: guestQuota.limitBytes,
+          remainingBytes: guestQuota.remainingBytes,
+          incomingBytes: pendingBytes,
+        })
+        return
+      }
+    }
     setIsUploading(true)
     setShareResult(null)
     if (!resume) {
@@ -492,10 +520,15 @@ function WorkspaceApp() {
         refreshMessages(authUser).catch(() => {})
       }
       setToast(data.share.deliveryRecipients?.length ? '文件已上传，通知状态已更新' : '文件已上传，分享信息已生成')
+      if (!authUser?.id) refreshGuestQuota()
     } catch (error) {
       if (error.name === 'UploadPausedError') {
         setUploadState((current) => ({ ...current, status: 'paused', phase: '已暂停，可继续上传', error: '' }))
         return
+      }
+      if (error.code === 'guest_quota_exceeded') {
+        setGuestQuotaDialog(error.guestQuota || { incomingBytes: 0 })
+        refreshGuestQuota()
       }
       setUploadState((current) => ({ ...current, status: 'failed', phase: '上传失败', error: error.message }))
       setToast(error.message)
@@ -1141,6 +1174,8 @@ function WorkspaceApp() {
             onCopy={copyValue}
             onCopyQrImage={copyQrImage}
             onRetrieve={() => setRetrieveOpen(true)}
+            guestQuota={guestQuota}
+            onLogin={startLogin}
           />
         )}
         {!isSettingsRoute && activeView === 'collect' && (
@@ -1190,7 +1225,38 @@ function WorkspaceApp() {
         />
       )}
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
+      {guestQuotaDialog && <GuestQuotaModal quota={guestQuotaDialog} onClose={() => setGuestQuotaDialog(null)} onLogin={startLogin} />}
       {toast && <Toast message={toast} />}
+    </div>
+  )
+}
+
+function GuestQuotaModal({ quota, onClose, onLogin }) {
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  return (
+    <div className="modal-backdrop confirm-backdrop" onMouseDown={onClose}>
+      <div className="modal confirm-modal guest-quota-modal" role="dialog" aria-modal="true" aria-labelledby="guest-quota-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="confirm-modal-icon"><Gauge size={20} /></div>
+        <p className="eyebrow">未登录传输额度</p>
+        <h2 id="guest-quota-title">免登录传输额度已用完</h2>
+        <p className="guest-quota-detail">
+          免登录传输按设备累计上限 <strong>{formatBytes(quota.limitBytes)}</strong>
+          {quota.usedBytes ? <>，本设备已用 <strong>{formatBytes(quota.usedBytes)}</strong></> : null}
+          {quota.incomingBytes ? <>，本次还需传输 <strong>{formatBytes(quota.incomingBytes)}</strong></> : null}。
+          免费注册后即可获得 <strong>20 GB</strong> 个人空间，上传与分享不再受此限制。
+        </p>
+        <div className="modal-footer confirm-modal-footer">
+          <button className="secondary-button" onClick={onClose}>知道了</button>
+          <button className="primary-button" onClick={onLogin}><UserPlus size={15} /> 免费注册 / 登录</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1220,7 +1286,7 @@ function feedbackTone(message = '') {
   return /失败|错误|无效|不可用|不能|无法|不能为空|不足|过期|不正确|未配置|未生效|拒绝|异常|请先|请输入|未登录|未投递|不存在|已失效|没有可|不支持|通道|需接入|暂不|暂无|暂未|尚未|需要会员|更高权益/.test(String(message)) ? 'error' : 'success'
 }
 
-function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve }) {
+function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
   const showUploadStatus = ['uploading', 'paused', 'failed', 'finalizing'].includes(uploadState.status)
   return (
     <>
@@ -1253,6 +1319,13 @@ function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, 
                   <input value={settings.recipients} onChange={(event) => onUpdateSettings({ recipients: event.target.value })} placeholder="输入手机号或邮箱，多个用逗号分隔（可选）" />
                 </label>
                 <div className="file-list">{files.map((file) => <FileRow key={file.id} file={file} onRemove={() => removeFile(file.id)} />)}</div>
+                {guestQuota?.enabled && (
+                  <div className="guest-quota-hint">
+                    <Gauge size={15} />
+                    <span>未登录累计可传 <strong>{formatBytes(guestQuota.limitBytes)}</strong>，本设备已用 {formatBytes(guestQuota.usedBytes)}，剩余 <strong>{formatBytes(guestQuota.remainingBytes)}</strong></span>
+                    <button type="button" onClick={onLogin}><UserPlus size={13} /> 免费注册解锁 20 GB</button>
+                  </div>
+                )}
                 {showUploadStatus ? <UploadProgressPanel progress={uploadProgress} uploadState={uploadState} isUploading={isUploading} onPause={onPause} onResume={onResume} onRetry={onRetry} /> : <div className="queue-actions"><button className="secondary-button" onClick={onSettings}><Settings2 size={16} /> 分享设置</button><button className="primary-button" onClick={() => uploadFiles()}><Send size={16} /> 开始上传 <ArrowRight size={15} /></button></div>}
               </div>
             )}
@@ -4832,6 +4905,7 @@ function AdminPage() {
         defaultShareDays: form.get('defaultShareDays'),
         maxShareDays: form.get('maxShareDays'),
         anonymousMaxFileSizeMb: form.get('anonymousMaxFileSizeMb'),
+        anonymousTotalSizeMb: form.get('anonymousTotalSizeMb'),
         maxBatchFiles: form.get('maxBatchFiles'),
         auditLogRetentionDays: form.get('auditLogRetentionDays'),
         orphanGraceHours: form.get('orphanGraceHours'),
@@ -4974,6 +5048,7 @@ function AdminConfig({ config = {}, saving = false, onSubmit }) {
       <label className="manage-field"><span>默认保存时效（天）</span><input name="defaultShareDays" type="number" min="1" max="365" defaultValue={config.defaultShareDays} /></label>
       <label className="manage-field"><span>普通分享最长有效期（天）</span><input name="maxShareDays" type="number" min="1" max="365" defaultValue={config.maxShareDays} /></label>
       <label className="manage-field"><span>匿名单文件上限（MB）</span><input name="anonymousMaxFileSizeMb" type="number" min="1" max="5120" defaultValue={config.anonymousMaxFileSizeMb} /></label>
+      <label className="manage-field"><span>未登录累计传输上限（MB）</span><input name="anonymousTotalSizeMb" type="number" min="0" max="102400" defaultValue={config.anonymousTotalSizeMb} /></label>
       <label className="manage-field"><span>单次最多文件数</span><input name="maxBatchFiles" type="number" min="1" max="100" defaultValue={config.maxBatchFiles} /></label>
       <label className="manage-field"><span>审计日志保留（天）</span><input name="auditLogRetentionDays" type="number" min="1" max="3650" defaultValue={config.auditLogRetentionDays} /></label>
       <label className="manage-field"><span>孤立目录宽限（小时）</span><input name="orphanGraceHours" type="number" min="1" max="720" defaultValue={config.orphanGraceHours} /></label>
@@ -6253,7 +6328,13 @@ function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkData, ch
       let data = {}
       try { data = JSON.parse(xhr.responseText || '{}') } catch { data = {} }
       if (xhr.status >= 200 && xhr.status < 300) resolve(data)
-      else reject(new Error(data.message || '分片上传失败'))
+      else {
+        const error = new Error(data.message || '分片上传失败')
+        error.status = xhr.status
+        error.code = data.code || ''
+        error.guestQuota = data.guestQuota || null
+        reject(error)
+      }
     }
     xhr.onerror = () => {
       cleanup()
@@ -6397,6 +6478,8 @@ async function apiRequest(url, options = {}) {
   if (!response.ok) {
     const error = new Error(data.message || '请求失败')
     error.status = response.status
+    error.code = data.code || ''
+    error.guestQuota = data.guestQuota || null
     throw error
   }
   return data

@@ -127,11 +127,18 @@ const COLLECTION_TYPE_EXTENSIONS = {
 const UPGRADE_ORDER_STATUSES = new Set(['pending_payment', 'paid', 'canceled', 'expired'])
 const MAX_UPGRADE_ORDERS = 500
 const MAX_AUDIT_LOGS = 5000
+// 未登录（游客）传输配额：累计计费按「设备 cookie（缺省回落 IP）」维度，
+// 条目数设上限防止 metadata 无限膨胀（超限淘汰最久未活跃的条目）。
+const GUEST_ID_COOKIE = 'kq_guest_id'
+const GUEST_ID_MAX_AGE_SECONDS = 365 * 24 * 3600
+const MAX_GUEST_USAGE_ENTRIES = 20000
 const DEFAULT_SYSTEM_CONFIG = {
   maintenanceMode: false,
   defaultShareDays: 3,
   maxShareDays: 30,
   anonymousMaxFileSizeMb: 500,
+  // 游客累计可传输大小（MB），0 表示不限制。防止匿名通道被无限白嫖。
+  anonymousTotalSizeMb: 1024,
   maxBatchFiles: MAX_FILES,
   auditLogRetentionDays: 90,
   orphanGraceHours: 24,
@@ -263,6 +270,9 @@ app.use((req, res, next) => {
   const origin = firstHeader(req.get('origin'))
   if (!origin) return next()
   if (origin !== getRequestOrigin(req)) {
+    // vite dev(4173) 经代理转发时会改写 Host，导致 Origin 与站点不一致；
+    // 与 enforceDownloadOrigin 的本机 dev 白名单同口径放行（仅限开发端口，浏览器无法伪造该 Origin）。
+    if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]):4173$/.test(origin)) return next()
     return res.status(403).json({ message: '请求来源不受信任' })
   }
   next()
@@ -291,6 +301,23 @@ app.get('/api/runtime-config', (_req, res) => {
     maxShareDays: config.maxShareDays,
     maxBatchFiles: config.maxBatchFiles,
     anonymousMaxFileSizeMb: config.anonymousMaxFileSizeMb,
+    anonymousTotalSizeMb: config.anonymousTotalSizeMb,
+  })
+})
+
+// 未登录传输配额查询：顺便给首次访客发游客 cookie，保证后续上传按同一设备计账。
+app.get('/api/guest/quota', (req, res) => {
+  const limitBytes = guestQuotaLimitBytes()
+  const guestKey = resolveGuestKey(req, res)
+  if (!limitBytes || !guestKey) {
+    return res.json({ enabled: false, limitBytes: 0, usedBytes: 0, remainingBytes: null })
+  }
+  const usedBytes = guestUsageEntry(guestKey).bytes
+  res.json({
+    enabled: true,
+    limitBytes,
+    usedBytes,
+    remainingBytes: Math.max(0, limitBytes - usedBytes),
   })
 })
 
@@ -1571,6 +1598,7 @@ app.post('/api/shares', upload.array('files', MAX_FILES), normalizeUploadedFileN
     const uploadedFiles = req.files || []
     if (!uploadedFiles.length) return res.status(400).json({ message: '至少选择一个文件' })
     assertConfiguredUploadLimits(req, uploadedFiles)
+    const guestKey = assertGuestQuota(req, res, uploadedFiles)
     assertSafeUploadFiles(uploadedFiles)
 
     const relativePaths = parseJson(req.body.relativePaths, [])
@@ -1587,6 +1615,7 @@ app.post('/api/shares', upload.array('files', MAX_FILES), normalizeUploadedFileN
 
     const ownerSession = authSessionFromRequest(req)
     const share = await createShareFromTempFiles(files, readShareOptions(req.body, ownerSession?.user), req)
+    addGuestUsage(guestKey, files)
     res.status(201).json({ share: publicShare(share, req, true, true) })
   } catch (error) {
     cleanupUploadedFiles(req.files)
@@ -1611,6 +1640,7 @@ app.post('/api/upload-sessions', (req, res) => {
   const invalid = normalizedFiles.find((file) => file.size > MAX_FILE_SIZE)
   if (invalid) return res.status(413).json({ message: `${invalid.name} 超过 5 GB 限制` })
   assertConfiguredUploadLimits(req, normalizedFiles)
+  const guestKey = assertGuestQuota(req, res, normalizedFiles)
   assertSafeUploadFiles(normalizedFiles)
   const ownerSession = authSessionFromRequest(req)
   let collectionTask = null
@@ -1647,6 +1677,8 @@ app.post('/api/upload-sessions', (req, res) => {
     id: sessionId,
     chunkSize: normalizeUploadChunkSize(req.body.chunkSize),
     files: normalizedFiles,
+    // 游客计账 key 冻结在会话上：complete 成功时按它补记累计用量（登录用户为空串）。
+    guestKey,
     // 团队资源走团队空间权益，不校验上传者的个人 permanent。
     options: readShareOptions(req.body, ownerSession?.user, isTeamResourceSession),
     mode: isTeamResourceSession ? 'team_resource' : (req.body.mode === 'collection' ? 'collection' : 'share'),
@@ -1748,6 +1780,7 @@ function persistUploadSession(session) {
       participantName: session.participantName,
       submitterUserId: session.submitterUserId,
       submitterName: session.submitterName,
+      guestKey: session.guestKey || '',
       relativePaths: session.relativePaths,
       createdAt: session.createdAt,
     }
@@ -1892,6 +1925,7 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
       }
       task.submissions.push(submission)
       addCollectionSubmissionMessage(task, submission, req)
+      addGuestUsage(session.guestKey, submissionFiles)
       persistMetadata()
       uploadSessions.delete(session.id)
       removeDirectory(session.directory)
@@ -1908,6 +1942,7 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
       teamResource: session.mode === 'team_resource',
       teamOrganizationId: session.organizationId,
     }, req)
+    addGuestUsage(session.guestKey, mergedFiles)
     uploadSessions.delete(session.id)
     removeDirectory(session.directory)
     res.status(201).json({ share: publicShare(share, req, true, true) })
@@ -2133,6 +2168,7 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
       return res.status(400).json({ message: '至少选择一个文件' })
     }
     assertConfiguredUploadLimits(req, uploadedFiles)
+    const guestKey = assertGuestQuota(req, res, uploadedFiles)
     assertSafeUploadFiles(uploadedFiles)
     const invalidFile = uploadedFiles.find((file) => file.size > task.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.originalname, task.allowedTypes))
     if (invalidFile) {
@@ -2160,6 +2196,7 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
     }
     task.submissions.push(submission)
     addCollectionSubmissionMessage(task, submission, req)
+    addGuestUsage(guestKey, files)
     persistMetadata()
     res.status(201).json({ submission: publicSubmission(submission) })
   } catch (error) {
@@ -2305,7 +2342,13 @@ if (fs.existsSync(distRoot)) {
 
 app.use((error, _req, res, _next) => {
   console.error(error)
-  if (error.status) return res.status(error.status).json({ message: error.message || '请求处理失败' })
+  if (error.status) {
+    // guestQuota 仅在游客配额超限时存在，前端据此渲染引导弹窗；code 供前端区分业务错误。
+    const payload = { message: error.message || '请求处理失败' }
+    if (error.code) payload.code = error.code
+    if (error.guestQuota) payload.guestQuota = error.guestQuota
+    return res.status(error.status).json(payload)
+  }
   if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: '文件超过 5 GB 限制' })
   if (error.code === 'LIMIT_FILE_COUNT') return res.status(413).json({ message: `单次最多上传 ${MAX_FILES} 个文件` })
   res.status(500).json({ message: '服务器处理失败，请稍后重试' })
@@ -2473,6 +2516,7 @@ function normalizeMetadata(value = {}) {
     auditLogs: normalizeAuditLogs(value.auditLogs),
     organizations: normalizeOrganizations(value.organizations),
     upgradeOrders: normalizeUpgradeOrders(value.upgradeOrders),
+    guestUsage: normalizeGuestUsageStore(value.guestUsage),
     systemConfig: normalizeSystemConfig(value.systemConfig),
   }
 }
@@ -2571,6 +2615,7 @@ function normalizeSystemConfig(value = {}) {
   const defaultShareDays = Number(source.defaultShareDays)
   const maxShareDays = Number(source.maxShareDays)
   const anonymousMaxFileSizeMb = Number(source.anonymousMaxFileSizeMb)
+  const anonymousTotalSizeMb = Number(source.anonymousTotalSizeMb)
   const maxBatchFiles = Number(source.maxBatchFiles)
   const auditLogRetentionDays = Number(source.auditLogRetentionDays)
   const orphanGraceHours = Number(source.orphanGraceHours)
@@ -2579,6 +2624,7 @@ function normalizeSystemConfig(value = {}) {
     defaultShareDays: Number.isFinite(defaultShareDays) ? Math.min(365, Math.max(1, Math.floor(defaultShareDays))) : DEFAULT_SYSTEM_CONFIG.defaultShareDays,
     maxShareDays: Number.isFinite(maxShareDays) ? Math.min(365, Math.max(1, Math.floor(maxShareDays))) : DEFAULT_SYSTEM_CONFIG.maxShareDays,
     anonymousMaxFileSizeMb: Number.isFinite(anonymousMaxFileSizeMb) ? Math.min(5120, Math.max(1, Math.floor(anonymousMaxFileSizeMb))) : DEFAULT_SYSTEM_CONFIG.anonymousMaxFileSizeMb,
+    anonymousTotalSizeMb: Number.isFinite(anonymousTotalSizeMb) ? Math.min(102400, Math.max(0, Math.floor(anonymousTotalSizeMb))) : DEFAULT_SYSTEM_CONFIG.anonymousTotalSizeMb,
     maxBatchFiles: Number.isFinite(maxBatchFiles) ? Math.min(MAX_FILES, Math.max(1, Math.floor(maxBatchFiles))) : DEFAULT_SYSTEM_CONFIG.maxBatchFiles,
     auditLogRetentionDays: Number.isFinite(auditLogRetentionDays) ? Math.min(3650, Math.max(1, Math.floor(auditLogRetentionDays))) : DEFAULT_SYSTEM_CONFIG.auditLogRetentionDays,
     orphanGraceHours: Number.isFinite(orphanGraceHours) ? Math.min(720, Math.max(1, Math.floor(orphanGraceHours))) : DEFAULT_SYSTEM_CONFIG.orphanGraceHours,
@@ -3551,6 +3597,110 @@ function assertConfiguredUploadLimits(req, files = []) {
   const maxBytes = config.anonymousMaxFileSizeMb * 1024 * 1024
   const invalid = files.find((file) => Number(file.size || 0) > maxBytes)
   if (invalid) throw httpError(413, `匿名上传单文件不能超过 ${config.anonymousMaxFileSizeMb} MB`)
+}
+
+// ---------- 未登录（游客）累计传输配额 ----------
+// 身份维度：优先设备 cookie（kq_guest_id），请求完全没有 cookie 头时回落 IP；
+// 登录用户返回空串（不参与游客计费，走个人空间配额）。
+function normalizeGuestUsageStore(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const entries = []
+  for (const [key, entry] of Object.entries(source)) {
+    if (!key || !entry || typeof entry !== 'object') continue
+    const bytes = Math.max(0, Math.floor(Number(entry.bytes) || 0))
+    if (!bytes) continue
+    entries.push({
+      key,
+      entry: {
+        bytes,
+        uploads: Math.max(0, Math.floor(Number(entry.uploads) || 0)),
+        firstAt: normalizeRecordDate(entry.firstAt) || new Date().toISOString(),
+        lastAt: normalizeRecordDate(entry.lastAt) || new Date().toISOString(),
+      },
+    })
+  }
+  entries.sort((a, b) => new Date(a.entry.lastAt).getTime() - new Date(b.entry.lastAt).getTime())
+  const store = {}
+  for (const { key, entry } of entries.slice(-MAX_GUEST_USAGE_ENTRIES)) store[key] = entry
+  return store
+}
+
+function resolveGuestKey(req, res) {
+  if (authSessionFromRequest(req)?.user?.id) return ''
+  const existing = readCookie(req, GUEST_ID_COOKIE)
+  if (existing && /^[A-Za-z0-9]{16,64}$/.test(existing)) return `cookie:${existing}`
+  // 完全没有 cookie 头（脚本直调或首次无痕访问）：本次按 IP 计账，防止脚本换 key 绕过额度；
+  // 同时仍签发游客 cookie，浏览器从下一个请求起就切到独立的 cookie 键。
+  if (!req.get('cookie')) {
+    issueGuestCookie(req, res)
+    const ip = String(req.socket?.remoteAddress || '').trim() || 'unknown'
+    return `ip:${ip}`
+  }
+  return `cookie:${issueGuestCookie(req, res)}`
+}
+
+function issueGuestCookie(req, res) {
+  const token = createToken(24)
+  res.append('Set-Cookie', serializeCookie(GUEST_ID_COOKIE, token, {
+    httpOnly: true,
+    maxAge: GUEST_ID_MAX_AGE_SECONDS,
+    path: '/',
+    sameSite: 'Lax',
+    secure: isSecureRequest(req),
+  }))
+  return token
+}
+
+function guestQuotaLimitBytes(config = metadata.systemConfig) {
+  const mb = Number(normalizeSystemConfig(config).anonymousTotalSizeMb)
+  if (!Number.isFinite(mb) || mb <= 0) return 0
+  return Math.floor(mb) * 1024 * 1024
+}
+
+function guestUsageEntry(key) {
+  const entry = key ? metadata.guestUsage?.[key] : null
+  return entry && typeof entry === 'object' ? entry : { bytes: 0, uploads: 0 }
+}
+
+function formatBytesLabel(bytes = 0) {
+  const value = Math.max(0, Number(bytes) || 0)
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(value % 1024 ** 3 ? 1 : 0)} GB`
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(value % 1024 ** 2 ? 1 : 0)} MB`
+  return `${Math.round(value / 1024)} KB`
+}
+
+function guestQuotaExceededError({ usedBytes, limitBytes, incomingBytes }) {
+  const remaining = Math.max(0, limitBytes - usedBytes)
+  const error = httpError(413, `未登录累计可传输 ${formatBytesLabel(limitBytes)}（本设备已用 ${formatBytesLabel(usedBytes)}，剩余 ${formatBytesLabel(remaining)}，本次还需 ${formatBytesLabel(incomingBytes)}）。免费注册后即可获得 20 GB 个人空间，继续传输不受此限制`)
+  error.code = 'guest_quota_exceeded'
+  error.guestQuota = { usedBytes, limitBytes, incomingBytes, remainingBytes: remaining }
+  return error
+}
+
+// 上传前预校验：返回本请求对应的游客 key（成功后用于计账），登录用户返回 ''。
+function assertGuestQuota(req, res, files = []) {
+  const limitBytes = guestQuotaLimitBytes()
+  if (!limitBytes) return ''
+  const key = resolveGuestKey(req, res)
+  if (!key) return ''
+  const usedBytes = guestUsageEntry(key).bytes
+  const incomingBytes = files.reduce((sum, file) => sum + Number(file.size || 0), 0)
+  if (usedBytes + incomingBytes > limitBytes) throw guestQuotaExceededError({ usedBytes, limitBytes, incomingBytes })
+  return key
+}
+
+function addGuestUsage(key, files = []) {
+  if (!key) return
+  const bytes = files.reduce((sum, file) => sum + Number(file.size || 0), 0)
+  if (!Number.isFinite(bytes) || bytes <= 0) return
+  const store = metadata.guestUsage || (metadata.guestUsage = {})
+  const entry = store[key] || { bytes: 0, uploads: 0, firstAt: '', lastAt: '' }
+  entry.bytes += bytes
+  entry.uploads = (entry.uploads || 0) + 1
+  entry.firstAt = entry.firstAt || new Date().toISOString()
+  entry.lastAt = new Date().toISOString()
+  store[key] = entry
+  persistMetadata()
 }
 
 function enforceDownloadOrigin(req) {

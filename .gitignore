@@ -94,3 +94,14 @@ _admin_login.json
 _admin_cookies.txt
 _admin_shares.json
 _admin_ov.json
+
+# 游客配额轮：验证脚本入库，报告/截图/诊断沙箱不入库
+_guest_quota.txt
+_quota_layout_verify.txt
+_quota_layout_fix.png
+_overflow_files/
+_dbg_*.mjs
+
+# 上传面板溢出修复轮：验证脚本入库，报告/截图不入库
+_panel_overflow_*.txt
+_panel_overflow_*.png

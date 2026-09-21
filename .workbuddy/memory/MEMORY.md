@@ -10,7 +10,7 @@
 - 发送≤100文件、≤5GB/文件；小文件直传 `/api/shares`，大文件/团队资源走分片 `/api/upload-sessions`(TTL12h)
 - **分片=offset直写架构**：createSession 预分配，chunk 按 `chunkIndex*chunkSize` pwrite+`.done`；complete 只校验 size+rename，**绝不能改回事后合并**(曾冻结全进程10~35s)。探针 `_probe_direct_write.mjs`
 - 套餐订阅制：free(20GB,✗)/member(100GB,30天)/team(500GB,90天) permanent=false，enterprise(2048GB)=买断永久；到期 `accountPlanForUser` 自动回落 free，续费 `Math.max` 顺延；`ACCOUNT_PLAN_RANK` 升序；主站卡=轻享月卡¥19/30天、成长季卡¥49/90天、永久会员¥159
-- **展示价真源=主站支付套餐**：`/api/account/upgrade-pricing`(60s缓存)→前端 `useRemotePlanPricing`+`mergePlanPricing` 三处注入(工作台/升级弹窗/设置页)；remotePriced 时有效期跟随主站(null=永久)，拉不到回落本地价
+- **展示价真源=主站支付套餐**：`/api/account/upgrade-pricing`(60s缓存)→前端 `useRemotePlanPricing`+`mergePlanPricing` 三处注入(工作台/升级弹窗/设置页)；remotePriced 时有效期跟随主站(null=永久)，拉不到回落本地价。**改价/支付测试只能改主站后台套餐价**（主站套餐 ID member=1/team=2/enterprise=5；`create_web_member_order` 无金额参数，扫码实付=主站价，改本站展示价是假修复）；主站改价后 60s 内本站展示/下单自动跟随；**套餐表跨子站共享**，0.01 测试窗口内所有子站在售价同步变，窗口尽量短
 - **分享特权两级**：会员特权(改有效期/重开/canReopen)=付费且有效期内(hasMembership: permanent||id!=='free')；永久特权(永久分享'0')=仅 permanent(enterprise/团队资源)；回归 `_verify_subscription_plan`(23)
 
 ## 3. 核心不变量（破坏即事故）
@@ -28,7 +28,8 @@
 - **3.13 删除联动**：`DELETE /api/account/records` 只清归属者名下**非活跃**资源；`purgeStaleResources` **只挂 POST /api/admin/cleanup**，绝不进定时链路；teamResource 永不自动清理；`runMaintenanceCleanup` 返回真实计数
 
 ## 4. metadata 字段
-`users`(map by userId)、`messages[userId]`、`sessions[{id,user,expiresAt}]`(user 带完整快照否则显示回落)、`organizations`、`auditLogs`、`shares[{id=分享token,code=提取码,manageToken}]`、`collections[{id=token}]`
+`users`(map by userId)、`messages[userId]`、`sessions[{id,user,expiresAt}]`(user 带完整快照否则显示回落)、`organizations`、`auditLogs`、`shares[{id=分享token,code=提取码,manageToken}]`、`collections[{id=token}]`、`guestUsage`（游客累计传输计账，条目上限 20000）
+- **3.14 游客配额**：未登录累计传输上限 `systemConfig.anonymousTotalSizeMb`(默认1024MB,0=不限)；key=cookie`kq_guest_id`，无 cookie 头按 IP 计但**仍要签发 cookie**（防脚本换 key 绕过）；计账只在成功后（直传/分片 complete/收集提交），create 仅预校验；超限 413+`code:guest_quota_exceeded`+guestQuota 详情，错误 handler 白名单透传。回归 `_verify_guest_quota.mjs`
 
 ## 5. 开发 / 部署
 - dev：`npm run dev`(8045+4173)；prod：build 后同源 8045 托管 dist/，**改前端后要重建 dist**

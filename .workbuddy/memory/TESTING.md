@@ -142,3 +142,7 @@ Chrome：`C:\Program Files\Google\Chrome\Application\chrome.exe`。无 puppeteer
 4. `git merge-base HEAD <sha>` 找共同祖先 → 据此判断是 **fast-forward / 平行线 / 真正冲突**
 5. 平行线且**改动文件无交集** → rebase（或 merge）；有交集 → 老老实实 merge 解冲突
 
+
+## 预览探针（2026-09-20）
+- `_probe_preview_video.mjs` — 沙箱 8117；需 ffmpeg（D:/batchAiCutter/.../ffmpeg.exe）生成真 mp4/mp3。覆盖：五类型 kind 判定、视频 Range 206/416、hash 完整性、分片+收集链路视频预览。结果：23/23 PASS
+- ⚠️ 探针里 Node undici 对裸 Blob 的 FormData 三参 append 不生效（文件名变 blob），仅影响探针显示，真实浏览器 File 对象无此问题

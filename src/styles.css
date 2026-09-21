@@ -1693,3 +1693,53 @@ h1, h2, p { margin-top: 0; }
 .record-card,
 .team-resource-card,
 .collection-card { transition: box-shadow .2s ease, transform .2s ease, border-color .2s ease; }
+
+/* --- 8. 未登录（游客）累计传输额度：发送页提示条 + 超限引导弹窗 --- */
+.guest-quota-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  font-size: 13px;
+  color: var(--muted);
+}
+.guest-quota-hint svg { flex: none; color: var(--accent); }
+.guest-quota-hint strong { color: var(--ink); font-weight: 600; }
+.guest-quota-hint button {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.guest-quota-hint button:hover { text-decoration: underline; }
+
+.guest-quota-modal .guest-quota-detail {
+  margin: 0 0 6px;
+  line-height: 1.7;
+  font-size: 14px;
+  color: var(--muted);
+}
+.guest-quota-modal .guest-quota-detail strong { color: var(--ink); font-weight: 600; }
+
+/* --- 9. 上传面板溢出修复：超长文件名/分享链接不再撑破面板与页面 ---
+   根因：.upload-panel 是 grid(place-items:center)，隐式 auto 列会被
+   nowrap 长文件名的 max-content 撑大，突破 transfer-column 约束导致
+   面板变宽、页面横向溢出。约束轨道 + 全链 min-width:0 兜底。 */
+.upload-panel { grid-template-columns: minmax(0, 1fr); }
+.file-queue, .share-result { min-width: 0; max-width: 100%; }
+.file-row { min-width: 0; }
+.share-link { min-width: 0; }
+.share-link > span { min-width: 0; overflow-wrap: anywhere; }
