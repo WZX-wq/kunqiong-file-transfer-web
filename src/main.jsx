@@ -2876,16 +2876,16 @@ function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
             <span>分享截止时间</span>
             <div className="option-grid compact-grid">
               <button className={mode === 'date' ? 'selected' : ''} onClick={() => setMode('date')}>自定义日期{mode === 'date' && <Check size={14} />}</button>
-              <button className={mode === 'permanent' ? 'selected' : ''} onClick={() => canUsePermanent && setMode('permanent')} disabled={!canUsePermanent} title={!canUsePermanent ? '设置分享截止时间需要会员版或更高权益' : ''}>永久保存{mode === 'permanent' && <Check size={14} />}</button>
+              <button className={mode === 'permanent' ? 'selected' : ''} onClick={() => canUsePermanent && setMode('permanent')} disabled={!canUsePermanent} title={!canUsePermanent ? '永久保存需要企业版权益' : ''}>永久保存{mode === 'permanent' && <Check size={14} />}</button>
             </div>
             {mode === 'date' && <DatePicker value={expiryDate} onChange={setExpiryDate} ariaLabel="分享截止日期" />}
-            {!canUsePermanent && <small className="setting-hint">当前账号不是会员，无法修改分享截至时间。</small>}
+            {!canUsePermanent && <small className="setting-hint">永久保存需要企业版权益，会员可自定义截止时间。</small>}
           </div>
           {error && <p className="manage-form-error">{error}</p>}
         </div>
         <div className="modal-footer">
           <button className="secondary-button" onClick={onClose}>取消</button>
-          <button className="primary-button" disabled={!canUsePermanent || saving} onClick={submit}>{saving ? '保存中' : '保存设置'}</button>
+          <button className="primary-button" disabled={saving || (mode === 'permanent' && !canUsePermanent)} onClick={submit}>{saving ? '保存中' : '保存设置'}</button>
         </div>
       </div>
     </div>
@@ -3384,7 +3384,10 @@ function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, on
           <>
             <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
             <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => {
-              if (!user?.plan?.permanent) {
+              // 与服务端 applyShareUpdate 同口径：改有效期 = 会员特权（付费且在有效期内），
+              // 永久保存才要求 permanent。此前误用 plan.permanent 预检，把月卡/季卡会员拦在门外。
+              const hasMembership = Boolean(user?.plan?.permanent || (user?.plan?.id && user?.plan?.id !== 'free'))
+              if (!hasMembership) {
                 onNotify?.('设置分享截止时间需要会员版或更高权益')
                 return
               }
@@ -4747,12 +4750,27 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal upgrade-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <div><p className="eyebrow">会员与企业版</p><h2>{orderView ? '升级订单' : '升级权益'}</h2></div>
+          <div><p className="eyebrow">会员与企业版</p><h2>{orderView ? (orderView.status === 'paid' ? '支付成功' : '升级订单') : '升级权益'}</h2></div>
           <button className="ghost-icon modal-close" aria-label="关闭升级窗口" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="modal-body upgrade-modal-body">
           {error && <FeedbackMessage message={error} tone="error" />}
-          {orderView ? (
+          {orderView ? (orderView.status === 'paid' ? (
+            <div className="upgrade-success-view" role="status">
+              <span className="upgrade-success-icon"><BadgeCheck size={34} /></span>
+              <h3>{orderView.planLabel}权益已开通</h3>
+              <p>{orderView.planId === 'enterprise' ? '文件永久保存，感谢支持' : '文件保存有效期已自动顺延，立即生效'}</p>
+              <dl className="upgrade-order-meta">
+                <div><dt>支付金额</dt><dd><strong className="upgrade-success-amount">{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '—'}</strong></dd></div>
+                <div><dt>有效期至</dt><dd>{orderView.planId === 'enterprise' ? '永久有效' : orderView.remoteExpireAt ? formatDate(orderView.remoteExpireAt) : '以主站权益为准'}</dd></div>
+                <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={async () => { try { await copyTextToClipboard(orderView.orderNo); onNotify?.('订单号已复制', 'success') } catch { /* 忽略 */ } }}><Copy size={13} /> 复制</button></dd></div>
+                {orderView.paidAt && <div><dt>支付时间</dt><dd>{formatDate(orderView.paidAt)}</dd></div>}
+              </dl>
+              <div className="upgrade-order-actions">
+                <button className="primary-button upgrade-success-done" onClick={onClose}><Check size={15} /> 完成</button>
+              </div>
+            </div>
+          ) : (
             <div className="upgrade-order-view">
               <div className="upgrade-order-head">
                 <span className="upgrade-order-plan"><Crown size={18} /> {orderView.planLabel}</span>
@@ -4767,13 +4785,19 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
               {payment?.qrcode_img_url && <div className="upgrade-payment-qr"><img src={payment.qrcode_img_url} alt="微信支付二维码" /><span>请使用微信扫码支付</span></div>}
               {payment?.alipaysubmit_html && <div className="upgrade-payment-qr upgrade-payment-alipay"><div className="upgrade-payment-alipay-frame"><iframe title="支付宝收银台" scrolling="no" srcDoc={payment.alipaysubmit_html} /></div><span>请使用支付宝扫码支付</span></div>}
               <div className="upgrade-order-note"><Clock3 size={15} /><span>{notice || '请选择支付方式并完成支付，支付成功后会员权益会自动开通。'}</span></div>
-              <div className="upgrade-order-actions">
-                <button className="primary-button" onClick={continuePay} disabled={busy}><Zap size={15} /> {busy ? '正在处理…' : '继续支付'}</button>
-                {payment && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</button>}
-                <button className="secondary-button" onClick={cancelOrder} disabled={busy}><X size={15} /> 取消订单</button>
-              </div>
+              {orderView.status === 'pending_payment' ? (
+                <div className="upgrade-order-actions">
+                  <button className="primary-button" onClick={continuePay} disabled={busy}><Zap size={15} /> {busy ? '正在处理…' : '继续支付'}</button>
+                  {payment && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</button>}
+                  <button className="secondary-button" onClick={cancelOrder} disabled={busy}><X size={15} /> 取消订单</button>
+                </div>
+              ) : (
+                <div className="upgrade-order-actions">
+                  <button className="primary-button" onClick={() => { setOrderView(null); setPayment(null); onRefresh?.({ silent: true }) }}><RotateCcw size={15} /> 重新选择套餐</button>
+                </div>
+              )}
             </div>
-          ) : (
+          )) : (
             <>
               <p className="upgrade-intro">当前权益：<strong>{plan.label || '基础版'}</strong>。价格和有效期以当前支付套餐为准，创建订单前会同步主站实际金额。</p>
               <div className="upgrade-plan-grid">

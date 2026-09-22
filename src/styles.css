@@ -1743,3 +1743,14 @@ h1, h2, p { margin-top: 0; }
 .file-row { min-width: 0; }
 .share-link { min-width: 0; }
 .share-link > span { min-width: 0; overflow-wrap: anywhere; }
+
+/* --- 10. 升级弹窗支付成功视图：替代收银台布局（无二维码/无取消订单） --- */
+.upgrade-success-view { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; padding: 16px 4px 2px; animation: upgrade-success-in 0.35s ease both; }
+@keyframes upgrade-success-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+.upgrade-success-icon { display: grid; place-items: center; width: 64px; height: 64px; margin-bottom: 4px; color: var(--accent); background: var(--accent-pale); border-radius: 50%; animation: upgrade-success-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes upgrade-success-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.upgrade-success-view h3 { margin: 0; font-size: 16px; font-weight: 600; color: var(--ink); }
+.upgrade-success-view > p { margin: 0; font-size: 13px; color: var(--muted); }
+.upgrade-success-view .upgrade-order-meta { width: 100%; margin-top: 14px; text-align: left; }
+.upgrade-success-amount { font-size: 19px; font-weight: 600; color: var(--accent-dark); }
+.upgrade-success-done { min-width: 180px; }

@@ -16,6 +16,7 @@
 ## 3. 核心不变量（破坏即事故）
 - **3.1 个人套餐⊥团队权益**：个人容量/永久/单文件上限唯一看 `user.planId`；团队空间唯一来源是**所有者**个人套餐；usage/payload/public 全用 personal。个人 free 误 return 所有者套餐曾是事故。回归 `_verify_plan_isolation`(33)
 - **3.1b 团队资源「永久」由团队定**：`readShareOptions(body,user,isTeamResource)` true 跳过个人 permanent 校验，**个人分享校验必须原样**；团队资源不计个人用量
+- **3.1c 前端会员特权预检=hasMembership 口径**：改有效期/重开分享的 UI 入口预检必须 `plan.permanent || planId!=='free'`（与 server applyShareUpdate 同口径），**不能用 plan.permanent**（那是永久保存专属）——曾有月卡会员被前端本地拦截改不了有效期的 bug；「UI 报错但 curl 直测 200」= 前端本地预检的特征
 - **3.2 avatar 粘性**：`avatarSource==='custom'` 后「没表态」的输入不得改它；只有 PATCH profile{avatar} 和显式 `avatarRestoreRequested` 能改（后者用完即删不落库）；merge 必须收原始输入、无短路。回归 `_verify_avatar_restart`
 - **3.3 metadata 落盘原子**：临时文件+`renameSync`；解析失败先试 `.bak` 且 warn
 - **3.4 /team 门控**：manage/requests 页签与面板都需 `data.canManage`；leave 接口所有者400/未登录401/不在团404/成员200
