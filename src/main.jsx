@@ -2848,7 +2848,12 @@ function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
   }, [onClose])
 
   const submit = async () => {
-    if (!canUsePermanent) return
+    // 自定义截止日期是会员特权（hasMembership 口径），只有「永久保存」才要求企业版 permanent。
+    // 此前误在入口处一刀切 !canUsePermanent 直接 return，导致非企业版用户点保存无任何反馈。
+    if (mode === 'permanent' && !canUsePermanent) {
+      setError('永久保存需要企业版权益，可选择自定义截止日期')
+      return
+    }
     if (mode === 'date' && !isDateInputStillOpen(expiryDate)) {
       setError('请把截止日期调整到今天或未来日期')
       return
