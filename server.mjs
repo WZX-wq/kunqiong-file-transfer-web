@@ -3629,14 +3629,12 @@ function resolveGuestKey(req, res) {
   if (authSessionFromRequest(req)?.user?.id) return ''
   const existing = readCookie(req, GUEST_ID_COOKIE)
   if (existing && /^[A-Za-z0-9]{16,64}$/.test(existing)) return `cookie:${existing}`
-  // 完全没有 cookie 头（脚本直调或首次无痕访问）：本次按 IP 计账，防止脚本换 key 绕过额度；
-  // 同时仍签发游客 cookie，浏览器从下一个请求起就切到独立的 cookie 键。
-  if (!req.get('cookie')) {
-    issueGuestCookie(req, res)
-    const ip = String(req.socket?.remoteAddress || '').trim() || 'unknown'
-    return `ip:${ip}`
-  }
-  return `cookie:${issueGuestCookie(req, res)}`
+  // 无 cookie 头，或带了 cookie 头却没有有效 kq_guest_id（脚本换头绕过）：
+  // 本次一律按 socket IP 计账，防止每次签发新 key 绕过累计额度；
+  // 同时仍签发游客 cookie，真实浏览器从下一个请求起就切到独立的 cookie 键。
+  issueGuestCookie(req, res)
+  const ip = String(req.socket?.remoteAddress || '').trim() || 'unknown'
+  return `ip:${ip}`
 }
 
 function issueGuestCookie(req, res) {

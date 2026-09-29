@@ -30,7 +30,7 @@ check('分片 create 接入校验并冻结 guestKey', /const guestKey = assertGu
 check('分片 complete 补记游客用量', server.includes('addGuestUsage(session.guestKey, mergedFiles)') && server.includes('addGuestUsage(session.guestKey, submissionFiles)'))
 check('收集直传提交接入校验+计账', /assertGuestQuota\(req, res, uploadedFiles\)[\s\S]{0,2600}addGuestUsage\(guestKey, files\)/.test(server))
 check('游客条目数有上限（防 metadata 膨胀）', /MAX_GUEST_USAGE_ENTRIES = \d+/.test(server))
-check('无 cookie 头仍签发游客 cookie（浏览器可切独立键）', /if \(!req\.get\('cookie'\)\) \{\s*issueGuestCookie\(req, res\)/.test(server))
+check('无有效游客 cookie 时回落 IP 键并仍签发 cookie（防换头绕过）', /issueGuestCookie\(req, res\)\s*\n\s*const ip = String\(req\.socket\?\.remoteAddress \|\| ''\)\.trim\(\) \|\| 'unknown'\s*\n\s*return `ip:\$\{ip\}`/.test(server))
 
 // ---------- 沙箱启动 ----------
 fs.rmSync(SANDBOX, { recursive: true, force: true })
@@ -159,6 +159,21 @@ try {
   const q2 = await fetch(`${BASE}/api/guest/quota`)
   const q2data = await q2.json()
   check('IP 维度独立计账 1MB（与 cookie 维度隔离）', q2data.enabled === true && q2data.usedBytes === Math.round(1 * MB), JSON.stringify(q2data))
+
+  // ---------- 场景 9：带无关 cookie 头（模拟换 key 攻击）必须归入同一 IP 键，配额仍然生效 ----------
+  const atkPost = (tracker, mb, name) => fetch(`${BASE}/api/shares`, { method: 'POST', headers: { cookie: `tracker=${tracker}` }, body: (() => { const fd = new FormData(); fd.append('files', new Blob([buf(mb)]), name); return fd })() })
+  const atk1 = await atkPost('aaa', 0.5, 'atk1.bin')
+  check('换 cookie 头攻击第一次直传成功（按 IP 计账）', atk1.status === 201, `status=${atk1.status}`)
+  const atk2 = await atkPost('bbb', 0.5, 'atk2.bin')
+  check('换 cookie 头攻击第二次直传成功', atk2.status === 201, `status=${atk2.status}`)
+  const usage9 = readGuestUsage()
+  const ipKey = Object.keys(usage9).find((k) => k.startsWith('ip:'))
+  check('两次攻击请求归入同一 IP 键（累计 2MB）', Boolean(ipKey) && Number(usage9[ipKey]?.bytes) === Math.round(2 * MB), JSON.stringify(usage9))
+  check('攻击请求未产生新的 cookie 计账键', Object.keys(usage9).filter((k) => k.startsWith('cookie:')).length === 1, JSON.stringify(Object.keys(usage9)))
+  const atk3 = await atkPost('ccc', 1.5, 'atk3.bin')
+  const atk3Data = await atk3.json()
+  check('换 key 攻击超限同样被拒 413', atk3.status === 413 && atk3Data.code === 'guest_quota_exceeded', `status=${atk3.status}`)
+  check('413 详情按 IP 键口径（已用 2MB / 上限 3MB）', atk3Data.guestQuota?.usedBytes === Math.round(2 * MB) && atk3Data.guestQuota?.limitBytes === 3 * MB, JSON.stringify(atk3Data))
 } finally {
   child.kill('SIGKILL')
   fs.rmSync(path.join(SANDBOX, 'node_modules'), { recursive: true, force: true })
