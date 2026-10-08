@@ -39,7 +39,6 @@ import {
   Mail,
   Megaphone,
   MessageCircle,
-  Menu,
   MoreHorizontal,
   Pause,
   Play,
@@ -1109,8 +1108,7 @@ function WorkspaceApp() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand" onClick={() => navigateMainView('send')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigateMainView('send') } }} role="button" tabIndex={0} aria-label="返回发文件首页">
-          <span className="brand-mark"><Cloud size={20} strokeWidth={2.3} /></span>
-          <span className="brand-copy"><strong>鲲穹</strong><em>文件传输</em></span>
+          <img className="brand-logo" src="/brand-logo.png" alt="鲲穹文件传输" />
         </div>
         <nav className="main-nav" aria-label="主导航">
           <NavItem icon={Send} label="发文件" active={!isSettingsRoute && activeView === 'send'} onClick={() => navigateMainView('send')} />
@@ -1141,9 +1139,7 @@ function WorkspaceApp() {
           {/* 后台入口不再按账号身份显示（白名单通道已移除，后台只认账号口令）。
               需要直接进后台时访问 /admin，未登录会弹出管理员账号密码弹窗。 */}
           <button className="merchant-button" onClick={() => { window.location.href = '/workspace' }}><Sparkles size={15} /> 会员与企业版</button>
-          <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
-          {/* 移动端菜单按钮：与账号下拉同一状态源，点击展开账号菜单（此前无 onClick，点了没反应） */}
-          <button className="mobile-menu" aria-label="打开菜单" aria-haspopup="menu" aria-expanded={authMenuOpen} onClick={(event) => { event.stopPropagation(); setMessageOpen(false); setAuthMenuOpen((current) => !current) }}><Menu size={20} /></button>
+          <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setMessageOpen(false); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
         </div>
       </header>
 
@@ -5287,7 +5283,7 @@ function NoticeToggle({ label, detail, checked, onChange }) {
 }
 
 function PublicShell({ children }) {
-  return <div className="app-shell public-shell"><header className="topbar"><div className="brand"><span className="brand-mark"><Cloud size={20} /></span><span className="brand-copy"><strong>鲲穹</strong><em>文件传输</em></span></div><span className="public-safe"><ShieldCheck size={15} /> 安全临时空间</span></header><main className="public-page">{children}</main><footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span><div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a></div></footer></div>
+  return <div className="app-shell public-shell"><header className="topbar"><div className="brand"><img className="brand-logo" src="/brand-logo.png" alt="鲲穹文件传输" /></div><span className="public-safe"><ShieldCheck size={15} /> 安全临时空间</span></header><main className="public-page">{children}</main><footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span><div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a></div></footer></div>
 }
 
 function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }
@@ -5355,11 +5351,11 @@ function MessageIcon({ category }) {
 }
 function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onSettings, onLogout }) {
   if (!user) {
-    return <button className="login-button" onClick={onLogin} disabled={loading}><UserRound size={18} /><span>{loading ? '检查登录' : '登录'}</span><ChevronDown size={14} /></button>
+    return <button className="login-button" aria-label={loading ? '检查登录状态' : '登录'} onClick={onLogin} disabled={loading}><UserRound size={18} /><span>{loading ? '检查登录' : '登录'}</span><ChevronDown size={14} /></button>
   }
   return (
     <div className="auth-menu-wrap">
-      <button className="login-button signed-in" onClick={onToggleMenu} aria-haspopup="menu" aria-expanded={menuOpen}>
+      <button className="login-button signed-in" aria-label="个人中心" onClick={onToggleMenu} aria-haspopup="menu" aria-expanded={menuOpen}>
         <UserAvatar user={user} />
         <span>{displayUserName(user)}</span>
         <ChevronDown size={14} />
@@ -5371,6 +5367,7 @@ function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onSettings
             <div><strong>{displayUserName(user)}</strong><span>{displayUserSubtitle(user)}</span></div>
           </div>
           <button role="menuitem" onClick={onSettings}><Settings2 size={14} /> 账户设置</button>
+          <button className="mobile-workspace-link" role="menuitem" onClick={() => { window.location.href = '/workspace' }}><Building2 size={14} /> 会员与团队空间</button>
           <button role="menuitem" onClick={onLogout}><LogOut size={14} /> 退出登录</button>
         </div>
       )}
@@ -7098,4 +7095,3 @@ function maskPhone(value = '') {
 }
 
 createRoot(document.getElementById('root')).render(<App />)
-
