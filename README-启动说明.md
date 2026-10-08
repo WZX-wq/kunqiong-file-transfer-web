@@ -46,6 +46,14 @@ npm start
 
 当前仓库已包含 Gitea Actions 测试部署流程：推送到 Gitea 的 `main` 分支后会由服务器 runner 自动构建并部署到测试环境，测试环境使用独立 `.env`，不会覆盖本地 `.env`。
 
+## 文件安全扫描
+
+上传文件发布前会通过 ClamAV 流式扫描。默认 `KUNQIONG_SCAN_MODE=required`；扫描服务未连接、超时或返回异常时，文件不会发布。
+
+- 使用 `scripts/deploy-test.sh` 的 Docker 部署时，会一并启动 ClamAV 服务，并使用 `deployment/clamd.conf` 配置扫描上限。
+- 本地运行 `npm run dev` 或手动运行 `npm start` 时，需要另行启动 ClamAV，并让它在 `.env` 配置的主机和端口上接受连接；默认是 `127.0.0.1:3310`。ClamAV 病毒库也需要保持更新。
+- 应用单文件上传上限为 5 GB，ClamAV 的流和文件扫描上限需要覆盖该值。没有可用扫描服务时上传会失败关闭，不会跳过扫描。
+
 ## 局域网内给别人看
 
 如果对方和启动项目的电脑连接在同一个 Wi-Fi 或局域网：

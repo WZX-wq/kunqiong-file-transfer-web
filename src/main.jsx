@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import mammoth from 'mammoth'
+import { sanitizeOfficeHtml } from './office-html.js'
 import * as XLSX from 'xlsx'
 import { PPTXViewer } from 'pptxviewjs'
 import QRCode from 'qrcode'
@@ -298,8 +299,8 @@ function WorkspaceApp() {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadState, setUploadState] = useState(createUploadState())
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [retrieveOpen, setRetrieveOpen] = useState(false)
-  const [retrievalCode, setRetrievalCode] = useState('')
+  const [retrieveOpen, setRetrieveOpen] = useState(() => /^[A-Z0-9]{4,6}$/i.test(new URLSearchParams(window.location.search).get('retrieve') || ''))
+  const [retrievalCode, setRetrievalCode] = useState(() => (new URLSearchParams(window.location.search).get('retrieve') || '').toUpperCase())
   const [retrieveResult, setRetrieveResult] = useState(null)
   const [shareResult, setShareResult] = useState(null)
   const [collectionResult, setCollectionResult] = useState(null)
@@ -408,6 +409,7 @@ function WorkspaceApp() {
     const params = new URLSearchParams(window.location.search)
     const loginStatus = params.get('login')
     const loginMessage = params.get('message') || ''
+    params.delete('retrieve')
     if (loginStatus) {
       params.delete('login')
       params.delete('message')
@@ -943,7 +945,7 @@ function WorkspaceApp() {
     }
   }
 
-  const lookupShare = (resolvedData) => {
+  const lookupShare = async (resolvedData) => {
     if (resolvedData?.share) {
       setRetrieveResult(resolvedData)
       saveRecord(createShareRecord(resolvedData.share, 'sent_to_me'))
@@ -954,12 +956,9 @@ function WorkspaceApp() {
       setToast('请输入取件码')
       return
     }
-    apiRequest(`/api/shares/lookup/${encodeURIComponent(code)}`)
-      .then((data) => {
-        setRetrieveResult(data)
-        saveRecord(createShareRecord(data.share, 'sent_to_me'))
-      })
-      .catch((error) => setToast(error.message))
+    const data = await apiRequest(`/api/shares/lookup/${encodeURIComponent(code)}`)
+    setRetrieveResult(data)
+    saveRecord(createShareRecord(data.share, 'sent_to_me'))
   }
 
   const closeRetrieve = () => {
@@ -1367,6 +1366,7 @@ function UploadProgressPanel({ progress, uploadState, isUploading, onPause, onRe
 
 function DownloadProgressPanel({ task, onRetry }) {
   if (!task || task.status === 'idle') return null
+  if (task.status === 'handed_off') return <div className="progress-wrap download-progress"><div className="progress-label"><span>已交给浏览器下载</span><Download size={16} /></div>{task.filename && <small>{task.filename}</small>}</div>
   const busy = ['preparing', 'downloading', 'saving'].includes(task.status)
   const statusText = downloadStatusText(task)
   const remainingText = task.status === 'complete' ? '已完成' : formatDuration(task.etaSeconds)
@@ -1760,14 +1760,14 @@ function OfficePreview({ preview }) {
         if (preview.kind === 'document') {
           const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
           if (!result.value.trim()) throw new Error('文档没有可显示的正文内容')
-          if (!cancelled) setState({ status: 'ready', html: result.value, workbook: null, sheets: [], error: '' })
+          if (!cancelled) setState({ status: 'ready', html: sanitizeOfficeHtml(result.value), workbook: null, sheets: [], error: '' })
           return
         }
         if (preview.kind === 'spreadsheet') {
           const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
           const sheets = workbook.SheetNames.map((name) => ({
             name,
-            html: spreadsheetSheetHtml(workbook.Sheets[name]),
+            html: sanitizeOfficeHtml(spreadsheetSheetHtml(workbook.Sheets[name])),
           }))
           if (!sheets.length) throw new Error('表格中没有可显示的工作表')
           if (!cancelled) setState({ status: 'ready', html: '', workbook, sheets, activeSheet: 0, error: '' })
@@ -2236,6 +2236,7 @@ function SharePage({ token, enterpriseSlug = '' }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
+  const [requiresLogin, setRequiresLogin] = useState(false)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
   useEffect(() => {
@@ -2243,7 +2244,7 @@ function SharePage({ token, enterpriseSlug = '' }) {
     apiRequest(`/api/shares/token/${token}${query}`).then((result) => {
       setData(result)
       saveLocalRecord(createShareRecord(result.share, 'sent_to_me'))
-    }).catch((err) => setError(err.message))
+    }).catch((err) => { setError(err.message); setRequiresLogin(err.code === 'directed_login_required') })
   }, [token, enterpriseSlug])
   const findShare = async () => {
     try {
@@ -2253,7 +2254,7 @@ function SharePage({ token, enterpriseSlug = '' }) {
       saveLocalRecord(createShareRecord(result.share, 'sent_to_me'))
     } catch (err) { setActionError(err.message) }
   }
-  if (error) return <PublicShell><StateBlock title="这个分享暂时不可用" detail={error} /></PublicShell>
+  if (error) return <PublicShell><StateBlock title="这个分享暂时不可用" detail={error} />{requiresLogin && <button className="primary-button" onClick={() => { window.location.href = `/api/auth/login?return_to=${encodeURIComponent(window.location.href)}` }}><UserRound size={16} /> 使用收件账号登录</button>}</PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   const share = data.share
   const downloadAll = () => startDownload(createShareDownloadConfig(share, { password }))
@@ -2742,6 +2743,7 @@ function CollectionManagePage({ token }) {
 function RetrieveModal({ code, setCode, result, onClose, onFind }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [requiresLogin, setRequiresLogin] = useState(false)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
   useEffect(() => {
@@ -2752,7 +2754,17 @@ function RetrieveModal({ code, setCode, result, onClose, onFind }) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose, previewItem])
   const verify = async () => {
-    try { const data = await apiRequest(`/api/shares/lookup/${code.trim().toUpperCase()}`, { method: 'POST', body: JSON.stringify({ password }) }); setError(''); onFind(data) } catch (err) { setError(err.message) }
+    try { const data = await apiRequest(`/api/shares/lookup/${code.trim().toUpperCase()}`, { method: 'POST', body: JSON.stringify({ password }) }); setError(''); setRequiresLogin(false); onFind(data) } catch (err) { setError(err.message); setRequiresLogin(err.code === 'directed_login_required') }
+  }
+  const findShare = async () => {
+    setError('')
+    try { await onFind() } catch (err) { setError(err.message); setRequiresLogin(err.code === 'directed_login_required') }
+  }
+  const loginAsRecipient = () => {
+    const returnTo = new URL(window.location.href)
+    returnTo.searchParams.set('retrieve', code.trim().toUpperCase())
+    returnTo.searchParams.set('view', 'send')
+    window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo.toString())}`
   }
   const share = result?.share
   const downloadAll = () => share && startDownload(createShareDownloadConfig(share, { password }))
@@ -2769,8 +2781,10 @@ function RetrieveModal({ code, setCode, result, onClose, onFind }) {
           {!result ? (
             <>
               <p className="modal-intro">输入分享者发给你的 4-6 位取件码，开始下载文件。</p>
-              <input className="code-input" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === 'Enter') onFind() }} placeholder="例如 QK7P" autoFocus />
-              <div className="retrieve-hint"><ShieldCheck size={15} /> 取件无需登录</div>
+              <input className="code-input" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === 'Enter') findShare() }} placeholder="例如 QK7P" autoFocus />
+              <div className="retrieve-hint"><ShieldCheck size={15} /> 定向分享需使用收件账号登录</div>
+              {error && <p className="public-message">{error}</p>}
+              {requiresLogin && <button className="secondary-button" onClick={loginAsRecipient}><UserRound size={15} /> 使用收件账号登录</button>}
             </>
           ) : (
             <>
@@ -2789,7 +2803,7 @@ function RetrieveModal({ code, setCode, result, onClose, onFind }) {
             </>
           )}
         </div>
-        {!result && <div className="modal-footer retrieve-footer"><button className="primary-button" onClick={() => onFind()}><KeyRound size={16} /> 查找文件</button></div>}
+        {!result && <div className="modal-footer retrieve-footer"><button className="primary-button" onClick={findShare}><KeyRound size={16} /> 查找文件</button></div>}
       </div>
     </div>
   )
@@ -4619,7 +4633,7 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
   const localPlans = (workspace?.plans || []).filter((item) => item.id !== 'free')
   const pendingOrder = (workspace?.orders || []).find((order) => order.status === 'pending_payment') || null
   const currentPlanRank = accountPlanRank(plan.id)
-  const defaultPlanId = localPlans.find((item) => accountPlanRank(item.id) > currentPlanRank)?.id || ''
+  const defaultPlanId = localPlans.find((item) => accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && item.permanent))?.id || ''
   const [selectedPlanId, setSelectedPlanId] = useState(defaultPlanId)
   const [orderView, setOrderView] = useState(pendingOrder)
   const [busy, setBusy] = useState(false)
@@ -4660,9 +4674,9 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
     return () => window.clearInterval(timer)
   }, [payment, orderView?.id, orderView?.status])
 
-  const selectedPlan = plans.find((item) => item.id === selectedPlanId && accountPlanRank(item.id) > currentPlanRank) || null
+  const selectedPlan = plans.find((item) => item.id === selectedPlanId && accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && item.permanent)) || null
   const isCurrentPlan = (item) => item.id === plan.id
-  const isIncludedPlan = (item) => accountPlanRank(item.id) <= currentPlanRank
+  const isIncludedPlan = (item) => accountPlanRank(item.id) < currentPlanRank || (item.id === plan.id && item.permanent)
 
   const createOrder = async () => {
     if (!selectedPlan || busy) return
@@ -4827,10 +4841,10 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
               {selectedPlan && (
                 <div className="upgrade-summary">
                   <span><Sparkles size={14} /> {plan.label || '基础版'} → <strong>{selectedPlan.label}</strong>：{selectedPlan.tagline}</span>
-                  <button className="primary-button" onClick={createOrder} disabled={busy}><Zap size={15} /> {busy ? '正在创建…' : '创建升级订单'}</button>
+                  <button className="primary-button" onClick={createOrder} disabled={busy}><Zap size={15} /> {busy ? '正在创建…' : selectedPlan.id === plan.id ? '创建续费订单' : '创建升级订单'}</button>
                 </div>
               )}
-              <p className="upgrade-hint">提交后仅创建待支付订单，不会立即扣费；支付通道上线后可继续支付并自动开通。</p>
+              <p className="upgrade-hint">支付成功后权益自动生效，续费会顺延有效期。</p>
             </>
           )}
         </div>
@@ -6550,10 +6564,10 @@ function useDownloadTask() {
     const retryCount = retryCountRef.current
     setDownloadTask({ ...createDownloadState(), status: 'preparing', label: config.label, filename: config.filename, totalBytes: config.totalBytes || 0, retryCount, retryConfig: config })
     try {
-      await downloadBinaryWithProgress(config, (patch) => {
+      const result = await downloadBinaryWithProgress(config, (patch) => {
         setDownloadTask((current) => ({ ...current, ...patch, retryConfig: config, retryCount }))
       })
-      setDownloadTask((current) => ({ ...current, status: 'complete', progress: 100, etaSeconds: 0, error: '', retryConfig: config, retryCount }))
+      setDownloadTask((current) => ({ ...current, status: result?.handedOff ? 'handed_off' : 'complete', progress: result?.handedOff ? 0 : 100, etaSeconds: 0, error: '', retryConfig: config, retryCount }))
       return { ok: true }
     } catch (error) {
       const message = error.message || '下载失败'
@@ -6603,44 +6617,18 @@ function downloadStatusText(task) {
 }
 
 async function downloadBinaryWithProgress(config, onProgress) {
-  const startedAt = Date.now()
-  onProgress({ status: 'preparing', label: config.label, filename: config.filename, totalBytes: config.totalBytes || 0, loadedBytes: 0, progress: 0, error: '' })
-  const response = await fetch(config.url, { credentials: 'include', headers: config.headers || {} })
+  onProgress({ status: 'preparing', label: config.label, filename: config.filename, error: '' })
+  const response = await fetch(config.url, { method: 'HEAD', credentials: 'include', headers: config.headers || {} })
   if (!response.ok) throw await downloadResponseError(response)
-
   const filename = config.filename || filenameFromContentDisposition(response.headers.get('content-disposition')) || '下载文件'
-  const contentLength = Number(response.headers.get('content-length') || 0)
-  const estimatedSize = Number(response.headers.get('x-download-total-size') || config.totalBytes || 0)
-  const totalBytes = contentLength || estimatedSize
-  const isEstimated = !contentLength && estimatedSize > 0
-  const canResume = (response.headers.get('x-download-resume') || '').includes('range') || (response.headers.get('accept-ranges') || '').toLowerCase() === 'bytes'
-  const contentType = response.headers.get('content-type') || 'application/octet-stream'
-
-  if (!response.body) {
-    const blob = await response.blob()
-    saveBlob(blob, filename)
-    onProgress({ status: 'saving', filename, loadedBytes: blob.size, totalBytes: blob.size || totalBytes, progress: 100, speedBps: currentDownloadSpeed(startedAt, blob.size), etaSeconds: 0, canResume, isEstimated: false })
-    return
-  }
-
-  const chunks = []
-  const reader = response.body.getReader()
-  let loadedBytes = 0
-  onProgress({ status: 'downloading', filename, totalBytes, canResume, isEstimated, progress: 0 })
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(value)
-    loadedBytes += value.byteLength
-    const speedBps = currentDownloadSpeed(startedAt, loadedBytes)
-    const progress = totalBytes ? Math.min(isEstimated ? 98 : 99, Math.round((loadedBytes / totalBytes) * 100)) : 0
-    const etaSeconds = totalBytes && speedBps ? Math.max(0, Math.ceil((totalBytes - loadedBytes) / speedBps)) : null
-    onProgress({ status: 'downloading', loadedBytes, totalBytes, speedBps, etaSeconds, progress, canResume, isEstimated })
-  }
-
-  const blob = new Blob(chunks, { type: contentType })
-  onProgress({ status: 'saving', filename, loadedBytes, totalBytes: totalBytes || loadedBytes, speedBps: currentDownloadSpeed(startedAt, loadedBytes), etaSeconds: 0, progress: 100, canResume, isEstimated })
-  saveBlob(blob, filename)
+  const link = document.createElement('a')
+  link.href = config.url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  onProgress({ status: 'handed_off', filename })
+  return { handedOff: true }
 }
 
 async function downloadResponseError(response) {

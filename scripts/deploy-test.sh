@@ -36,8 +36,12 @@ KUNQIONG_OAUTH_TOKEN_URL=${KUNQIONG_OAUTH_TOKEN_URL:-https://login.kunqiongai.co
 KUNQIONG_OAUTH_CLIENT_ID=$KUNQIONG_OAUTH_CLIENT_ID
 KUNQIONG_OAUTH_CLIENT_SECRET=$KUNQIONG_OAUTH_CLIENT_SECRET
 KUNQIONG_ADMIN_USER_IDS=${KUNQIONG_ADMIN_USER_IDS:-}
-KUNQIONG_ADMIN_USERNAME=${KUNQIONG_ADMIN_USERNAME:-ljxkjadmin}
+KUNQIONG_ADMIN_USERNAME=${KUNQIONG_ADMIN_USERNAME:-}
 KUNQIONG_ADMIN_PASSWORD=${KUNQIONG_ADMIN_PASSWORD:-}
+KUNQIONG_SCAN_MODE=required
+KUNQIONG_CLAMAV_HOST=${KUNQIONG_CLAMAV_HOST:-127.0.0.1}
+KUNQIONG_CLAMAV_PORT=${KUNQIONG_CLAMAV_PORT:-3310}
+KUNQIONG_SCAN_TIMEOUT_MS=${KUNQIONG_SCAN_TIMEOUT_MS:-600000}
 KUNQIONG_TEST_ENTERPRISE_USER_KEYS=${KUNQIONG_TEST_ENTERPRISE_USER_KEYS:-${KUNQIONG_TEST_ENTERPRISE_USER_IDS:-}}
 KUNQIONG_TEST_ENTERPRISE_ALL=${KUNQIONG_TEST_ENTERPRISE_ALL:-false}
 KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST=${KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST:-true}
@@ -147,12 +151,34 @@ services:
       - "$PORT:$PORT"
     env_file:
       - .env
+    environment:
+      KUNQIONG_SCAN_MODE: required
+      KUNQIONG_CLAMAV_HOST: scanner
+      KUNQIONG_CLAMAV_PORT: "3310"
+    depends_on:
+      scanner:
+        condition: service_healthy
     volumes:
       - storage:/app/storage
+
+  scanner:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    volumes:
+      - clamav-data:/var/lib/clamav
+      - $COMPOSE_DIR/clamd.conf:/etc/clamav/clamd.conf:ro
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
 
 volumes:
   storage:
     name: $APP_NAME-storage
+  clamav-data:
+    name: $APP_NAME-clamav-data
 EOF
 }
 
@@ -162,6 +188,7 @@ deploy_with_docker() {
 
   mkdir -p "$COMPOSE_DIR"
   write_compose_file "$COMPOSE_DIR/$COMPOSE_FILE"
+  cp deployment/clamd.conf "$COMPOSE_DIR/clamd.conf"
   cp "$ENV_FILE" "$COMPOSE_DIR/.env"
   chmod 600 "$COMPOSE_DIR/.env" 2>/dev/null || true
 

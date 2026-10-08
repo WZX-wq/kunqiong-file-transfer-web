@@ -8,6 +8,8 @@ import archiver from 'archiver'
 import QRCode from 'qrcode'
 import nodemailer from 'nodemailer'
 import mysql from 'mysql2/promise'
+import net from 'node:net'
+import { once } from 'node:events'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 loadEnvFile(path.join(__dirname, '.env'))
@@ -84,17 +86,15 @@ const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections'
 const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
 const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
-// 运营后台账号密码登录。优先读环境变量，未配置时回落到内置默认账号，保证后台开箱可用。
-//
-// ⚠️ 后台**只认这组账号口令**（cookie kunqiong_admin_session）。
-// KUNQIONG_ADMIN_USER_IDS 白名单已不再构成后台入口，仅用于维护模式豁免。
-// 注意：空字符串是 falsy，会静默回落到下面的默认值 —— 部署时若 secret 没配好，
-// 表现就是「用默认口令仍能登录」，所以这里显式打一条告警，别让配置问题沉默。
-const ADMIN_ACCOUNT_USERNAME = String(process.env.KUNQIONG_ADMIN_USERNAME || 'ljxkjadmin').trim()
-const ADMIN_ACCOUNT_PASSWORD = String(process.env.KUNQIONG_ADMIN_PASSWORD || 'jxljxkj009900')
-if (!process.env.KUNQIONG_ADMIN_USERNAME || !process.env.KUNQIONG_ADMIN_PASSWORD) {
-  console.warn('[admin] KUNQIONG_ADMIN_USERNAME/PASSWORD 未配置，后台正在使用内置默认口令，请尽快在部署环境配置 secret。')
-}
+const ADMIN_ACCOUNT_USERNAME = String(process.env.KUNQIONG_ADMIN_USERNAME || '').trim()
+const ADMIN_ACCOUNT_PASSWORD = String(process.env.KUNQIONG_ADMIN_PASSWORD || '')
+const adminCredentialsConfigured = Boolean(ADMIN_ACCOUNT_USERNAME && ADMIN_ACCOUNT_PASSWORD.trim())
+if (!adminCredentialsConfigured) console.warn('[admin] 管理员凭据未配置，后台密码登录已禁用。')
+const scanMode = String(process.env.KUNQIONG_SCAN_MODE || 'required').toLowerCase()
+if (!['required', 'optional'].includes(scanMode)) throw new Error('KUNQIONG_SCAN_MODE 必须是 required 或 optional')
+const clamavHost = String(process.env.KUNQIONG_CLAMAV_HOST || '').trim()
+const clamavPort = Number(process.env.KUNQIONG_CLAMAV_PORT || 3310)
+const scanTimeoutMs = Math.max(1000, Number(process.env.KUNQIONG_SCAN_TIMEOUT_MS) || 600000)
 const ADMIN_COOKIE_NAME = 'kunqiong_admin_session'
 const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000
 const ADMIN_LOGIN_MAX_ATTEMPTS = 8
@@ -210,14 +210,26 @@ for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
 }
 
 const metadata = normalizeMetadata(await loadMetadata())
+for (const share of metadata.shares) {
+  if (share.deliveryRecipients?.length && !Array.isArray(share.recipientUserIds)) {
+    const notifiedIds = (share.notificationLog || []).flatMap((entry) => entry.deliveredUserIds || [])
+    share.recipientUserIds = [...new Set([...notifiedIds, ...resolveRecipientUserIds(share.deliveryRecipients, true)])]
+    share.recipientContacts = share.deliveryRecipients.filter((recipient) => normalizeContactTarget(recipient) && !resolveRecipientUserIds([recipient], true).length)
+    metadataNeedsPersist = true
+  }
+}
 metadataReady = metadata
 if (metadataNeedsPersist) persistMetadata()
 const uploadSessions = new Map()
+const uploadReservations = new Map()
+const upgradeOrderLocks = new Map()
+const paymentReconcileAttempts = new Map()
 const oauthStates = new Map()
 const upload = multer({
   dest: tempRoot,
   limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE },
 })
+const chunkUpload = multer({ dest: tempRoot, limits: { files: 1, fileSize: UPLOAD_CHUNK_MAX_BYTES } })
 const app = express()
 
 function normalizeUploadedFileNames(req, res, next) {
@@ -703,9 +715,10 @@ app.put('/api/account/notification-settings', (req, res) => {
   res.json({ settings: metadata.notificationSettings[key] })
 })
 
-app.get('/api/account/workspace', (req, res) => {
+app.get('/api/account/workspace', async (req, res) => {
   const session = requireAuthSession(req, res)
   if (!session) return
+  await reconcileUserUpgradeOrders(session)
   res.json(accountWorkspacePayload(session.user))
 })
 
@@ -740,7 +753,7 @@ app.get('/api/account/team/overview', (req, res) => {
   // 避免越过上传者编辑他人资源（回归见 _verify_team_token_leak.mjs）。
   const canManageTeam = isOrganizationManager(organization, session.user.id)
   const resources = [
-    ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && memberIds.has(item.ownerUserId)).map((item) => ({
+    ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && memberIds.has(item.ownerUserId) && (canManageTeam || validateShareRecipient(item, session.user).ok)).map((item) => ({
       id: item.id,
       kind: 'share',
       name: item.files?.[0]?.name || '文件分享',
@@ -1292,9 +1305,10 @@ app.post('/api/account/workspace/join-requests/:requestId', (req, res) => {
   res.json({ ...accountWorkspacePayload(session.user), joinRequests: publicJoinRequestsForOrganization(organization), decided: 'approve', applicantName, notifiedInApp })
 })
 
-app.get('/api/account/upgrade-orders', (req, res) => {
+app.get('/api/account/upgrade-orders', async (req, res) => {
   const session = requireAuthSession(req, res)
   if (!session) return
+  await reconcileUserUpgradeOrders(session)
   res.json({ orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
 })
 
@@ -1307,15 +1321,18 @@ app.get('/api/account/upgrade-pricing', async (req, res) => {
 })
 
 app.post('/api/account/upgrade-orders', async (req, res) => {
+  let release
   try {
     const session = requireAuthSession(req, res)
     if (!session) return
+    release = await acquireUpgradeLock(`create:${session.user.id}`)
+    await reconcileUserUpgradeOrders(session, true)
     const stored = accountUserById(session.user.id) || session.user
     const effective = accountEffectivePlanForUser(stored)
     const planId = normalizePlanId(req.body?.planId)
     if (planId === 'free') return res.status(400).json({ message: '基础版为默认权益，无需订购' })
-    if (planId === effective.id) return res.status(409).json({ message: `当前已是${effective.label}权益` })
-    if (accountPlanRank(planId) <= accountPlanRank(effective.id)) {
+    if (planId === effective.id && effective.permanent) return res.status(409).json({ message: `当前${effective.label}永久有效，无需续费` })
+    if (accountPlanRank(planId) < accountPlanRank(effective.id)) {
       return res.status(409).json({ message: `当前已享有${effective.label}权益，无需订购低等级套餐` })
     }
 
@@ -1359,6 +1376,8 @@ app.post('/api/account/upgrade-orders', async (req, res) => {
     res.status(201).json({ order: upgradeOrderSummary(order), orders: upgradeOrdersForUser(stored.id).slice(0, 20).map(upgradeOrderSummary) })
   } catch (error) {
     res.status(error.status || 502).json({ message: error.message || '升级套餐读取失败' })
+  } finally {
+    release?.()
   }
 })
 
@@ -1375,11 +1394,13 @@ app.post('/api/account/upgrade-orders/:orderId/cancel', (req, res) => {
 })
 
 app.post('/api/account/upgrade-orders/:orderId/confirm', async (req, res) => {
+  let release
   try {
     const session = requireAuthSession(req, res)
     if (!session) return
     const order = findUpgradeOrder(req.params.orderId, session.user.id)
     if (!order) return res.status(404).json({ message: '升级订单不存在' })
+    release = await acquireUpgradeLock(order.id)
     if (order.status !== 'pending_payment') return res.status(409).json({ message: '当前订单不支持支付确认' })
     const payType = normalizeWebMemberPayType(req.body?.payType || order.payType || 1)
     const payment = order.remoteOrderNo
@@ -1396,6 +1417,8 @@ app.post('/api/account/upgrade-orders/:orderId/confirm', async (req, res) => {
     })
   } catch (error) {
     res.status(error.status || 502).json({ message: error.message || '支付订单创建失败' })
+  } finally {
+    release?.()
   }
 })
 
@@ -1409,10 +1432,8 @@ app.post('/api/account/upgrade-orders/:orderId/pay-status', async (req, res) => 
     if (order.status === 'paid') {
       return res.json({ message: '支付成功', order: upgradeOrderSummary(order), workspace: accountWorkspacePayload(session.user) })
     }
-    const result = await checkWebMemberPaymentStatus(session, order.remoteOrderNo)
-    if (Number(result.pay_status) === 1) {
-      activatePaidUpgradeOrder(order, result.expire_at)
-      persistMetadata()
+    const result = await reconcileUpgradeOrder(session, order)
+    if (order.status === 'paid') {
       return res.json({ message: '支付成功，会员权益已开通', order: upgradeOrderSummary(order), workspace: accountWorkspacePayload(session.user) })
     }
     order.updatedAt = new Date().toISOString()
@@ -1424,6 +1445,7 @@ app.post('/api/account/upgrade-orders/:orderId/pay-status', async (req, res) => 
 })
 
 app.post('/api/admin/login', (req, res) => {
+  if (!adminCredentialsConfigured) return res.status(503).json({ message: '后台登录未配置，请设置管理员账号和密码' })
   if (adminLoginRateLimited(req)) {
     return res.status(429).json({ message: '登录尝试过于频繁，请稍后再试' })
   }
@@ -1593,13 +1615,17 @@ app.get('/auth/callback', async (req, res) => {
 })
 
 app.post('/api/shares', upload.array('files', MAX_FILES), normalizeUploadedFileNames, async (req, res, next) => {
+  let reservationId
   try {
     assertServiceWritable(req)
     const uploadedFiles = req.files || []
     if (!uploadedFiles.length) return res.status(400).json({ message: '至少选择一个文件' })
     assertConfiguredUploadLimits(req, uploadedFiles)
     const guestKey = assertGuestQuota(req, res, uploadedFiles)
-    assertSafeUploadFiles(uploadedFiles)
+    const ownerSession = authSessionFromRequest(req)
+    const options = readShareOptions(req.body, ownerSession?.user)
+    reservationId = reserveUploadCapacity({ files: uploadedFiles, guestKey, ownerUserId: ownerSession?.user?.id || '' })
+    await assertSafeUploadFiles(uploadedFiles)
 
     const relativePaths = parseJson(req.body.relativePaths, [])
     const files = uploadedFiles.map((file, index) => {
@@ -1610,16 +1636,20 @@ app.post('/api/shares', upload.array('files', MAX_FILES), normalizeUploadedFileN
         size: file.size,
         mimeType: file.mimetype || 'application/octet-stream',
         tempPath: file.path,
+        reviewStatus: file.reviewStatus,
+        scanEngine: file.scanEngine,
+        scannedAt: file.scannedAt,
       }
     })
 
-    const ownerSession = authSessionFromRequest(req)
-    const share = await createShareFromTempFiles(files, readShareOptions(req.body, ownerSession?.user), req)
+    const share = await createShareFromTempFiles(files, options, req)
     addGuestUsage(guestKey, files)
     res.status(201).json({ share: publicShare(share, req, true, true) })
   } catch (error) {
     cleanupUploadedFiles(req.files)
     next(error)
+  } finally {
+    if (reservationId) uploadReservations.delete(reservationId)
   }
 })
 
@@ -1637,11 +1667,11 @@ app.post('/api/upload-sessions', (req, res) => {
     mimeType: String(file.mimeType || 'application/octet-stream'),
     chunks: new Set(),
   }))
+  if (normalizedFiles.some((file) => !Number.isSafeInteger(file.size) || file.size < 0)) return res.status(400).json({ message: '文件大小必须为有效的非负整数' })
   const invalid = normalizedFiles.find((file) => file.size > MAX_FILE_SIZE)
   if (invalid) return res.status(413).json({ message: `${invalid.name} 超过 5 GB 限制` })
   assertConfiguredUploadLimits(req, normalizedFiles)
   const guestKey = assertGuestQuota(req, res, normalizedFiles)
-  assertSafeUploadFiles(normalizedFiles)
   const ownerSession = authSessionFromRequest(req)
   let collectionTask = null
   let teamOrganization = null
@@ -1679,6 +1709,8 @@ app.post('/api/upload-sessions', (req, res) => {
     files: normalizedFiles,
     // 游客计账 key 冻结在会话上：complete 成功时按它补记累计用量（登录用户为空串）。
     guestKey,
+    ownerUserId: ownerSession?.user?.id || '',
+    capacityOwnerUserId: collectionTask ? collectionTask.ownerUserId : ownerSession?.user?.id || '',
     // 团队资源走团队空间权益，不校验上传者的个人 permanent。
     options: readShareOptions(req.body, ownerSession?.user, isTeamResourceSession),
     mode: isTeamResourceSession ? 'team_resource' : (req.body.mode === 'collection' ? 'collection' : 'share'),
@@ -1691,18 +1723,25 @@ app.post('/api/upload-sessions', (req, res) => {
     directory: sessionDirectory,
     createdAt: new Date().toISOString(),
   }
+  assertUploadCapacity(session)
   uploadSessions.set(sessionId, session)
   persistUploadSession(session)
   res.status(201).json({ sessionId, uploaded: session.files.map((file) => ({ name: file.name, chunks: [] })) })
 })
 
-app.post('/api/upload-sessions/:sessionId/chunks', upload.single('chunk'), async (req, res, next) => {
+function requireUploadSessionOwner(req, res, next) {
+  const session = uploadSessions.get(req.params.sessionId)
+  if (!session) return res.status(404).json({ message: '上传会话不存在，请重新开始上传' })
+  if (session.ownerUserId && authSessionFromRequest(req)?.user?.id !== session.ownerUserId) {
+    return res.status(403).json({ message: '请使用创建上传的账号继续操作' })
+  }
+  req.uploadSession = session
+  next()
+}
+
+app.post('/api/upload-sessions/:sessionId/chunks', requireUploadSessionOwner, chunkUpload.single('chunk'), async (req, res, next) => {
   try {
-    const session = uploadSessions.get(req.params.sessionId)
-    if (!session) {
-      cleanupUploadedFiles(req.file ? [req.file] : [])
-      return res.status(404).json({ message: '上传会话不存在，请重新开始上传' })
-    }
+    const session = req.uploadSession
     const fileIndex = Number(req.body.fileIndex)
     const chunkIndex = Number(req.body.chunkIndex)
     const totalChunks = Number(req.body.totalChunks)
@@ -1781,6 +1820,8 @@ function persistUploadSession(session) {
       submitterUserId: session.submitterUserId,
       submitterName: session.submitterName,
       guestKey: session.guestKey || '',
+      ownerUserId: session.ownerUserId || '',
+      capacityOwnerUserId: session.capacityOwnerUserId || '',
       relativePaths: session.relativePaths,
       createdAt: session.createdAt,
     }
@@ -1850,9 +1891,8 @@ function restoreUploadSessions() {
   }
 }
 
-app.get('/api/upload-sessions/:sessionId', (req, res) => {
-  const session = uploadSessions.get(req.params.sessionId)
-  if (!session) return res.status(404).json({ message: '上传会话不存在，请重新开始上传' })
+app.get('/api/upload-sessions/:sessionId', requireUploadSessionOwner, (req, res) => {
+  const session = req.uploadSession
   res.json({
     sessionId: session.id,
     chunkSize: session.chunkSize,
@@ -1867,10 +1907,14 @@ app.get('/api/upload-sessions/:sessionId', (req, res) => {
   })
 })
 
-app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
+app.post('/api/upload-sessions/:sessionId/complete', requireUploadSessionOwner, async (req, res, next) => {
+  let activeSession
   try {
-    const session = uploadSessions.get(req.params.sessionId)
-    if (!session) return res.status(404).json({ message: '上传会话不存在，请重新开始上传' })
+    const session = req.uploadSession
+    if (session.completing) return res.status(409).json({ message: '此上传正在发布，请稍后重试' })
+    activeSession = session
+    session.completing = true
+    assertUploadCapacity(session, session.id)
     // 分片直写模式：这里只做完整性校验（逐 index 齐片 + 目标文件大小），
     // 不再合并 —— 旧版同步合并 5GB 文件会阻塞事件循环 10~35 秒。
     for (let fileIndex = 0; fileIndex < session.files.length; fileIndex += 1) {
@@ -1896,12 +1940,14 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
         tempPath: targetPath,
       }
     })
-    assertSafeUploadFiles(mergedFiles)
+    await assertSafeUploadFiles(mergedFiles)
     if (session.mode === 'collection') {
       const task = metadata.collections.find((item) => item.token === session.collectionToken)
       if (!task) return res.status(404).json({ message: '收集任务不存在' })
       const access = validateCollection(task)
       if (!access.ok) return res.status(access.status).json({ message: access.message })
+      assertCollectionFiles(task, mergedFiles)
+      assertUploadCapacity(session, session.id)
       const participantName = session.participantName.trim()
       const files = mergedFiles.map((file, index) => {
         const relativePath = safeRelativePath(session.relativePaths[index] || file.relativePath || file.name)
@@ -1913,7 +1959,7 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
       fs.mkdirSync(submissionDirectory, { recursive: true })
       const submissionFiles = files.map((file) => {
         fs.renameSync(file.tempPath, path.join(submissionDirectory, file.storedName))
-        return { name: file.name, relativePath: file.relativePath, storedName: file.storedName, size: file.size, mimeType: file.mimeType, reviewStatus: 'approved' }
+        return { name: file.name, relativePath: file.relativePath, storedName: file.storedName, size: file.size, mimeType: file.mimeType, reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt }
       })
       const submission = {
         id: submissionId,
@@ -1948,6 +1994,8 @@ app.post('/api/upload-sessions/:sessionId/complete', async (req, res, next) => {
     res.status(201).json({ share: publicShare(share, req, true, true) })
   } catch (error) {
     next(error)
+  } finally {
+    if (activeSession) activeSession.completing = false
   }
 })
 
@@ -1983,8 +2031,8 @@ app.get('/api/shares/lookup/:code', (req, res) => {
   if (shareLookupRateLimited(req)) return res.status(429).json({ message: '查询过于频繁，请稍后再试' })
   const share = findShareByCode(req.params.code)
   if (!share) return res.status(404).json({ message: '取件码不存在或已失效' })
-  const access = validateShare(share, undefined, { allowMissingPassword: true })
-  if (!access.ok) return res.status(access.status).json({ message: access.message })
+  const access = validateShareRequest(share, req, { allowMissingPassword: true, allowOwner: true })
+  if (!access.ok) return res.status(access.status).json({ message: access.message, code: access.code || '' })
   if (share.passwordHash) return res.json({ share: publicShare(share, req, false), requiresPassword: true })
   res.json({ share: publicShare(share, req, true), requiresPassword: false })
 })
@@ -1993,8 +2041,8 @@ app.post('/api/shares/lookup/:code', (req, res) => {
   if (shareLookupRateLimited(req)) return res.status(429).json({ message: '查询过于频繁，请稍后再试' })
   const share = findShareByCode(req.params.code)
   if (!share) return res.status(404).json({ message: '取件码不存在或已失效' })
-  const access = validateShare(share, req.body.password)
-  if (!access.ok) return res.status(access.status).json({ message: access.message })
+  const access = validateShareRequest(share, req, { password: req.body.password, allowOwner: true })
+  if (!access.ok) return res.status(access.status).json({ message: access.message, code: access.code || '' })
   setShareAccessCookie(res, req, share)
   res.json({ share: publicShare(share, req, true), requiresPassword: false })
 })
@@ -2003,8 +2051,8 @@ app.get('/api/shares/token/:token', (req, res) => {
   const share = metadata.shares.find((item) => item.id === req.params.token)
   if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
   if (!validateEnterpriseSlug(share, req.query.organization)) return res.status(404).json({ message: '企业专属链接无效' })
-  const access = validateShare(share, undefined, { allowMissingPassword: true })
-  if (!access.ok) return res.status(access.status).json({ message: access.message })
+  const access = validateShareRequest(share, req, { allowMissingPassword: true, allowOwner: true })
+  if (!access.ok) return res.status(access.status).json({ message: access.message, code: access.code || '' })
   const viewer = authSessionFromRequest(req)?.user
   const includeManage = Boolean(viewer?.id && share.ownerUserId && viewer.id === share.ownerUserId)
   res.json({ share: publicShare(share, req, !share.passwordHash, includeManage), requiresPassword: Boolean(share.passwordHash) })
@@ -2049,6 +2097,8 @@ app.get('/api/shares/:token/download', async (req, res, next) => {
     enforceDownloadOrigin(req)
     const access = validateShareRequest(share, req, { allowOwner: true })
     if (!access.ok) return res.status(access.status).json({ message: access.message })
+    await ensureStoredFilesScanned(share.files, path.join(filesRoot, share.id))
+    if (req.method === 'HEAD') setShareAccessCookie(res, req, share)
     registerShareDownload(share, res)
     const shareDirectory = path.join(filesRoot, share.id)
     if (share.files.length === 1) {
@@ -2066,7 +2116,7 @@ app.get('/api/shares/:token/download', async (req, res, next) => {
   }
 })
 
-app.get('/api/shares/:token/files/:fileIndex/download', (req, res, next) => {
+app.get('/api/shares/:token/files/:fileIndex/download', async (req, res, next) => {
   try {
     const share = metadata.shares.find((item) => item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
@@ -2075,6 +2125,8 @@ app.get('/api/shares/:token/files/:fileIndex/download', (req, res, next) => {
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     const file = share.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
+    await ensureStoredFilesScanned([file], path.join(filesRoot, share.id))
+    if (req.method === 'HEAD') setShareAccessCookie(res, req, share)
     registerShareDownload(share, res)
     sendDownloadFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
   } catch (error) {
@@ -2082,7 +2134,7 @@ app.get('/api/shares/:token/files/:fileIndex/download', (req, res, next) => {
   }
 })
 
-app.get('/api/shares/:token/files/:fileIndex/preview', (req, res, next) => {
+app.get('/api/shares/:token/files/:fileIndex/preview', async (req, res, next) => {
   try {
     const share = metadata.shares.find((item) => item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
@@ -2091,6 +2143,7 @@ app.get('/api/shares/:token/files/:fileIndex/preview', (req, res, next) => {
     if (!access.ok) return res.status(access.status).json({ message: access.message })
     const file = share.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
+    await ensureStoredFilesScanned([file], path.join(filesRoot, share.id))
     sendPreviewFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
   } catch (error) {
     next(error)
@@ -2116,6 +2169,7 @@ app.post('/api/collections', async (req, res, next) => {
       deadline,
       allowedTypes: normalizeCollectionAllowedTypes(req.body.allowedTypes),
       maxFileSizeMb: Number(req.body.maxFileSizeMb || 500),
+      capacityBytes: ownerSession?.user?.id ? null : guestQuotaLimitBytes() || 1024 * 1024 * 1024,
       createdAt: new Date().toISOString(),
       ownerUserId: ownerSession?.user?.id || '',
       status: 'active',
@@ -2144,7 +2198,8 @@ app.get('/api/collections/:token', async (req, res, next) => {
   }
 })
 
-app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES), normalizeUploadedFileNames, (req, res, next) => {
+app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES), normalizeUploadedFileNames, async (req, res, next) => {
+  let reservationId
   try {
     assertServiceWritable(req)
     const task = metadata.collections.find((item) => item.token === req.params.token)
@@ -2169,13 +2224,19 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
     }
     assertConfiguredUploadLimits(req, uploadedFiles)
     const guestKey = assertGuestQuota(req, res, uploadedFiles)
-    assertSafeUploadFiles(uploadedFiles)
+    assertCollectionFiles(task, uploadedFiles)
+    reservationId = reserveUploadCapacity({ files: uploadedFiles, guestKey, collectionToken: task.token, capacityOwnerUserId: task.ownerUserId })
+    await assertSafeUploadFiles(uploadedFiles)
     const invalidFile = uploadedFiles.find((file) => file.size > task.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.originalname, task.allowedTypes))
     if (invalidFile) {
       cleanupUploadedFiles(uploadedFiles)
       return res.status(413).json({ message: `${invalidFile.originalname} 不符合当前收集任务的文件限制` })
     }
     assertAccountCapacity(accountUserById(task.ownerUserId), uploadedFiles.reduce((sum, file) => sum + file.size, 0))
+    assertUploadCapacity(uploadReservations.get(reservationId), reservationId)
+    const finalAccess = validateCollection(task)
+    if (!finalAccess.ok) throw httpError(finalAccess.status, finalAccess.message)
+    assertCollectionFiles(task, uploadedFiles)
     const submissionId = createToken(12)
     const submissionDirectory = path.join(collectionsRoot, task.id, submissionId)
     fs.mkdirSync(submissionDirectory, { recursive: true })
@@ -2184,7 +2245,7 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
       const relativePath = safeRelativePath(relativePaths[index] || file.originalname)
       const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
       fs.renameSync(file.path, path.join(submissionDirectory, storedName))
-      return { name: file.originalname, relativePath, storedName, size: file.size, mimeType: file.mimetype || 'application/octet-stream', reviewStatus: file.reviewStatus || 'approved' }
+      return { name: file.originalname, relativePath, storedName, size: file.size, mimeType: file.mimetype || 'application/octet-stream', reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt }
     })
     const submission = {
       id: submissionId,
@@ -2202,6 +2263,8 @@ app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES)
   } catch (error) {
     cleanupUploadedFiles(req.files)
     next(error)
+  } finally {
+    if (reservationId) uploadReservations.delete(reservationId)
   }
 })
 
@@ -2265,6 +2328,7 @@ app.get('/api/collections/manage/:manageToken/download', async (req, res, next) 
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
     if (!task) return res.status(404).json({ message: '管理链接不存在' })
     assertFilesDownloadable(task.submissions.flatMap((submission) => submission.files || []))
+    for (const submission of task.submissions) await ensureStoredFilesScanned(submission.files, path.join(collectionsRoot, task.id, submission.id))
     const entries = collectionZipEntries(task)
     if (!entries.length) return res.status(404).json({ message: '暂无可下载的提交文件' })
     await streamZip(res, next, `${task.title || '收集文件'}.zip`, entries)
@@ -2281,6 +2345,7 @@ app.get('/api/collections/manage/:manageToken/submissions/:submissionId/download
     const submission = task.submissions.find((item) => item.id === req.params.submissionId)
     if (!submission) return res.status(404).json({ message: '提交记录不存在' })
     assertFilesDownloadable(submission.files || [])
+    await ensureStoredFilesScanned(submission.files, path.join(collectionsRoot, task.id, submission.id))
     const entries = collectionZipEntries(task, submission)
     if (!entries.length) return res.status(404).json({ message: '暂无可下载的提交文件' })
     await streamZip(res, next, `${submission.participantName || '提交文件'}.zip`, entries)
@@ -2289,7 +2354,7 @@ app.get('/api/collections/manage/:manageToken/submissions/:submissionId/download
   }
 })
 
-app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/download', (req, res, next) => {
+app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/download', async (req, res, next) => {
   try {
     enforceDownloadOrigin(req)
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
@@ -2298,13 +2363,14 @@ app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:f
     const file = submission?.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
     assertFilesDownloadable([file])
+    await ensureStoredFilesScanned([file], path.join(collectionsRoot, task.id, submission.id))
     sendDownloadFile(req, res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
   } catch (error) {
     next(error)
   }
 })
 
-app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/preview', (req, res, next) => {
+app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/preview', async (req, res, next) => {
   try {
     enforceDownloadOrigin(req)
     const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
@@ -2313,6 +2379,7 @@ app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:f
     const file = submission?.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
     assertFilesDownloadable([file])
+    await ensureStoredFilesScanned([file], path.join(collectionsRoot, task.id, submission.id))
     sendPreviewFile(req, res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
   } catch (error) {
     next(error)
@@ -2363,6 +2430,10 @@ const cleanupTimer = setInterval(() => {
   cleanupUploadSessions()
 }, 60 * 1000)
 cleanupTimer.unref()
+const paymentTimer = setInterval(() => { reconcileActiveUpgradeOrders().catch(() => {}) }, 30000)
+paymentTimer.unref()
+const initialPaymentCheck = setTimeout(() => { reconcileActiveUpgradeOrders().catch(() => {}) }, 1000)
+initialPaymentCheck.unref()
 // 审计日志按保留期每日自动清除（只动 auditLogs，不碰资源清理——purgeStaleResources 绝不进定时链路）
 const auditLogTimer = setInterval(() => {
   try {
@@ -2381,6 +2452,8 @@ async function shutdown(signal) {
   if (shuttingDown) return
   shuttingDown = true
   clearInterval(cleanupTimer)
+  clearInterval(paymentTimer)
+  clearTimeout(initialPaymentCheck)
   try {
     await metadataWriteQueue
     if (databasePool) await databasePool.end()
@@ -3474,11 +3547,12 @@ function publicShare(share, req, includeFiles = true, includeManage = false) {
     enterpriseUrl: organization ? `${getOrigin(req)}/e/${organization.slug}/share/${share.id}` : '',
     requiresPassword: Boolean(share.passwordHash),
     closeReason: share.closeReason || null,
-    deliveryRecipients: share.deliveryRecipients || [],
-    notificationLog: share.notificationLog || [],
+    directed: Boolean(share.deliveryRecipients?.length),
     status,
   }
   if (includeManage) {
+    payload.deliveryRecipients = share.deliveryRecipients || []
+    payload.notificationLog = share.notificationLog || []
     payload.manageToken = share.manageToken
     payload.manageUrl = `${getOrigin(req)}/share/manage/${share.manageToken}`
     // 重新开启是「会员特权」而非「永久特权」：付费套餐在有效期内即可（到期由 accountPlanForUser 回落 free 自动收回）。
@@ -3516,6 +3590,8 @@ function publicCollection(task, req, includeManage = false) {
     deadline: task.deadline,
     allowedTypes: task.allowedTypes,
     maxFileSizeMb: task.maxFileSizeMb,
+    capacityBytes: collectionCapacityBytes(task),
+    usedBytes: task.submissions.reduce((sum, submission) => sum + fileListSize(submission.files), 0),
     status,
     submissionCount: task.submissions.length,
     publicUrl: `${getOrigin(req)}/collect/${task.token}`,
@@ -3557,34 +3633,101 @@ function managerCollection(task, req) {
 
 function validateShareRequest(share, req, options = {}) {
   const viewer = authSessionFromRequest(req)?.user
+  const recipientAccess = validateShareRecipient(share, viewer)
+  if (!recipientAccess.ok) return recipientAccess
+  assertFilesDownloadable(share.files)
   const isOwner = options.allowOwner && viewer?.id && share.ownerUserId && viewer.id === share.ownerUserId
   // 团队资源：关闭分享只应切断公开提取链接，文件本体仍在团队空间。
   // 所有者本人登录后始终可以打开自己的资源 —— 否则所有者关闭分享后连自己也打不开文件。
   if (isOwner && share.teamResource && currentShareStatus(share) === 'closed') return { ok: true }
-  return validateShare(share, req.get('x-share-password'), {
+  return validateShare(share, options.password ?? req.get('x-share-password'), {
     ...options,
     skipPassword: isOwner,
     hasAccessCookie: hasShareAccessCookie(req, share),
   })
 }
 
-function fileSafetyVerdict(file = {}) {
-  return { status: 'approved', message: '' }
-}
-
 function assertFilesDownloadable(files = []) {
+  if (files.some((file) => file.reviewStatus === 'blocked')) throw httpError(415, '文件安全检查未通过，无法下载或预览')
   return true
 }
 
-function assertSafeUploadFiles(files = []) {
-  for (const file of files) {
-    const verdict = fileSafetyVerdict(file)
-    if (verdict.status === 'blocked') {
-      recordAuditLog({ type: 'security', action: '拦截高风险文件', targetId: file.originalname || file.name, details: { extension: path.extname(file.originalname || file.name || '').toLowerCase() } })
-      throw httpError(415, verdict.message)
-    }
-    file.reviewStatus = verdict.status
+async function scanFileBytes(filePath) {
+  if (!clamavHost) {
+    if (scanMode === 'required') throw httpError(503, '文件扫描服务未配置，暂时无法发布或读取未扫描文件')
+    return { reviewStatus: 'unscanned', scanEngine: null, scannedAt: null }
   }
+  const socket = net.createConnection({ host: clamavHost, port: clamavPort })
+  let source
+  let response = ''
+  let timer
+  const verdict = new Promise((resolve, reject) => {
+    const fail = (error) => { source?.destroy(); socket.destroy(); reject(error) }
+    timer = setTimeout(() => fail(httpError(503, '文件扫描超时，请稍后重试')), scanTimeoutMs)
+    socket.on('error', () => fail(httpError(503, '文件扫描服务连接失败，请稍后重试')))
+    socket.on('end', () => { if (!response.includes('\0')) fail(httpError(503, '文件扫描服务未返回完整结果')) })
+    socket.on('data', (data) => {
+      response += data.toString('utf8')
+      if (response.length > 4096) return fail(httpError(503, '文件扫描结果无效'))
+      if (!response.includes('\0')) return
+      const result = response.split('\0')[0].trim()
+      if (/^stream: OK$/.test(result)) resolve({ reviewStatus: 'approved', scanEngine: 'clamav', scannedAt: new Date().toISOString() })
+      else if (/ FOUND$/.test(result)) reject(httpError(415, '文件扫描发现威胁或超出扫描安全限制，已阻止发布'))
+      else reject(httpError(503, '文件扫描未完成，请检查扫描服务和大小限制'))
+      socket.destroy()
+    })
+  })
+  // Await both producer and verdict; buffers stay bounded by stream backpressure.
+  const producer = (async () => {
+    await once(socket, 'connect')
+    const write = async (buffer) => {
+      if (socket.destroyed) throw httpError(503, '文件扫描连接已关闭')
+      if (!socket.write(buffer)) await once(socket, 'drain')
+    }
+    await write(Buffer.from('zINSTREAM\0'))
+    source = fs.createReadStream(filePath, { highWaterMark: 64 * 1024 })
+    for await (const chunk of source) {
+      const length = Buffer.alloc(4)
+      length.writeUInt32BE(chunk.length)
+      await write(length)
+      await write(chunk)
+    }
+    await write(Buffer.alloc(4))
+  })()
+  try {
+    const [result] = await Promise.all([verdict, producer])
+    return result
+  } finally {
+    clearTimeout(timer)
+    source?.destroy()
+    socket.destroy()
+  }
+}
+
+async function assertSafeUploadFiles(files = []) {
+  for (const file of files) {
+    try {
+      Object.assign(file, await scanFileBytes(file.tempPath || file.path))
+    } catch (error) {
+      if (error.status === 415) {
+        file.reviewStatus = 'blocked'
+        recordAuditLog({ type: 'security', action: '文件扫描拦截', targetId: file.originalname || file.name })
+      }
+      throw error
+    }
+  }
+}
+
+async function ensureStoredFilesScanned(files, directory) {
+  assertFilesDownloadable(files)
+  for (const file of files) {
+    if (file.reviewStatus === 'approved' && file.scanEngine === 'clamav' && file.scannedAt) continue
+    const targetPath = path.join(directory, file.storedName)
+    if (!fs.existsSync(targetPath)) throw httpError(410, '文件已清理，无法读取')
+    try { Object.assign(file, await scanFileBytes(targetPath)) }
+    catch (error) { if (error.status === 415) file.reviewStatus = 'blocked'; persistMetadata(); throw error }
+  }
+  persistMetadata()
 }
 
 function assertConfiguredUploadLimits(req, files = []) {
@@ -3743,6 +3886,7 @@ function shareAccessCookieValue(share) {
 }
 
 function registerShareDownload(share, res) {
+  if (res.req.method === 'HEAD') return
   let counted = false
   res.on('finish', () => {
     if (counted || res.statusCode < 200 || res.statusCode >= 300) return
@@ -3798,6 +3942,7 @@ function sendDownloadFile(req, res, next, filePath, file) {
   res.setHeader('X-Download-Total-Size', String(stat.size))
   if (file.mimeType) res.type(file.mimeType)
   res.setHeader('Content-Disposition', contentDisposition('attachment', normalizeUploadFileName(file.name || path.basename(filePath))))
+  if (req.method === 'HEAD') { res.setHeader('Content-Length', String(stat.size)); return res.end() }
   const range = req.get('range')
   if (!range) {
     res.setHeader('Content-Length', String(stat.size))
@@ -3831,6 +3976,7 @@ async function streamZip(res, next, filename, entries) {
   res.setHeader('X-Download-Total-Size', String(totalSize))
   res.setHeader('Accept-Ranges', 'none')
   res.attachment(filename)
+  if (res.req.method === 'HEAD') return res.end()
   const archive = archiver('zip', { zlib: { level: 6 } })
   archive.on('warning', (error) => {
     if (error.code === 'ENOENT') console.warn(error)
@@ -4400,6 +4546,59 @@ function assertUniqueTeamResourceNames(organization, files) {
   }
 }
 
+function collectionCapacityBytes(task) {
+  if (task.ownerUserId) return accountUsageForUser(task.ownerUserId).totalBytes
+  const configured = guestQuotaLimitBytes() || 1024 * 1024 * 1024
+  return Math.min(Number(task.capacityBytes) > 0 ? Number(task.capacityBytes) : configured, configured)
+}
+
+function assertCollectionFiles(task, files) {
+  if (files.some((file) => file.size > task.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.originalname || file.name, task.allowedTypes))) {
+    throw httpError(413, '文件不符合当前收集任务的大小或格式限制')
+  }
+}
+
+function pendingUploadBytes(predicate, excludeId) {
+  let bytes = 0
+  for (const [id, item] of [...uploadSessions, ...uploadReservations]) {
+    if (id !== excludeId && predicate(item)) bytes += fileListSize(item.files)
+  }
+  return bytes
+}
+
+function assertUploadCapacity(item, excludeId) {
+  const incomingBytes = fileListSize(item.files)
+  if (item.guestKey && guestQuotaLimitBytes()) {
+    const usedBytes = guestUsageEntry(item.guestKey).bytes + pendingUploadBytes((other) => other.guestKey === item.guestKey, excludeId)
+    if (usedBytes + incomingBytes > guestQuotaLimitBytes()) throw guestQuotaExceededError({ usedBytes, limitBytes: guestQuotaLimitBytes(), incomingBytes })
+  }
+  if (item.collectionToken) {
+    const task = metadata.collections.find((task) => task.token === item.collectionToken)
+    if (!task) throw httpError(404, '收集任务不存在')
+    assertCollectionFiles(task, item.files)
+    if (!task.ownerUserId) {
+      const usedBytes = task.submissions.reduce((sum, submission) => sum + fileListSize(submission.files), 0)
+      const reservedBytes = pendingUploadBytes((other) => other.collectionToken === task.token, excludeId)
+      if (usedBytes + reservedBytes + incomingBytes > collectionCapacityBytes(task)) throw httpError(507, '此匿名收集任务的总容量已不足，请联系发起人')
+    }
+  }
+  if (item.organizationId) {
+    const organization = Object.values(metadata.organizations).find((organization) => organization.id === item.organizationId)
+    if (!organization) throw httpError(404, '团队空间不存在')
+    assertTeamCapacity(organization, incomingBytes + pendingUploadBytes((other) => other.organizationId === item.organizationId, excludeId))
+  } else {
+    const ownerId = item.capacityOwnerUserId || item.ownerUserId
+    assertAccountCapacity(accountUserById(ownerId), incomingBytes + pendingUploadBytes((other) => !other.organizationId && (other.capacityOwnerUserId || other.ownerUserId) === ownerId, excludeId))
+  }
+}
+
+function reserveUploadCapacity(item) {
+  assertUploadCapacity(item)
+  const id = createToken(18)
+  uploadReservations.set(id, item)
+  return id
+}
+
 function assertAccountCapacity(user, incomingBytes) {
   if (!user?.id) return
   const usage = accountUsageForUser(user.id)
@@ -4554,6 +4753,32 @@ function shouldDeliverAccountEmail(userId, eventType) {
   const settings = accountNotificationSettingsForUser(userId)
   if (!settings.email) return false
   return !eventType || !Object.prototype.hasOwnProperty.call(settings, eventType) || settings[eventType] !== false
+}
+
+function resolveRecipientUserIds(recipients = [], legacy = false) {
+  const ids = new Set()
+  for (const recipient of recipients) {
+    const contact = normalizeContactTarget(recipient)
+    const raw = String(recipient).trim().toLowerCase()
+    const matches = Object.values(metadata.users || {}).filter((user) => contact
+      ? (contact.type === 'email' ? normalizeEmailValue(user.email) === contact.value : normalizePhoneValue(user.phone) === contact.value)
+      : [user.id, user.username].some((value) => String(value || '').toLowerCase() === raw))
+    if (!contact && matches.length !== 1 && !legacy) throw httpError(400, '指定账号不存在或不唯一，请使用账号 ID、邮箱或手机号')
+    for (const user of matches) ids.add(user.id)
+  }
+  return [...ids]
+}
+
+function validateShareRecipient(share, viewer) {
+  if (!share.deliveryRecipients?.length) return { ok: true }
+  if (!viewer?.id) return { ok: false, status: 401, code: 'directed_login_required', message: '此文件为定向分享，请使用收件账号登录' }
+  if (viewer.id === share.ownerUserId || share.recipientUserIds?.includes(viewer.id)) return { ok: true }
+  const account = accountUserById(viewer.id)
+  const contactMatch = account && (share.recipientContacts || []).some((recipient) => {
+    const contact = normalizeContactTarget(recipient)
+    return contact && (contact.type === 'email' ? normalizeEmailValue(account.email) === contact.value : normalizePhoneValue(account.phone) === contact.value)
+  })
+  return contactMatch ? { ok: true } : { ok: false, status: 403, code: 'directed_access_denied', message: '当前账号不是此分享的指定收件人' }
 }
 
 function findUsersByRecipient(recipient) {
@@ -4975,6 +5200,7 @@ async function webMemberRequest(pathname, token, params = {}) {
       token,
     },
     body: new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value ?? '')])).toString(),
+    signal: AbortSignal.timeout(10000),
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok || Number(payload.code) !== 1) {
@@ -5093,18 +5319,66 @@ async function checkWebMemberPaymentStatus(session, remoteOrderNo) {
   })
 }
 
+async function acquireUpgradeLock(key) {
+  const previous = upgradeOrderLocks.get(key) || Promise.resolve()
+  let unlock
+  const current = new Promise((resolve) => { unlock = resolve })
+  upgradeOrderLocks.set(key, current)
+  await previous
+  return () => { unlock(); if (upgradeOrderLocks.get(key) === current) upgradeOrderLocks.delete(key) }
+}
+
+async function reconcileUpgradeOrder(session, order) {
+  const release = await acquireUpgradeLock(order.id)
+  try {
+    if (order.status === 'paid' || !order.remoteOrderNo) return { pay_status: order.status === 'paid' ? 1 : 0 }
+    const result = await checkWebMemberPaymentStatus(session, order.remoteOrderNo)
+    if (Number(result.pay_status) === 1) {
+      activatePaidUpgradeOrder(order, result.expire_at)
+      persistMetadata()
+    }
+    return result
+  } finally { release() }
+}
+
+async function reconcileUserUpgradeOrders(session, force = false) {
+  if (!sessionApiWebToken(session)) return
+  const key = session.user.id
+  const previous = paymentReconcileAttempts.get(key)
+  if (previous?.running || (!force && previous?.at > Date.now() - 30000)) return
+  const state = { running: true, at: Date.now() }
+  paymentReconcileAttempts.set(key, state)
+  try {
+    for (const order of upgradeOrdersForUser(key).filter((item) => item.status !== 'paid' && item.remoteOrderNo)) {
+      try { await reconcileUpgradeOrder(session, order) }
+      catch { /* Retry on the next interval or a fresh login token. */ }
+    }
+  } finally { state.running = false }
+}
+
+async function reconcileActiveUpgradeOrders() {
+  const seen = new Set()
+  for (const session of [...metadata.sessions].reverse()) {
+    if (seen.has(session.user.id) || new Date(session.expiresAt).getTime() <= Date.now() || accountUserById(session.user.id)?.status === 'disabled') continue
+    seen.add(session.user.id)
+    await reconcileUserUpgradeOrders(session)
+  }
+}
+
 function activatePaidUpgradeOrder(order, expireAt = null) {
+  if (order.status === 'paid') return
   const account = accountUserById(order.userId)
   if (!account) throw httpError(404, '支付用户不存在')
   const plan = configuredAccountPlan(order.planId)
   const currentExpiry = account.planExpiresAt ? new Date(account.planExpiresAt).getTime() : 0
   const remoteExpiry = expireAt ? new Date(expireAt).getTime() : 0
-  const nextExpiry = remoteExpiry > Date.now()
-    ? remoteExpiry
-    : Date.now() + (Number(order.remotePackageDays) || plan.validityDays || 30) * 86400000
-  account.planId = order.planId
+  const currentPlan = accountPlanForUser(account)
+  const renewalBase = currentPlan.id === order.planId ? Math.max(Date.now(), currentExpiry || 0) : Date.now()
+  const nextExpiry = Math.max(remoteExpiry || 0, renewalBase + (Number(order.remotePackageDays) || plan.validityDays || 30) * 86400000)
+  const keepHigherPlan = accountPlanRank(currentPlan.id) > accountPlanRank(order.planId)
+  if (!keepHigherPlan) account.planId = order.planId
   account.planStartedAt = account.planStartedAt || new Date().toISOString()
-  account.planExpiresAt = plan.permanent
+  if (!keepHigherPlan) account.planExpiresAt = plan.permanent
     ? null
     : new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
   account.updatedAt = new Date().toISOString()
@@ -5112,7 +5386,7 @@ function activatePaidUpgradeOrder(order, expireAt = null) {
   order.paidAt = new Date().toISOString()
   order.remoteExpireAt = plan.permanent
     ? null
-    : expireAt || new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
+    : new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
   order.updatedAt = new Date().toISOString()
   upsertAccountUser(account)
   syncAccountUserSessions(account)
@@ -5192,6 +5466,7 @@ function createAuthSession(tokenData) {
   // 这样即使改名的请求没走到 PATCH /api/auth/profile（例如离线改的），下次登录也能自愈。
   syncOrganizationMemberProfile(user)
   persistMetadata()
+  reconcileUserUpgradeOrders(session, true).catch(() => {})
   return session
 }
 
@@ -5418,7 +5693,9 @@ async function createShareFromTempFiles(tempFiles, options, req) {
         storedName,
         size: Number(file.size || 0),
         mimeType: file.mimeType || 'application/octet-stream',
-        reviewStatus: file.reviewStatus || fileSafetyVerdict(file).status,
+        reviewStatus: file.reviewStatus || 'unscanned',
+        scanEngine: file.scanEngine || null,
+        scannedAt: file.scannedAt || null,
       }
     })
     const expiryDays = String(options.expiryDays || '3')
@@ -5435,6 +5712,8 @@ async function createShareFromTempFiles(tempFiles, options, req) {
       downloadCount: 0,
       passwordHash: options.password ? hashSecret(options.password) : null,
       deliveryRecipients: options.recipients,
+      recipientUserIds: options.recipientUserIds,
+      recipientContacts: options.recipientContacts,
       notificationLog: [],
       ownerUserId: ownerSession?.user?.id || '',
       status: 'active',
@@ -5460,6 +5739,9 @@ async function createShareFromTempFiles(tempFiles, options, req) {
 // 会因个人 permanent=false 而无法往团队空间上传文件。
 function readShareOptions(body = {}, user = null, isTeamResource = false) {
   const config = normalizeSystemConfig(metadata.systemConfig)
+  const recipients = parseRecipients(body.recipients, { max: 50 })
+  if (recipients.length && !user?.id) throw httpError(401, '定向发送需要先登录')
+  const recipientUserIds = resolveRecipientUserIds(recipients)
   // 兼容数字 0：'0'/'0'（永久）是合法值，不能被 || 吞掉回落默认天数。
   const rawExpiryDays = body.expiryDays
   const requestedExpiryDays = String(rawExpiryDays === 0 || rawExpiryDays === '0' ? '0' : (rawExpiryDays || config.defaultShareDays))
@@ -5473,7 +5755,9 @@ function readShareOptions(body = {}, user = null, isTeamResource = false) {
     password: String(body.password || ''),
     codeLength: Number(body.codeLength || 6),
     // 收件人上限：防止一次创建触发海量外发邮件（邮件放大/发信域名被封）。
-    recipients: parseRecipients(body.recipients, { max: 50 }),
+    recipients,
+    recipientUserIds,
+    recipientContacts: recipients.filter((recipient) => normalizeContactTarget(recipient) && !resolveRecipientUserIds([recipient], true).length),
     teamResource: Boolean(isTeamResource),
   }
 }
