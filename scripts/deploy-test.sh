@@ -211,7 +211,16 @@ deploy_with_docker() {
     fi
   fi
 
-  ( cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans )
+  if ! ( cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans ); then
+    echo "Compose startup failed; collecting scanner diagnostics" >&2
+    ( cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" ps -a && docker compose -f "$COMPOSE_FILE" logs --no-color --tail 120 scanner ) >&2 || true
+    local scanner_id
+    scanner_id="$(cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" ps -a -q scanner)"
+    if [ -n "$scanner_id" ]; then
+      docker inspect -f 'Scanner state: {{json .State}}' "$scanner_id" >&2 || true
+    fi
+    return 1
+  fi
 
   # 校验：运行中的容器 release 必须是本次提交，否则说明端口仍被旧容器占用。
   local running_release
