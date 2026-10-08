@@ -168,7 +168,8 @@ services:
       - clamav-data:/var/lib/clamav
       - $COMPOSE_DIR/clamd.conf:/etc/clamav/clamd.conf:ro
     healthcheck:
-      test: ["CMD", "clamdcheck.sh"]
+      # clamd binds IPv4; localhost can resolve to an unavailable IPv6 listener.
+      test: ["CMD-SHELL", "echo PING | nc -w 2 127.0.0.1 3310 | grep -qx PONG"]
       interval: 30s
       timeout: 10s
       retries: 20
