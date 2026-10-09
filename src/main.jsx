@@ -6,6 +6,15 @@ import * as XLSX from 'xlsx'
 import { PPTXViewer } from 'pptxviewjs'
 import QRCode from 'qrcode'
 
+// 通用组件（已拆出）
+import {
+  ConfirmModal, FeedbackMessage, LoadingBlock, PublicShell, StateBlock, Toast
+} from './components/common.jsx'
+// 格式化工具（已拆出）
+import {
+  feedbackTone
+} from './lib/format.js'
+
 // 已拆出的模块
 import {
   useConfirmDialog, useDownloadTask, useRemotePlanPricing
@@ -1134,31 +1143,6 @@ function GuestQuotaModal({ quota, onClose, onLogin }) {
   )
 }
 
-function Toast({ message }) {
-  const tone = feedbackTone(message)
-  const Icon = tone === 'error' ? XCircle : CheckCircle2
-  return (
-    <div className={`toast ${tone}`} role={tone === 'error' ? 'alert' : 'status'} aria-live={tone === 'error' ? 'assertive' : 'polite'}>
-      <span className="toast-icon"><Icon size={18} /></span>
-      <span>{message}</span>
-    </div>
-  )
-}
-
-function FeedbackMessage({ message, tone = 'error' }) {
-  const Icon = tone === 'success' ? CheckCircle2 : XCircle
-  return (
-    <p className={`public-message feedback-message ${tone}`} role={tone === 'error' ? 'alert' : 'status'}>
-      <Icon size={16} />
-      <span>{message}</span>
-    </p>
-  )
-}
-
-function feedbackTone(message = '') {
-  return /失败|错误|无效|不可用|不能|无法|不能为空|不足|过期|不正确|未配置|未生效|拒绝|异常|请先|请输入|未登录|未投递|不存在|已失效|没有可|不支持|通道|需接入|暂不|暂无|暂未|尚未|需要会员|更高权益/.test(String(message)) ? 'error' : 'success'
-}
-
 function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
   const showUploadStatus = ['uploading', 'paused', 'failed', 'finalizing'].includes(uploadState.status)
   return (
@@ -1420,36 +1404,6 @@ function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome }) {
           </button>
         </div>
       </form>
-    </div>
-  )
-}
-
-function ConfirmModal({ state, onCancel, onConfirm }) {
-  useEffect(() => {
-    if (!state) return undefined
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onCancel()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [state, onCancel])
-
-  if (!state) return null
-
-  const Icon = state.tone === 'danger' ? Trash2 : ShieldCheck
-  return (
-    <div className="modal-backdrop confirm-backdrop" onMouseDown={onCancel}>
-      <div className={`modal confirm-modal ${state.tone === 'danger' ? 'danger' : ''}`} role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="confirm-modal-icon"><Icon size={20} /></div>
-        <p className="eyebrow">{state.eyebrow || '操作确认'}</p>
-        <h2>{state.title || '确认操作'}</h2>
-        {state.subject && <p className="confirm-modal-subject" title={state.subject}>{state.subject}</p>}
-        {state.detail && <p>{state.detail}</p>}
-        <div className="modal-footer confirm-modal-footer">
-          <button className="secondary-button" onClick={onCancel}>{state.cancelText || '取消'}</button>
-          <button className={`primary-button ${state.tone === 'danger' ? 'danger-button' : ''}`} onClick={onConfirm}>{state.confirmText || '确定'}</button>
-        </div>
-      </div>
     </div>
   )
 }
@@ -5111,12 +5065,6 @@ function NoticeToggle({ label, detail, checked, onChange }) {
   )
 }
 
-function PublicShell({ children }) {
-  return <div className="app-shell public-shell"><header className="topbar"><div className="brand"><img className="brand-logo" src="/brand-logo.png" alt="鲲穹文件传输" /></div><span className="public-safe"><ShieldCheck size={15} /> 安全临时空间</span></header><main className="public-page">{children}</main><footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span><div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a></div></footer></div>
-}
-
-function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }
-function LoadingBlock() { return <div className="state-block"><span className="loading-dot" /><h1>正在打开</h1><p>正在检查分享状态，请稍候。</p></div> }
 function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
 function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin, onInvitationAction }) {
   const unreadCount = messages.filter((message) => message.unread).length

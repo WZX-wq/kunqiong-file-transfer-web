@@ -151,3 +151,7 @@ export function maskPhone(value = '') {
   const phone = String(value)
   return phone.length >= 7 ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : phone
 }
+
+export function feedbackTone(message = '') {
+  return /失败|错误|无效|不可用|不能|无法|不能为空|不足|过期|不正确|未配置|未生效|拒绝|异常|请先|请输入|未登录|未投递|不存在|已失效|没有可|不支持|通道|需接入|暂不|暂无|暂未|尚未|需要会员|更高权益/.test(String(message)) ? 'error' : 'success'
+}
