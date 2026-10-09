@@ -10,14 +10,18 @@
 │   ├── config.js           # 环境变量、路径与业务常量（唯一配置来源）
 │   ├── state.js            # 运行期共享状态（连接池 + 限流/会话/上传计数表 + 缓存）
 │   ├── services/           # 业务服务层：按业务域聚合领域逻辑
-│   │   └── account.js      # 账号域：身份会话 / 账号数据 / 套餐用量 / 升级支付 / 团队组织
+│   │   ├── account.js      # 账号域：身份会话 / 账号数据 / 套餐用量 / 升级支付 / 团队组织
+│   │   └── shares.js       # 分享/上传域：上传会话 / 文件落盘扫描 / 分享创建查询管理下载
 │   ├── routes/             # 路由层：只做 HTTP 适配，调用 services
 │   │   ├── account.js      # /api/auth/* + /api/account/{基础}
 │   │   ├── workspace.js    # /api/account/workspace* + /api/organizations/*
-│   │   └── upgrade.js      # /api/account/upgrade-*
+│   │   ├── upgrade.js      # /api/account/upgrade-*
+│   │   ├── shares.js       # /api/shares（创建 + 查询/管理/下载/预览）
+│   │   └── upload.js       # /api/upload-sessions/*
 │   └── lib/
 │       ├── env-file.js     # .env 文件加载
 │       ├── http.js         # HTTP 错误构造与通用纯函数
+│       ├── upload.js       # multer 实例 + 上传中间件 + 文件名规范化（routes 与入口共用）
 │       ├── metadata-store.js # 元数据快照：载入 / 合并 / CAS 落盘（不含领域规范化）
 │       └── metadata-normalizers.js # 领域规范化聚合点（唯一允许 import 多个领域的地方）
 ├── src/
@@ -68,7 +72,7 @@ src/styles/components.css 944 行  原文件第 849–末尾
 | 状态层 | `server/state.js` | 连接池、限流/会话/上传计数表、缓存、CAS 计数 | 仅可依赖配置层 |
 | 存储层 | `server/lib/metadata-store.js` | 元数据快照的载入、合并与 CAS 落盘 | 可依赖配置层与状态层 |
 | 规范化层 | `server/lib/metadata-normalizers.js` | 把原始 JSON 规范化为内存模型 | 可依赖以上各层 |
-| 工具层 | `server/lib/*.js` | 无状态纯函数、错误构造 | 可依赖以上各层 |
+| 工具层 | `server/lib/*.js` | 无状态纯函数、错误构造、多域共用的中间件（`upload.js` 的 multer 实例） | 可依赖以上各层 |
 | 服务层 | `server/services/*.js` | 按业务域聚合领域逻辑（账号域已迁出） | 不得依赖 `routes/` 与入口 |
 | 路由层 | `server/routes/*.js` | 按业务域注册路由，只做 HTTP 适配 | 可依赖服务层及以下 |
 | 入口层 | `server.mjs` | 应用装配、路由注册、启动与优雅退出 | 可依赖以上各层 |
@@ -107,13 +111,25 @@ src/styles/components.css 944 行  原文件第 849–末尾
 
 8. **路由注册顺序 = Express 匹配顺序，`server.mjs` 中的 `registerXxxRoutes(app)` 调用顺序不可调整。**
    各路由文件内部按原始顺序排列，新路由追加到所属文件末尾。
+   一个路由文件可以导出多个注册函数，用于在流水线的不同位置插入（如
+   `routes/shares.js` 的「创建」在 upload-sessions 之前、「访问」在其之后）；
+   但**调用点顺序必须与原文件一致**。
 
-9. **搬迁按「先函数、后路由」的顺序。** 路由处理器直接引用业务函数；
+9. **路由模块之间不得互相依赖。** 相邻域共享的中间件与工具应下沉到 `lib/`，
+   例如 multer 实例放 `lib/upload.js`（`/api/shares` 与 `/api/collections` 都要用）。
+   `verify:refactor` 会强制这条规则。
+
+10. **搬迁按「先函数、后路由」的顺序。** 路由处理器直接引用业务函数；
    若先搬路由，就得让入口反向导出函数给路由用，那是循环依赖。
    搬迁方法：用脚本算 `app.get/post/...` 处理器的**函数闭包**（而非手写清单），
    再确认闭包对顶层符号零逃逸，然后整块搬移。
 
-**验证**：`npm run verify:refactor` 会检查循环依赖、结构约束、未使用导入、缺失导入，并算出依赖层级（当前最大深度 6）。
+11. **`lib/` 里只放被多域共用的东西。** 判断标准是「有没有第二个消费者」，
+   而不是「看起来通用」。`normalizeUploadFileName` 从 `services/account.js`
+   下沉到 `lib/upload.js` 就是因为它被 account / shares / lib / 入口四处使用；
+   只被一个域用的工具留在该域的 service 里。
+
+**验证**：`npm run verify:refactor` 会检查循环依赖、结构约束、未使用导入、缺失导入，并算出依赖层级（当前最大深度 7）。
 
 ### 前端
 
@@ -302,6 +318,35 @@ organizations-join / upgrade）的处理器作为种子，算函数依赖闭包 
 **结果**：`server.mjs` 5196 → 2774 行；新增 `services/account.js` 1425 行 +
 `routes/{account,workspace,upgrade}.js` 共 1118 行。
 搬迁途中校验器自动抓出 94 个失效导入。
+
+### 2026-10-09：抽出分享/上传域（第二个业务域）
+
+沿用账号域确立的流程：算闭包 → 三确认 → 先 services 后 routes → 逐条比对路由顺序。
+
+**同样遇到「子簇不可拆」**：upload 与 shares 实测互相引用（6 条双向边：
+`assertUploadCapacity` → `assertCollectionFiles` / `collectionCapacityBytes` /
+`assertTeamCapacity` / `assertAccountCapacity`，而 `collectionCapacityBytes` →
+`guestQuotaLimitBytes`），故合并为单个 `services/shares.js`。
+
+**multer 中间件的归属**：`upload.array('files', N)` 同时被 `/api/shares`（本轮搬出）
+与 `/api/collections/:token/submissions`（仍在入口）使用。放在 service 里会让
+「收集」这个未来的 route 反向依赖「分享」的 service；故下沉到 `lib/upload.js`，
+并为此新增校验规则「路由模块之间不得互相依赖」。
+
+**一个路由文件可导出多个注册函数**：`POST /api/shares` 在源文件中位于
+upload-sessions 路由之前，因此 `routes/shares.js` 分成 `registerShareCreateRoutes`
+与 `registerShareAccessRoutes` 两个入口，在流水线的两个位置分别调用 ——
+保持「注册顺序与原文件逐条一致」这条不变量不破。
+
+**顺带下沉通用工具**：`normalizeUploadFileName` / `looksLikeMojibake` 原在
+`services/account.js`，但被四个模块使用；lib 不得反向 import services，
+故下沉到 `lib/upload.js`。
+
+**结果**：`server.mjs` 2774 → 1238 行；新增 `services/shares.js` 1186 行、
+`routes/{shares,upload}.js` 467 行、`lib/upload.js` 42 行。
+
+**行尾统一**：此前 `server/` 下 CRLF / LF / 混合三种并存（历次脚本产出不统一），
+本轮一并规范化为 CRLF，与 `core.autocrlf=true` 的检出结果对齐。
 
 ## 服务端拆分进度（2026-10-09）
 
