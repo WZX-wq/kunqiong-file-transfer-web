@@ -195,7 +195,7 @@ try {
   check('HEAD grants password access without downloading/counting', head.status === 200 && !!cookies && (await api(`/api/shares/token/${protectedShare.id}`)).data.share.downloadCount === before)
   const native = await fetch(base + `/api/shares/${protectedShare.id}/download`, { headers: { cookie: cookies, range: 'bytes=0-3' } })
   check('Native password download preserves byte ranges', native.status === 206 && await native.text() === 'pass')
-  const source = fs.readFileSync(path.join(root, 'src', 'main.jsx'), 'utf8').split('async function downloadBinaryWithProgress')[1].split('async function downloadResponseError')[0]
+  const source = fs.readFileSync(path.join(root, 'src', 'lib', 'api.js'), 'utf8').split('async function downloadBinaryWithProgress')[1].split('async function downloadResponseError')[0]
   check('Client download never buffers file bodies', source.includes("method: 'HEAD'") && !source.includes('new Blob') && !source.includes('getReader') && !source.includes('.blob('))
   const retrievalUi = fs.readFileSync(path.join(root, 'src', 'main.jsx'), 'utf8')
   check('取件码查找错误可触发收件账号登录并保留取件码', retrievalUi.includes('try { await onFind() } catch (err)') && retrievalUi.includes("setRequiresLogin(err.code === 'directed_login_required')") && retrievalUi.includes("searchParams.set('retrieve', code.trim().toUpperCase())"))

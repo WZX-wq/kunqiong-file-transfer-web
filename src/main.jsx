@@ -22,7 +22,7 @@ import {
   apiRequest, buildShareOptions, canUseImageClipboard, copyImageWithSelection,
   copyTextWithTextarea, createDownloadState, createShareFileDownloadConfig,
   createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState,
-  currentSpeed, downloadResponseError, downloadStatusText, filenameFromContentDisposition,
+  currentSpeed, downloadBinaryWithProgress, downloadResponseError, downloadStatusText, filenameFromContentDisposition,
   getUrlParts, isDownloadBusy, markRecordUnavailable, pickUploadChunkSize, sha256Hex,
   uploadResumeSignature, wait, xhrUploadChunk
 } from './lib/api.js'
@@ -6219,20 +6219,6 @@ function useDownloadTask() {
   return { downloadTask, startDownload, retryDownload, downloadBusy: isDownloadBusy(downloadTask) }
 }
 
-async function downloadBinaryWithProgress(config, onProgress) {
-  onProgress({ status: 'preparing', label: config.label, filename: config.filename, error: '' })
-  const response = await fetch(config.url, { method: 'HEAD', credentials: 'include', headers: config.headers || {} })
-  if (!response.ok) throw await downloadResponseError(response)
-  const filename = config.filename || filenameFromContentDisposition(response.headers.get('content-disposition')) || '下载文件'
-  const link = document.createElement('a')
-  link.href = config.url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  onProgress({ status: 'handed_off', filename })
-  return { handedOff: true }
-}
 
 async function copyImageToClipboard(dataUrl) {
   if (canUseImageClipboard()) {

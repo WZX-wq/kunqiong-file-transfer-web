@@ -328,3 +328,18 @@ export function createSubmissionFileDownloadConfig(collection, submission, fileI
     totalBytes: Number(file.size || 0),
   }
 }
+
+export async function downloadBinaryWithProgress(config, onProgress) {
+  onProgress({ status: 'preparing', label: config.label, filename: config.filename, error: '' })
+  const response = await fetch(config.url, { method: 'HEAD', credentials: 'include', headers: config.headers || {} })
+  if (!response.ok) throw await downloadResponseError(response)
+  const filename = config.filename || filenameFromContentDisposition(response.headers.get('content-disposition')) || '下载文件'
+  const link = document.createElement('a')
+  link.href = config.url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  onProgress({ status: 'handed_off', filename })
+  return { handedOff: true }
+}
