@@ -363,3 +363,18 @@ export function mergePlanPricing(plan, remotePricing) {
   if (!plan || !pricing) return plan
   return { ...plan, monthlyPrice: pricing.priceCents, validityDays: pricing.validityDays, remotePriced: true, remotePackageName: pricing.packageName || '' }
 }
+
+export async function copyTextToClipboard(value) {
+  const text = String(value ?? '')
+  if (!text) throw new Error('copy-empty-text')
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {}
+  }
+
+  if (copyTextWithTextarea(text)) return
+  throw new Error('copy-text-not-supported')
+}
