@@ -8,6 +8,16 @@ import QRCode from 'qrcode'
 
 // 工具函数（已拆出）
 import {
+  apiRequest, buildShareOptions, canUseImageClipboard, copyImageWithSelection,
+  copyTextWithTextarea, createDownloadState, createShareFileDownloadConfig,
+  createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState,
+  currentSpeed, downloadResponseError, downloadStatusText, filenameFromContentDisposition,
+  getUrlParts, isDownloadBusy, markRecordUnavailable, pickUploadChunkSize, sha256Hex,
+  uploadResumeSignature, wait, xhrUploadChunk
+} from './lib/api.js'
+
+// 工具函数（已拆出）
+import {
   addLocalDays, addMonths, defaultDeadline, displayUserName, fileExtension, formatBytes,
   formatDate, formatDateInput, formatDuration, formatExpiry, formatLimitSize,
   formatMessageTime, formatPlanPrice, formatShortDate, isClosedStatus, isExpiredStatus,
@@ -6115,63 +6125,8 @@ function recordExpiryLabel(record) {
   return `${record.kind === 'collection' ? '截止' : '到期'} ${formatShortDate(deadline)}`
 }
 
-function createUploadState() {
-  return {
-    status: 'idle',
-    phase: '',
-    progress: 0,
-    uploadedBytes: 0,
-    totalBytes: 0,
-    speedBps: 0,
-    etaSeconds: null,
-    currentFile: '',
-    retryCount: 0,
-    error: '',
-  }
-}
-
-function createUploadSessionState() {
-  return {
-    sessionId: '',
-    fileIndex: 0,
-    chunkIndex: 0,
-    uploadedBytes: 0,
-    totalBytes: 0,
-    startedAt: 0,
-    paused: false,
-    abortCurrent: null,
-    activeXhrs: new Set(),
-  }
-}
-
-// 分片大小选择：会话创建时确定，服务端按同一配置定位写入。
-// 弱网/省流量 → 2MB 减少单片失败代价；大批量 → 16MB 减少请求数；默认 8MB。
-function pickUploadChunkSize(files) {
-  const totalBytes = files.reduce((sum, item) => sum + item.size, 0)
-  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {}
-  if (connection.saveData || ['slow-2g', '2g', '3g'].includes(connection.effectiveType)) return 2 * 1024 * 1024
-  if (totalBytes >= 512 * 1024 * 1024) return 16 * 1024 * 1024
-  return 8 * 1024 * 1024
-}
-
-// 分片 SHA-256：非 secure context（http 局域网地址）下 crypto.subtle 不存在，跳过校验降级传输。
-async function sha256Hex(buffer) {
-  if (!globalThis.crypto?.subtle) return ''
-  const digest = await crypto.subtle.digest('SHA-256', buffer)
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
-}
-
 const UPLOAD_RESUME_KEY = 'kunqiong_upload_resume'
 const UPLOAD_RESUME_TTL_MS = 11 * 60 * 60 * 1000
-
-function uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions) {
-  return JSON.stringify({
-    chunkSize,
-    files: files.map((item) => ({ name: item.name, size: item.size, relativePath: item.relativePath || '', mimeType: item.file?.type || item.mimeType || '' })),
-    options: shareOptions,
-    mode: uploadConfig.sessionBody || {},
-  })
-}
 
 function readUploadResume() {
   try { return JSON.parse(localStorage.getItem(UPLOAD_RESUME_KEY) || 'null') } catch { return null }
@@ -6344,75 +6299,12 @@ function uploadStateFromProgress(session, loadedBytes, phase, currentFile, retry
   }
 }
 
-function currentSpeed(session, loadedBytes) {
-  const elapsedSeconds = Math.max((Date.now() - session.startedAt) / 1000, 0.3)
-  return loadedBytes / elapsedSeconds
-}
-
-function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkData, chunkHash, filename }, { uploadRef, onProgress }) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    const uploadState = uploadRef.current
-    const body = new FormData()
-    body.append('fileIndex', String(fileIndex))
-    body.append('chunkIndex', String(chunkIndex))
-    body.append('totalChunks', String(totalChunks))
-    body.append('chunk', new Blob([chunkData], { type: 'application/octet-stream' }), filename)
-    if (chunkHash) body.append('chunkHash', chunkHash)
-    const activeXhrs = uploadState.activeXhrs || new Set()
-    uploadState.activeXhrs = activeXhrs
-    activeXhrs.add(xhr)
-    uploadState.abortCurrent = () => activeXhrs.forEach((request) => request.abort())
-    const cleanup = () => {
-      activeXhrs.delete(xhr)
-      if (!activeXhrs.size) uploadState.abortCurrent = null
-    }
-    xhr.open('POST', url)
-    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded) }
-    xhr.onload = () => {
-      cleanup()
-      let data = {}
-      try { data = JSON.parse(xhr.responseText || '{}') } catch { data = {} }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(data)
-      else {
-        const error = new Error(data.message || '分片上传失败')
-        error.status = xhr.status
-        error.code = data.code || ''
-        error.guestQuota = data.guestQuota || null
-        reject(error)
-      }
-    }
-    xhr.onerror = () => {
-      cleanup()
-      reject(new Error('网络连接失败，请确认鲲穹服务已启动'))
-    }
-    xhr.onabort = () => {
-      cleanup()
-      reject(uploadState.paused ? new UploadPausedError() : new Error('上传已中断'))
-    }
-    xhr.send(body)
-  })
-}
-
-function buildShareOptions(settings) {
-  const downloadLimit = settings.downloadLimit === 'custom' ? settings.customDownloadLimit : settings.downloadLimit
-  return {
-    expiryDays: settings.expiryDays,
-    downloadLimit,
-    password: settings.passwordEnabled ? settings.password : '',
-    codeLength: settings.codeLength,
-    recipients: settings.recipients,
-  }
-}
-
 class UploadPausedError extends Error {
   constructor() {
     super('上传已暂停')
     this.name = 'UploadPausedError'
   }
 }
-
-function wait(ms) { return new Promise((resolve) => window.setTimeout(resolve, ms)) }
 
 async function syncRecords(records) {
   const updates = await Promise.all(normalizeRecords(records).map(syncRecord))
@@ -6471,24 +6363,6 @@ async function syncCollectionRecord(record) {
   }
 }
 
-function markRecordUnavailable(record, message = '') {
-  if (!/过期|失效|不存在|用完|关闭|截止|不可用/.test(message)) return record
-  return {
-    ...record,
-    status: message.includes('关闭') ? '已关闭' : record.kind === 'collection' ? '已截止' : '已失效',
-    updatedAt: new Date().toISOString(),
-  }
-}
-
-function getUrlParts(value) {
-  if (!value) return []
-  try {
-    return new URL(value, window.location.origin).pathname.split('/').filter(Boolean)
-  } catch {
-    return []
-  }
-}
-
 function getShareToken(value) {
   const parts = getUrlParts(value)
   return parts[0] === 'share' ? parts[1] || '' : ''
@@ -6503,41 +6377,6 @@ function getManageToken(value) {
   const parts = getUrlParts(value)
   const index = parts.indexOf('manage')
   return index >= 0 ? parts[index + 1] || '' : ''
-}
-
-async function apiRequest(url, options = {}) {
-  const { headers = {}, ...fetchOptions } = options
-  const response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'Content-Type': 'application/json', ...headers } })
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const error = new Error(data.message || '请求失败')
-    error.status = response.status
-    error.code = data.code || ''
-    error.guestQuota = data.guestQuota || null
-    throw error
-  }
-  return data
-}
-
-function xhrRequest(url, { method = 'POST', body, onProgress, onRequest }) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open(method, url)
-    onRequest?.(xhr)
-    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100)) }
-    xhr.onload = () => {
-      const data = JSON.parse(xhr.responseText || '{}')
-      if (xhr.status >= 200 && xhr.status < 300) resolve(data)
-      else reject(new Error(data.message || '上传失败'))
-    }
-    xhr.onerror = () => reject(new Error('网络连接失败，请确认鲲穹服务已启动'))
-    xhr.onabort = () => {
-      const error = new Error('提交已取消')
-      error.name = 'UploadCancelledError'
-      reject(error)
-    }
-    xhr.send(body)
-  })
 }
 
 function useDownloadTask() {
@@ -6577,36 +6416,6 @@ function useDownloadTask() {
   return { downloadTask, startDownload, retryDownload, downloadBusy: isDownloadBusy(downloadTask) }
 }
 
-function createDownloadState() {
-  return {
-    status: 'idle',
-    label: '',
-    filename: '',
-    progress: 0,
-    loadedBytes: 0,
-    totalBytes: 0,
-    speedBps: 0,
-    etaSeconds: null,
-    canResume: false,
-    isEstimated: false,
-    retryCount: 0,
-    retryConfig: null,
-    error: '',
-  }
-}
-
-function isDownloadBusy(task) {
-  return ['preparing', 'downloading', 'saving'].includes(task?.status)
-}
-
-function downloadStatusText(task) {
-  if (task.status === 'preparing') return '准备下载'
-  if (task.status === 'saving') return '正在保存'
-  if (task.status === 'complete') return '下载完成'
-  if (task.status === 'failed') return '下载失败'
-  return task.label || '正在下载'
-}
-
 async function downloadBinaryWithProgress(config, onProgress) {
   onProgress({ status: 'preparing', label: config.label, filename: config.filename, error: '' })
   const response = await fetch(config.url, { method: 'HEAD', credentials: 'include', headers: config.headers || {} })
@@ -6622,31 +6431,6 @@ async function downloadBinaryWithProgress(config, onProgress) {
   return { handedOff: true }
 }
 
-async function downloadResponseError(response) {
-  const text = await response.text().catch(() => '')
-  try {
-    const data = JSON.parse(text)
-    return new Error(data.message || `下载失败（${response.status}）`)
-  } catch {
-    return new Error(text || `下载失败（${response.status}）`)
-  }
-}
-
-function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
-function canUseImageClipboard() {
-  return Boolean(window.isSecureContext && navigator.clipboard?.write && typeof window.ClipboardItem !== 'undefined')
-}
-
 async function copyImageToClipboard(dataUrl) {
   if (canUseImageClipboard()) {
     const response = await fetch(dataUrl)
@@ -6656,47 +6440,6 @@ async function copyImageToClipboard(dataUrl) {
   }
   if (copyImageWithSelection(dataUrl)) return
   throw new Error('copy-image-not-supported')
-}
-
-function copyImageWithSelection(dataUrl) {
-  const activeElement = document.activeElement
-  const container = document.createElement('div')
-  container.contentEditable = 'true'
-  container.setAttribute('aria-hidden', 'true')
-  container.style.position = 'fixed'
-  container.style.top = '0'
-  container.style.left = '-9999px'
-  container.style.width = '220px'
-  container.style.height = '220px'
-  container.style.overflow = 'hidden'
-  container.style.opacity = '0'
-  const image = document.createElement('img')
-  image.src = dataUrl
-  image.alt = '分享二维码'
-  image.style.width = '200px'
-  image.style.height = '200px'
-  container.appendChild(image)
-  document.body.appendChild(container)
-
-  const selection = window.getSelection()
-  const range = document.createRange()
-  range.selectNodeContents(container)
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-
-  let copied = false
-  try {
-    copied = document.execCommand('copy')
-  } catch {
-    copied = false
-  }
-
-  selection?.removeAllRanges()
-  container.remove()
-  if (activeElement && typeof activeElement.focus === 'function') {
-    activeElement.focus({ preventScroll: true })
-  }
-  return copied
 }
 
 async function copyTextToClipboard(value) {
@@ -6714,47 +6457,6 @@ async function copyTextToClipboard(value) {
   throw new Error('copy-text-not-supported')
 }
 
-function copyTextWithTextarea(text) {
-  const textarea = document.createElement('textarea')
-  const activeElement = document.activeElement
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.top = '0'
-  textarea.style.left = '-9999px'
-  textarea.style.width = '1px'
-  textarea.style.height = '1px'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.focus()
-  textarea.select()
-  textarea.setSelectionRange(0, textarea.value.length)
-  let copied = false
-  try {
-    copied = document.execCommand('copy')
-  } catch {
-    copied = false
-  }
-  textarea.remove()
-  if (activeElement && typeof activeElement.focus === 'function') {
-    activeElement.focus({ preventScroll: true })
-  }
-  return copied
-}
-
-function currentDownloadSpeed(startedAt, loadedBytes) {
-  const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.1)
-  return Math.round(loadedBytes / elapsedSeconds)
-}
-
-function filenameFromContentDisposition(value = '') {
-  const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
-  if (encoded) {
-    try { return decodeURIComponent(encoded) } catch {}
-  }
-  return value.match(/filename="?([^";]+)"?/i)?.[1] || ''
-}
-
 function createShareDownloadConfig(share, { password = '' } = {}) {
   const files = share.files || []
   return {
@@ -6762,16 +6464,6 @@ function createShareDownloadConfig(share, { password = '' } = {}) {
     filename: files.length === 1 ? files[0].name : '鲲穹文件包.zip',
     label: files.length === 1 ? `下载 ${files[0]?.name || '文件'}` : `打包下载 ${files.length} 个文件`,
     totalBytes: totalFileSize(files),
-    headers: password ? { 'x-share-password': password } : {},
-  }
-}
-
-function createShareFileDownloadConfig(share, file, fileIndex, { password = '' } = {}) {
-  return {
-    url: `${window.location.origin}/api/shares/${encodeURIComponent(share.id)}/files/${fileIndex}/download`,
-    filename: file.name || '下载文件',
-    label: `下载 ${file.name || '文件'}`,
-    totalBytes: Number(file.size || 0),
     headers: password ? { 'x-share-password': password } : {},
   }
 }
@@ -6803,16 +6495,6 @@ function createSubmissionDownloadConfig(collection, submission) {
     filename: `${safeDownloadName(submission.participantName || '提交文件')}.zip`,
     label: `打包下载 ${submission.participantName || '提交文件'}`,
     totalBytes: totalFileSize(submission.files),
-  }
-}
-
-function createSubmissionFileDownloadConfig(collection, submission, fileIndex) {
-  const file = submission.files?.[fileIndex] || {}
-  return {
-    url: `${window.location.origin}/api/collections/manage/${encodeURIComponent(collection.manageToken)}/submissions/${encodeURIComponent(submission.id)}/files/${fileIndex}/download`,
-    filename: file.name || '下载文件',
-    label: `下载 ${file.name || '文件'}`,
-    totalBytes: Number(file.size || 0),
   }
 }
 
