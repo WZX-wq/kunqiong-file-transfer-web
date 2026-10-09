@@ -30,18 +30,18 @@ import {
   tencentSmsBindTemplateId, tencentSmsRegion,
   webMemberApiBase, webMemberSubsiteName, WEB_MEMBER_PACKAGE_ENV_KEYS, DEFAULT_WEB_MEMBER_PACKAGE_IDS,
   AUTH_COOKIE_NAME, SHARE_ACCESS_COOKIE_PREFIX, SHARE_ACCESS_TTL_SECONDS, OAUTH_STATE_TTL_MS,
-  MAX_ACCOUNT_RECORDS, MAX_ACCOUNT_MESSAGES, MAX_RECORD_FILES, MAX_RECORD_SUBMISSIONS,
-  DEFAULT_SYSTEM_CONFIG,
+  MAX_ACCOUNT_RECORDS,
+  ACCOUNT_PLANS, ACCOUNT_PLAN_RANK,
+  DEFAULT_ACCOUNT_MESSAGES,
   VERIFICATION_CODE_TTL_MS, MAX_VERIFICATION_CODES, ACCOUNT_SINGLE_FILE_BYTES,
-  ACCOUNT_RECORD_SCOPES, ACCOUNT_RECORD_KINDS, ACCOUNT_MESSAGE_CATEGORIES,
   ADMIN_USER_IDS, ADMIN_ACCOUNT_USERNAME, ADMIN_ACCOUNT_PASSWORD, adminCredentialsConfigured,
   ADMIN_COOKIE_NAME, ADMIN_SESSION_TTL_MS, ADMIN_LOGIN_MAX_ATTEMPTS, ADMIN_LOGIN_WINDOW_MS,
   JOIN_REQUEST_MAX_PER_WINDOW, JOIN_REQUEST_WINDOW_MS, JOIN_REQUEST_REJECT_COOLDOWN_MS,
-  COLLECTION_TYPE_OPTIONS, COLLECTION_TYPE_EXTENSIONS, UPGRADE_ORDER_STATUSES,
-  MAX_UPGRADE_ORDERS, PAYMENT_QUERY_RETENTION_MS, MAX_AUDIT_LOGS,
-  GUEST_ID_COOKIE, GUEST_ID_MAX_AGE_SECONDS, MAX_GUEST_USAGE_ENTRIES,
+  COLLECTION_TYPE_OPTIONS, COLLECTION_TYPE_EXTENSIONS,
+  MAX_UPGRADE_ORDERS, PAYMENT_QUERY_RETENTION_MS,
+  GUEST_ID_COOKIE, GUEST_ID_MAX_AGE_SECONDS,
   scanMode, clamavHost, clamavPort, scanTimeoutMs,
-  TEST_ENTERPRISE_USER_KEYS, testEnterpriseForAllUsers, testEnforceEnterpriseAllowlist,
+  testEnterpriseForAllUsers,
   testVerificationDebugMode,
   serverPort,
 } from './server/config.js'
@@ -64,48 +64,14 @@ import {
 import {
   initMetadata, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata,
 } from './server/lib/metadata-store.js'
-const ACCOUNT_PLANS = {
-  free: {
-    id: 'free', label: '基础版', totalBytes: 20 * 1024 * 1024 * 1024, permanent: false, team: false,
-    tagline: '个人临时传输', monthlyPrice: 0, validityDays: null,
-    features: ['20 GB 存储空间', '文件临时保存，到期自动失效', '分享码 / 链接 / 二维码取件', '文件收集任务'],
-  },
-  member: {
-    id: 'member', label: '会员版', totalBytes: 100 * 1024 * 1024 * 1024, permanent: false, team: false,
-    // monthlyPrice 仅作「主站实价拉不到时」的兜底展示价，尽量对齐主站当前挂牌价（轻享月卡 ¥19）；
-    // 真实下单/支付金额始终以主站 pay_amount 为准（createWebMemberPaymentOrder 会覆盖 order.amount）。
-    tagline: '个人会员空间', monthlyPrice: 1900, validityDays: 30,
-    features: ['100 GB 存储空间', '会员期内文件持续保存', '完整分享与收集能力', '会员专属标识'],
-  },
-  team: {
-    id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, teamSpaceBytes: 250 * 1024 * 1024 * 1024, permanent: false, team: true,
-    tagline: '小团队协作', monthlyPrice: 4900, validityDays: 90,
-    features: ['500 GB 个人空间', '250 GB 团队空间', '团队成员邀请与协作', '企业专属分享链接'],
-  },
-  enterprise: {
-    id: 'enterprise', label: '企业版', totalBytes: 2 * 1024 * 1024 * 1024 * 1024, teamSpaceBytes: 1024 * 1024 * 1024 * 1024, permanent: true, team: true,
-    tagline: '企业统一管控', monthlyPrice: 15900, validityDays: null,
-    features: ['2048 GB 个人空间', '1024 GB 团队空间', '组织与成员统一管理', '企业专属入口与审计日志'],
-  },
-}
-const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, enterprise: 3 }
-const DEFAULT_NOTIFICATION_SETTINGS = {
-  inApp: true,
-  email: false,
-  incomingShare: true,
-  shareExpiring: true,
-  shareDownloaded: true,
-  collectionExpiring: true,
-  collectionSubmitted: true,
-}
-const DEFAULT_FILE_CLEANUP_SETTINGS = {
-  enabled: false,
-  days: 3,
-}
-const DEFAULT_ACCOUNT_MESSAGES = [
-  { id: 'system-welcome', category: 'system', eventType: 'welcome', title: '欢迎使用鲲穹文件传输', body: '你的账户已连接，可以开始发送和收集文件。' },
-  { id: 'official-update', category: 'official', eventType: 'official', title: '鲲穹服务通知', body: '站内消息、账号容量和账号绑定已接入当前账户。' },
-]
+
+// normalizeMetadata 的传递依赖闭包已移至 metadata-normalizers.js；
+// 它同时是注入给 metadata-store 的规范化函数来源。
+import {
+  accountRecordOwnerKey, compareAccountRecords, configuredAccountPlan, mergeAccountRecord, mergeAccountUser, mergeLoginMethods, normalizeAccountMessage, normalizeAccountMessages, normalizeAccountRecords, normalizeAccountUser, normalizeAuditLogs, normalizeEmailValue, normalizeFileCleanupSettings, normalizeMetadata, normalizeNonNegativeInteger, normalizeNotificationSettings, normalizeNullablePositiveInteger, normalizePaymentPayload, normalizePaymentQueryCredential, normalizePhoneValue, normalizePlanId, normalizeRecordDate, normalizeSystemConfig, normalizeVerificationCodes, normalizeWebMemberPayType, publicUser, trimRecordString,
+} from './server/lib/metadata-normalizers.js'
+
+// 业务常量（套餐、默认通知/清理设置、默认站内消息）已移至 server/config.js。
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const serverHost = process.env.HOST || process.env.KUNQIONG_HOST || '0.0.0.0'
 // 元数据并发写保护：revision 是快照的单调版本号，落盘走 CAS（MySQL 用 WHERE revision = ?）。
@@ -2387,101 +2353,6 @@ process.once('SIGINT', () => { shutdown('SIGINT').catch(() => process.exit(1)) }
 process.once('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)) })
 
 
-function normalizeMetadata(value = {}) {
-  const shares = Array.isArray(value.shares) ? value.shares : []
-  for (const share of shares) {
-    if (!share.manageToken) {
-      share.manageToken = createToken(18)
-      runtime.metadataNeedsPersist = true
-    }
-    if (share.status === 'expired') {
-      share.status = 'closed'
-      share.closeReason = share.closeReason || 'expired'
-      runtime.metadataNeedsPersist = true
-    }
-  }
-  const collections = Array.isArray(value.collections) ? value.collections : []
-  for (const task of collections) {
-    if (!task.manageToken) {
-      task.manageToken = createToken(18)
-      runtime.metadataNeedsPersist = true
-    }
-    if (!Array.isArray(task.submissions)) {
-      task.submissions = []
-      runtime.metadataNeedsPersist = true
-    }
-  }
-  const sessions = Array.isArray(value.sessions)
-    ? value.sessions
-      .filter((session) => session?.id && session?.user)
-      .map((session) => {
-        if (Object.prototype.hasOwnProperty.call(session, 'accessToken') || Object.prototype.hasOwnProperty.call(session, 'tokenType')) {
-          runtime.metadataNeedsPersist = true
-        }
-        const { accessToken: _accessToken, tokenType: _tokenType, ...sanitized } = session
-        return sanitized
-      })
-    : []
-  const users = normalizeAccountUserStore(value.users, sessions)
-  return {
-    ...value,
-    shares,
-    collections,
-    sessions,
-    records: normalizeAccountRecordStore(value.records),
-    users,
-    messages: normalizeAccountMessageStore(value.messages),
-    notificationSettings: normalizeNotificationSettingsStore(value.notificationSettings),
-    verificationCodes: normalizeVerificationCodes(value.verificationCodes),
-    auditLogs: normalizeAuditLogs(value.auditLogs),
-    organizations: normalizeOrganizations(value.organizations),
-    upgradeOrders: normalizeUpgradeOrders(value.upgradeOrders),
-    guestUsage: normalizeGuestUsageStore(value.guestUsage),
-    systemConfig: normalizeSystemConfig(value.systemConfig),
-  }
-}
-
-function normalizeUpgradeOrders(value = []) {
-  if (!Array.isArray(value)) return []
-  return value.map((item) => {
-    const paymentQueryCredential = normalizePaymentQueryCredential(item)
-    if (item?.paymentQueryCredential && (!paymentQueryCredential
-      || item.paymentQueryCredential.apiWebToken !== paymentQueryCredential.apiWebToken
-      || item.paymentQueryCredential.expiresAt !== paymentQueryCredential.expiresAt)) runtime.metadataNeedsPersist = true
-    return {
-      id: trimRecordString(item?.id, 80) || createToken(10),
-      orderNo: trimRecordString(item?.orderNo, 40) || `UPG-${createToken(8).toUpperCase()}`,
-      userId: trimRecordString(item?.userId, 120),
-      planId: normalizePlanId(item?.planId),
-      status: UPGRADE_ORDER_STATUSES.has(item?.status) ? item.status : 'expired',
-      amount: Number(item?.amount) > 0 ? Number(item.amount) : null,
-      payType: normalizeWebMemberPayType(item?.payType || item?.payment?.pay_type || 1),
-      remoteOrderNo: trimRecordString(item?.remoteOrderNo || item?.remoteOrderNumber, 80),
-      remotePackageId: normalizeNullablePositiveInteger(item?.remotePackageId),
-      remotePackageName: trimRecordString(item?.remotePackageName, 80),
-      remotePackageDays: normalizeNullablePositiveInteger(item?.remotePackageDays),
-      payment: normalizePaymentPayload(item?.payment),
-      createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
-      updatedAt: normalizeRecordDate(item?.updatedAt) || new Date().toISOString(),
-      paidAt: normalizeRecordDate(item?.paidAt) || null,
-      remoteExpireAt: normalizeRecordDate(item?.remoteExpireAt) || null,
-      paymentQueryCredential,
-      paymentRequiresLogin: Boolean(item?.paymentRequiresLogin),
-    }
-  }).filter((item) => item.userId)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, MAX_UPGRADE_ORDERS)
-}
-
-function normalizePaymentQueryCredential(order) {
-  const credential = order?.paymentQueryCredential
-  const apiWebToken = trimRecordString(credential?.apiWebToken, 300)
-  const deadline = new Date(order?.createdAt).getTime() + PAYMENT_QUERY_RETENTION_MS
-  const expiresAt = Math.min(new Date(credential?.expiresAt).getTime(), deadline)
-  if (!apiWebToken || order.status === 'paid' || order.paymentRequiresLogin || !order.remoteOrderNo || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null
-  return { apiWebToken, expiresAt: new Date(expiresAt).toISOString() }
-}
-
 function upgradeOrderSummary(order = {}) {
   const plan = configuredAccountPlan(order.planId)
   return {
@@ -2514,104 +2385,6 @@ function findUpgradeOrder(orderId, userId) {
 }
 
 
-function normalizeMemberStatus(value) {
-  if (value === 'invited') return 'invited'
-  if (value === 'requested') return 'requested'
-  return 'active'
-}
-
-function normalizeSystemConfig(value = {}) {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-  const defaultShareDays = Number(source.defaultShareDays)
-  const maxShareDays = Number(source.maxShareDays)
-  const anonymousMaxFileSizeMb = Number(source.anonymousMaxFileSizeMb)
-  const anonymousTotalSizeMb = Number(source.anonymousTotalSizeMb)
-  const maxBatchFiles = Number(source.maxBatchFiles)
-  const auditLogRetentionDays = Number(source.auditLogRetentionDays)
-  const orphanGraceHours = Number(source.orphanGraceHours)
-  return {
-    maintenanceMode: Boolean(source.maintenanceMode),
-    defaultShareDays: Number.isFinite(defaultShareDays) ? Math.min(365, Math.max(1, Math.floor(defaultShareDays))) : DEFAULT_SYSTEM_CONFIG.defaultShareDays,
-    maxShareDays: Number.isFinite(maxShareDays) ? Math.min(365, Math.max(1, Math.floor(maxShareDays))) : DEFAULT_SYSTEM_CONFIG.maxShareDays,
-    anonymousMaxFileSizeMb: Number.isFinite(anonymousMaxFileSizeMb) ? Math.min(5120, Math.max(1, Math.floor(anonymousMaxFileSizeMb))) : DEFAULT_SYSTEM_CONFIG.anonymousMaxFileSizeMb,
-    anonymousTotalSizeMb: Number.isFinite(anonymousTotalSizeMb) ? Math.min(102400, Math.max(0, Math.floor(anonymousTotalSizeMb))) : DEFAULT_SYSTEM_CONFIG.anonymousTotalSizeMb,
-    maxBatchFiles: Number.isFinite(maxBatchFiles) ? Math.min(MAX_FILES, Math.max(1, Math.floor(maxBatchFiles))) : DEFAULT_SYSTEM_CONFIG.maxBatchFiles,
-    auditLogRetentionDays: Number.isFinite(auditLogRetentionDays) ? Math.min(3650, Math.max(1, Math.floor(auditLogRetentionDays))) : DEFAULT_SYSTEM_CONFIG.auditLogRetentionDays,
-    orphanGraceHours: Number.isFinite(orphanGraceHours) ? Math.min(720, Math.max(1, Math.floor(orphanGraceHours))) : DEFAULT_SYSTEM_CONFIG.orphanGraceHours,
-    planOverrides: normalizePlanOverrides(source.planOverrides),
-  }
-}
-
-function normalizePlanOverrides(value = {}) {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-  const overrides = {}
-  for (const planId of Object.keys(ACCOUNT_PLANS)) {
-    const plan = source[planId] && typeof source[planId] === 'object' ? source[planId] : {}
-    const totalGb = Number(plan.totalGb ?? plan.totalGB)
-    const monthlyPrice = Number(plan.monthlyPrice)
-    const validityDays = plan.validityDays === null || plan.validityDays === '' ? null : Number(plan.validityDays)
-    const normalized = {}
-    if (Number.isFinite(totalGb) && totalGb > 0) normalized.totalBytes = Math.round(Math.min(20480, totalGb) * 1024 ** 3)
-    if (Number.isFinite(monthlyPrice) && monthlyPrice >= 0) normalized.monthlyPrice = Math.round(monthlyPrice)
-    if (validityDays === null || (Number.isFinite(validityDays) && validityDays > 0)) normalized.validityDays = validityDays === null ? null : Math.min(3650, Math.floor(validityDays))
-    if (Object.keys(normalized).length) overrides[planId] = normalized
-  }
-  return overrides
-}
-
-function normalizeAuditLogs(value = []) {
-  if (!Array.isArray(value)) return []
-  return value.map((item) => ({
-    id: trimRecordString(item?.id, 80) || createToken(10),
-    type: trimRecordString(item?.type, 30) || 'access',
-    action: trimRecordString(item?.action, 180),
-    status: normalizeNonNegativeInteger(item?.status),
-    durationMs: normalizeNonNegativeInteger(item?.durationMs),
-    userId: trimRecordString(item?.userId, 120),
-    targetId: trimRecordString(item?.targetId, 160),
-    ip: trimRecordString(item?.ip, 80),
-    details: item?.details && typeof item.details === 'object' ? item.details : {},
-    createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
-  })).filter((item) => item.action).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, MAX_AUDIT_LOGS)
-}
-
-function normalizeOrganizations(value = []) {
-  const source = Array.isArray(value)
-    ? Object.fromEntries(value.map((item) => [item?.id, item]))
-    : value && typeof value === 'object' ? value : {}
-  const organizations = {}
-  for (const item of Object.values(source)) {
-    if (!item?.id) continue
-    const members = Array.isArray(item.members) ? item.members.map((member) => ({
-      id: trimRecordString(member?.id, 80) || createToken(10),
-      userId: trimRecordString(member?.userId, 120),
-      email: normalizeEmailValue(member?.email),
-      phone: normalizePhoneValue(member?.phone),
-      displayName: trimRecordString(member?.displayName, 80) || '团队成员',
-      role: member?.role === 'owner' ? 'owner' : 'member',
-      status: normalizeMemberStatus(member?.status),
-      invitationId: trimRecordString(member?.invitationId, 120),
-      joinRequestId: trimRecordString(member?.joinRequestId, 120),
-      joinSource: trimRecordString(member?.joinSource, 20),
-      joinMessage: trimRecordString(member?.joinMessage, 120),
-      requestedAt: normalizeRecordDate(member?.requestedAt),
-      reviewedAt: normalizeRecordDate(member?.reviewedAt),
-      joinedAt: normalizeRecordDate(member?.joinedAt),
-      invitedAt: normalizeRecordDate(member?.invitedAt),
-    })) : []
-    organizations[item.id] = {
-      id: trimRecordString(item.id, 80),
-      slug: trimRecordString(item.slug, 80) || `team-${createToken(6)}`,
-      name: trimRecordString(item.name, 80) || '未命名团队',
-      ownerUserId: trimRecordString(item.ownerUserId, 120),
-      createdAt: normalizeRecordDate(item.createdAt) || new Date().toISOString(),
-      updatedAt: normalizeRecordDate(item.updatedAt) || new Date().toISOString(),
-      members,
-    }
-  }
-  return organizations
-}
-
 function recordAuditLog(entry = {}) {
   if (!metadata.auditLogs) metadata.auditLogs = []
   metadata.auditLogs.unshift({
@@ -2642,20 +2415,8 @@ function sanitizeAuditPath(value = '') {
     .replace(/\/(share|collect)\/[^/]+/g, '/$1/[token]')
 }
 
-function normalizePlanId(value) {
-  const id = String(value || '').trim().toLowerCase()
-  return Object.prototype.hasOwnProperty.call(ACCOUNT_PLANS, id) ? id : 'free'
-}
-
 function accountPlanRank(planId) {
   return ACCOUNT_PLAN_RANK[normalizePlanId(planId)] ?? 0
-}
-
-function configuredAccountPlan(planId) {
-  const id = normalizePlanId(planId)
-  const base = ACCOUNT_PLANS[id] || ACCOUNT_PLANS.free
-  const override = normalizeSystemConfig(runtime.metadataReady?.systemConfig || {}).planOverrides[id] || {}
-  return { ...base, ...override, id: base.id, label: base.label, permanent: base.permanent, team: base.team, features: base.features }
 }
 
 function configuredAccountPlans() {
@@ -3583,29 +3344,6 @@ function assertConfiguredUploadLimits(req, files = []) {
 // ---------- 未登录（游客）累计传输配额 ----------
 // 身份维度：优先设备 cookie（kq_guest_id），请求完全没有 cookie 头时回落 IP；
 // 登录用户返回空串（不参与游客计费，走个人空间配额）。
-function normalizeGuestUsageStore(value = {}) {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-  const entries = []
-  for (const [key, entry] of Object.entries(source)) {
-    if (!key || !entry || typeof entry !== 'object') continue
-    const bytes = Math.max(0, Math.floor(Number(entry.bytes) || 0))
-    if (!bytes) continue
-    entries.push({
-      key,
-      entry: {
-        bytes,
-        uploads: Math.max(0, Math.floor(Number(entry.uploads) || 0)),
-        firstAt: normalizeRecordDate(entry.firstAt) || new Date().toISOString(),
-        lastAt: normalizeRecordDate(entry.lastAt) || new Date().toISOString(),
-      },
-    })
-  }
-  entries.sort((a, b) => new Date(a.entry.lastAt).getTime() - new Date(b.entry.lastAt).getTime())
-  const store = {}
-  for (const { key, entry } of entries.slice(-MAX_GUEST_USAGE_ENTRIES)) store[key] = entry
-  return store
-}
-
 function resolveGuestKey(req, res) {
   if (authSessionFromRequest(req)?.user?.id) return ''
   const existing = readCookie(req, GUEST_ID_COOKIE)
@@ -3911,36 +3649,6 @@ function contentDisposition(type, filename) {
   return `${type}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(String(filename || fallback))}`
 }
 
-function publicUser(user = {}) {
-  const avatarSource = String(user.avatarSource || '')
-  const providerAvatar = user.providerAvatar || (!avatarSource ? user.avatar : null) || null
-  const provider = String(user.provider || user.login_provider || user.oauth_provider || user.channel || user.source || '').trim()
-  const email = normalizeEmailValue(user.email || user.mail)
-  const phone = normalizePhoneValue(user.phone || user.mobile)
-  const username = trimRecordString(user.username || user.name || user.login || email || phone, 80)
-  return {
-    id: trimRecordString(user.id || user.userId || user.user_id || user.openid || user.open_id || user.unionid || user.sub || email || phone, 120),
-    username,
-    nickname: trimRecordString(user.nickname || user.displayName || user.display_name || username || '鲲穹用户', 80),
-    email,
-    phone,
-    avatar: user.avatar || null,
-    avatarSource,
-    providerAvatar,
-    provider,
-    loginMethods: mergeLoginMethods(user.loginMethods, provider ? ['oauth'] : []),
-    planId: user.planId || null,
-    planStartedAt: normalizeRecordDate(user.planStartedAt),
-    planExpiresAt: normalizeRecordDate(user.planExpiresAt),
-    organizationId: trimRecordString(user.organizationId, 80),
-    organizationRole: user.organizationRole === 'owner' ? 'owner' : user.organizationRole === 'member' ? 'member' : '',
-    status: user.status === 'disabled' ? 'disabled' : 'active',
-    fileCleanup: normalizeFileCleanupSettings(user.fileCleanup),
-    createdAt: normalizeRecordDate(user.createdAt),
-    updatedAt: normalizeRecordDate(user.updatedAt),
-  }
-}
-
 function publicAccountUser(user = {}) {
   const stored = accountUserById(user.id) || normalizeAccountUser(user) || publicUser(user)
   const organization = accountOrganizationForUser(stored.id)
@@ -3968,120 +3676,6 @@ function publicAccountUser(user = {}) {
   }
 }
 
-function normalizeAccountUserStore(value = {}, sessions = []) {
-  const store = {}
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    for (const user of Object.values(value)) {
-      const normalized = normalizeAccountUser(user)
-      if (normalized?.id) store[normalized.id] = mergeAccountUser(store[normalized.id], user)
-    }
-  }
-  for (const session of sessions) {
-    const normalized = normalizeAccountUser(session.user)
-    if (!normalized?.id) continue
-    // 传原始快照（而非归一化结果），保留 mergeAccountUser 需要的意图标记。
-    store[normalized.id] = mergeAccountUser(store[normalized.id], session.user)
-    session.user = publicUser(store[normalized.id])
-  }
-  return store
-}
-
-function normalizeAccountUser(user = {}) {
-  const base = publicUser(user)
-  const contactTarget = base.email
-    ? { type: 'email', value: base.email }
-    : base.phone
-      ? { type: 'phone', value: base.phone }
-      : null
-  const id = base.id || (contactTarget ? accountUserIdForTarget(contactTarget) : '')
-  if (!id) return null
-  const testEnterpriseKeys = [id, base.username, base.email, base.phone]
-    .map((value) => String(value || '').trim().toLowerCase())
-    .filter(Boolean)
-  const testEnterpriseOverride = testEnterpriseForAllUsers
-    || (testEnforceEnterpriseAllowlist && testEnterpriseKeys.some((value) => TEST_ENTERPRISE_USER_KEYS.has(value)))
-  // 测试服按白名单强制收敛权益：不在 KUNQIONG_TEST_ENTERPRISE_USER_KEYS 内的账号一律回落基础版，
-  // 避免历史数据或手工改库残留的高等级权益（升级需走充值流程）。
-  const testEnforceFree = testEnforceEnterpriseAllowlist
-    && !testEnterpriseOverride
-    && normalizePlanId(user.planId || base.planId || 'free') !== 'free'
-  const planId = testEnterpriseOverride ? 'enterprise' : testEnforceFree ? 'free' : normalizePlanId(user.planId || base.planId || 'free')
-  const plan = configuredAccountPlan(planId)
-  const planExpiresAt = plan.permanent ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
-  if (testEnterpriseOverride || testEnforceFree || (plan.permanent && (user.planExpiresAt || base.planExpiresAt))) runtime.metadataNeedsPersist = true
-  const now = new Date().toISOString()
-  return {
-    ...base,
-    id,
-    loginMethods: mergeLoginMethods(base.loginMethods, user.loginMethods),
-    planId,
-    planStartedAt: normalizeRecordDate(user.planStartedAt || base.planStartedAt),
-    planExpiresAt,
-    organizationId: trimRecordString(user.organizationId || base.organizationId, 80),
-    organizationRole: user.organizationRole === 'owner' || user.organizationRole === 'member' ? user.organizationRole : '',
-    status: user.status === 'disabled' ? 'disabled' : 'active',
-    fileCleanup: normalizeFileCleanupSettings(user.fileCleanup),
-    createdAt: normalizeRecordDate(user.createdAt) || now,
-    updatedAt: normalizeRecordDate(user.updatedAt) || now,
-  }
-}
-
-function mergeAccountUser(existing = null, incoming = {}) {
-  // 即便还没有既有记录，也要走完整合并流程：否则「首次保存 = 恢复登录头像」
-  // 这类只靠 avatarRestoreRequested 表达意图的调用会被 normalizeAccountUser 直接吞掉标记。
-  const normalized = normalizeAccountUser(incoming)
-  if (!normalized) return existing || null
-  const base = existing || normalized
-  // 自定义头像一旦保存，就是用户的明确意愿，属于"粘性"字段：
-  // 只有「用户主动恢复登录头像」或「重新上传」才允许变更。
-  // 此前逻辑用 `avatarSourceExplicit`（incoming 是否带该键）判断"用户是否表态"，
-  // 但 OAuth 登录快照、会话快照、后台改库都会带一个显式 avatarSource:''，
-  // 于是每次重启归一化 / 重新登录都会把已保存的自定义头像抹成 provider 头像 —— 即"头像丢"。
-  // 注意：不能简单用"avatar 为 null"判断恢复，因为恢复时 avatar 会被填成 provider 地址。
-  // 因此由调用方通过 avatarRestoreRequested 显式标记"用户就是要恢复登录头像"。
-  const restoreRequested = incoming.avatarRestoreRequested === true
-  const nextProviderAvatar = normalized.providerAvatar || (!normalized.avatarSource && normalized.avatar) || base.providerAvatar || null
-  const nextAvatarSource = normalized.avatarSource === 'custom'
-    ? 'custom'
-    : base.avatarSource === 'custom' && !restoreRequested
-      ? 'custom'
-      : ''
-  const nextAvatar = nextAvatarSource === 'custom'
-    ? normalized.avatarSource === 'custom'
-      ? normalized.avatar || base.avatar || null
-      : base.avatar || null
-    : restoreRequested
-      ? (base.providerAvatar || nextProviderAvatar || null)
-      : nextProviderAvatar
-  const merged = {
-    ...base,
-    ...normalized,
-    nickname: normalized.nickname || base.nickname,
-    email: normalized.email || base.email,
-    phone: normalized.phone || base.phone,
-    avatar: nextAvatar,
-    avatarSource: nextAvatarSource,
-    providerAvatar: nextProviderAvatar,
-    provider: normalized.provider || base.provider,
-    loginMethods: mergeLoginMethods(base.loginMethods, normalized.loginMethods),
-    // Do not let a stale upstream free record downgrade a locally confirmed paid plan.
-    planId: base.planId && base.planId !== 'free' && normalized.planId === 'free'
-      ? base.planId
-      : normalized.planId || base.planId || 'free',
-    planStartedAt: normalized.planStartedAt || base.planStartedAt || null,
-    planExpiresAt: normalized.planExpiresAt || base.planExpiresAt || null,
-    organizationId: normalized.organizationId || base.organizationId,
-    organizationRole: normalized.organizationRole || base.organizationRole,
-    status: base.status === 'disabled' ? 'disabled' : normalized.status || base.status || 'active',
-    fileCleanup: normalized.fileCleanup || base.fileCleanup || DEFAULT_FILE_CLEANUP_SETTINGS,
-    createdAt: base.createdAt || normalized.createdAt,
-    updatedAt: new Date().toISOString(),
-  }
-  // 意图标记只在合并过程中有意义，绝不能落库/下发。
-  delete merged.avatarRestoreRequested
-  return merged
-}
-
 function upsertAccountUser(user = {}) {
   // ⚠️ 必须把**原始** user 交给 mergeAccountUser（而不是先 normalizeAccountUser 的结果）：
   // mergeAccountUser 需要读取 avatarRestoreRequested 这类"意图标记"来决定合并方向，
@@ -4107,16 +3701,6 @@ function syncAccountUserSessions(user = {}) {
   }
 }
 
-function normalizeEmailValue(value) {
-  const email = trimRecordString(value, 160).toLowerCase()
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
-}
-
-function normalizePhoneValue(value) {
-  const digits = String(value || '').replace(/[^\d]/g, '')
-  return digits.length >= 6 && digits.length <= 20 ? digits : ''
-}
-
 function normalizeContactTarget(value) {
   const raw = trimRecordString(value, 160)
   if (!raw) return null
@@ -4125,10 +3709,6 @@ function normalizeContactTarget(value) {
   const phone = normalizePhoneValue(raw)
   if (phone) return { type: 'phone', value: phone, label: phone }
   return null
-}
-
-function accountUserIdForTarget(target) {
-  return `contact_${target.type}_${hashSecret(target.value).slice(0, 18)}`
 }
 
 function findAccountUserByTarget(target) {
@@ -4148,29 +3728,6 @@ function findAccountUserByInvitationTarget(value) {
 
 function boundMethodForTargetType(type) {
   return type === 'email' ? 'email_bound' : 'phone_bound'
-}
-
-function mergeLoginMethods(...groups) {
-  return Array.from(new Set(groups.flatMap((group) => Array.isArray(group) ? group : group ? [group] : []).map((item) => trimRecordString(item, 40)).filter(Boolean)))
-}
-
-function normalizeVerificationScene() {
-  return 'bind'
-}
-
-function normalizeVerificationCodes(value = []) {
-  if (!Array.isArray(value)) return []
-  const now = Date.now()
-  return value.map((item) => ({
-    id: trimRecordString(item?.id, 80) || createToken(10),
-    type: item?.type === 'phone' ? 'phone' : 'email',
-    target: trimRecordString(item?.target, 160),
-    scene: normalizeVerificationScene(item?.scene),
-    codeHash: trimRecordString(item?.codeHash, 80),
-    attempts: Math.max(0, Math.min(99, Math.floor(Number(item?.attempts) || 0))),
-    createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
-    expiresAt: normalizeRecordDate(item?.expiresAt),
-  })).filter((item) => item.target && item.codeHash && item.expiresAt && new Date(item.expiresAt).getTime() > now).slice(0, MAX_VERIFICATION_CODES)
 }
 
 function cleanupVerificationCodes() {
@@ -4477,82 +4034,12 @@ function fileListSize(files = []) {
   return Array.isArray(files) ? files.reduce((sum, file) => sum + Number(file?.size || 0), 0) : 0
 }
 
-function normalizeNotificationSettingsStore(value = {}) {
-  const store = {}
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return store
-  for (const [userId, settings] of Object.entries(value)) {
-    const key = accountRecordOwnerKey(userId)
-    if (key) store[key] = normalizeNotificationSettings(settings)
-  }
-  return store
-}
-
-function normalizeNotificationSettings(settings = {}) {
-  const next = { ...DEFAULT_NOTIFICATION_SETTINGS }
-  if (settings && typeof settings === 'object' && !Array.isArray(settings)) {
-    for (const key of Object.keys(DEFAULT_NOTIFICATION_SETTINGS)) {
-      if (Object.prototype.hasOwnProperty.call(settings, key)) next[key] = Boolean(settings[key])
-    }
-  }
-  return next
-}
-
-function normalizeFileCleanupSettings(settings = {}) {
-  const source = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}
-  const days = Number(source.days)
-  return {
-    enabled: Boolean(source.enabled),
-    days: [1, 3, 7].includes(days) ? days : DEFAULT_FILE_CLEANUP_SETTINGS.days,
-  }
-}
-
 function accountNotificationSettingsForUser(userId) {
   const key = accountRecordOwnerKey(userId)
   if (!key) return normalizeNotificationSettings()
   if (!metadata.notificationSettings || typeof metadata.notificationSettings !== 'object' || Array.isArray(metadata.notificationSettings)) metadata.notificationSettings = {}
   if (!metadata.notificationSettings[key]) metadata.notificationSettings[key] = normalizeNotificationSettings()
   return metadata.notificationSettings[key]
-}
-
-function normalizeAccountMessageStore(value = {}) {
-  const store = {}
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return store
-  for (const [userId, messages] of Object.entries(value)) {
-    const key = accountRecordOwnerKey(userId)
-    if (key) store[key] = normalizeAccountMessages(messages)
-  }
-  return store
-}
-
-function normalizeAccountMessages(messages = []) {
-  if (!Array.isArray(messages)) return []
-  const deduped = new Map()
-  messages.map(normalizeAccountMessage).filter(Boolean).forEach((message) => {
-    deduped.set(message.id, { ...deduped.get(message.id), ...message })
-  })
-  return Array.from(deduped.values()).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).slice(0, MAX_ACCOUNT_MESSAGES)
-}
-
-function normalizeAccountMessage(message = {}) {
-  if (!message || typeof message !== 'object') return null
-  const title = trimRecordString(message.title, 80)
-  const body = trimRecordString(message.body, 280)
-  if (!title && !body) return null
-  const createdAt = normalizeRecordDate(message.createdAt) || new Date().toISOString()
-  const category = ACCOUNT_MESSAGE_CATEGORIES.has(message.category) ? message.category : 'system'
-  return {
-    id: trimRecordString(message.id, 120) || createToken(12),
-    category,
-    eventType: trimRecordString(message.eventType, 40),
-    title: title || '鲲穹消息',
-    body,
-    createdAt,
-    unread: message.unread !== false,
-    readAt: normalizeRecordDate(message.readAt),
-    actionUrl: trimRecordString(message.actionUrl, 400),
-    actionType: trimRecordString(message.actionType, 50),
-    actionId: trimRecordString(message.actionId, 120),
-  }
 }
 
 function accountMessagesForUser(userId) {
@@ -4817,10 +4304,6 @@ function requireAuthSession(req, res) {
   return session
 }
 
-function accountRecordOwnerKey(userId) {
-  return trimRecordString(userId, 120)
-}
-
 function accountRecordsForUser(userId) {
   const key = accountRecordOwnerKey(userId)
   if (!key) return []
@@ -4828,16 +4311,6 @@ function accountRecordsForUser(userId) {
   if (!Array.isArray(metadata.records[key])) metadata.records[key] = []
   // 读取时过滤死条目：存量「资源已删但记录还在」的脏数据在此统一拦截
   return pruneOrphanRecordEntries(metadata.records[key])
-}
-
-function normalizeAccountRecordStore(value = {}) {
-  const store = {}
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return store
-  for (const [userId, records] of Object.entries(value)) {
-    const key = accountRecordOwnerKey(userId)
-    if (key) store[key] = normalizeAccountRecords(records)
-  }
-  return store
 }
 
 function mergeAccountRecords(currentRecords, incomingRecords) {
@@ -4851,158 +4324,8 @@ function mergeAccountRecords(currentRecords, incomingRecords) {
   return pruneOrphanRecordEntries(Array.from(merged.values()).sort(compareAccountRecords).slice(0, MAX_ACCOUNT_RECORDS))
 }
 
-function normalizeAccountRecords(records) {
-  if (!Array.isArray(records)) return []
-  const deduped = new Map()
-  records.map(normalizeAccountRecord).filter(Boolean).forEach((record) => {
-    const existing = deduped.get(record.id)
-    deduped.set(record.id, existing ? mergeAccountRecord(existing, record) : record)
-  })
-  return Array.from(deduped.values()).sort(compareAccountRecords).slice(0, MAX_ACCOUNT_RECORDS)
-}
-
-function normalizeAccountRecord(record = {}) {
-  if (!record || typeof record !== 'object') return null
-  const id = trimRecordString(record.id, 180)
-  if (!id) return null
-  const scope = ACCOUNT_RECORD_SCOPES.has(record.scope) ? record.scope : legacyScopeFromType(record.type)
-  const kind = ACCOUNT_RECORD_KINDS.has(record.kind)
-    ? record.kind
-    : scope === 'my_collections' || scope === 'collect_from_me'
-      ? 'collection'
-      : 'share'
-  const now = new Date().toISOString()
-  const createdAt = normalizeRecordDate(record.createdAt || record.submittedAt) || now
-  const updatedAt = normalizeRecordDate(record.updatedAt || record.lastSeenAt) || createdAt
-  return {
-    id,
-    scope,
-    kind,
-    type: trimRecordString(record.type, 20) || (kind === 'collection' ? '收集' : '发送'),
-    name: trimRecordString(record.name, 160) || (kind === 'collection' ? '收集任务' : '文件分享'),
-    alias: trimRecordString(record.alias, 160),
-    meta: trimRecordString(record.meta, 240),
-    code: trimRecordString(record.code, 40),
-    status: trimRecordString(record.status, 40),
-    shareId: trimRecordString(record.shareId, 80),
-    shareUrl: trimRecordString(record.shareUrl, 400),
-    manageToken: trimRecordString(record.manageToken, 120),
-    manageUrl: trimRecordString(record.manageUrl, 400),
-    collectionToken: trimRecordString(record.collectionToken, 120),
-    publicUrl: trimRecordString(record.publicUrl, 400),
-    expiresAt: normalizeRecordDate(record.expiresAt),
-    deadline: normalizeRecordDate(record.deadline),
-    downloadLimit: normalizeNullablePositiveInteger(record.downloadLimit),
-    downloadCount: normalizeNonNegativeInteger(record.downloadCount),
-    fileCount: normalizeNonNegativeInteger(record.fileCount),
-    totalSize: normalizeNonNegativeInteger(record.totalSize),
-    submissionCount: normalizeNonNegativeInteger(record.submissionCount),
-    participantName: trimRecordString(record.participantName, 80),
-    submittedAt: normalizeRecordDate(record.submittedAt),
-    allowedTypes: normalizeRecordStringArray(record.allowedTypes, 12, 20),
-    maxFileSizeMb: normalizeNullablePositiveInteger(record.maxFileSizeMb),
-    files: normalizeRecordFiles(record.files),
-    submissions: normalizeRecordSubmissions(record.submissions),
-    createdAt,
-    updatedAt,
-  }
-}
-
-function mergeAccountRecord(existing, incoming) {
-  const merged = { ...existing, ...incoming }
-  merged.createdAt = existing.createdAt || incoming.createdAt
-  merged.updatedAt = incoming.updatedAt || existing.updatedAt || merged.createdAt
-  if (!incoming.shareId && existing.shareId) merged.shareId = existing.shareId
-  if (!incoming.shareUrl && existing.shareUrl) merged.shareUrl = existing.shareUrl
-  if (!incoming.manageToken && existing.manageToken) merged.manageToken = existing.manageToken
-  if (!incoming.manageUrl && existing.manageUrl) merged.manageUrl = existing.manageUrl
-  if (!incoming.alias && existing.alias) merged.alias = existing.alias
-  if ((!incoming.name || incoming.name === '文件分享' || incoming.name === '收集任务') && existing.name) merged.name = existing.name
-  if (!incoming.meta && existing.meta) merged.meta = existing.meta
-  if (!incoming.fileCount && existing.fileCount) merged.fileCount = existing.fileCount
-  if (!incoming.totalSize && existing.totalSize) merged.totalSize = existing.totalSize
-  if (!incoming.submissionCount && existing.submissionCount) merged.submissionCount = existing.submissionCount
-  if ((!incoming.files || !incoming.files.length) && existing.files?.length) merged.files = existing.files
-  if ((!incoming.submissions || !incoming.submissions.length) && existing.submissions?.length) merged.submissions = existing.submissions
-  return merged
-}
-
-function normalizeRecordFiles(files) {
-  if (!Array.isArray(files)) return []
-  return files.slice(0, MAX_RECORD_FILES).map((file, index) => ({
-    name: trimRecordString(file?.name, 180) || `文件 ${index + 1}`,
-    relativePath: trimRecordString(file?.relativePath || file?.name, 260),
-    size: normalizeNonNegativeInteger(file?.size),
-    mimeType: trimRecordString(file?.mimeType, 100),
-  }))
-}
-
-function normalizeRecordSubmissions(submissions) {
-  if (!Array.isArray(submissions)) return []
-  return submissions.slice(0, MAX_RECORD_SUBMISSIONS).map((submission) => ({
-    id: trimRecordString(submission?.id, 120),
-    participantName: trimRecordString(submission?.participantName, 80),
-    submitterUserId: trimRecordString(submission?.submitterUserId, 120),
-    submitterName: trimRecordString(submission?.submitterName, 80),
-    submittedAt: normalizeRecordDate(submission?.submittedAt),
-    files: normalizeRecordFiles(submission?.files),
-  })).filter((submission) => submission.id || submission.files.length)
-}
-
-function normalizeRecordStringArray(value, limit, maxLength) {
-  if (!Array.isArray(value)) return []
-  return Array.from(new Set(value.map((item) => trimRecordString(item, maxLength)).filter(Boolean))).slice(0, limit)
-}
-
-function normalizeRecordDate(value) {
-  if (!value) return null
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? null : date.toISOString()
-}
-
-function normalizeNullablePositiveInteger(value) {
-  if (value === null || value === undefined || value === '' || value === 'unlimited') return null
-  const number = Number(value)
-  return Number.isFinite(number) && number > 0 ? Math.floor(number) : null
-}
-
-function normalizeNonNegativeInteger(value) {
-  const number = Number(value || 0)
-  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0
-}
-
-function trimRecordString(value, maxLength) {
-  const text = String(value ?? '').trim()
-  return text.length > maxLength ? text.slice(0, maxLength) : text
-}
-
-function legacyScopeFromType(type) {
-  if (type === '收取' || type === '接收') return 'sent_to_me'
-  if (type === '被收集' || type === '提交') return 'collect_from_me'
-  if (type === '收集') return 'my_collections'
-  return 'my_sent'
-}
-
-function compareAccountRecords(a, b) {
-  return new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime()
-}
-
 function isOAuthConfigured() {
   return Boolean(oauthClientId && oauthClientSecret)
-}
-
-function normalizeWebMemberPayType(value) {
-  return Number(value) === 2 ? 2 : 1
-}
-
-function normalizePaymentPayload(value) {
-  if (!value || typeof value !== 'object') return null
-  return {
-    pay_type: normalizeWebMemberPayType(value.pay_type),
-    code_url: trimRecordString(value.code_url, 1000),
-    qrcode_img_url: trimRecordString(value.qrcode_img_url, 2_000_000),
-    alipaysubmit_html: trimRecordString(value.alipaysubmit_html, 2_000_000),
-  }
 }
 
 function publicPaymentPayload(value) {

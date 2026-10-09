@@ -37,6 +37,56 @@ export const UPLOAD_CHUNK_MIN_BYTES = 1 * 1024 * 1024
 export const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024
 export const UPLOAD_CHUNK_DEFAULT_BYTES = 8 * 1024 * 1024
 
+// ── 业务常量：套餐与默认项 ──
+// 元数据层（规范化）与业务层（路由、后台）都要用，放在配置层避免互相 import。
+
+export const ACCOUNT_PLANS = {
+  free: {
+    id: 'free', label: '基础版', totalBytes: 20 * 1024 * 1024 * 1024, permanent: false, team: false,
+    tagline: '个人临时传输', monthlyPrice: 0, validityDays: null,
+    features: ['20 GB 存储空间', '文件临时保存，到期自动失效', '分享码 / 链接 / 二维码取件', '文件收集任务'],
+  },
+  member: {
+    id: 'member', label: '会员版', totalBytes: 100 * 1024 * 1024 * 1024, permanent: false, team: false,
+    // monthlyPrice 仅作「主站实价拉不到时」的兜底展示价，尽量对齐主站当前挂牌价（轻享月卡 ¥19）；
+    // 真实下单/支付金额始终以主站 pay_amount 为准（createWebMemberPaymentOrder 会覆盖 order.amount）。
+    tagline: '个人会员空间', monthlyPrice: 1900, validityDays: 30,
+    features: ['100 GB 存储空间', '会员期内文件持续保存', '完整分享与收集能力', '会员专属标识'],
+  },
+  team: {
+    id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, teamSpaceBytes: 250 * 1024 * 1024 * 1024, permanent: false, team: true,
+    tagline: '小团队协作', monthlyPrice: 4900, validityDays: 90,
+    features: ['500 GB 个人空间', '250 GB 团队空间', '团队成员邀请与协作', '企业专属分享链接'],
+  },
+  enterprise: {
+    id: 'enterprise', label: '企业版', totalBytes: 2 * 1024 * 1024 * 1024 * 1024, teamSpaceBytes: 1024 * 1024 * 1024 * 1024, permanent: true, team: true,
+    tagline: '企业统一管控', monthlyPrice: 15900, validityDays: null,
+    features: ['2048 GB 个人空间', '1024 GB 团队空间', '组织与成员统一管理', '企业专属入口与审计日志'],
+  },
+}
+
+export const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, enterprise: 3 }
+
+export const DEFAULT_NOTIFICATION_SETTINGS = {
+  inApp: true,
+  email: false,
+  incomingShare: true,
+  shareExpiring: true,
+  shareDownloaded: true,
+  collectionExpiring: true,
+  collectionSubmitted: true,
+}
+
+export const DEFAULT_FILE_CLEANUP_SETTINGS = {
+  enabled: false,
+  days: 3,
+}
+
+export const DEFAULT_ACCOUNT_MESSAGES = [
+  { id: 'system-welcome', category: 'system', eventType: 'welcome', title: '欢迎使用鲲穹文件传输', body: '你的账户已连接，可以开始发送和收集文件。' },
+  { id: 'official-update', category: 'official', eventType: 'official', title: '鲲穹服务通知', body: '站内消息、账号容量和账号绑定已接入当前账户。' },
+]
+
 // ── 元数据默认值 ──
 // 元数据层与业务层都要用（emptyMetadata 造初始快照、normalizeSystemConfig 兜底），
 // 放在配置层避免两边互相 import。
