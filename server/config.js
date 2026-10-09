@@ -1,0 +1,184 @@
+// 环境配置与路径常量
+// 本文件由 scripts/refactor/extract-config.mjs 从 server.mjs 逐字抽取生成。
+// 原则：业务常量与环境变量表达式均原样搬运，仅追加 export 前缀，未改写任何逻辑。
+// 唯一结构性调整：路径常量中的 __dirname 改为 projectRoot（本文件位于 server/ 子目录）。
+import fs from 'node:fs'
+import path from 'node:path'
+import mysql from 'mysql2/promise'
+import { loadEnvFile } from './lib/env-file.js'
+
+export const projectRoot = path.resolve(import.meta.dirname, '..')
+
+loadEnvFile(path.join(projectRoot, '.env'))
+
+// ── 路径 ──
+export const storageRoot = path.join(projectRoot, 'storage')
+export const tempRoot = path.join(storageRoot, 'tmp')
+export const filesRoot = path.join(storageRoot, 'files')
+export const collectionsRoot = path.join(storageRoot, 'collections')
+export const distRoot = path.join(projectRoot, 'dist')
+export const metadataPath = path.join(storageRoot, 'metadata.json')
+export const shareEmailTemplatePath = path.join(projectRoot, 'email-templates', 'share-notification.html')
+
+export function splitConfigValues(value = '') {
+  return String(value).split(',').map((item) => item.trim()).filter(Boolean)
+}
+
+export function parseBooleanEnv(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase())
+}
+
+// ── 上传与限流 ──
+export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
+export const MAX_FILES = 100
+export const EXPIRING_SOON_MS = 24 * 60 * 60 * 1000
+
+export const UPLOAD_CHUNK_MIN_BYTES = 1 * 1024 * 1024
+export const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024
+export const UPLOAD_CHUNK_DEFAULT_BYTES = 8 * 1024 * 1024
+
+// ── OAuth 与应用地址 ──
+export const serverPort = Number(process.env.PORT || process.env.KUNQIONG_PORT || 8045)
+export const oauthAuthorizeUrl = process.env.KUNQIONG_OAUTH_AUTHORIZE_URL || 'https://login.kunqiongai.com/authorize.html'
+export const oauthTokenUrl = process.env.KUNQIONG_OAUTH_TOKEN_URL || 'https://login.kunqiongai.com/api/oauth/token'
+export const oauthClientId = process.env.KUNQIONG_OAUTH_CLIENT_ID || ''
+export const oauthClientSecret = process.env.KUNQIONG_OAUTH_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || ''
+export const configuredCallbackUrls = splitConfigValues(process.env.KUNQIONG_AUTH_CALLBACK_URL)
+export const configuredAppUrl = process.env.KUNQIONG_APP_URL || ''
+export const releaseSha = String(process.env.KUNQIONG_RELEASE_SHA || '').trim()
+
+// ── SMTP ──
+export const smtpHost = String(process.env.KUNQIONG_SMTP_HOST || '').trim()
+export const smtpPort = Number(process.env.KUNQIONG_SMTP_PORT || 465)
+export const smtpSecure = parseBooleanEnv(process.env.KUNQIONG_SMTP_SECURE, smtpPort === 465)
+export const smtpUser = String(process.env.KUNQIONG_SMTP_USER || '').trim()
+export const smtpPassword = String(process.env.KUNQIONG_SMTP_PASSWORD || '')
+export const smtpFrom = String(process.env.KUNQIONG_SMTP_FROM || smtpUser).trim()
+export const smtpFromName = String(process.env.KUNQIONG_SMTP_FROM_NAME || '鲲穹文件传输').trim()
+
+// ── 腾讯云短信 ──
+export const tencentSmsSecretId = String(process.env.KUNQIONG_TENCENT_SECRET_ID || '').trim()
+export const tencentSmsSecretKey = String(process.env.KUNQIONG_TENCENT_SECRET_KEY || '')
+export const tencentSmsSdkAppId = String(process.env.KUNQIONG_TENCENT_SMS_SDK_APP_ID || '').trim()
+export const tencentSmsSignName = String(process.env.KUNQIONG_TENCENT_SMS_SIGN_NAME || '').trim()
+export const tencentSmsBindTemplateId = String(process.env.KUNQIONG_TENCENT_SMS_TEMPLATE_BIND_CODE_ID || '').trim()
+export const tencentSmsRegion = String(process.env.KUNQIONG_TENCENT_SMS_REGION || 'ap-guangzhou').trim()
+
+// ── 主站会员支付 ──
+export const webMemberApiBase = String(process.env.KUNQIONG_WEB_MEMBER_API_BASE || 'https://api-web.kunqiongai.com').replace(/\/+$/, '')
+export const webMemberSubsiteName = String(process.env.KUNQIONG_WEB_MEMBER_SUBSITE_NAME || configuredAppUrl || 'kunqiong-send').trim()
+
+export const WEB_MEMBER_PACKAGE_ENV_KEYS = {
+  member: 'KUNQIONG_WEB_MEMBER_PACKAGE_MEMBER_ID',
+  team: 'KUNQIONG_WEB_MEMBER_PACKAGE_TEAM_ID',
+  enterprise: 'KUNQIONG_WEB_MEMBER_PACKAGE_ENTERPRISE_ID',
+}
+// These are the currently enabled package IDs returned by the member service.
+// Deployments can override them through the environment variables above.
+
+export const DEFAULT_WEB_MEMBER_PACKAGE_IDS = {
+  member: 1,
+  team: 2,
+  enterprise: 5,
+}
+
+// ── Cookie 与会话 ──
+export const AUTH_COOKIE_NAME = 'kunqiong_session'
+export const SHARE_ACCESS_COOKIE_PREFIX = 'kunqiong_share_access_'
+export const SHARE_ACCESS_TTL_SECONDS = 15 * 60
+export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
+export const UPLOAD_SESSION_TTL_MS = 12 * 60 * 60 * 1000
+// 分片直写模式：会话级分片大小固定，服务端按 chunkIndex*chunkSize 定位写入，
+// complete 阶段零合并（旧实现 readSync/writeSync 同步合并会阻塞整个事件循环）。
+
+// ── 账号侧数量限制 ──
+export const MAX_ACCOUNT_RECORDS = 200
+export const MAX_ACCOUNT_MESSAGES = 120
+export const MAX_RECORD_FILES = 120
+export const MAX_RECORD_SUBMISSIONS = 80
+export const VERIFICATION_CODE_TTL_MS = 10 * 60 * 1000
+export const MAX_VERIFICATION_CODES = 120
+export const ACCOUNT_SINGLE_FILE_BYTES = MAX_FILE_SIZE
+export const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections', 'collect_from_me'])
+export const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
+export const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
+
+// ── 管理员认证 ──
+export const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
+export const ADMIN_ACCOUNT_USERNAME = String(process.env.KUNQIONG_ADMIN_USERNAME || '').trim()
+export const ADMIN_ACCOUNT_PASSWORD = String(process.env.KUNQIONG_ADMIN_PASSWORD || '')
+
+export const adminCredentialsConfigured = Boolean(ADMIN_ACCOUNT_USERNAME && ADMIN_ACCOUNT_PASSWORD.trim())
+if (!adminCredentialsConfigured) console.warn('[admin] 管理员凭据未配置，后台密码登录已禁用。')
+
+// ── 文件安全扫描（fail-closed）──
+export const scanMode = String(process.env.KUNQIONG_SCAN_MODE || 'required').toLowerCase()
+if (!['required', 'optional'].includes(scanMode)) throw new Error('KUNQIONG_SCAN_MODE 必须是 required 或 optional')
+export const clamavHost = String(process.env.KUNQIONG_CLAMAV_HOST || '').trim()
+export const clamavPort = Number(process.env.KUNQIONG_CLAMAV_PORT || 3310)
+export const scanTimeoutMs = Math.max(1000, Number(process.env.KUNQIONG_SCAN_TIMEOUT_MS) || 600000)
+
+// ── 后台会话与限流 ──
+export const ADMIN_COOKIE_NAME = 'kunqiong_admin_session'
+export const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000
+export const ADMIN_LOGIN_MAX_ATTEMPTS = 8
+export const ADMIN_LOGIN_WINDOW_MS = 10 * 60 * 1000
+
+export const JOIN_REQUEST_MAX_PER_WINDOW = 5
+export const JOIN_REQUEST_WINDOW_MS = 60 * 60 * 1000
+// 被拒绝后的重新申请冷却，避免持续骚扰团队所有者。
+export const JOIN_REQUEST_REJECT_COOLDOWN_MS = 24 * 60 * 60 * 1000
+
+// ── 测试环境开关 ──
+export const TEST_ENTERPRISE_USER_KEYS = new Set(splitConfigValues(process.env.KUNQIONG_TEST_ENTERPRISE_USER_KEYS || process.env.KUNQIONG_TEST_ENTERPRISE_USER_IDS).map((value) => value.toLowerCase()))
+export const testEnterpriseForAllUsers = process.env.NODE_ENV === 'test'
+  && parseBooleanEnv(process.env.KUNQIONG_TEST_ENTERPRISE_ALL, false)
+// 测试服权益白名单模式：仅 KUNQIONG_TEST_ENTERPRISE_USER_KEYS 内的账号为高等级权益，其余强制基础版。
+export const testEnforceEnterpriseAllowlist = process.env.NODE_ENV === 'test'
+  && parseBooleanEnv(process.env.KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST, true)
+export const testVerificationDebugMode = process.env.NODE_ENV === 'test'
+
+// ── 收集任务文件类型（键为中文分类名，改动会影响收集白名单）──
+export const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']
+export const COLLECTION_TYPE_EXTENSIONS = {
+  图片: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif', '.ico'],
+  文档: ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.xls', '.xlsx', '.csv', '.ppt', '.pptx', '.md'],
+  视频: ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.ogv', '.flv', '.wmv'],
+  音频: ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.oga', '.ogg', '.wma'],
+  压缩包: ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz'],
+  代码文件: ['.js', '.jsx', '.ts', '.tsx', '.html', '.css', '.json', '.xml', '.yml', '.yaml', '.java', '.py', '.go', '.php', '.rb', '.rs', '.c', '.cpp', '.h', '.cs', '.sh', '.ps1', '.bat', '.cmd', '.sql'],
+}
+export const UPGRADE_ORDER_STATUSES = new Set(['pending_payment', 'paid', 'canceled', 'expired'])
+
+export const MAX_UPGRADE_ORDERS = 500
+export const MAX_AUDIT_LOGS = 5000
+
+// ── 游客配额 ──
+// 条目数设上限防止 metadata 无限膨胀（超限淘汰最久未活跃的条目）。
+export const GUEST_ID_COOKIE = 'kq_guest_id'
+export const GUEST_ID_MAX_AGE_SECONDS = 365 * 24 * 3600
+export const MAX_GUEST_USAGE_ENTRIES = 20000
+
+// ── 数据库 ──
+export const databaseEnabled = parseBooleanEnv(process.env.KUNQIONG_DB_ENABLED, false)
+export const databaseHost = String(process.env.KUNQIONG_DB_HOST || '').trim()
+export const databasePort = Number(process.env.KUNQIONG_DB_PORT || 3306)
+export const databaseName = String(process.env.KUNQIONG_DB_NAME || '').trim()
+export const databaseUser = String(process.env.KUNQIONG_DB_USER || '').trim()
+
+export const databasePool = databaseEnabled ? mysql.createPool({
+  host: databaseHost,
+  port: databasePort,
+  database: databaseName,
+  user: databaseUser,
+  password: databasePassword,
+  waitForConnections: true,
+  connectionLimit: Number(process.env.KUNQIONG_DB_CONNECTION_LIMIT || 5),
+  queueLimit: 0,
+  charset: 'utf8mb4',
+}) : null
+
+for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
+  fs.mkdirSync(directory, { recursive: true })
+}

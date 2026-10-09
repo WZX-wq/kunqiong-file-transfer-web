@@ -1,137 +1,55 @@
-import crypto from 'node:crypto'
+// 鲲穹文件传输服务端入口
+//
+// 分层说明（重构后）：
+//   server/config.js        环境变量、路径与业务常量
+//   server/lib/env-file.js  .env 加载
+//   server/lib/http.js      HTTP 错误构造与通用纯函数
+//   server/store.js         metadata 状态与持久化（后续拆分）
+//   server/routes/*.js      业务路由模块（后续拆分）
+//
+// 本文件保留应用装配、运行期状态与全部路由注册，按域逐步迁移且保持行为不变。
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import express from 'express'
 import multer from 'multer'
 import archiver from 'archiver'
 import QRCode from 'qrcode'
 import nodemailer from 'nodemailer'
-import mysql from 'mysql2/promise'
 import net from 'node:net'
 import { once } from 'node:events'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-loadEnvFile(path.join(__dirname, '.env'))
+import {
+  storageRoot, tempRoot, filesRoot, collectionsRoot, distRoot, metadataPath, shareEmailTemplatePath,
+  MAX_FILE_SIZE, MAX_FILES, EXPIRING_SOON_MS,
+  UPLOAD_CHUNK_MIN_BYTES, UPLOAD_CHUNK_MAX_BYTES, UPLOAD_CHUNK_DEFAULT_BYTES, UPLOAD_SESSION_TTL_MS,
+  oauthAuthorizeUrl, oauthTokenUrl, oauthClientId, oauthClientSecret,
+  configuredCallbackUrls, configuredAppUrl, releaseSha,
+  smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, smtpFrom, smtpFromName,
+  tencentSmsSecretId, tencentSmsSecretKey, tencentSmsSdkAppId, tencentSmsSignName,
+  tencentSmsBindTemplateId, tencentSmsRegion,
+  webMemberApiBase, webMemberSubsiteName, WEB_MEMBER_PACKAGE_ENV_KEYS, DEFAULT_WEB_MEMBER_PACKAGE_IDS,
+  AUTH_COOKIE_NAME, SHARE_ACCESS_COOKIE_PREFIX, SHARE_ACCESS_TTL_SECONDS, OAUTH_STATE_TTL_MS,
+  MAX_ACCOUNT_RECORDS, MAX_ACCOUNT_MESSAGES, MAX_RECORD_FILES, MAX_RECORD_SUBMISSIONS,
+  VERIFICATION_CODE_TTL_MS, MAX_VERIFICATION_CODES, ACCOUNT_SINGLE_FILE_BYTES,
+  ACCOUNT_RECORD_SCOPES, ACCOUNT_RECORD_KINDS, ACCOUNT_MESSAGE_CATEGORIES,
+  ADMIN_USER_IDS, ADMIN_ACCOUNT_USERNAME, ADMIN_ACCOUNT_PASSWORD, adminCredentialsConfigured,
+  ADMIN_COOKIE_NAME, ADMIN_SESSION_TTL_MS, ADMIN_LOGIN_MAX_ATTEMPTS, ADMIN_LOGIN_WINDOW_MS,
+  JOIN_REQUEST_MAX_PER_WINDOW, JOIN_REQUEST_WINDOW_MS, JOIN_REQUEST_REJECT_COOLDOWN_MS,
+  COLLECTION_TYPE_OPTIONS, COLLECTION_TYPE_EXTENSIONS, UPGRADE_ORDER_STATUSES,
+  MAX_UPGRADE_ORDERS, MAX_AUDIT_LOGS,
+  GUEST_ID_COOKIE, GUEST_ID_MAX_AGE_SECONDS, MAX_GUEST_USAGE_ENTRIES,
+  scanMode, clamavHost, clamavPort, scanTimeoutMs,
+  TEST_ENTERPRISE_USER_KEYS, testEnterpriseForAllUsers, testEnforceEnterpriseAllowlist,
+  testVerificationDebugMode,
+  databaseEnabled,
+  serverPort,
+  splitConfigValues, parseBooleanEnv,
+} from './server/config.js'
 
-const storageRoot = path.join(__dirname, 'storage')
-const tempRoot = path.join(storageRoot, 'tmp')
-const filesRoot = path.join(storageRoot, 'files')
-const collectionsRoot = path.join(storageRoot, 'collections')
-const distRoot = path.join(__dirname, 'dist')
-const metadataPath = path.join(storageRoot, 'metadata.json')
-const shareEmailTemplatePath = path.join(__dirname, 'email-templates', 'share-notification.html')
-const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
-const MAX_FILES = 100
-const EXPIRING_SOON_MS = 24 * 60 * 60 * 1000
-const serverPort = Number(process.env.PORT || process.env.KUNQIONG_PORT || 8045)
-const oauthAuthorizeUrl = process.env.KUNQIONG_OAUTH_AUTHORIZE_URL || 'https://login.kunqiongai.com/authorize.html'
-const oauthTokenUrl = process.env.KUNQIONG_OAUTH_TOKEN_URL || 'https://login.kunqiongai.com/api/oauth/token'
-const oauthClientId = process.env.KUNQIONG_OAUTH_CLIENT_ID || ''
-const oauthClientSecret = process.env.KUNQIONG_OAUTH_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || ''
-const configuredCallbackUrls = splitConfigValues(process.env.KUNQIONG_AUTH_CALLBACK_URL)
-const configuredAppUrl = process.env.KUNQIONG_APP_URL || ''
-const releaseSha = String(process.env.KUNQIONG_RELEASE_SHA || '').trim()
-const smtpHost = String(process.env.KUNQIONG_SMTP_HOST || '').trim()
-const smtpPort = Number(process.env.KUNQIONG_SMTP_PORT || 465)
-const smtpSecure = parseBooleanEnv(process.env.KUNQIONG_SMTP_SECURE, smtpPort === 465)
-const smtpUser = String(process.env.KUNQIONG_SMTP_USER || '').trim()
-const smtpPassword = String(process.env.KUNQIONG_SMTP_PASSWORD || '')
-const smtpFrom = String(process.env.KUNQIONG_SMTP_FROM || smtpUser).trim()
-const smtpFromName = String(process.env.KUNQIONG_SMTP_FROM_NAME || '鲲穹文件传输').trim()
-const tencentSmsSecretId = String(process.env.KUNQIONG_TENCENT_SECRET_ID || '').trim()
-const tencentSmsSecretKey = String(process.env.KUNQIONG_TENCENT_SECRET_KEY || '')
-const tencentSmsSdkAppId = String(process.env.KUNQIONG_TENCENT_SMS_SDK_APP_ID || '').trim()
-const tencentSmsSignName = String(process.env.KUNQIONG_TENCENT_SMS_SIGN_NAME || '').trim()
-const tencentSmsBindTemplateId = String(process.env.KUNQIONG_TENCENT_SMS_TEMPLATE_BIND_CODE_ID || '').trim()
-const tencentSmsRegion = String(process.env.KUNQIONG_TENCENT_SMS_REGION || 'ap-guangzhou').trim()
-const webMemberApiBase = String(process.env.KUNQIONG_WEB_MEMBER_API_BASE || 'https://api-web.kunqiongai.com').replace(/\/+$/, '')
-const webMemberSubsiteName = String(process.env.KUNQIONG_WEB_MEMBER_SUBSITE_NAME || configuredAppUrl || 'kunqiong-send').trim()
-const WEB_MEMBER_PACKAGE_ENV_KEYS = {
-  member: 'KUNQIONG_WEB_MEMBER_PACKAGE_MEMBER_ID',
-  team: 'KUNQIONG_WEB_MEMBER_PACKAGE_TEAM_ID',
-  enterprise: 'KUNQIONG_WEB_MEMBER_PACKAGE_ENTERPRISE_ID',
-}
-// These are the currently enabled package IDs returned by the member service.
-// Deployments can override them through the environment variables above.
-const DEFAULT_WEB_MEMBER_PACKAGE_IDS = {
-  member: 1,
-  team: 2,
-  enterprise: 5,
-}
-const databaseEnabled = parseBooleanEnv(process.env.KUNQIONG_DB_ENABLED, false)
-const databaseHost = String(process.env.KUNQIONG_DB_HOST || '').trim()
-const databasePort = Number(process.env.KUNQIONG_DB_PORT || 3306)
-const databaseName = String(process.env.KUNQIONG_DB_NAME || '').trim()
-const databaseUser = String(process.env.KUNQIONG_DB_USER || '').trim()
-const databasePassword = String(process.env.KUNQIONG_DB_PASSWORD || '')
-const AUTH_COOKIE_NAME = 'kunqiong_session'
-const SHARE_ACCESS_COOKIE_PREFIX = 'kunqiong_share_access_'
-const SHARE_ACCESS_TTL_SECONDS = 15 * 60
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
-const UPLOAD_SESSION_TTL_MS = 12 * 60 * 60 * 1000
-// 分片直写模式：会话级分片大小固定，服务端按 chunkIndex*chunkSize 定位写入，
-// complete 阶段零合并（旧实现 readSync/writeSync 同步合并会阻塞整个事件循环）。
-const UPLOAD_CHUNK_MIN_BYTES = 1 * 1024 * 1024
-const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024
-const UPLOAD_CHUNK_DEFAULT_BYTES = 8 * 1024 * 1024
-const MAX_ACCOUNT_RECORDS = 200
-const MAX_ACCOUNT_MESSAGES = 120
-const MAX_RECORD_FILES = 120
-const MAX_RECORD_SUBMISSIONS = 80
-const VERIFICATION_CODE_TTL_MS = 10 * 60 * 1000
-const MAX_VERIFICATION_CODES = 120
-const ACCOUNT_SINGLE_FILE_BYTES = MAX_FILE_SIZE
-const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_collections', 'collect_from_me'])
-const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
-const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
-const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
-const ADMIN_ACCOUNT_USERNAME = String(process.env.KUNQIONG_ADMIN_USERNAME || '').trim()
-const ADMIN_ACCOUNT_PASSWORD = String(process.env.KUNQIONG_ADMIN_PASSWORD || '')
-const adminCredentialsConfigured = Boolean(ADMIN_ACCOUNT_USERNAME && ADMIN_ACCOUNT_PASSWORD.trim())
-if (!adminCredentialsConfigured) console.warn('[admin] 管理员凭据未配置，后台密码登录已禁用。')
-const scanMode = String(process.env.KUNQIONG_SCAN_MODE || 'required').toLowerCase()
-if (!['required', 'optional'].includes(scanMode)) throw new Error('KUNQIONG_SCAN_MODE 必须是 required 或 optional')
-const clamavHost = String(process.env.KUNQIONG_CLAMAV_HOST || '').trim()
-const clamavPort = Number(process.env.KUNQIONG_CLAMAV_PORT || 3310)
-const scanTimeoutMs = Math.max(1000, Number(process.env.KUNQIONG_SCAN_TIMEOUT_MS) || 600000)
-const ADMIN_COOKIE_NAME = 'kunqiong_admin_session'
-const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000
-const ADMIN_LOGIN_MAX_ATTEMPTS = 8
-const ADMIN_LOGIN_WINDOW_MS = 10 * 60 * 1000
-// 入团申请限流：同一 IP + 账号在窗口内的申请次数上限，防止被转发出去的分享链接被刷申请。
-const JOIN_REQUEST_MAX_PER_WINDOW = 5
-const JOIN_REQUEST_WINDOW_MS = 60 * 60 * 1000
-// 被拒绝后的重新申请冷却，避免持续骚扰团队所有者。
-const JOIN_REQUEST_REJECT_COOLDOWN_MS = 24 * 60 * 60 * 1000
-const joinRequestAttempts = new Map()
-const adminLoginAttempts = new Map()
-const adminSessions = new Map()
-const TEST_ENTERPRISE_USER_KEYS = new Set(splitConfigValues(process.env.KUNQIONG_TEST_ENTERPRISE_USER_KEYS || process.env.KUNQIONG_TEST_ENTERPRISE_USER_IDS).map((value) => value.toLowerCase()))
-const testEnterpriseForAllUsers = process.env.NODE_ENV === 'test'
-  && parseBooleanEnv(process.env.KUNQIONG_TEST_ENTERPRISE_ALL, false)
-// 测试服权益白名单模式：仅 KUNQIONG_TEST_ENTERPRISE_USER_KEYS 内的账号为高等级权益，其余强制基础版。
-const testEnforceEnterpriseAllowlist = process.env.NODE_ENV === 'test'
-  && parseBooleanEnv(process.env.KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST, true)
-const testVerificationDebugMode = process.env.NODE_ENV === 'test'
-  && parseBooleanEnv(process.env.KUNQIONG_VERIFICATION_DEBUG, false)
-const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']
-const COLLECTION_TYPE_EXTENSIONS = {
-  图片: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif', '.ico'],
-  文档: ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.xls', '.xlsx', '.csv', '.ppt', '.pptx', '.md'],
-  视频: ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.ogv', '.flv', '.wmv'],
-  音频: ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.oga', '.ogg', '.wma'],
-  压缩包: ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz'],
-  代码文件: ['.js', '.jsx', '.ts', '.tsx', '.html', '.css', '.json', '.xml', '.yml', '.yaml', '.java', '.py', '.go', '.php', '.rb', '.rs', '.c', '.cpp', '.h', '.cs', '.sh', '.ps1', '.bat', '.cmd', '.sql'],
-}
-const UPGRADE_ORDER_STATUSES = new Set(['pending_payment', 'paid', 'canceled', 'expired'])
-const MAX_UPGRADE_ORDERS = 500
-const MAX_AUDIT_LOGS = 5000
-// 未登录（游客）传输配额：累计计费按「设备 cookie（缺省回落 IP）」维度，
-// 条目数设上限防止 metadata 无限膨胀（超限淘汰最久未活跃的条目）。
-const GUEST_ID_COOKIE = 'kq_guest_id'
-const GUEST_ID_MAX_AGE_SECONDS = 365 * 24 * 3600
-const MAX_GUEST_USAGE_ENTRIES = 20000
+import {
+  httpError, parseRecipients, firstHeader, firstValue,
+  escapeHtml, createToken, hashSecret, parseJson, removeDirectory,
+} from './server/lib/http.js'
 const DEFAULT_SYSTEM_CONFIG = {
   maintenanceMode: false,
   defaultShareDays: 3,
@@ -5879,21 +5797,6 @@ function normalizeExpiryInput(value, label) {
   return date.toISOString()
 }
 
-function httpError(status, message) {
-  const error = new Error(message)
-  error.status = status
-  return error
-}
-
-function parseRecipients(value, { max = Infinity } = {}) {
-  const list = Array.isArray(value)
-    ? value.map(String).map((item) => item.trim()).filter(Boolean)
-    : String(value || '')
-      .split(/[\n,，;；\s]+/)
-      .map((item) => item.trim())
-      .filter(Boolean)
-  return max === Infinity ? list : list.slice(0, max)
-}
 
 function findShareByCode(code) {
   return metadata.shares.find((share) => share.code.toLowerCase() === String(code).trim().toLowerCase())
@@ -5936,35 +5839,8 @@ function getRequestOrigin(req) {
   return `${proto}://${host}`
 }
 
-function firstHeader(value) {
-  return String(value || '').split(',')[0].trim()
-}
 
-function firstValue(value) {
-  return Array.isArray(value) ? String(value[0] || '') : String(value || '')
-}
 
-function splitConfigValues(value = '') {
-  return String(value).split(',').map((item) => item.trim()).filter(Boolean)
-}
-
-function parseBooleanEnv(value, fallback = false) {
-  if (value === undefined || value === null || value === '') return fallback
-  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase())
-}
-
-function escapeHtml(value = '') {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-}
-
-function createToken(length) {
-  return crypto.randomBytes(Math.ceil(length / 2)).toString('hex').slice(0, length)
-}
 
 function createCode(requestedLength = 4) {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -5977,17 +5853,6 @@ function createCode(requestedLength = 4) {
   return code
 }
 
-function hashSecret(value) {
-  return crypto.createHash('sha256').update(String(value)).digest('hex')
-}
-
-function parseJson(value, fallback) {
-  try {
-    return value ? JSON.parse(value) : fallback
-  } catch {
-    return fallback
-  }
-}
 
 function safeRelativePath(value) {
   const normalized = path.posix.normalize(String(value).replaceAll('\\', '/')).replace(/^(\.\.(\/|\\|$))+/, '')
@@ -6014,24 +5879,3 @@ function cleanupUploadedFiles(files = []) {
   }
 }
 
-function removeDirectory(directory) {
-  try { fs.rmSync(directory, { recursive: true, force: true }) } catch {}
-}
-
-function loadEnvFile(filePath) {
-  try {
-    const content = fs.readFileSync(filePath, 'utf8')
-    for (const line of content.split(/\r?\n/)) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith('#')) continue
-      const index = trimmed.indexOf('=')
-      if (index <= 0) continue
-      const key = trimmed.slice(0, index).trim()
-      let value = trimmed.slice(index + 1).trim()
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1)
-      }
-      if (process.env[key] === undefined) process.env[key] = value
-    }
-  } catch {}
-}
