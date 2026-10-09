@@ -343,3 +343,23 @@ export async function downloadBinaryWithProgress(config, onProgress) {
   onProgress({ status: 'handed_off', filename })
   return { handedOff: true }
 }
+
+export async function upgradeApiRequest(url, options = {}) {
+  const { headers = {}, ...fetchOptions } = options
+  const response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'Content-Type': 'application/json', ...headers } })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const error = new Error(data.message || '请求失败')
+    error.order = data.order || null
+    throw error
+  }
+  return data
+}
+
+// 把远端实价合并进套餐对象（只改展示字段，不动 permanent/team 等权益字段；
+// remotePriced 标记供 formatPlanPrice 区分「天数跟随主站」与本地兜底展示）
+export function mergePlanPricing(plan, remotePricing) {
+  const pricing = remotePricing?.[plan?.id]
+  if (!plan || !pricing) return plan
+  return { ...plan, monthlyPrice: pricing.priceCents, validityDays: pricing.validityDays, remotePriced: true, remotePackageName: pricing.packageName || '' }
+}

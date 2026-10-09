@@ -6,6 +6,16 @@ import * as XLSX from 'xlsx'
 import { PPTXViewer } from 'pptxviewjs'
 import QRCode from 'qrcode'
 
+// 已拆出的模块
+import {
+  useConfirmDialog, useDownloadTask, useRemotePlanPricing
+} from './hooks.js'
+
+// 已拆出的模块
+import {
+  mergePlanPricing, upgradeApiRequest
+} from './lib/api.js'
+
 // 工具函数（已拆出）
 import {
   ACCOUNT_PLAN_ICON, ACCOUNT_PLAN_RANK, COLLECTION_TYPE_CATEGORY_KEYS,
@@ -149,35 +159,6 @@ function App() {
   if (route.startsWith('/collect/manage/')) return <CollectionManagePage token={route.split('/')[3]} />
   if (route.startsWith('/collect/')) return <CollectionSubmitPage token={route.split('/')[2]} />
   return <WorkspaceApp />
-}
-
-function useConfirmDialog() {
-  const [confirmState, setConfirmState] = useState(null)
-  const resolverRef = useRef(null)
-
-  useEffect(() => () => {
-    if (resolverRef.current) resolverRef.current(false)
-  }, [])
-
-  const requestConfirm = (options = {}) => new Promise((resolve) => {
-    resolverRef.current = resolve
-    setConfirmState({
-      eyebrow: '操作确认',
-      confirmText: '确定',
-      cancelText: '取消',
-      tone: 'default',
-      ...options,
-    })
-  })
-
-  const settleConfirm = (confirmed) => {
-    const resolve = resolverRef.current
-    resolverRef.current = null
-    setConfirmState(null)
-    resolve?.(confirmed)
-  }
-
-  return { confirmState, requestConfirm, settleConfirm }
 }
 
 function WorkspaceApp() {
@@ -4466,40 +4447,6 @@ function WorkspacePage() {
 const accountPlanRank = (planId) => ACCOUNT_PLAN_RANK[planId] ?? 0
 const accountPlanIcon = (planId) => ACCOUNT_PLAN_ICON[planId] || HardDrive
 
-async function upgradeApiRequest(url, options = {}) {
-  const { headers = {}, ...fetchOptions } = options
-  const response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'Content-Type': 'application/json', ...headers } })
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const error = new Error(data.message || '请求失败')
-    error.order = data.order || null
-    throw error
-  }
-  return data
-}
-
-// 远端主站套餐实价（与订单支付同源）：拉取失败或非远端来源时返回 null，调用方沿用本地展示价兜底。
-function useRemotePlanPricing(enabledId) {
-  const [remotePricing, setRemotePricing] = useState(null)
-  useEffect(() => {
-    if (!enabledId) return undefined
-    let cancelled = false
-    upgradeApiRequest('/api/account/upgrade-pricing').then((data) => {
-      if (!cancelled && data?.source === 'remote') setRemotePricing(data.pricing || {})
-    }).catch(() => { /* 拉不到远端价就沿用本地展示价 */ })
-    return () => { cancelled = true }
-  }, [enabledId])
-  return remotePricing
-}
-
-// 把远端实价合并进套餐对象（只改展示字段，不动 permanent/team 等权益字段；
-// remotePriced 标记供 formatPlanPrice 区分「天数跟随主站」与本地兜底展示）
-function mergePlanPricing(plan, remotePricing) {
-  const pricing = remotePricing?.[plan?.id]
-  if (!plan || !pricing) return plan
-  return { ...plan, monthlyPrice: pricing.priceCents, validityDays: pricing.validityDays, remotePriced: true, remotePackageName: pricing.packageName || '' }
-}
-
 function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
   const plan = workspace?.plan || {}
   const localPlans = (workspace?.plans || []).filter((item) => item.id !== 'free')
@@ -6181,44 +6128,6 @@ function getManageToken(value) {
   const index = parts.indexOf('manage')
   return index >= 0 ? parts[index + 1] || '' : ''
 }
-
-function useDownloadTask() {
-  const [downloadTask, setDownloadTask] = useState(createDownloadState())
-  const activeRef = useRef(false)
-  const retryConfigRef = useRef(null)
-  const retryCountRef = useRef(0)
-
-  const startDownload = async (config, options = {}) => {
-    if (!config) return { ok: false, error: '下载链接不可用' }
-    if (activeRef.current) return { ok: false, error: '已有下载正在进行，请稍候' }
-    activeRef.current = true
-    retryConfigRef.current = config
-    retryCountRef.current = options.retry ? retryCountRef.current + 1 : 0
-    const retryCount = retryCountRef.current
-    setDownloadTask({ ...createDownloadState(), status: 'preparing', label: config.label, filename: config.filename, totalBytes: config.totalBytes || 0, retryCount, retryConfig: config })
-    try {
-      const result = await downloadBinaryWithProgress(config, (patch) => {
-        setDownloadTask((current) => ({ ...current, ...patch, retryConfig: config, retryCount }))
-      })
-      setDownloadTask((current) => ({ ...current, status: result?.handedOff ? 'handed_off' : 'complete', progress: result?.handedOff ? 0 : 100, etaSeconds: 0, error: '', retryConfig: config, retryCount }))
-      return { ok: true }
-    } catch (error) {
-      const message = error.message || '下载失败'
-      setDownloadTask((current) => ({ ...current, status: 'failed', error: message, retryConfig: config, retryCount }))
-      return { ok: false, error: message }
-    } finally {
-      activeRef.current = false
-    }
-  }
-
-  const retryDownload = () => {
-    const config = retryConfigRef.current || downloadTask.retryConfig
-    if (config) startDownload(config, { retry: true })
-  }
-
-  return { downloadTask, startDownload, retryDownload, downloadBusy: isDownloadBusy(downloadTask) }
-}
-
 
 async function copyImageToClipboard(dataUrl) {
   if (canUseImageClipboard()) {
