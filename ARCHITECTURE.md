@@ -12,7 +12,8 @@
 │   └── lib/
 │       ├── env-file.js     # .env 文件加载
 │       ├── http.js         # HTTP 错误构造与通用纯函数
-│       └── metadata-store.js # 元数据快照：载入 / 合并 / CAS 落盘（不含领域规范化）
+│       ├── metadata-store.js # 元数据快照：载入 / 合并 / CAS 落盘（不含领域规范化）
+│       └── metadata-normalizers.js # 领域规范化聚合点（唯一允许 import 多个领域的地方）
 ├── src/
 │   ├── main.jsx            # 前端入口（React 应用与页面组件）
 │   ├── office-html.js      # Office 文档 HTML 清洗
@@ -57,9 +58,10 @@ src/styles/components.css 944 行  原文件第 849–末尾
 
 | 层 | 位置 | 职责 | 可否依赖上层 |
 |---|---|---|---|
-| 配置层 | `server/config.js` | 读取环境变量、定义路径与业务常量 | 仅可依赖 `lib/env-file.js` |
+| 配置层 | `server/config.js` | 环境变量、路径、业务常量与默认项 | 仅可依赖 `lib/env-file.js` |
 | 状态层 | `server/state.js` | 连接池、限流/会话/上传计数表、缓存、CAS 计数 | 仅可依赖配置层 |
 | 存储层 | `server/lib/metadata-store.js` | 元数据快照的载入、合并与 CAS 落盘 | 可依赖配置层与状态层 |
+| 规范化层 | `server/lib/metadata-normalizers.js` | 把原始 JSON 规范化为内存模型 | 可依赖以上各层 |
 | 工具层 | `server/lib/*.js` | 无状态纯函数、错误构造 | 可依赖以上各层 |
 | 路由层 | `server/routes/*.js`（待建） | 按业务域注册路由 | 可依赖以上各层 |
 | 入口层 | `server.mjs` | 应用装配、路由注册、启动与优雅退出 | 可依赖以上各层 |
@@ -229,6 +231,73 @@ initMetadata(normalizeMetadata(await loadMetadata()))   // ② 再初始化
 
 **验证**：`metadata-cas` 12/12（两个真实进程并发写 + 重启恢复，这是对持久化路径最深的检验）、
 `upload` 10/10、`remediation` 61 PASS、`payment-ui` 10/10、`docker-copy` 200、构建 8.31s。
+
+### 2026-10-09：抽出元数据规范化层
+
+`normalizeMetadata` 的**传递依赖闭包**（43 个函数 / 600 行）迁到
+`server/lib/metadata-normalizers.js`。闭包由脚本从 AST 算出，**未手写清单** ——
+漏一个就是运行期 `ReferenceError`。
+
+覆盖账号（用户/消息/通知设置）、记录、组织、支付、游客配额、系统配置、验证码、
+审计等领域的规范化，以及同簇的小工具。
+
+该模块是「唯一允许 import 多个领域」的聚合点。实测**无循环依赖**：
+闭包对 `metadata-store` 的唯一需求（落盘）是通过 `runtime.metadataNeedsPersist = true`
+标记 + 由 store 统一落盘完成的，不需要反向 import。
+
+同时把业务常量归位 `config.js`：`ACCOUNT_PLANS` / `ACCOUNT_PLAN_RANK` /
+`DEFAULT_NOTIFICATION_SETTINGS` / `DEFAULT_FILE_CLEANUP_SETTINGS` / `DEFAULT_ACCOUNT_MESSAGES`。
+理由：规范化层与业务层都要用，放配置层避免互相 import。
+
+**结果**：`server.mjs` 5873 → 5198 行，新增 `metadata-normalizers.js` 646 行。
+
+## 服务端拆分进度（2026-10-09）
+
+原 `server.mjs` 6261 行 → 现在 **5196 行**，已抽出 5 个模块。
+
+| 已抽出 | 行数 | 说明 |
+|---|---:|---|
+| `server/config.js` | 249 | 环境变量、路径、业务常量与默认项 |
+| `server/state.js` | 84 | 12 个可变 Map/Set + `runtime` 容器 + 连接池 + 缓存 |
+| `server/lib/metadata-store.js` | 408 | 元数据载入/合并/CAS 落盘（21 函数） |
+| `server/lib/metadata-normalizers.js` | 671 | 领域规范化闭包（43 函数） |
+| `server/lib/http.js` / `env-file.js` | 78 | 通用纯函数 |
+
+`verify:refactor` 实测依赖层级（深度 4）：
+
+```
+层0  lib/env-file.js, lib/http.js
+层1  config.js
+层2  state.js
+层3  lib/metadata-store.js, lib/metadata-normalizers.js
+层4  server.mjs
+```
+
+### 剩余工作
+
+`server.mjs` 余下 5196 行 ≈ 214 个顶层函数（2760 行）+ 80 条路由的内联处理器（1824 行）。
+
+**顺序不能颠倒**：路由处理器直接引用这些函数，若先搬路由，就得让 `server.mjs`
+反向导出函数给路由用 —— 那是循环依赖。必须先按域把函数搬进 `server/lib/*.js`，
+再搬路由。
+
+**路由域边界**（按内联处理器行数排序，可直接当拆分单位）：
+
+| 前缀 | 路由数 | 处理器行数 |
+|---|---:|---:|
+| `/api/account` | 34 | 731 |
+| `/api/upload-sessions` | 4 | 237 |
+| `/api/collections` | 11 | 225 |
+| `/api/auth` | 5 | 173 |
+| `/api/shares` | 10 | 152 |
+| `/api/admin` | 9 | 132 |
+| `/api/organizations` | 2 | 114 |
+| 其余（health / guest / runtime-config / 根路径） | 5 | 60 |
+
+搬路由时用计划中的 `registerXRoutes(app, ctx)`：`ctx` 只放真正共享的可变状态与
+跨域函数，各域内部专用函数直接 import，避免 `ctx` 长成新的上帝对象。
+
+全部抽完后，`server.mjs` 预计收敛到 200–400 行（仅装配与启动）。
 
 ## 值得注意的技术债
 
