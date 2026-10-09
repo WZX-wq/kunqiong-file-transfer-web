@@ -37,6 +37,22 @@ export const UPLOAD_CHUNK_MIN_BYTES = 1 * 1024 * 1024
 export const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024
 export const UPLOAD_CHUNK_DEFAULT_BYTES = 8 * 1024 * 1024
 
+// ── 元数据默认值 ──
+// 元数据层与业务层都要用（emptyMetadata 造初始快照、normalizeSystemConfig 兜底），
+// 放在配置层避免两边互相 import。
+export const DEFAULT_SYSTEM_CONFIG = {
+  maintenanceMode: false,
+  defaultShareDays: 3,
+  maxShareDays: 30,
+  anonymousMaxFileSizeMb: 500,
+  // 游客累计可传输大小（MB），0 表示不限制。防止匿名通道被无限白嫖。
+  anonymousTotalSizeMb: 1024,
+  maxBatchFiles: MAX_FILES,
+  auditLogRetentionDays: 90,
+  orphanGraceHours: 24,
+  planOverrides: {},
+}
+
 // ── OAuth 与应用地址 ──
 export const serverPort = Number(process.env.PORT || process.env.KUNQIONG_PORT || 8045)
 export const oauthAuthorizeUrl = process.env.KUNQIONG_OAUTH_AUTHORIZE_URL || 'https://login.kunqiongai.com/authorize.html'
