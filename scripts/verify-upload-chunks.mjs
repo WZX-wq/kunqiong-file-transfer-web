@@ -11,10 +11,23 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 const root = path.resolve(import.meta.dirname, '..')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-upload-chunks-'))
+
+// 不用 fs.cpSync：部分受限执行环境会直接终止使用了递归复制的进程
+// （表现为无输出 + exit 127，难以定位）。同 verify-metadata-cas.mjs 的处理方式。
+function copyDirectory(source, target) {
+  fs.mkdirSync(target, { recursive: true })
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name)
+    const to = path.join(target, entry.name)
+    if (entry.isDirectory()) copyDirectory(from, to)
+    else if (entry.isFile()) fs.copyFileSync(from, to)
+  }
+}
+
 fs.copyFileSync(path.join(root, 'server.mjs'), path.join(fixture, 'server.mjs'))
 fs.copyFileSync(path.join(root, 'package.json'), path.join(fixture, 'package.json'))
-fs.cpSync(path.join(root, 'server'), path.join(fixture, 'server'), { recursive: true })
-fs.cpSync(path.join(root, 'email-templates'), path.join(fixture, 'email-templates'), { recursive: true })
+copyDirectory(path.join(root, 'server'), path.join(fixture, 'server'))
+copyDirectory(path.join(root, 'email-templates'), path.join(fixture, 'email-templates'))
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
 const user = { id: 'owner', username: 'owner', status: 'active', planId: 'free' }
 fs.mkdirSync(path.join(fixture, 'storage'))

@@ -16,6 +16,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
+import { spawn } from 'node:child_process'
 
 const root = path.resolve(import.meta.dirname, '..', '..')
 process.chdir(root)
@@ -69,13 +70,40 @@ function parseModule(mod) {
   const imports = []      // { source, named[], default[], namespace[] }
   const exports = new Set()
   const reExports = []    // { source, names: [...] | '*' }
+  const referenced = new Set()   // 被引用的标识符（用于未使用导入检测）
   let hasDefault = false
+
+  // 收集引用：跳过导入声明本身（它不构成“使用”）、非计算属性名、对象字面量的键
+  const collectRefs = (node, parent, key) => {
+    if (!node || typeof node.type !== 'string') return
+    if (node.type === 'ImportDeclaration') return
+    if (node.type === 'Identifier') {
+      const isPropKey = parent && (
+        (parent.type === 'MemberExpression' && key === 'property' && !parent.computed) ||
+        (parent.type === 'ObjectProperty' && key === 'key' && !parent.computed) ||
+        (parent.type === 'ObjectMethod' && key === 'key' && !parent.computed) ||
+        (parent.type === 'ClassMethod' && key === 'key' && !parent.computed)
+      )
+      const isDeclId = parent && key === 'id' &&
+        ['FunctionDeclaration', 'ClassDeclaration', 'VariableDeclarator'].includes(parent.type)
+      const isFnParam = parent && parent.type === 'FunctionDeclaration' && key === 'params'
+      if (!isPropKey && !isDeclId && !isFnParam) referenced.add(node.name)
+      return
+    }
+    if (node.type === 'JSXIdentifier') { referenced.add(node.name); return }
+    for (const k in node) {
+      if (k === 'loc' || k.includes('omment')) continue
+      const v = node[k]
+      if (Array.isArray(v)) { for (const c of v) if (c && typeof c.type === 'string') collectRefs(c, node, k) }
+      else if (v && typeof v.type === 'string') collectRefs(v, node, k)
+    }
+  }
 
   for (const node of ast.program.body) {
     if (node.type === 'ImportDeclaration') {
       const names = { named: [], default: [], namespace: [] }
       for (const sp of node.specifiers) {
-        if (sp.type === 'ImportSpecifier') names.named.push(sp.imported.name)
+        if (sp.type === 'ImportSpecifier') names.named.push({ imported: sp.imported.name, local: sp.local.name })
         else if (sp.type === 'ImportDefaultSpecifier') names.default.push(sp.local.name)
         else if (sp.type === 'ImportNamespaceSpecifier') names.namespace.push(sp.local.name)
       }
@@ -107,7 +135,31 @@ function parseModule(mod) {
     if (node.type === 'ExportAllDeclaration') { reExports.push({ source: node.source.value, names: '*' }); continue }
   }
 
-  return { imports, exports, reExports, hasDefault, lines: code.split(/\r?\n/).length - 1 }
+  // 收集全文件的标识符引用（collectRefs 已跳过 import 声明，故导入绑定不会被误记为“已使用”）
+  collectRefs(ast.program, null, 'program')
+
+  // 顶层声明（导入绑定除外），用于「缺失导入」检测
+  const declared = new Set()
+  for (const n of ast.program.body) {
+    if (n.type === 'FunctionDeclaration' || n.type === 'ClassDeclaration') { if (n.id) declared.add(n.id.name) }
+    else if (n.type === 'VariableDeclaration') {
+      for (const d of n.declarations) {
+        if (d.id.type === 'Identifier') declared.add(d.id.name)
+        else if (d.id.type === 'ObjectPattern') {
+          for (const p of d.id.properties) {
+            if (p.value?.type === 'Identifier') declared.add(p.value.name)
+            else if (p.argument?.type === 'Identifier') declared.add(p.argument.name)
+          }
+        }
+      }
+    } else if (n.type === 'ExportNamedDeclaration' && n.declaration) {
+      const d = n.declaration
+      if (d.id) declared.add(d.id.name)
+      else if (d.type === 'VariableDeclaration') for (const v of d.declarations) if (v.id.type === 'Identifier') declared.add(v.id.name)
+    }
+  }
+
+  return { imports, exports, reExports, hasDefault, referenced, declared, lines: code.split(/\r?\n/).length - 1 }
 }
 
 // 相对路径解析：./x → ./x.js | ./x.mjs | ./x/index.js
@@ -149,14 +201,14 @@ for (const [rel, node] of graph) {
     const t = graph.get(target.rel)
     if (!t) continue
 
-    for (const name of imp.named) {
+    for (const spec of imp.named) {
       importCount++
-      if (t.exports.has(name)) continue
+      if (t.exports.has(spec.imported)) continue
       if (t.reExports.some((r) => r.names === '*')) {
-        console.log(`  [跳过] ${rel} 导入 ${name}：目标 ${target.rel} 含 export *，无法静态判定`)
+        console.log(`  [跳过] ${rel} 导入 ${spec.imported}：目标 ${target.rel} 含 export *，无法静态判定`)
         continue
       }
-      fail(`${rel} 从 ${target.rel} 导入 ${name}，但后者未导出该符号`)
+      fail(`${rel} 从 ${target.rel} 导入 ${spec.imported}，但后者未导出该符号`)
     }
     for (const _ of imp.default) {
       importCount++
@@ -164,6 +216,50 @@ for (const [rel, node] of graph) {
     }
   }
 }
+
+// 未使用导入：搬迁后最常见的手尾（搬走了用它的代码，import 忘了删）。
+// 反向也说明问题：某符号被 import 却没人用，往往意味着搬迁漏了调用点。
+console.log('未使用导入检测：')
+let unusedCount = 0
+for (const [rel, node] of graph) {
+  for (const imp of node.imports) {
+    const judge = (name, label) => {
+      if (node.referenced.has(name)) return
+      unusedCount++
+      fail(`${rel} 导入了 ${name}${label}，但全文未引用`)
+    }
+    for (const n of imp.named) judge(n.local, n.local !== n.imported ? `（来源名 ${n.imported}）` : '')
+    for (const n of imp.default) judge(n, '（默认导出）')
+    for (const n of imp.namespace) judge(n, '（命名空间）')
+  }
+}
+if (!unusedCount) console.log('  无未使用导入')
+
+// 缺失导入：某符号在本项目其他模块有导出、本文件也引用了它，
+// 但既没 import 也没本地声明 —— 运行到那一行就会 ReferenceError。
+// 这类问题 import 校验抓不到（根本没有 import 语句），
+// 常规启动也未必暴露（引用可能位于某个不常走的分支里，例如 DB 模式）。
+// 2026-10-09 的实际案例：config.js 导出 databasePassword/Host/Name/User，
+// server.mjs 分别引用却没导入，导致「开 MySQL 就起不来」，且默认路径下完全看不见。
+console.log('缺失导入检测：')
+const exportIndex = new Map()   // 符号名 -> 导出它的模块
+for (const [rel, node] of graph) for (const name of node.exports) if (!exportIndex.has(name)) exportIndex.set(name, rel)
+
+let missingImports = 0
+for (const [rel, node] of graph) {
+  for (const name of node.referenced) {
+    if (node.declared.has(name)) continue
+    const owner = exportIndex.get(name)
+    if (!owner) continue                 // 非本项目导出（内建/全局/被 import 的第三方），不判
+    // 已经 import 进来了就不算缺失
+    const importedHere = node.imports.some((imp) =>
+      imp.named.some((n) => n.local === name) || imp.default.includes(name) || imp.namespace.includes(name))
+    if (importedHere) continue
+    missingImports++
+    fail(`${rel} 引用了 ${name}（由 ${owner} 导出），但既未 import 也未本地声明 —— 运行到该行会 ReferenceError`)
+  }
+}
+if (!missingImports) console.log('  无缺失导入')
 
 if (missingModules.length) missingModules.forEach((x) => fail(`模块解析失败：${x}`))
 const edgeCount = [...graph.values()].reduce((s, n) => s + n.deps.size, 0)
@@ -324,6 +420,45 @@ const httpChecks = [
 ]
 console.log('函数行为：')
 for (const [name, ok] of httpChecks) console.log(`  ${ok ? '[函数OK]' : '[函数FAIL]'} ${name}`)
+
+// ─────────────────────────────────────────────────────────
+// 7) 配置模块的环境分支覆盖
+// ─────────────────────────────────────────────────────────
+// 起因：config.js 曾有一处 `password: databasePassword` 引用未定义变量，
+// 而该行位于 `databaseEnabled ? ... : null` 的三元真分支里 ——
+// 默认 KUNQIONG_DB_ENABLED=false 时永远不执行，所以静态检查和常规启动都发现不了；
+// 一旦开启 MySQL，import 即抛 ReferenceError，服务完全起不来。
+// 教训：带环境分支的模块必须在**每个分支**下各跑一次导入。
+console.log('配置模块环境分支覆盖：')
+const ENV_CASES = [
+  { name: '默认（DB 关闭）', env: {} },
+  { name: 'KUNQIONG_DB_ENABLED=true', env: { KUNQIONG_DB_ENABLED: 'true' } },
+]
+// 注意：这里必须用异步 spawn，不能用 spawnSync ——
+// 受限执行环境下 spawnSync 启动子进程会直接 EBUSY（与 execFileSync('git') 同类问题）。
+// 同目录下的 verify-metadata-cas.mjs 也是因此改用 spawn。
+const runInEnv = (url, extraEnv) => new Promise((resolve) => {
+  const cleanEnv = { ...process.env }
+  for (const k of Object.keys(cleanEnv)) if (k.startsWith('KUNQIONG_') || k.startsWith('OAUTH_')) delete cleanEnv[k]
+  const child = spawn(process.execPath, ['-e', `import(${JSON.stringify(url)}).catch(e=>{console.error(e.constructor.name+': '+e.message);process.exit(1)})`], {
+    env: { ...cleanEnv, ...extraEnv },
+    cwd: root,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  let stderr = ''
+  child.stderr.on('data', (d) => { stderr += d })
+  const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 30000)
+  child.on('error', (err) => { clearTimeout(timer); resolve({ code: -1, stderr: err.message }) })
+  child.on('close', (code) => { clearTimeout(timer); resolve({ code, stderr }) })
+})
+
+const probe = pathToFileURL(path.join(root, 'scripts/refactor/_probe-config.mjs')).href
+for (const c of ENV_CASES) {
+  const r = await runInEnv(probe, c.env)
+  if (r.code === 0) console.log(`  [OK] ${c.name}`)
+  else fail(`config.js 在「${c.name}」下无法导入：${(r.stderr || '').trim().split('\n').filter(Boolean)[0] || `exit=${r.code}`}`)
+}
+console.log()
 
 // ─────────────────────────────────────────────────────────
 // 汇总

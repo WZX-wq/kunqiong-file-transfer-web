@@ -17,7 +17,18 @@ users.member.planId = 'member'
 users.member.planExpiresAt = future
 const sessions = Object.values(users).map((user) => ({ id: user.id + '-session', user, apiWebToken: 'fixture-token-' + user.id, expiresAt: future }))
 fs.copyFileSync(path.join(root, 'server.mjs'), path.join(fixture, 'server.mjs'))
-fs.cpSync(path.join(root, 'server'), path.join(fixture, 'server'), { recursive: true })
+// 不用 fs.cpSync 复制目录：部分受限执行环境会直接终止使用了递归复制的进程
+// （表现为无输出 + exit 127，很难定位）。同 verify-metadata-cas.mjs / verify-upload-chunks.mjs。
+function copyDirectory(source, target) {
+  fs.mkdirSync(target, { recursive: true })
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name)
+    const to = path.join(target, entry.name)
+    if (entry.isDirectory()) copyDirectory(from, to)
+    else if (entry.isFile()) fs.copyFileSync(from, to)
+  }
+}
+copyDirectory(path.join(root, 'server'), path.join(fixture, 'server'))
 fs.copyFileSync(path.join(root, 'package.json'), path.join(fixture, 'package.json'))
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
 const templateSource = path.join(root, 'email-templates')
