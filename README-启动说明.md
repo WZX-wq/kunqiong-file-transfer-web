@@ -1,5 +1,8 @@
 # 鲲穹文件传输 Web Demo
 
+> 代码结构与分层约定见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+> 服务端改动后建议运行 `npm run verify:refactor` 做导入完整性与行为回归检查。
+
 ## 运行环境
 
 - Windows、macOS 或 Linux

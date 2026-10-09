@@ -18,15 +18,21 @@ for (const m of mods) {
 
 // 2) 核对 server.mjs 从这些模块 import 的符号是否都在导出列表里
 const src = fs.readFileSync(path.join(root, 'server.mjs'), 'utf8')
-const re = /import\s*\{([\s\S]*?)\}\s*from\s*'(\.\/server\/[^']+)'/g
+// 仅匹配指向本项目 server/ 目录的具名导入。注意用 [^}]*? 限定在单个花括号内，
+// 避免跨到后面无关 import 语句（曾导致把 node:events 的 once 误报成 config.js 的导出）。
+const re = /import\s*\{([^}]*)\}\s*from\s*'(\.\/server\/[^']+)'/g
 let m, problems = 0, total = 0
 while ((m = re.exec(src))) {
-  const target = m[2].replace('./', './')
+  const target = m[2]
   const avail = new Set(exported[target] || [])
   if (!avail.size) { console.log(`  [跳过] 目标模块未直接加载: ${target}`); continue }
-  const names = m[1].split(',').map(s=>s.trim()).filter(Boolean)
+  // 去掉行注释后再切分，避免把注释文字当成导入名
+  const names = m[1]
+    .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
+    .split(',').map((s) => s.trim()).filter(Boolean)
   for (const raw of names) {
     const name = raw.split(/\s+as\s+/)[0].trim()
+    if (!/^[A-Za-z_$][\w$]*$/.test(name)) { console.log(`  [忽略] 非法名称: ${JSON.stringify(raw)}`); continue }
     total++
     if (!avail.has(name)) { console.log(`  [缺失] ${target} 未导出 ${name}`); problems++ }
   }
