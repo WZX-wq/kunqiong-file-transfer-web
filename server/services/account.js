@@ -1413,3 +1413,21 @@ export function safeRelativePath(value) {
   const normalized = path.posix.normalize(String(value).replaceAll('\\', '/')).replace(/^(\.\.(\/|\\|$))+/, '')
   return normalized.replace(/^\/+/, '') || '未命名文件'
 }
+
+
+export async function reconcileActiveUpgradeOrders() {
+  if (cleanupPaymentQueryCredentials()) persistMetadata()
+  const seen = new Set()
+  for (const session of [...metadata.sessions].reverse()) {
+    if (seen.has(session.user.id) || !sessionApiWebToken(session) || new Date(session.expiresAt).getTime() <= Date.now() || accountUserById(session.user.id)?.status === 'disabled') continue
+    seen.add(session.user.id)
+    paymentSessionTokens.set(session.user.id, sessionApiWebToken(session))
+    await reconcileUserUpgradeOrders(session)
+  }
+  for (const order of metadata.upgradeOrders) {
+    const credential = normalizePaymentQueryCredential(order)
+    if (!credential || seen.has(order.userId) || accountUserById(order.userId)?.status === 'disabled') continue
+    try { await reconcileUpgradeOrder(credential, order) }
+    catch { /* Keep transient failures retryable within the retention window. */ }
+  }
+}
