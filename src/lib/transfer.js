@@ -7,7 +7,7 @@ import {
   fileExtension, safeDownloadName, totalFileSize
 } from './format.js'
 import {
-  apiRequest, buildShareOptions, canUseImageClipboard, copyImageWithSelection,
+  UploadPausedError, apiRequest, buildShareOptions, canUseImageClipboard, copyImageWithSelection,
   createShareFileDownloadConfig, createSubmissionFileDownloadConfig, currentSpeed,
   pickUploadChunkSize, sha256Hex, uploadResumeSignature, wait, xhrUploadChunk
 } from './api.js'
@@ -312,12 +312,5 @@ export function uploadStateFromProgress(session, loadedBytes, phase, currentFile
     currentFile,
     retryCount,
     error,
-  }
-}
-
-export class UploadPausedError extends Error {
-  constructor() {
-    super('上传已暂停')
-    this.name = 'UploadPausedError'
   }
 }

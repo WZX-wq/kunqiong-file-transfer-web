@@ -61,6 +61,14 @@ export function currentSpeed(session, loadedBytes) {
   return loadedBytes / elapsedSeconds
 }
 
+// 上传暂停/取消时的专用错误类型：xhrUploadChunk 与 transfer.js 的上传循环共用。
+export class UploadPausedError extends Error {
+  constructor() {
+    super('上传已暂停')
+    this.name = 'UploadPausedError'
+  }
+}
+
 export function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkData, chunkHash, filename }, { uploadRef, onProgress }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()

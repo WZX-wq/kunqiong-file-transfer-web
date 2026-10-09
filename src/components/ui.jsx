@@ -1,4 +1,8 @@
 import React from 'react'
+import mammoth from 'mammoth'
+import { sanitizeOfficeHtml } from '../office-html.js'
+import * as XLSX from 'xlsx'
+import { PPTXViewer } from 'pptxviewjs'
 import { Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, Eye, FileText, Link2, PencilLine, RefreshCw, RotateCcw, UserPlus, UserRound, X } from 'lucide-react'
 import { apiRequest, downloadStatusText } from '../lib/api.js'
 import { addMonths, displayUserName, formatBytes, formatDateInput, formatDuration, formatLimitSize, isClosedStatus, maskPhone, parseLocalDate, splitFileNameForDisplay, startOfMonth } from '../lib/format.js'
@@ -770,3 +774,5 @@ export function userAvatarSource(user = {}) {
 export function displayUserInitial(user = {}) { return displayUserName(user).trim().slice(0, 1).toUpperCase() || '鲲' }
 
 export function displayUserSubtitle(user = {}) { return user.email || maskPhone(user.phone) || user.username || '已登录' }
+
+export function toFileItems(incoming) { return Array.from(incoming || []).map((file, index) => ({ id: `${file.name}-${file.lastModified}-${index}`, file, name: file.name, size: file.size, mimeType: file.type || 'application/octet-stream', relativePath: file.webkitRelativePath || file.name })) }
