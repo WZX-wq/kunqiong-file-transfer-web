@@ -19,6 +19,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=build /app/server.mjs ./server.mjs
+COPY --from=build /app/server ./server
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/email-templates ./email-templates
 

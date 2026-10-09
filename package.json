@@ -6,9 +6,12 @@
   "scripts": {
     "dev": "concurrently -k \"node server.mjs\" \"vite --host 0.0.0.0 --port 4173\"",
     "build": "vite build",
-    "test:remediation": "node scripts/verify-office-html.mjs && node scripts/verify-remediation.mjs",
+    "test:remediation": "node scripts/verify-office-html.mjs && node scripts/verify-remediation.mjs && node scripts/verify-payment-ui.mjs",
     "test:upload": "node scripts/verify-upload-chunks.mjs",
+    "verify:metadata-cas": "node scripts/verify-metadata-cas.mjs",
+    "verify:docker-copy": "node scripts/refactor/check-docker-copy.mjs",
     "verify:refactor": "node scripts/refactor/verify-runtime.mjs",
+    "verify:locate": "node scripts/refactor/locate.mjs",
     "start": "node server.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
