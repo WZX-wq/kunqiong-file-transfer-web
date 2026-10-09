@@ -55,6 +55,7 @@ import {
 } from './server/lib/http.js'
 
 import {
+  runtime,
   databasePool, reservedShareCodes,
   uploadSessions, uploadReservations,
   upgradeOrderLocks, paymentReconcileAttempts, paymentSessionTokens,
@@ -118,21 +119,12 @@ const DEFAULT_ACCOUNT_MESSAGES = [
 ]
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const serverHost = process.env.HOST || process.env.KUNQIONG_HOST || '0.0.0.0'
-let metadataNeedsPersist = false
-let metadataReady = null
-let emailTransporter = null
-let metadataWriteQueue = Promise.resolve()
 // 元数据并发写保护：revision 是快照的单调版本号，落盘走 CAS（MySQL 用 WHERE revision = ?）。
 // 冲突时重读远端 + 合并 + 重试，避免多实例各自拿启动时的旧快照互相覆盖。
 // MySQL 模式以数据库为准（metadata.json 只作镜像，不参与 CAS）；
 // 本地模式以文件为准，用旁挂的 .revision 文件记录版本。两条路径各自独立计数。
 const metadataRevisionPath = `${metadataPath}.revision`
 const instanceTag = crypto.randomUUID().slice(0, 8)
-let metadataRevision = 0
-let metadataLocalRevision = 0
-let metadataBaseIds = null
-let metadataLocalBaseIds = null
-let metadataConflictCount = 0
 // 快照合并规则（合并算法见后面的 mergeMetadataSnapshots）。放在模块顶部是因为
 // 启动阶段就会调用 metadataIdSets，必须早于任何落盘动作完成初始化。
 const METADATA_MERGE_RULES = [
@@ -156,18 +148,18 @@ for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
 }
 
 const metadata = normalizeMetadata(await loadMetadata())
-metadataBaseIds = metadataIdSets(metadata)
-metadataLocalBaseIds = metadataBaseIds
+runtime.metadataBaseIds = metadataIdSets(metadata)
+runtime.metadataLocalBaseIds = runtime.metadataBaseIds
 for (const share of metadata.shares) {
   if (share.deliveryRecipients?.length && !Array.isArray(share.recipientUserIds)) {
     const notifiedIds = (share.notificationLog || []).flatMap((entry) => entry.deliveredUserIds || [])
     share.recipientUserIds = [...new Set([...notifiedIds, ...resolveRecipientUserIds(share.deliveryRecipients, true)])]
     share.recipientContacts = share.deliveryRecipients.filter((recipient) => normalizeContactTarget(recipient) && !resolveRecipientUserIds([recipient], true).length)
-    metadataNeedsPersist = true
+    runtime.metadataNeedsPersist = true
   }
 }
-metadataReady = metadata
-if (metadataNeedsPersist) persistMetadata()
+runtime.metadataReady = metadata
+if (runtime.metadataNeedsPersist) persistMetadata()
 // 上传会话/预留、升级订单锁、支付对账、管理后台会话、OAuth state 均在 server/state.js。
 const upload = multer({
   dest: tempRoot,
@@ -2406,7 +2398,7 @@ async function shutdown(signal) {
   clearInterval(paymentTimer)
   clearTimeout(initialPaymentCheck)
   try {
-    await metadataWriteQueue
+    await runtime.metadataWriteQueue
     if (databasePool) await databasePool.end()
     server.close(() => process.exit(0))
   } catch (error) {
@@ -2467,7 +2459,7 @@ function readLocalMetadataRevision() {
 
 async function loadMetadata() {
   const localMetadata = loadLocalMetadata()
-  metadataLocalRevision = readLocalMetadataRevision()
+  runtime.metadataLocalRevision = readLocalMetadataRevision()
   if (!databasePool) return localMetadata
   if (!databaseHost || !databaseName || !databaseUser) {
     throw new Error('数据库模式已开启，但数据库连接参数不完整')
@@ -2475,7 +2467,7 @@ async function loadMetadata() {
   await ensureDatabaseStateTable()
   const remote = await readRemoteMetadataRow()
   if (remote) {
-    metadataRevision = remote.revision
+    runtime.metadataRevision = remote.revision
     return remote.metadata
   }
   const normalized = normalizeMetadata(localMetadata)
@@ -2486,13 +2478,13 @@ async function loadMetadata() {
   )
   // affectedRows 为 1 表示本实例建了行；为 0 表示另一个实例抢先建了行，按正常路径重读。
   if (Number(result.affectedRows) === 1) {
-    metadataRevision = 1
+    runtime.metadataRevision = 1
     console.log('已将本地 metadata.json 迁移到 MySQL')
     return normalized
   }
   const winner = await readRemoteMetadataRow()
   if (!winner) throw new Error('元数据状态行创建失败，已停止启动以避免覆盖数据')
-  metadataRevision = winner.revision
+  runtime.metadataRevision = winner.revision
   return winner.metadata
 }
 
@@ -2637,8 +2629,8 @@ function applyMergedMetadata(next) {
 
 function rememberMetadataBaseIds() {
   const sets = metadataIdSets(metadata)
-  metadataBaseIds = sets
-  metadataLocalBaseIds = sets
+  runtime.metadataBaseIds = sets
+  runtime.metadataLocalBaseIds = sets
 }
 
 function normalizeMetadata(value = {}) {
@@ -2646,23 +2638,23 @@ function normalizeMetadata(value = {}) {
   for (const share of shares) {
     if (!share.manageToken) {
       share.manageToken = createToken(18)
-      metadataNeedsPersist = true
+      runtime.metadataNeedsPersist = true
     }
     if (share.status === 'expired') {
       share.status = 'closed'
       share.closeReason = share.closeReason || 'expired'
-      metadataNeedsPersist = true
+      runtime.metadataNeedsPersist = true
     }
   }
   const collections = Array.isArray(value.collections) ? value.collections : []
   for (const task of collections) {
     if (!task.manageToken) {
       task.manageToken = createToken(18)
-      metadataNeedsPersist = true
+      runtime.metadataNeedsPersist = true
     }
     if (!Array.isArray(task.submissions)) {
       task.submissions = []
-      metadataNeedsPersist = true
+      runtime.metadataNeedsPersist = true
     }
   }
   const sessions = Array.isArray(value.sessions)
@@ -2670,7 +2662,7 @@ function normalizeMetadata(value = {}) {
       .filter((session) => session?.id && session?.user)
       .map((session) => {
         if (Object.prototype.hasOwnProperty.call(session, 'accessToken') || Object.prototype.hasOwnProperty.call(session, 'tokenType')) {
-          metadataNeedsPersist = true
+          runtime.metadataNeedsPersist = true
         }
         const { accessToken: _accessToken, tokenType: _tokenType, ...sanitized } = session
         return sanitized
@@ -2701,7 +2693,7 @@ function normalizeUpgradeOrders(value = []) {
     const paymentQueryCredential = normalizePaymentQueryCredential(item)
     if (item?.paymentQueryCredential && (!paymentQueryCredential
       || item.paymentQueryCredential.apiWebToken !== paymentQueryCredential.apiWebToken
-      || item.paymentQueryCredential.expiresAt !== paymentQueryCredential.expiresAt)) metadataNeedsPersist = true
+      || item.paymentQueryCredential.expiresAt !== paymentQueryCredential.expiresAt)) runtime.metadataNeedsPersist = true
     return {
       id: trimRecordString(item?.id, 80) || createToken(10),
       orderNo: trimRecordString(item?.orderNo, 40) || `UPG-${createToken(8).toUpperCase()}`,
@@ -2770,7 +2762,7 @@ function findUpgradeOrder(orderId, userId) {
 function persistMetadata() {
   persistLocalMetadata()
   if (!databasePool) return
-  metadataWriteQueue = metadataWriteQueue
+  runtime.metadataWriteQueue = runtime.metadataWriteQueue
     .catch(() => {})
     .then(() => writeMetadataToDatabase())
     .catch((error) => {
@@ -2826,10 +2818,10 @@ function persistLocalMetadata() {
       // 本地模式：文件是唯一真源。磁盘版本领先说明另一个进程（同机多实例、
       // 开发与生产共用 storage）改过，先合并再写，不要拿本进程的旧快照直接覆盖。
       const diskRevision = readLocalMetadataRevision()
-      if (diskRevision > metadataLocalRevision) {
-        applyMergedMetadata(mergeMetadataSnapshots(loadLocalMetadata(), metadata, diskRevision === metadataLocalRevision + 1 ? metadataLocalBaseIds : null))
-        metadataLocalRevision = diskRevision
-        metadataConflictCount += 1
+      if (diskRevision > runtime.metadataLocalRevision) {
+        applyMergedMetadata(mergeMetadataSnapshots(loadLocalMetadata(), metadata, diskRevision === runtime.metadataLocalRevision + 1 ? runtime.metadataLocalBaseIds : null))
+        runtime.metadataLocalRevision = diskRevision
+        runtime.metadataConflictCount += 1
         console.warn(`[metadata-cas] 实例 ${instanceTag} 检测到本地快照被其他进程更新，已合并后重写`)
       }
       // 原子落盘：先写临时文件再 rename。直接 writeFileSync 会先截断目标文件，
@@ -2843,10 +2835,10 @@ function persistLocalMetadata() {
       fs.writeFileSync(tempPath, JSON.stringify(metadata, null, 2), 'utf8')
       fs.renameSync(tempPath, metadataPath)
       const revisionTempPath = `${metadataRevisionPath}.${instanceTag}.tmp`
-      fs.writeFileSync(revisionTempPath, String(metadataLocalRevision + 1), 'utf8')
+      fs.writeFileSync(revisionTempPath, String(runtime.metadataLocalRevision + 1), 'utf8')
       fs.renameSync(revisionTempPath, metadataRevisionPath)
-      metadataLocalRevision += 1
-      metadataLocalBaseIds = metadataIdSets(metadata)
+      runtime.metadataLocalRevision += 1
+      runtime.metadataLocalBaseIds = metadataIdSets(metadata)
     })
   } catch (error) {
     console.error(`本地元数据保存失败：${error.message || error}`)
@@ -2858,14 +2850,14 @@ function persistLocalMetadata() {
 
 async function writeMetadataToDatabase() {
   for (let attempt = 0; attempt < MAX_METADATA_WRITE_ATTEMPTS; attempt++) {
-    const expected = metadataRevision
+    const expected = runtime.metadataRevision
     const [result] = await databasePool.execute(
       'UPDATE kunqiong_app_state SET revision = revision + 1, payload = ? WHERE state_key = ? AND revision = ?',
       [JSON.stringify(metadata), 'metadata', expected],
     )
     if (Number(result.affectedRows) > 0) {
-      metadataRevision = expected + 1
-      metadataBaseIds = metadataIdSets(metadata)
+      runtime.metadataRevision = expected + 1
+      runtime.metadataBaseIds = metadataIdSets(metadata)
       return
     }
     const remote = await readRemoteMetadataRow()
@@ -2876,17 +2868,17 @@ async function writeMetadataToDatabase() {
          VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE state_key = state_key`,
         ['metadata', 1, expected + 1, JSON.stringify(metadata)],
       )
-      metadataRevision = expected + 1
-      metadataBaseIds = metadataIdSets(metadata)
+      runtime.metadataRevision = expected + 1
+      runtime.metadataBaseIds = metadataIdSets(metadata)
       return
     }
     if (remote.revision === expected) continue
     // CAS 失败：另一个实例先写了。重读远端，合并本进程的改动后重试。
     // 远端恰好领先 1 个版本时两端基线相同，可以可靠识别删除；否则退回并集语义。
     const exactBase = remote.revision === expected + 1
-    applyMergedMetadata(mergeMetadataSnapshots(remote.metadata, metadata, exactBase ? metadataBaseIds : null))
-    metadataRevision = remote.revision
-    metadataConflictCount += 1
+    applyMergedMetadata(mergeMetadataSnapshots(remote.metadata, metadata, exactBase ? runtime.metadataBaseIds : null))
+    runtime.metadataRevision = remote.revision
+    runtime.metadataConflictCount += 1
     console.warn(`[metadata-cas] 实例 ${instanceTag} 写入冲突，已合并重试（本地 rev ${expected}，远端 rev ${remote.revision}${exactBase ? '，删除可识别' : '，基线不可比按并集处理'}）`)
   }
   throw new Error(`元数据写入连续 ${MAX_METADATA_WRITE_ATTEMPTS} 次与其他实例冲突`)
@@ -3032,7 +3024,7 @@ function accountPlanRank(planId) {
 function configuredAccountPlan(planId) {
   const id = normalizePlanId(planId)
   const base = ACCOUNT_PLANS[id] || ACCOUNT_PLANS.free
-  const override = normalizeSystemConfig(metadataReady?.systemConfig || {}).planOverrides[id] || {}
+  const override = normalizeSystemConfig(runtime.metadataReady?.systemConfig || {}).planOverrides[id] || {}
   return { ...base, ...override, id: base.id, label: base.label, permanent: base.permanent, team: base.team, features: base.features }
 }
 
@@ -3378,7 +3370,7 @@ function syncOrganizationMemberProfile(user = {}) {
       changed = true
     }
   }
-  if (changed) metadataNeedsPersist = true
+  if (changed) runtime.metadataNeedsPersist = true
   return changed
 }
 
@@ -4386,7 +4378,7 @@ function normalizeAccountUser(user = {}) {
   const planId = testEnterpriseOverride ? 'enterprise' : testEnforceFree ? 'free' : normalizePlanId(user.planId || base.planId || 'free')
   const plan = configuredAccountPlan(planId)
   const planExpiresAt = plan.permanent ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
-  if (testEnterpriseOverride || testEnforceFree || (plan.permanent && (user.planExpiresAt || base.planExpiresAt))) metadataNeedsPersist = true
+  if (testEnterpriseOverride || testEnforceFree || (plan.permanent && (user.planExpiresAt || base.planExpiresAt))) runtime.metadataNeedsPersist = true
   const now = new Date().toISOString()
   return {
     ...base,
@@ -5074,8 +5066,8 @@ function mailErrorReason(error) {
 
 function getEmailTransporter() {
   if (!isSmtpConfigured()) return null
-  if (!emailTransporter) {
-    emailTransporter = nodemailer.createTransport({
+  if (!runtime.emailTransporter) {
+    runtime.emailTransporter = nodemailer.createTransport({
       host: smtpHost,
       port: smtpPort,
       secure: smtpSecure,
@@ -5085,7 +5077,7 @@ function getEmailTransporter() {
       socketTimeout: 20000,
     })
   }
-  return emailTransporter
+  return runtime.emailTransporter
 }
 
 async function sendShareEmail({ recipient, share, req, ownerName, title }) {

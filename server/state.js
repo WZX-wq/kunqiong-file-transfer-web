@@ -27,6 +27,27 @@ export const databasePool = databaseEnabled ? mysql.createPool({
   charset: 'utf8mb4',
 }) : null
 
+// ── 元数据运行期标记 ─────────────────────────────────────────
+// 为什么要包成对象：ESM 的导入绑定是只读的 —— `import { x }` 之后不能 `x = 1`，
+// 而这些值在业务代码里被赋值（如 metadataNeedsPersist = true，共 40 余处）。
+// 所以统一放进可变容器，引用处写 runtime.xxx。
+export const runtime = {
+  // 启动期规范化时若修正了旧数据，置为 true，触发一次落盘
+  metadataNeedsPersist: false,
+  // 指向当前 metadata 快照（与 metadata 同一引用），供少数需要判空的路径使用
+  metadataReady: null,
+  // SMTP 传输器惰性单例（首次发信时创建）
+  emailTransporter: null,
+  // 元数据落盘串行队列：所有写入排队，避免并发写覆盖
+  metadataWriteQueue: Promise.resolve(),
+  // 以下 6 个是 CAS 并发写保护的计数与基线，详见 persistMetadata / persistLocalMetadata
+  metadataRevision: 0,
+  metadataLocalRevision: 0,
+  metadataBaseIds: null,
+  metadataLocalBaseIds: null,
+  metadataConflictCount: 0,
+}
+
 // ── 分享 ─────────────────────────────────────────────────────
 // 已分配的提取码，用于生成时避免碰撞
 export const reservedShareCodes = new Set()
