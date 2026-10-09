@@ -4370,10 +4370,13 @@ function WorkspacePage() {
   const [saving, setSaving] = useState(false)
   const [selectedPlanId, setSelectedPlanId] = useState('')
   const [upgradeOpen, setUpgradeOpen] = useState(false)
+  const loadRunning = useRef(false)
   // 远端主站套餐实价：工作台展示价与升级弹窗/订单支付同源，拉不到时回落本地配置价
   const remotePricing = useRemotePlanPricing(user?.id)
 
   const load = async ({ silent = false } = {}) => {
+    if (silent && loadRunning.current) return
+    loadRunning.current = true
     if (!silent) setLoading(true)
     setError('')
     try {
@@ -4389,10 +4392,23 @@ function WorkspacePage() {
       setError(err.message || '团队空间加载失败')
     } finally {
       if (!silent) setLoading(false)
+      loadRunning.current = false
     }
   }
 
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (!user || !workspace?.paymentReconciliation?.pending) return undefined
+    const refresh = () => { load({ silent: true }).catch(() => {}) }
+    const timer = window.setInterval(refresh, 15000)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [user?.id, workspace?.paymentReconciliation?.pending])
   useEffect(() => {
     if (workspace?.plan?.id) setSelectedPlanId(workspace.plan.id)
   }, [workspace?.plan?.id])
@@ -4570,7 +4586,7 @@ function WorkspacePage() {
                 </>
               )}
             </div>
-            <div className="public-card workspace-side-card workspace-status-card"><div className="workspace-side-heading"><ListChecks size={22} /><strong>当前状态</strong></div><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan || canUseTeamSpace ? 'on' : 'off'}>{hasTeamPlan || canUseTeamSpace ? <Check size={13} /> : <X size={13} />} {teamRole === 'member' && !hasTeamPlan ? '共享团队空间' : '团队协作与成员管理'}</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 分享链接入团申请</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
+            <div className="public-card workspace-side-card workspace-status-card"><div className="workspace-side-heading"><ListChecks size={22} /><strong>当前状态</strong></div><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan || canUseTeamSpace ? 'on' : 'off'}>{hasTeamPlan || canUseTeamSpace ? <Check size={13} /> : <X size={13} />} {teamRole === 'member' && !hasTeamPlan ? '共享团队空间' : '团队协作与成员管理'}</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 分享链接入团申请</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}{workspace?.paymentReconciliation?.requiresLogin && <div className="workspace-payment-warning" role="status">支付订单需要重新登录核对状态。<button type="button" className="team-manage-link" onClick={login}><UserRound size={14} /> 重新登录</button></div>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
             </div>
         </div>
       </section>
@@ -4708,6 +4724,7 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
       })
       setOrderView(result.order)
       setPayment(result.payment || null)
+      onRefresh?.({ silent: true })
       if (payType === 2) {
         if (result.payment?.alipaysubmit_html) {
           setNotice('支付宝收银台已加载，请完成支付后刷新支付状态')

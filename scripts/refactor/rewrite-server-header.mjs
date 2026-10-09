@@ -70,6 +70,7 @@ const NEW_HEADER = `// 鲲穹文件传输服务端入口
 import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
+import crypto from 'node:crypto'
 import multer from 'multer'
 import archiver from 'archiver'
 import QRCode from 'qrcode'

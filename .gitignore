@@ -114,3 +114,6 @@ _dbg_*.mjs
 # 上传面板溢出修复轮：验证脚本入库，报告/截图不入库
 _panel_overflow_*.txt
 _panel_overflow_*.png
+
+# Word 打开文档时生成的临时锁文件
+~$*.docx

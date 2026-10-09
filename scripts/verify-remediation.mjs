@@ -12,11 +12,13 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-remediation-'))
 const future = new Date(Date.now() + 20 * 86400000).toISOString()
-const users = Object.fromEntries(['owner', 'recipient', 'stranger', 'member'].map((id) => [id, { id, username: id, nickname: id, status: 'active', planId: 'free' }]))
+const users = Object.fromEntries(['owner', 'recipient', 'stranger', 'member', 'logout', 'expired', 'canceled', 'auth', 'retention'].map((id) => [id, { id, username: id, nickname: id, status: 'active', planId: 'free' }]))
 users.member.planId = 'member'
 users.member.planExpiresAt = future
-const sessions = Object.values(users).map((user) => ({ id: user.id + '-session', user, apiWebToken: 'fixture-token', expiresAt: future }))
+const sessions = Object.values(users).map((user) => ({ id: user.id + '-session', user, apiWebToken: 'fixture-token-' + user.id, expiresAt: future }))
 fs.copyFileSync(path.join(root, 'server.mjs'), path.join(fixture, 'server.mjs'))
+fs.cpSync(path.join(root, 'server'), path.join(fixture, 'server'), { recursive: true })
+fs.copyFileSync(path.join(root, 'package.json'), path.join(fixture, 'package.json'))
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
 const templateSource = path.join(root, 'email-templates')
 const templateFixture = path.join(fixture, 'email-templates')
@@ -56,17 +58,32 @@ const scanner = net.createServer((socket) => {
 })
 await new Promise((resolve) => scanner.listen(0, '127.0.0.1', resolve))
 const remoteOrders = new Map()
+const invalidTokens = new Set()
 let remoteSeq = 0
 const payments = http.createServer(async (req, res) => {
   let body = ''; for await (const part of req) body += part
   const params = new URLSearchParams(body)
   let data = {}
+  if (req.url === '/oauth/token') {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ code: 200, data: { access_token: 'fixture-fresh-auth', api_web_token: 'fixture-fresh-auth', expires_in: 3600, user: users.auth } }))
+    return
+  }
+  if (invalidTokens.has(req.headers.token)) {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ code: 401, msg: 'fixture token expired' }))
+    return
+  }
   if (req.url.endsWith('/get_web_member_package_info')) data = { packages: [{ id: 1, name: '会员版', price_yuan: 19, days: 30 }, { id: 2, name: '团队版', price_yuan: 49, days: 90 }, { id: 5, name: '企业版', price_yuan: 159, days: 0 }] }
   else if (req.url.endsWith('/create_web_member_order')) {
     const order_no = 'remote-' + (++remoteSeq)
-    remoteOrders.set(order_no, false)
+    remoteOrders.set(order_no, { paid: false, token: req.headers.token })
     data = { order_no, package_id: Number(params.get('package_id')), pay_type: 1, pay_amount: 19, package_days: 30, code_url: 'weixin://fixture' }
-  } else if (req.url.endsWith('/check_web_member_order_paystatus')) data = { pay_status: remoteOrders.get(params.get('order_no')) ? 1 : 0 }
+  } else if (req.url.endsWith('/check_web_member_order_paystatus')) {
+    const order = remoteOrders.get(params.get('order_no'))
+    assert.ok(order && (order.token === req.headers.token || (order.token === 'fixture-token-auth' && req.headers.token === 'fixture-fresh-auth')), 'Payment queries use the order owner token')
+    data = { order_no: params.get('order_no'), pay_status: order.paid ? 1 : 0 }
+  }
   res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 1, data }))
 })
 await new Promise((resolve) => payments.listen(0, '127.0.0.1', resolve))
@@ -77,7 +94,7 @@ async function start(extra = {}) {
   const probe = net.createServer(); await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve))
   const port = probe.address().port; await new Promise((resolve) => probe.close(resolve))
   base = `http://127.0.0.1:${port}`
-  child = spawn(process.execPath, ['server.mjs'], { cwd: fixture, windowsHide: true, env: { ...cleanEnv, PORT: String(port), NODE_ENV: 'production', KUNQIONG_HOST: '127.0.0.1', KUNQIONG_SCAN_MODE: 'required', KUNQIONG_CLAMAV_HOST: '127.0.0.1', KUNQIONG_CLAMAV_PORT: String(scanner.address().port), KUNQIONG_WEB_MEMBER_API_BASE: `http://127.0.0.1:${payments.address().port}`, ...extra }, stdio: ['ignore', 'ignore', 'pipe'] })
+  child = spawn(process.execPath, ['server.mjs'], { cwd: fixture, windowsHide: true, env: { ...cleanEnv, PORT: String(port), NODE_ENV: 'production', KUNQIONG_HOST: '127.0.0.1', KUNQIONG_SCAN_MODE: 'required', KUNQIONG_CLAMAV_HOST: '127.0.0.1', KUNQIONG_CLAMAV_PORT: String(scanner.address().port), KUNQIONG_WEB_MEMBER_API_BASE: `http://127.0.0.1:${payments.address().port}`, KUNQIONG_OAUTH_AUTHORIZE_URL: `http://127.0.0.1:${payments.address().port}/authorize`, KUNQIONG_OAUTH_TOKEN_URL: `http://127.0.0.1:${payments.address().port}/oauth/token`, KUNQIONG_OAUTH_CLIENT_ID: 'fixture', KUNQIONG_OAUTH_CLIENT_SECRET: 'fixture-only', ...extra }, stdio: ['ignore', 'ignore', 'pipe'] })
   child.stderr.on('data', (data) => { errors += data })
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(base + '/api/health')).ok) return } catch {}
@@ -92,6 +109,12 @@ async function api(url, { user = '', method = 'GET', body, headers = {} } = {}) 
   return { response, data, status: response.status }
 }
 function check(name, condition) { assert.ok(condition, name); passed++; console.log('PASS ' + name) }
+const metadataFile = path.join(fixture, 'storage', 'metadata.json')
+const stored = () => JSON.parse(fs.readFileSync(metadataFile, 'utf8'))
+async function waitFor(condition) {
+  for (let i = 0; i < 80; i++) { if (condition()) return true; await delay(50) }
+  return false
+}
 function form(bytes = 'safe', name = 'fixture.txt', recipients = '') {
   const body = new FormData(); body.append('files', new Blob([bytes]), name)
   if (recipients) body.append('recipients', recipients)
@@ -157,7 +180,7 @@ try {
   check('Active same-plan renewal creates order', renew.status === 201)
   const [pay1, pay2] = await Promise.all([1, 2].map(() => api(`/api/account/upgrade-orders/${renew.data.order.id}/confirm`, { user: 'member', method: 'POST', body: {} })))
   check('Concurrent checkout creates one provider order', pay1.status === 200 && pay2.status === 200 && remoteSeq === 1)
-  remoteOrders.set(pay1.data.order.remoteOrderNo, true)
+  remoteOrders.get(pay1.data.order.remoteOrderNo).paid = true
   await stop(); await start()
   await delay(1500)
   let workspace = (await api('/api/account/workspace', { user: 'member' })).data
@@ -167,10 +190,48 @@ try {
   await Promise.all([1, 2].map(() => api(`/api/account/upgrade-orders/${renew.data.order.id}/pay-status`, { user: 'member', method: 'POST', body: {} })))
   workspace = (await api('/api/account/workspace', { user: 'member' })).data
   check('Repeated payment checks do not extend twice', new Date(workspace.planExpiresAt).getTime() === expiry)
+  const pending = {}
+  for (const user of ['logout', 'expired', 'canceled', 'auth', 'retention']) {
+    const created = await api('/api/account/upgrade-orders', { user, method: 'POST', body: { planId: 'member' } })
+    assert.equal(created.status, 201)
+    const checkout = await api(`/api/account/upgrade-orders/${created.data.order.id}/confirm`, { user, method: 'POST', body: {} })
+    assert.equal(checkout.status, 200)
+    pending[user] = checkout.data.order
+    check('Checkout never exposes payment credentials: ' + user, !JSON.stringify(checkout.data).includes('fixture-token'))
+  }
+  await api(`/api/account/upgrade-orders/${pending.canceled.id}/cancel`, { user: 'canceled', method: 'POST' })
+  for (const user of ['logout', 'canceled', 'retention']) await api('/api/auth/logout', { user, method: 'POST' })
+  check('Logout immediately revokes account access', (await api('/api/account/workspace', { user: 'logout' })).status === 401)
+  await stop()
+  const beforeRestart = stored()
+  beforeRestart.sessions.find((item) => item.user.id === 'expired').expiresAt = new Date(Date.now() - 1000).toISOString()
+  const oldOrder = beforeRestart.upgradeOrders.find((item) => item.id === pending.retention.id)
+  oldOrder.createdAt = new Date(Date.now() - 2 * 86400000).toISOString()
+  if (oldOrder.paymentQueryCredential) oldOrder.paymentQueryCredential.expiresAt = new Date(Date.now() - 1000).toISOString()
+  fs.writeFileSync(metadataFile, JSON.stringify(beforeRestart))
+  for (const user of Object.keys(pending)) remoteOrders.get(pending[user].remoteOrderNo).paid = true
+  invalidTokens.add('fixture-token-auth')
+  await start()
+  check('Logout and expired sessions compensate after restart without account access', await waitFor(() => ['logout', 'expired', 'canceled'].every((user) => stored().upgradeOrders.find((item) => item.id === pending[user].id)?.status === 'paid')))
+  check('Expired session cookie stays revoked', (await api('/api/account/workspace', { user: 'expired' })).status === 401)
+  check('Successful compensation removes retained credentials', ['logout', 'expired', 'canceled'].every((user) => !stored().upgradeOrders.find((item) => item.id === pending[user].id)?.paymentQueryCredential))
+  check('Compensation activates the logged-out account', stored().users.logout.planId === 'member' && stored().users.expired.planId === 'member')
+  check('Retention timeout stops automatic payment queries and deletes credentials', !stored().upgradeOrders.find((item) => item.id === pending.retention.id)?.paymentQueryCredential && stored().upgradeOrders.find((item) => item.id === pending.retention.id)?.status !== 'paid')
+  const authWorkspace = (await api('/api/account/workspace', { user: 'auth' })).data
+  check('Expired upstream credential requests re-login without leaking a token', authWorkspace.paymentReconciliation?.requiresLogin === true && !JSON.stringify(authWorkspace).includes('fixture-token'))
+  check('Rejected upstream credential is deleted', !stored().upgradeOrders.find((item) => item.id === pending.auth.id)?.paymentQueryCredential)
+  const login = await fetch(base + '/api/auth/login?return_to=' + encodeURIComponent(base + '/workspace'), { redirect: 'manual' })
+  const state = new URL(login.headers.get('location')).searchParams.get('state')
+  const callback = await fetch(base + '/auth/callback?code=fixture&state=' + state, { redirect: 'manual' })
+  check('Fresh login compensates orders rejected by expired upstream credentials', callback.status === 302 && await waitFor(() => stored().upgradeOrders.find((item) => item.id === pending.auth.id)?.status === 'paid'))
+  const loginCookie = callback.headers.getSetCookie().map((item) => item.split(';')[0]).join('; ')
+  const freshWorkspace = (await api('/api/account/workspace', { headers: { cookie: loginCookie } })).data
+  check('Fresh login clears payment warning and preserves credential privacy', freshWorkspace.plan.id === 'member' && !freshWorkspace.paymentReconciliation?.requiresLogin && !JSON.stringify(freshWorkspace).includes('fixture-fresh'))
   await stop(); await start({ KUNQIONG_CLAMAV_HOST: '' })
   check('Absent scanner rejects publication in required mode', (await api('/api/shares', { user: 'owner', method: 'POST', body: form() })).status === 503)
   await stop(); await start({ KUNQIONG_ADMIN_USERNAME: 'fixture-admin', KUNQIONG_ADMIN_PASSWORD: 'fixture-only-password' })
-  check('Explicit configured admin credentials work', (await api('/api/admin/login', { method: 'POST', body: { username: 'fixture-admin', password: 'fixture-only-password' } })).status === 200)
+  const adminLogin = await api('/api/admin/login', { method: 'POST', body: { username: 'fixture-admin', password: 'fixture-only-password' } })
+  check(`Explicit configured admin credentials work (status ${adminLogin.status}; ${errors.trim()})`, adminLogin.status === 200)
   console.log(`Remediation checks: ${passed}/${passed}; isolated fixture: ${fixture}`)
 } finally {
   await stop(); scanner.closeAllConnections?.(); await new Promise((resolve) => scanner.close(resolve)); payments.closeAllConnections(); await new Promise((resolve) => payments.close(resolve))

@@ -7,6 +7,7 @@
     "dev": "concurrently -k \"node server.mjs\" \"vite --host 0.0.0.0 --port 4173\"",
     "build": "vite build",
     "test:remediation": "node scripts/verify-office-html.mjs && node scripts/verify-remediation.mjs",
+    "test:upload": "node scripts/verify-upload-chunks.mjs",
     "verify:refactor": "node scripts/refactor/verify-runtime.mjs",
     "start": "node server.mjs",
     "preview": "vite preview --host 0.0.0.0"

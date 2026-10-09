@@ -10,6 +10,7 @@
 // 本文件保留应用装配、运行期状态与全部路由注册，按域逐步迁移且保持行为不变。
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import express from 'express'
 import multer from 'multer'
 import archiver from 'archiver'
@@ -36,7 +37,7 @@ import {
   ADMIN_COOKIE_NAME, ADMIN_SESSION_TTL_MS, ADMIN_LOGIN_MAX_ATTEMPTS, ADMIN_LOGIN_WINDOW_MS,
   JOIN_REQUEST_MAX_PER_WINDOW, JOIN_REQUEST_WINDOW_MS, JOIN_REQUEST_REJECT_COOLDOWN_MS,
   COLLECTION_TYPE_OPTIONS, COLLECTION_TYPE_EXTENSIONS, UPGRADE_ORDER_STATUSES,
-  MAX_UPGRADE_ORDERS, MAX_AUDIT_LOGS,
+  MAX_UPGRADE_ORDERS, PAYMENT_QUERY_RETENTION_MS, MAX_AUDIT_LOGS,
   GUEST_ID_COOKIE, GUEST_ID_MAX_AGE_SECONDS, MAX_GUEST_USAGE_ENTRIES,
   scanMode, clamavHost, clamavPort, scanTimeoutMs,
   TEST_ENTERPRISE_USER_KEYS, testEnterpriseForAllUsers, testEnforceEnterpriseAllowlist,
@@ -142,6 +143,7 @@ const uploadSessions = new Map()
 const uploadReservations = new Map()
 const upgradeOrderLocks = new Map()
 const paymentReconcileAttempts = new Map()
+const adminLoginAttempts = new Map()
 const oauthStates = new Map()
 const upload = multer({
   dest: tempRoot,
@@ -1324,6 +1326,8 @@ app.post('/api/account/upgrade-orders/:orderId/confirm', async (req, res) => {
     const payment = order.remoteOrderNo
       ? { order_no: order.remoteOrderNo, pay_type: order.payType || payType, ...(order.payment || {}) }
       : await createWebMemberPaymentOrder(session, order, payType)
+    retainPaymentQueryCredential(session, order)
+    persistMetadata()
     await ensurePaymentAssets(payment)
     order.payment = normalizePaymentPayload(payment)
     order.payType = normalizeWebMemberPayType(payment.pay_type || order.payType || payType)
@@ -2531,9 +2535,20 @@ function normalizeUpgradeOrders(value = []) {
     updatedAt: normalizeRecordDate(item?.updatedAt) || new Date().toISOString(),
     paidAt: normalizeRecordDate(item?.paidAt) || null,
     remoteExpireAt: normalizeRecordDate(item?.remoteExpireAt) || null,
+    paymentQueryCredential: normalizePaymentQueryCredential(item),
+    paymentRequiresLogin: Boolean(item?.paymentRequiresLogin),
   })).filter((item) => item.userId)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, MAX_UPGRADE_ORDERS)
+}
+
+function normalizePaymentQueryCredential(order) {
+  const credential = order?.paymentQueryCredential
+  const apiWebToken = trimRecordString(credential?.apiWebToken, 300)
+  const deadline = new Date(order?.createdAt).getTime() + PAYMENT_QUERY_RETENTION_MS
+  const expiresAt = Math.min(new Date(credential?.expiresAt).getTime(), deadline)
+  if (!apiWebToken || order.status === 'paid' || order.paymentRequiresLogin || !order.remoteOrderNo || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null
+  return { apiWebToken, expiresAt: new Date(expiresAt).toISOString() }
 }
 
 function upgradeOrderSummary(order = {}) {
@@ -3107,6 +3122,10 @@ function accountWorkspacePayload(user) {
     organization: publicOrganization(organization, user.id),
     canManage: Boolean(organization && isOrganizationManager(organization, user.id)),
     orders: upgradeOrdersForUser(user.id).slice(0, 10).map(upgradeOrderSummary),
+    paymentReconciliation: {
+      pending: upgradeOrdersForUser(user.id).some((order) => order.status !== 'paid' && order.remoteOrderNo && !order.paymentRequiresLogin && new Date(order.createdAt).getTime() + PAYMENT_QUERY_RETENTION_MS > Date.now()),
+      requiresLogin: upgradeOrdersForUser(user.id).some((order) => order.status !== 'paid' && order.remoteOrderNo && order.paymentRequiresLogin),
+    },
   }
 }
 
@@ -3399,11 +3418,8 @@ function cleanupExpired() {
     if (maybeNotifyExpiringCollection(task, now)) changed = true
   }
   if (cleanupUserExpiredFiles(now)) changed = true
-  const activeSessions = metadata.sessions.filter((session) => new Date(session.expiresAt).getTime() > now)
-  if (activeSessions.length !== metadata.sessions.length) {
-    metadata.sessions = activeSessions
-    changed = true
-  }
+  cleanupExpiredAuthSessions()
+  if (cleanupPaymentQueryCredentials()) changed = true
   if (changed) persistMetadata()
 }
 
@@ -5122,7 +5138,10 @@ async function webMemberRequest(pathname, token, params = {}) {
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok || Number(payload.code) !== 1) {
-    throw httpError(response.status >= 400 ? response.status : 502, payload.msg || `会员服务返回 ${response.status}`)
+    const authRejected = response.status === 401 || Number(payload.code) === 401
+    const error = httpError(authRejected ? 401 : response.status >= 400 ? response.status : 502, authRejected ? '会员支付凭证已失效，请重新登录后核对支付状态' : payload.msg || `会员服务返回 ${response.status}`)
+    if (authRejected) error.code = 'payment_login_required'
+    throw error
   }
   return payload.data || {}
 }
@@ -5225,9 +5244,11 @@ async function createWebMemberPaymentOrder(session, order, payType) {
   order.remotePackageDays = normalizeNullablePositiveInteger(data.package_days || memberPackage.days)
   order.amount = Math.round(Number(data.pay_amount) * 100) || order.amount
   order.payment = normalizePaymentPayload(data)
-  await ensurePaymentAssets(order.payment)
   order.updatedAt = new Date().toISOString()
   if (!order.remoteOrderNo) throw httpError(502, '会员服务未返回主站订单号')
+  retainPaymentQueryCredential(session, order)
+  persistMetadata()
+  await ensurePaymentAssets(order.payment)
   return { ...data, pay_type: order.payType }
 }
 
@@ -5256,7 +5277,41 @@ async function reconcileUpgradeOrder(session, order) {
       persistMetadata()
     }
     return result
+  } catch (error) {
+    if (error.code === 'payment_login_required') {
+      order.paymentRequiresLogin = true
+      order.paymentQueryCredential = null
+      persistMetadata()
+    }
+    throw error
   } finally { release() }
+}
+
+function retainPaymentQueryCredential(session, order, freshLogin = false) {
+  const apiWebToken = sessionApiWebToken(session)
+  const expiresAt = new Date(order.createdAt).getTime() + PAYMENT_QUERY_RETENTION_MS
+  if (!apiWebToken || order.userId !== session.user?.id || order.status === 'paid' || !order.remoteOrderNo || expiresAt <= Date.now() || accountUserById(order.userId)?.status === 'disabled') return
+  if (freshLogin) order.paymentRequiresLogin = false
+  if (order.paymentRequiresLogin || (!freshLogin && normalizePaymentQueryCredential(order))) return
+  order.paymentQueryCredential = { apiWebToken, expiresAt: new Date(expiresAt).toISOString() }
+}
+
+function retainUserPaymentQueryCredentials(session, freshLogin = false) {
+  for (const order of upgradeOrdersForUser(session.user.id)) {
+    if (freshLogin && sessionApiWebToken(session)) order.paymentRequiresLogin = false
+    retainPaymentQueryCredential(session, order, freshLogin)
+  }
+}
+
+function cleanupPaymentQueryCredentials() {
+  let changed = false
+  for (const order of metadata.upgradeOrders) {
+    if (order.paymentQueryCredential && (!normalizePaymentQueryCredential(order) || accountUserById(order.userId)?.status === 'disabled')) {
+      order.paymentQueryCredential = null
+      changed = true
+    }
+  }
+  return changed
 }
 
 async function reconcileUserUpgradeOrders(session, force = false) {
@@ -5267,7 +5322,7 @@ async function reconcileUserUpgradeOrders(session, force = false) {
   const state = { running: true, at: Date.now() }
   paymentReconcileAttempts.set(key, state)
   try {
-    for (const order of upgradeOrdersForUser(key).filter((item) => item.status !== 'paid' && item.remoteOrderNo)) {
+    for (const order of upgradeOrdersForUser(key).filter((item) => item.status !== 'paid' && item.remoteOrderNo && !item.paymentRequiresLogin)) {
       try { await reconcileUpgradeOrder(session, order) }
       catch { /* Retry on the next interval or a fresh login token. */ }
     }
@@ -5275,11 +5330,18 @@ async function reconcileUserUpgradeOrders(session, force = false) {
 }
 
 async function reconcileActiveUpgradeOrders() {
+  if (cleanupPaymentQueryCredentials()) persistMetadata()
   const seen = new Set()
   for (const session of [...metadata.sessions].reverse()) {
-    if (seen.has(session.user.id) || new Date(session.expiresAt).getTime() <= Date.now() || accountUserById(session.user.id)?.status === 'disabled') continue
+    if (seen.has(session.user.id) || !sessionApiWebToken(session) || new Date(session.expiresAt).getTime() <= Date.now() || accountUserById(session.user.id)?.status === 'disabled') continue
     seen.add(session.user.id)
     await reconcileUserUpgradeOrders(session)
+  }
+  for (const order of metadata.upgradeOrders) {
+    const credential = normalizePaymentQueryCredential(order)
+    if (!credential || seen.has(order.userId) || accountUserById(order.userId)?.status === 'disabled') continue
+    try { await reconcileUpgradeOrder(credential, order) }
+    catch { /* Keep transient failures retryable within the retention window. */ }
   }
 }
 
@@ -5301,6 +5363,8 @@ function activatePaidUpgradeOrder(order, expireAt = null) {
     : new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
   account.updatedAt = new Date().toISOString()
   order.status = 'paid'
+  order.paymentQueryCredential = null
+  order.paymentRequiresLogin = false
   order.paidAt = new Date().toISOString()
   order.remoteExpireAt = plan.permanent
     ? null
@@ -5380,6 +5444,7 @@ function createAuthSession(tokenData) {
     user: publicUser(user),
   }
   metadata.sessions.push(session)
+  retainUserPaymentQueryCredentials(session, true)
   // 每次登录顺带把团队 roster 上的旧昵称/联系方式刷新一遍，
   // 这样即使改名的请求没走到 PATCH /api/auth/profile（例如离线改的），下次登录也能自愈。
   syncOrganizationMemberProfile(user)
@@ -5407,6 +5472,8 @@ function authSessionFromRequest(req) {
 }
 
 function removeAuthSession(sessionId) {
+  const session = metadata.sessions.find((item) => item.id === sessionId)
+  if (session) retainUserPaymentQueryCredentials(session)
   const before = metadata.sessions.length
   metadata.sessions = metadata.sessions.filter((session) => session.id !== sessionId)
   if (metadata.sessions.length !== before) persistMetadata()
@@ -5414,6 +5481,9 @@ function removeAuthSession(sessionId) {
 
 function cleanupExpiredAuthSessions() {
   const now = Date.now()
+  for (const session of metadata.sessions) {
+    if (new Date(session.expiresAt).getTime() <= now) retainUserPaymentQueryCredentials(session)
+  }
   const nextSessions = metadata.sessions.filter((session) => new Date(session.expiresAt).getTime() > now)
   if (nextSessions.length !== metadata.sessions.length) {
     metadata.sessions = nextSessions

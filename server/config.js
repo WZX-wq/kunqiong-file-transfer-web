@@ -152,6 +152,9 @@ export const COLLECTION_TYPE_EXTENSIONS = {
 export const UPGRADE_ORDER_STATUSES = new Set(['pending_payment', 'paid', 'canceled', 'expired'])
 
 export const MAX_UPGRADE_ORDERS = 500
+// 支付单创建后，后台最多保留 24 小时的主站查单凭证。它不是登录会话，
+// 仅用于核对未完成订单，完成、过期或主站拒绝后立即删除。
+export const PAYMENT_QUERY_RETENTION_MS = 24 * 60 * 60 * 1000
 export const MAX_AUDIT_LOGS = 5000
 
 // ── 游客配额 ──
