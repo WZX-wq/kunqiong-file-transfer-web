@@ -13,6 +13,12 @@ HOST="${KUNQIONG_HOST:-0.0.0.0}"
 COMPOSE_DIR="${KUNQIONG_COMPOSE_DIR:-/opt/$APP_NAME}"
 COMPOSE_FILE="docker-compose.test.yml"
 RELEASE_SHA="${GITHUB_SHA:-${GITEA_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}}"
+DEPLOY_VERIFY_MODE="${KUNQIONG_DEPLOY_VERIFY_MODE:-runtime}"
+
+case "$DEPLOY_VERIFY_MODE" in
+  runtime|configuration) ;;
+  *) echo "KUNQIONG_DEPLOY_VERIFY_MODE must be runtime or configuration" >&2; exit 1 ;;
+esac
 
 require_var() {
   local name="$1"
@@ -187,6 +193,29 @@ volumes:
 EOF
 }
 
+verify_container_configuration() {
+  local expected_image actual_image name actual_value
+  expected_image="$(docker image inspect -f '{{.Id}}' "$IMAGE_NAME")"
+  actual_image="$(docker inspect -f '{{.Image}}' "$APP_NAME")"
+  if [ "$expected_image" != "$actual_image" ]; then
+    echo "App container does not use the deployed image" >&2
+    return 1
+  fi
+  for name in KUNQIONG_ADMIN_USERNAME KUNQIONG_ADMIN_PASSWORD; do
+    actual_value="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$APP_NAME" | sed -n "s/^${name}=//p")"
+    if [ "$actual_value" != "${!name}" ]; then
+      echo "App container configuration mismatch: $name" >&2
+      return 1
+    fi
+  done
+  actual_value="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$APP_NAME" | sed -n 's/^KUNQIONG_RELEASE_SHA=//p')"
+  if [ "$actual_value" != "$RELEASE_SHA" ]; then
+    echo "App container release does not match this deployment" >&2
+    return 1
+  fi
+  echo "Deployment configuration verified: image, release and administrator credentials"
+}
+
 deploy_with_docker() {
   docker info >/dev/null 2>&1 || return 1
   docker build -t "$IMAGE_NAME" .
@@ -214,6 +243,18 @@ deploy_with_docker() {
     else
       echo "Container '$APP_NAME' will be recreated by compose (project: ${existing_proj:-$APP_NAME})"
     fi
+  fi
+
+  # This test server intentionally stops containers automatically. Validate the
+  # installed image and configuration independently of its runtime policy.
+  if [ "$DEPLOY_VERIFY_MODE" = "configuration" ]; then
+    ( cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" create --force-recreate --remove-orphans )
+    verify_container_configuration
+    local configured_scanner_id
+    configured_scanner_id="$(cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" ps -a -q scanner)"
+    docker start "$configured_scanner_id" "$APP_NAME"
+    echo "Deployment complete; automatic container shutdown is managed by the server"
+    return 0
   fi
 
   if ! ( cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans ); then

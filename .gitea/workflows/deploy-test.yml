@@ -13,6 +13,8 @@ jobs:
     env:
       PORT: "8045"
       KUNQIONG_HOST: "0.0.0.0"
+      # The test server deliberately closes containers after deployment.
+      KUNQIONG_DEPLOY_VERIFY_MODE: "configuration"
       KUNQIONG_APP_URL: "http://43.154.197.96:8045"
       KUNQIONG_AUTH_CALLBACK_URL: "http://43.154.197.96:8045/auth/callback"
       KUNQIONG_OAUTH_AUTHORIZE_URL: "https://login.kunqiongai.com/authorize.html"
