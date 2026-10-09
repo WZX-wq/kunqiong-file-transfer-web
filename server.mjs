@@ -43,15 +43,25 @@ import {
   scanMode, clamavHost, clamavPort, scanTimeoutMs,
   TEST_ENTERPRISE_USER_KEYS, testEnterpriseForAllUsers, testEnforceEnterpriseAllowlist,
   testVerificationDebugMode,
-  databaseEnabled,
+  // loadMetadata 里会用它判断「配置不全就退回本地文件存储」，
+  // 因此即使池已迁到 state.js，这三个值仍需在入口可见。
+  databaseHost, databaseName, databaseUser,
   serverPort,
-  splitConfigValues, parseBooleanEnv,
 } from './server/config.js'
 
 import {
   httpError, parseRecipients, firstHeader, firstValue,
   escapeHtml, createToken, hashSecret, parseJson, removeDirectory,
 } from './server/lib/http.js'
+
+import {
+  databasePool, reservedShareCodes,
+  uploadSessions, uploadReservations,
+  upgradeOrderLocks, paymentReconcileAttempts, paymentSessionTokens,
+  adminLoginAttempts, adminSessions, oauthStates,
+  verificationTargetLastSent, verificationIpAttempts, shareLookupAttempts,
+  remotePricingCache,
+} from './server/state.js'
 const DEFAULT_SYSTEM_CONFIG = {
   maintenanceMode: false,
   defaultShareDays: 3,
@@ -139,18 +149,7 @@ const METADATA_MERGE_RULES = [
   { key: 'notificationSettings', kind: 'map', time: [] },
   { key: 'guestUsage', kind: 'map', time: ['lastAt'] },
 ]
-const reservedShareCodes = new Set()
-const databasePool = databaseEnabled ? mysql.createPool({
-  host: databaseHost,
-  port: databasePort,
-  database: databaseName,
-  user: databaseUser,
-  password: databasePassword,
-  waitForConnections: true,
-  connectionLimit: Number(process.env.KUNQIONG_DB_CONNECTION_LIMIT || 5),
-  queueLimit: 0,
-  charset: 'utf8mb4',
-}) : null
+// 连接池与限流/会话状态已移至 server/state.js（全进程共享同一实例，见该文件说明）。
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
   fs.mkdirSync(directory, { recursive: true })
@@ -169,14 +168,7 @@ for (const share of metadata.shares) {
 }
 metadataReady = metadata
 if (metadataNeedsPersist) persistMetadata()
-const uploadSessions = new Map()
-const uploadReservations = new Map()
-const upgradeOrderLocks = new Map()
-const paymentReconcileAttempts = new Map()
-const paymentSessionTokens = new Map()
-const adminLoginAttempts = new Map()
-const adminSessions = new Map()
-const oauthStates = new Map()
+// 上传会话/预留、升级订单锁、支付对账、管理后台会话、OAuth state 均在 server/state.js。
 const upload = multer({
   dest: tempRoot,
   limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE },
@@ -390,8 +382,7 @@ app.post('/api/account/file-cleanup-settings', updateFileCleanupSettings)
 const VERIFICATION_TARGET_COOLDOWN_MS = 60 * 1000
 const VERIFICATION_IP_WINDOW_MS = 60 * 60 * 1000
 const VERIFICATION_IP_MAX = 10
-const verificationTargetLastSent = new Map()
-const verificationIpAttempts = new Map()
+// 限流计数表在 server/state.js
 
 function verificationSendBlocked(target, req) {
   const now = Date.now()
@@ -1964,7 +1955,7 @@ app.post('/api/upload-sessions/:sessionId/complete', requireUploadSessionOwner, 
 const SHARE_LOOKUP_WINDOW_MS = 10 * 60 * 1000
 const SHARE_LOOKUP_MAX_PER_WINDOW = 30
 const SHARE_LOOKUP_GLOBAL_MAX = 300
-const shareLookupAttempts = new Map()
+// 查取计数表 shareLookupAttempts 在 server/state.js
 
 function shareLookupRateLimited(req) {
   const socketIp = String(req.socket?.remoteAddress || '').trim() || 'unknown'
@@ -5489,8 +5480,7 @@ function matchWebMemberPackageFromPackages(planId, packages) {
     || null
 }
 
-// 远端套餐实价缓存：升级弹窗展示与订单计价必须同源（价格以主站支付套餐为准）
-const remotePricingCache = { at: 0, data: null }
+// 远端套餐实价缓存 remotePricingCache 在 server/state.js（展示与订单计价必须同源）
 const REMOTE_PRICING_TTL = 60 * 1000
 
 async function remoteUpgradePricing(session) {

@@ -4,7 +4,6 @@
 // 唯一结构性调整：路径常量中的 __dirname 改为 projectRoot（本文件位于 server/ 子目录）。
 import fs from 'node:fs'
 import path from 'node:path'
-import mysql from 'mysql2/promise'
 import { loadEnvFile } from './lib/env-file.js'
 
 export const projectRoot = path.resolve(import.meta.dirname, '..')
@@ -172,18 +171,12 @@ export const databaseHost = String(process.env.KUNQIONG_DB_HOST || '').trim()
 export const databasePort = Number(process.env.KUNQIONG_DB_PORT || 3306)
 export const databaseName = String(process.env.KUNQIONG_DB_NAME || '').trim()
 export const databaseUser = String(process.env.KUNQIONG_DB_USER || '').trim()
+export const databasePassword = String(process.env.KUNQIONG_DB_PASSWORD || '')
 
-export const databasePool = databaseEnabled ? mysql.createPool({
-  host: databaseHost,
-  port: databasePort,
-  database: databaseName,
-  user: databaseUser,
-  password: databasePassword,
-  waitForConnections: true,
-  connectionLimit: Number(process.env.KUNQIONG_DB_CONNECTION_LIMIT || 5),
-  queueLimit: 0,
-  charset: 'utf8mb4',
-}) : null
+// 注意：连接池不在这里创建。
+// config 层只读取配置值、不持有运行期资源 —— 池由 server/state.js 创建并持有。
+// 历史上这里曾有一份 databasePool，但引用了一个未定义的 databasePassword，
+// 导致 KUNQIONG_DB_ENABLED=true 时本模块 import 即抛 ReferenceError。已移除。
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
   fs.mkdirSync(directory, { recursive: true })
