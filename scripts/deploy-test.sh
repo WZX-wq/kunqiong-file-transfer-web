@@ -223,7 +223,12 @@ deploy_with_docker() {
     scanner_id="$(cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" ps -a -q scanner)"
     if [ -n "$scanner_id" ]; then
       docker inspect -f 'Scanner state: {{json .State}}' "$scanner_id" >&2 || true
+      docker inspect -f 'Scanner resources: memory={{.HostConfig.Memory}} memorySwap={{.HostConfig.MemorySwap}} restartCount={{.RestartCount}}' "$scanner_id" >&2 || true
+      docker events --since 3m --until "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --filter "container=$scanner_id" >&2 || true
     fi
+    free -m >&2 || true
+    df -h "$COMPOSE_DIR" >&2 || true
+    dmesg --ctime 2>/dev/null | grep -Ei 'out of memory|oom-kill|killed process|clamd' | tail -20 >&2 || true
     return 1
   fi
 
