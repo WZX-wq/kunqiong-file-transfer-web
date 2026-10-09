@@ -59,6 +59,9 @@ const scanner = net.createServer((socket) => {
 await new Promise((resolve) => scanner.listen(0, '127.0.0.1', resolve))
 const remoteOrders = new Map()
 const invalidTokens = new Set()
+let loginUserId = 'auth'
+let heldPaymentQuery = null
+let holdPaymentOrderNo = ''
 let remoteSeq = 0
 const payments = http.createServer(async (req, res) => {
   let body = ''; for await (const part of req) body += part
@@ -66,8 +69,13 @@ const payments = http.createServer(async (req, res) => {
   let data = {}
   if (req.url === '/oauth/token') {
     res.setHeader('content-type', 'application/json')
-    res.end(JSON.stringify({ code: 200, data: { access_token: 'fixture-fresh-auth', api_web_token: 'fixture-fresh-auth', expires_in: 3600, user: users.auth } }))
+    const token = 'fixture-fresh-' + loginUserId
+    res.end(JSON.stringify({ code: 200, data: { access_token: token, api_web_token: token, expires_in: 3600, user: users[loginUserId] } }))
     return
+  }
+  if (params.get('order_no') === holdPaymentOrderNo) {
+    await new Promise((resolve) => { heldPaymentQuery = resolve })
+    holdPaymentOrderNo = ''
   }
   if (invalidTokens.has(req.headers.token)) {
     res.setHeader('content-type', 'application/json')
@@ -81,7 +89,7 @@ const payments = http.createServer(async (req, res) => {
     data = { order_no, package_id: Number(params.get('package_id')), pay_type: 1, pay_amount: 19, package_days: 30, code_url: 'weixin://fixture' }
   } else if (req.url.endsWith('/check_web_member_order_paystatus')) {
     const order = remoteOrders.get(params.get('order_no'))
-    assert.ok(order && (order.token === req.headers.token || (order.token === 'fixture-token-auth' && req.headers.token === 'fixture-fresh-auth')), 'Payment queries use the order owner token')
+    assert.ok(order && (order.token === req.headers.token || req.headers.token === order.token.replace('fixture-token-', 'fixture-fresh-')), 'Payment queries use the order owner token')
     data = { order_no: params.get('order_no'), pay_status: order.paid ? 1 : 0 }
   }
   res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 1, data }))
@@ -102,7 +110,13 @@ async function start(extra = {}) {
   }
   throw new Error('Fixture startup failed: ' + errors)
 }
-async function stop() { if (child && child.exitCode === null) { const exited = once(child, 'exit'); child.kill(); await exited } }
+async function stop() {
+  if (!child || child.exitCode !== null) return
+  const exited = once(child, 'exit')
+  child.kill()
+  await Promise.race([exited, delay(3000)])
+  if (child.exitCode === null) child.kill('SIGKILL')
+}
 async function api(url, { user = '', method = 'GET', body, headers = {} } = {}) {
   const response = await fetch(base + url, { method, headers: { ...(user ? { cookie: `kunqiong_session=${user}-session` } : {}), ...(body && !(body instanceof FormData) ? { 'content-type': 'application/json' } : {}), ...headers }, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined })
   const data = method === 'HEAD' ? {} : await response.json().catch(() => ({}))
@@ -227,11 +241,59 @@ try {
   const loginCookie = callback.headers.getSetCookie().map((item) => item.split(';')[0]).join('; ')
   const freshWorkspace = (await api('/api/account/workspace', { headers: { cookie: loginCookie } })).data
   check('Fresh login clears payment warning and preserves credential privacy', freshWorkspace.plan.id === 'member' && !freshWorkspace.paymentReconciliation?.requiresLogin && !JSON.stringify(freshWorkspace).includes('fixture-fresh'))
+  const staleCreated = await api('/api/account/upgrade-orders', { headers: { cookie: loginCookie }, method: 'POST', body: { planId: 'member' } })
+  await api(`/api/account/upgrade-orders/${staleCreated.data.order.id}/confirm`, { headers: { cookie: loginCookie }, method: 'POST', body: {} })
+  await stop()
+  const staleOrderMetadata = stored()
+  const staleOrder = staleOrderMetadata.upgradeOrders.find((item) => item.id === staleCreated.data.order.id)
+  staleOrder.createdAt = new Date(Date.now() - 31 * 60 * 1000).toISOString()
+  staleOrder.paymentQueryCredential = { apiWebToken: 'fixture-fresh-auth', expiresAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString() }
+  staleOrder.paymentRequiresLogin = false
+  fs.writeFileSync(metadataFile, JSON.stringify(staleOrderMetadata))
+  await start()
+  assert.equal((await api('/api/account/upgrade-orders', { headers: { cookie: loginCookie }, method: 'POST', body: { planId: 'member' } })).status, 201)
+  check('Expired local payment order removes its query credential immediately', !stored().upgradeOrders.find((item) => item.id === staleCreated.data.order.id)?.paymentQueryCredential)
+  const concurrentOrder = (await api('/api/account/upgrade-orders', { user: 'recipient', method: 'POST', body: { planId: 'member' } })).data.order
+  const concurrentCheckout = (await api(`/api/account/upgrade-orders/${concurrentOrder.id}/confirm`, { user: 'recipient', method: 'POST', body: {} })).data.order
+  remoteOrders.get(concurrentCheckout.remoteOrderNo).paid = true
+  heldPaymentQuery = null
+  holdPaymentOrderNo = concurrentCheckout.remoteOrderNo
+  const concurrentCheck = api(`/api/account/upgrade-orders/${concurrentOrder.id}/pay-status`, { user: 'recipient', method: 'POST' })
+  assert.ok(await waitFor(() => heldPaymentQuery))
+  assert.equal((await api('/api/account/upgrade-orders', { user: 'owner', method: 'POST', body: { planId: 'member' } })).status, 201)
+  heldPaymentQuery()
+  await concurrentCheck
+  check('Another user creating an order cannot detach the order being activated', stored().upgradeOrders.find((item) => item.id === concurrentOrder.id)?.status === 'paid')
+  const concurrentExpiry = stored().users.recipient.planExpiresAt
+  await api(`/api/account/upgrade-orders/${concurrentOrder.id}/pay-status`, { user: 'recipient', method: 'POST' })
+  check('Concurrent order creation cannot cause duplicate renewal', stored().users.recipient.planExpiresAt === concurrentExpiry)
+  const raceOrder = (await api('/api/account/upgrade-orders', { user: 'stranger', method: 'POST', body: { planId: 'member' } })).data.order
+  const raceCheckout = (await api(`/api/account/upgrade-orders/${raceOrder.id}/confirm`, { user: 'stranger', method: 'POST', body: {} })).data.order
+  remoteOrders.get(raceCheckout.remoteOrderNo).paid = true
+  invalidTokens.add('fixture-token-stranger')
+  heldPaymentQuery = null
+  holdPaymentOrderNo = raceCheckout.remoteOrderNo
+  await stop(); await start()
+  assert.ok(await waitFor(() => heldPaymentQuery), 'Old-token query reaches provider before new login')
+  loginUserId = 'stranger'
+  const raceLogin = await fetch(base + '/api/auth/login?return_to=' + encodeURIComponent(base + '/workspace'), { redirect: 'manual' })
+  const raceState = new URL(raceLogin.headers.get('location')).searchParams.get('state')
+  const raceCallback = await fetch(base + '/auth/callback?code=fixture&state=' + raceState, { redirect: 'manual' })
+  heldPaymentQuery()
+  check('Fresh login during old-token rejection still compensates without another login', raceCallback.status === 302 && await waitFor(() => stored().upgradeOrders.find((item) => item.id === raceOrder.id)?.status === 'paid'))
+  await stop()
+  const onlyExpiredCredential = stored()
+  onlyExpiredCredential.sessions = []
+  onlyExpiredCredential.shares = []
+  onlyExpiredCredential.collections = []
+  onlyExpiredCredential.upgradeOrders = [{ ...pending.retention, paymentQueryCredential: { apiWebToken: 'fixture-expired-secret', expiresAt: new Date(Date.now() - 1000).toISOString() } }]
+  fs.writeFileSync(metadataFile, JSON.stringify(onlyExpiredCredential))
+  await start()
+  check('Startup persists expired credential removal without unrelated writes', await waitFor(() => !stored().upgradeOrders[0]?.paymentQueryCredential))
   await stop(); await start({ KUNQIONG_CLAMAV_HOST: '' })
   check('Absent scanner rejects publication in required mode', (await api('/api/shares', { user: 'owner', method: 'POST', body: form() })).status === 503)
   await stop(); await start({ KUNQIONG_ADMIN_USERNAME: 'fixture-admin', KUNQIONG_ADMIN_PASSWORD: 'fixture-only-password' })
-  const adminLogin = await api('/api/admin/login', { method: 'POST', body: { username: 'fixture-admin', password: 'fixture-only-password' } })
-  check(`Explicit configured admin credentials work (status ${adminLogin.status}; ${errors.trim()})`, adminLogin.status === 200)
+  check('Explicit configured admin credentials work', (await api('/api/admin/login', { method: 'POST', body: { username: 'fixture-admin', password: 'fixture-only-password' } })).status === 200)
   console.log(`Remediation checks: ${passed}/${passed}; isolated fixture: ${fixture}`)
 } finally {
   await stop(); scanner.closeAllConnections?.(); await new Promise((resolve) => scanner.close(resolve)); payments.closeAllConnections(); await new Promise((resolve) => payments.close(resolve))

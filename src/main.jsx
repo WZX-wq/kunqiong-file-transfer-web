@@ -4370,41 +4370,72 @@ function WorkspacePage() {
   const [saving, setSaving] = useState(false)
   const [selectedPlanId, setSelectedPlanId] = useState('')
   const [upgradeOpen, setUpgradeOpen] = useState(false)
-  const loadRunning = useRef(false)
+  const loadRunning = useRef(null)
+  const mounted = useRef(false)
   // 远端主站套餐实价：工作台展示价与升级弹窗/订单支付同源，拉不到时回落本地配置价
   const remotePricing = useRemotePlanPricing(user?.id)
 
-  const load = async ({ silent = false } = {}) => {
-    if (silent && loadRunning.current) return
-    loadRunning.current = true
-    if (!silent) setLoading(true)
-    setError('')
-    try {
-      const auth = await apiRequest('/api/auth/me')
-      if (!auth.user) {
-        setUser(null)
-        setWorkspace(null)
-        return
-      }
-      setUser(auth.user)
-      setWorkspace(await apiRequest('/api/account/workspace'))
-    } catch (err) {
-      setError(err.message || '团队空间加载失败')
-    } finally {
-      if (!silent) setLoading(false)
-      loadRunning.current = false
+  const load = ({ silent = false } = {}) => {
+    if (!mounted.current) return Promise.resolve()
+    if (loadRunning.current) {
+      // Checkout may finish after the current request took its workspace snapshot.
+      loadRunning.current.queued = true
+      return loadRunning.current.promise
     }
+    const request = { queued: false, controller: new AbortController(), promise: null }
+    loadRunning.current = request
+    if (!silent) setLoading(true)
+    request.promise = (async () => {
+      const signal = request.controller.signal
+      try {
+        do {
+          request.queued = false
+          try {
+            const auth = await apiRequest('/api/auth/me', { signal })
+            const data = auth.user ? await apiRequest('/api/account/workspace', { signal }) : null
+            if (!mounted.current || signal.aborted) return
+            setUser(auth.user || null)
+            setWorkspace(data)
+            setError('')
+            if (!auth.user) { setUpgradeOpen(false); return }
+          } catch (err) {
+            if (!mounted.current || signal.aborted) return
+            if (err.status === 401) {
+              setUser(null)
+              setWorkspace(null)
+              setUpgradeOpen(false)
+              return
+            }
+            setError(err.message || '团队空间加载失败')
+          }
+        } while (request.queued && mounted.current && !signal.aborted)
+      } finally {
+        if (loadRunning.current === request) loadRunning.current = null
+        if (mounted.current && !signal.aborted && !silent) setLoading(false)
+      }
+    })()
+    return request.promise
   }
 
-  useEffect(() => { load() }, [])
   useEffect(() => {
-    if (!user || !workspace?.paymentReconciliation?.pending) return undefined
-    const refresh = () => { load({ silent: true }).catch(() => {}) }
-    const timer = window.setInterval(refresh, 15000)
+    mounted.current = true
+    load()
+    return () => {
+      mounted.current = false
+      loadRunning.current?.controller.abort()
+      loadRunning.current = null
+    }
+  }, [])
+  useEffect(() => {
+    if (!user) return undefined
+    const refresh = () => {
+      if (document.visibilityState === 'visible') load({ silent: true })
+    }
+    const timer = workspace?.paymentReconciliation?.pending ? window.setInterval(refresh, 15000) : null
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', refresh)
     return () => {
-      window.clearInterval(timer)
+      if (timer !== null) window.clearInterval(timer)
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', refresh)
     }
@@ -4667,9 +4698,14 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
   }, [orderView?.id, orderView?.payment, orderView?.payType])
   useEffect(() => {
     if (!payment || !orderView || orderView.status !== 'pending_payment') return undefined
+    const controller = new AbortController()
+    let running = false
     const timer = window.setInterval(async () => {
+      if (running || controller.signal.aborted) return
+      running = true
       try {
-        const result = await upgradeApiRequest(`/api/account/upgrade-orders/${encodeURIComponent(orderView.id)}/pay-status`, { method: 'POST' })
+        const result = await upgradeApiRequest(`/api/account/upgrade-orders/${encodeURIComponent(orderView.id)}/pay-status`, { method: 'POST', signal: controller.signal })
+        if (controller.signal.aborted) return
         setOrderView(result.order)
         if (result.workspace) {
           onRefresh?.({ silent: true })
@@ -4681,9 +4717,9 @@ function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
         }
       } catch {
         // 轮询失败不打断收银台，用户仍可手动重试。
-      }
+      } finally { running = false }
     }, 2000)
-    return () => window.clearInterval(timer)
+    return () => { window.clearInterval(timer); controller.abort() }
   }, [payment, orderView?.id, orderView?.status])
 
   const selectedPlan = plans.find((item) => item.id === selectedPlanId && accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && item.permanent)) || null
