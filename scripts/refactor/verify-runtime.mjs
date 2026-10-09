@@ -337,6 +337,21 @@ const CONSTRAINTS = [
     from: /^server\/state\.js$/,
     to: /^server\/routes\//,
   },
+  {
+    why: 'lib 是基础层，不得依赖业务服务层 services（依赖方向只能 services → lib）',
+    from: /^server\/lib\//,
+    to: /^server\/services\//,
+  },
+  {
+    why: 'state 是基础层，不得依赖业务服务层 services',
+    from: /^server\/state\.js$/,
+    to: /^server\/services\//,
+  },
+  {
+    why: 'config 是配置层，不得依赖业务服务层 services',
+    from: /^server\/config\.js$/,
+    to: /^server\/services\//,
+  },
 ]
 
 let constraintViolations = 0
