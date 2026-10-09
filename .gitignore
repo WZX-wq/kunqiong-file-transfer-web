@@ -2,6 +2,10 @@ node_modules/
 dist/
 storage/
 
+# 测试用边界大文件（500MB / 5GB），仅供本地压测，超出仓库托管限制。
+# 需要时按 测试数据/鲲穹文件传输测试数据包/02-边界大小文件/README 说明自行生成。
+测试数据/**/*.bin
+
 *.log
 dev-server.*.log
 qa-*.png
