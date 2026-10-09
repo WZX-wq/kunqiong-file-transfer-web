@@ -5,23 +5,28 @@
 ## 目录结构
 
 ```
-├── server.mjs              # 服务端入口：应用装配、路由注册、启动与优雅退出
+├── server.mjs              # 服务端入口：应用装配、中间件、启动与优雅退出（292 行）
 ├── server/                 # 服务端分层模块
 │   ├── config.js           # 环境变量、路径与业务常量（唯一配置来源）
 │   ├── state.js            # 运行期共享状态（连接池 + 限流/会话/上传计数表 + 缓存）
 │   ├── services/           # 业务服务层：按业务域聚合领域逻辑
 │   │   ├── account.js      # 账号域：身份会话 / 账号数据 / 套餐用量 / 升级支付 / 团队组织
-│   │   └── shares.js       # 分享/上传域：上传会话 / 文件落盘扫描 / 分享创建查询管理下载
+│   │   ├── shares.js       # 分享/上传域：上传会话 / 文件落盘扫描 / 分享创建查询管理下载
+│   │   ├── admin.js        # 后台/身份域：管理员会话 / OAuth 回调 / 运维清理
+│   │   └── collections.js  # 收集域：匿名文件收集 / 提交 / 汇总下载
 │   ├── routes/             # 路由层：只做 HTTP 适配，调用 services
 │   │   ├── account.js      # /api/auth/* + /api/account/{基础}
 │   │   ├── workspace.js    # /api/account/workspace* + /api/organizations/*
 │   │   ├── upgrade.js      # /api/account/upgrade-*
 │   │   ├── shares.js       # /api/shares（创建 + 查询/管理/下载/预览）
-│   │   └── upload.js       # /api/upload-sessions/*
+│   │   ├── upload.js       # /api/upload-sessions/*
+│   │   ├── admin.js        # /api/admin/* + /auth/callback
+│   │   └── collections.js  # /api/collections/*
 │   └── lib/
 │       ├── env-file.js     # .env 文件加载
 │       ├── http.js         # HTTP 错误构造与通用纯函数
-│       ├── upload.js       # multer 实例 + 上传中间件 + 文件名规范化（routes 与入口共用）
+│       ├── upload.js       # multer 实例 + 上传中间件 + 文件名规范化（多域共用）
+│       ├── audit.js        # 审计日志工具（requestIp / sanitizeAuditPath，多域共用）
 │       ├── metadata-store.js # 元数据快照：载入 / 合并 / CAS 落盘（不含领域规范化）
 │       └── metadata-normalizers.js # 领域规范化聚合点（唯一允许 import 多个领域的地方）
 ├── src/
@@ -348,59 +353,82 @@ upload-sessions 路由之前，因此 `routes/shares.js` 分成 `registerShareCr
 **行尾统一**：此前 `server/` 下 CRLF / LF / 混合三种并存（历次脚本产出不统一），
 本轮一并规范化为 CRLF，与 `core.autocrlf=true` 的检出结果对齐。
 
-## 服务端拆分进度（2026-10-09）
+### 2026-10-09：抽出后台/收集域（服务端拆分完成）
 
-原 `server.mjs` 6261 行 → 现在 **2774 行**，已抽出 4 层共 8 个模块。
+最后两个业务域迁出，`server.mjs` 收敛到 **292 行**。
 
-| 已抽出 | 行数 | 说明 |
-|---|---:|---|
-| `server/config.js` | 249 | 环境变量、路径、业务常量与默认项 |
-| `server/state.js` | 84 | 12 个可变 Map/Set + `runtime` 容器 + 连接池 + 缓存 |
-| `server/lib/metadata-store.js` | 408 | 元数据载入/合并/CAS 落盘（21 函数） |
-| `server/lib/metadata-normalizers.js` | 671 | 领域规范化闭包（43 函数） |
-| `server/lib/http.js` / `env-file.js` | 78 | 通用纯函数 |
-| `server/services/account.js` | 1425 | 账号域业务逻辑（105 函数） |
-| `server/routes/{account,workspace,upgrade}.js` | 1118 | 41 条路由 |
+**归属决策**：
+- `requestIp` / `sanitizeAuditPath` 下沉 `lib/audit.js`（中间件与 admin 共用）
+- `reconcileActiveUpgradeOrders` 迁 `services/account.js`（支付对账，非后台）
+- `adminSessionFromRequest` / `cleanupExpiredAdminSessions` **留在 shares.js**：
+  被 shares 的 `assertServiceWritable` 依赖，搬回 admin 会形成 shares→admin 环
 
-`verify:refactor` 实测依赖层级（深度 6）：
+**crypto 教训（重要）**：`safeEqualString` 依赖 `crypto.timingSafeEqual`，
+但抽取脚本的 JS_GLOBALS 误把 `crypto` 当成 `globalThis.crypto` 过滤，漏生成
+`import crypto from 'node:crypto'`。`node --check` 和 verify:refactor 都挡不住
+（default 导入的本地名无法静态确认真实来源），直到跑 remediation 的 admin 登录
+用例才暴露 `TypeError`。**结论：default 导入缺失是运行时才暴露的一类错误，
+搬迁后必须跑覆盖该路径的真实回归。**
+
+**结果**：`server.mjs` 1238 → 292 行；新增 `services/{admin,collections}.js`、
+`routes/{admin,collections}.js`、`lib/audit.js`。服务端拆分全部完成。
+
+## 服务端拆分进度（2026-10-09 —— 已完成）
+
+原 `server.mjs` 6261 行 → 现在 **292 行**（仅装配、启动、中间件与静态托管）。
+
+| 层 | 模块 | 行数 | 说明 |
+|---|---|---:|---|
+| 配置 | `server/config.js` | 249 | 环境变量、路径、业务常量与默认项 |
+| 状态 | `server/state.js` | 84 | 12 个可变 Map/Set + `runtime` 容器 + 连接池 + 缓存 |
+| 工具 | `server/lib/http.js` / `env-file.js` | 78 | HTTP 错误构造与通用纯函数 / .env 加载 |
+| 工具 | `server/lib/upload.js` | 42 | multer 实例 + 文件名规范化（多域共用） |
+| 工具 | `server/lib/audit.js` | 20 | requestIp / sanitizeAuditPath（中间件与 admin 共用） |
+| 存储 | `server/lib/metadata-store.js` | 408 | 元数据载入/合并/CAS 落盘 |
+| 规范化 | `server/lib/metadata-normalizers.js` | 671 | 领域规范化闭包（43 函数） |
+| 服务 | `server/services/account.js` | 1433 | 账号域（身份/套餐/支付/组织） |
+| 服务 | `server/services/shares.js` | 1186 | 分享/上传域 |
+| 服务 | `server/services/admin.js` | 434 | 后台管理/身份/运维清理 |
+| 服务 | `server/services/collections.js` | 112 | 匿名收集域 |
+| 路由 | `server/routes/{account,workspace,upgrade,shares,upload,admin,collections}.js` | 2044 | 全部 80 条业务路由 |
+
+`verify:refactor` 实测依赖层级（深度 8）：
 
 ```
 层0  lib/env-file.js, lib/http.js
 层1  config.js
-层2  state.js
-层3  lib/metadata-store.js, lib/metadata-normalizers.js
+层2  state.js, lib/upload.js
+层3  lib/metadata-store.js, lib/metadata-normalizers.js, lib/audit.js
 层4  services/account.js
-层5  routes/{account,workspace,upgrade}.js
-层6  server.mjs
+层5  services/shares.js, services/admin.js, services/collections.js,
+     routes/{account,upgrade,workspace}.js
+层6  routes/{shares,upload,admin,collections}.js
+层7  server.mjs
 ```
 
-### 剩余工作
+### 拆分完成，无需剩余工作
 
-`server.mjs` 余下 2774 行 ≈ 109 个顶层函数（1523 行）+ 39 条路由的内联处理器（806 行）
-+ 装配与启动逻辑。
+全部 80 条业务路由与它们的函数闭包都已迁出。`server.mjs` 里只剩：
 
-**顺序不能颠倒**：路由处理器直接引用这些函数，若先搬路由，就得让入口
-反向导出函数给路由用 —— 那是循环依赖。必须先按域把函数搬进 `server/services/*.js`，
-再搬路由。
+- `app.set`/`app.use` 全局中间件（JSON 解析、审计日志、安全头）
+- `/api/health`、`/api/runtime-config`、`/api/guest/quota` 三条基础设施路由
+- 各域 `registerXxxRoutes(app)` 的调用（顺序不可调整）
+- 启动、优雅退出、支付对账定时器、维护清理定时器
+- `/auth/callback` 的注册（归 admin 域）
 
-**路由域边界**（按内联处理器行数排序，可直接当拆分单位）：
+**顺序不变量**：`registerXxxRoutes(app)` 的调用顺序 = 原单文件中路由出现的顺序。
+拆分过程中每一轮都用脚本逐条比对（展开 register 调用 vs `git show HEAD:server.mjs`），
+最终 **85 条路由注册的方法/路径/顺序完全一致**。
 
-| 前缀 | 路由数 | 处理器行数 |
-|---|---:|---:|
-| `/api/upload-sessions` | 4 | 237 |
-| `/api/collections` | 11 | 225 |
-| `/api/shares` | 10 | 152 |
-| `/api/admin` | 9 | 132 |
-| `/auth/callback` | 1 | 18 |
-| `/api/health` `/api/guest` `/api/runtime-config` 等 | 4 | 42 |
+### 关键决策记录
 
-搬迁用 `registerXxxRoutes(app)`：本项目的路由只依赖 import 得到的函数，
-不需要 `ctx` 注入（账号域实践已验证 —— 41 条路由的自由标识符全部来自 import）。
-
-**`registerXxxRoutes(app)` 不带 `ctx` 是有意为之**：`ctx` 一旦引入，容易长成新的
-上帝对象；而依赖方向已经由 `services → lib → state → config` 单向约束住了。
-
-全部抽完后，`server.mjs` 预计收敛到 300–500 行（仅装配与启动）。
+1. **不按子域硬拆高耦合簇**。account 域内「身份/套餐/组织/数据」、shares 域内
+   「上传/分享」都实测存在子簇间双向边，硬拆必成环，故各自合并为单模块。
+2. **`registerXxxRoutes(app)` 不带 `ctx`**。实践证伪了方案里的 ctx 假设 ——
+   路由自由标识符全部来自 import，加 ctx 只会催生上帝对象。
+3. **共享中间件下沉 lib**。multer 实例、审计工具等被多域共用的东西放 lib，
+   避免 routes 之间互相依赖。
+4. **default 导入缺失是运行时才暴露的错误**（见下方「重构历史」的 crypto 教训）。
 
 ## 值得注意的技术债
 
