@@ -11,7 +11,8 @@
 │   ├── state.js            # 运行期共享状态（连接池 + 限流/会话/上传计数表 + 缓存）
 │   └── lib/
 │       ├── env-file.js     # .env 文件加载
-│       └── http.js         # HTTP 错误构造与通用纯函数
+│       ├── http.js         # HTTP 错误构造与通用纯函数
+│       └── metadata-store.js # 元数据快照：载入 / 合并 / CAS 落盘（不含领域规范化）
 ├── src/
 │   ├── main.jsx            # 前端入口（React 应用与页面组件）
 │   ├── office-html.js      # Office 文档 HTML 清洗
@@ -57,7 +58,8 @@ src/styles/components.css 944 行  原文件第 849–末尾
 | 层 | 位置 | 职责 | 可否依赖上层 |
 |---|---|---|---|
 | 配置层 | `server/config.js` | 读取环境变量、定义路径与业务常量 | 仅可依赖 `lib/env-file.js` |
-| 状态层 | `server/state.js` | 连接池、限流/会话/上传计数表、缓存 | 仅可依赖配置层 |
+| 状态层 | `server/state.js` | 连接池、限流/会话/上传计数表、缓存、CAS 计数 | 仅可依赖配置层 |
+| 存储层 | `server/lib/metadata-store.js` | 元数据快照的载入、合并与 CAS 落盘 | 可依赖配置层与状态层 |
 | 工具层 | `server/lib/*.js` | 无状态纯函数、错误构造 | 可依赖以上各层 |
 | 路由层 | `server/routes/*.js`（待建） | 按业务域注册路由 | 可依赖以上各层 |
 | 入口层 | `server.mjs` | 应用装配、路由注册、启动与优雅退出 | 可依赖以上各层 |
@@ -68,13 +70,27 @@ src/styles/components.css 944 行  原文件第 849–末尾
 
 2. **配置层不持有运行期资源。** `config.js` 只导出值，不创建连接池、不注册定时器。连接池由 `server/state.js` 创建并持有。（历史上 `config.js` 里曾有一份连接池，因引用未定义变量导致开 MySQL 就崩，已于 2026-10-09 移除。）
 
-3. **`server/lib/` 内不持有可变状态。** 这里只放纯函数；一旦需要状态，说明它属于 `state.js`。
+3. **`server/lib/` 内不持有可变状态**（`metadata-store.js` 的 `metadata` 是唯一例外，见第 5 条）。其余需要状态的一律放 `state.js`。
 
 4. **`server/state.js` 里的 Map/Set 必须全进程唯一。** 这些是限流计数、上传会话、管理后台会话、OAuth state —— 各自持有一份副本会静默失效（限流不生效、会话查不到），所以集中在一处 export，各模块按需 import。
 
-5. **`metadata` 等其余可变状态仍由 `server.mjs` 持有**，后续按 `拆分方案-2026-10-09.md` 第 2 章的注入式 normalizer 方案迁移。
+5. **`metadata-store.js` 不得 import 任何领域模块。** 领域规范化函数由入口在启动时通过 `installNormalizer` 注入，顺序不可颠倒：
 
-**验证**：`npm run verify:refactor` 会检查循环依赖、结构约束、未使用导入、缺失导入，并算出依赖层级（当前最大深度 3）。
+   ```js
+   installNormalizer(normalizeMetadata)                    // ① 先注入
+   initMetadata(normalizeMetadata(await loadMetadata()))   // ② 再初始化
+   ```
+
+   原因：`normalizeMetadata` 依赖 11 个领域 normalizer，而它的调用点在存储层内部；
+   若存储层直接 import 领域模块，就会形成
+   `metadata-store → 领域模块 → metadata-store`（领域模块要 persist）的循环。
+   ESM 下成环不抛错，表现为运行期 `undefined`，极难排查。
+
+6. **`metadata` 快照只在启动时就地填充一次，之后只做属性级修改，绝不整体替换。**
+   路由与定时器持有的是同一个引用，替换对象会让它们继续写到废弃的快照上。
+   （`applyMergedMetadata` 里有同样说明。）
+
+**验证**：`npm run verify:refactor` 会检查循环依赖、结构约束、未使用导入、缺失导入，并算出依赖层级（当前最大深度 4）。
 
 ### 前端
 
@@ -172,6 +188,48 @@ server.mjs:2469  ReferenceError: databaseHost is not defined
 1. **配置模块环境分支覆盖** —— 带环境分支的模块必须在每个分支下各跑一次导入。以子进程方式在「默认」与 `KUNQIONG_DB_ENABLED=true` 下分别 import 一次 `config.js`。
 2. **缺失导入检测** —— 某符号在本项目其他模块有导出、本文件也引用了它，但既没 import 也没本地声明。这正是本次能逐层挖出三处引用的工具。
 
+### 2026-10-09：抽出元数据存储层，用注入式 normalizer 打破依赖环
+
+**背景**：这是服务端拆分里最难的一环。`normalizeMetadata` 依赖 11 个领域 normalizer，
+而它的 **3 个调用点全部位于存储层内部**——启动时的 `normalizeMetadata(await loadMetadata())`、
+`loadMetadata` 内的本地→MySQL 迁移、`mergeMetadataSnapshots` 的返回值。
+
+所以「把 normalizer 抽成独立文件」**并不解决问题**：存储层自己就要调用它，
+`metadata-store → 领域模块 → metadata-store` 的环依然闭环。ESM 下成环不抛错，
+表现为运行期 `undefined`，极难排查。
+
+**做法**：存储层留一个注入缝，由入口在启动时把 `normalizeMetadata` 注进去。
+
+```js
+// metadata-store.js
+let normalizeSnapshot = (value) => value      // 注入前恒等，模块可独立加载
+export function installNormalizer(fn) { ... }
+
+// server.mjs —— 顺序不可颠倒
+installNormalizer(normalizeMetadata)                    // ① 先注入
+initMetadata(normalizeMetadata(await loadMetadata()))   // ② 再初始化
+```
+
+`metadata` 迁移为 `export const metadata = {}`，启动时就地填充一次，之后只做属性级修改 ——
+沿用既有的「同一引用」不变量。
+
+**搬迁内容**：21 个函数（分三段连续块）+ 3 个常量。
+
+| 块 | 内容 |
+|---|---|
+| 载入 | `emptyMetadata` / `readMetadataFileFrom` / `loadLocalMetadata` / `readLocalMetadataRevision` / `loadMetadata` / `readRemoteMetadataRow` / `ensureDatabaseStateTable` |
+| 合并 | `metadataIdSets` / `metadataRecordTime` / `mergeMetadata*` / `applyMergedMetadata` / `rememberMetadataBaseIds` |
+| 持久化 | `persistMetadata` / `withLocalMetadataLock` / `persistLocalMetadata` / `writeMetadataToDatabase` |
+
+块内对 `normalizeMetadata` 的 2 处调用改写为注入的 `normalizeSnapshot`。
+`DEFAULT_SYSTEM_CONFIG` 移入 `config.js`（存储层与业务层都要用）。
+
+**结果**：`server.mjs` 6243 → 5873 行，新增 `metadata-store.js` 408 行。
+依赖层级变为干净的单向链：`env-file/http → config → state → metadata-store → server.mjs`（深度 4）。
+
+**验证**：`metadata-cas` 12/12（两个真实进程并发写 + 重启恢复，这是对持久化路径最深的检验）、
+`upload` 10/10、`remediation` 61 PASS、`payment-ui` 10/10、`docker-copy` 200、构建 8.31s。
+
 ## 值得注意的技术债
 
 ### 1. 函数按功能分散书写，彼此交错
@@ -183,7 +241,7 @@ server.mjs:2469  ReferenceError: databaseHost is not defined
 **建议**：若后续要继续拆分，先在文件内**按业务域重排函数顺序**（纯位置调整，
 不改逻辑），让同一域的函数连续，再整体搬迁。这样每步都可独立验证。
 
-### 1b. `metadata` 的规范化依赖形成环（继续拆分前必须先解决）
+### 1b. ~~`metadata` 的规范化依赖形成环~~（2026-10-09 已解决，留档）
 
 `normalizeMetadata()` 依赖 **11 个领域规范化函数**（`normalizeAccountUserStore`、
 `normalizeAccountRecordStore`、`normalizeUpgradeOrders`、`normalizeOrganizations` ……）
@@ -197,14 +255,12 @@ server.mjs:2469  ReferenceError: databaseHost is not defined
 `metadata-store → 领域模块 → metadata-store` 仍是闭环（ESM 下不抛错，
 表现为运行期 `undefined`，极难排查）。
 
-**正确解法是注入**：存储层暴露 `installNormalizer(fn)`，由入口在启动时把
-`metadata-normalizers.js` 的 `normalizeMetadata` 注进去。单向依赖图：
+**解法（已实施）**：存储层暴露 `installNormalizer(fn)`，由入口在启动时把
+`normalizeMetadata` 注进去。见上文重构历史「抽出元数据存储层」。
 
-```
-config.js ← state.js ← metadata-store.js ← 各领域模块 ← metadata-normalizers.js ← server.mjs
-```
-
-详见 `拆分方案-2026-10-09.md` 第 2 章。
+**剩余工作**：11 个领域 normalizer 目前仍留在 `server.mjs`。
+后续按 `拆分方案-2026-10-09.md` 第 2 章迁到 `server/lib/metadata-normalizers.js`
+（它是唯一允许 import 所有领域模块的地方），届时 `server.mjs` 只做注入与编排。
 
 ### 2. 前端 `src/main.jsx` 尚未拆分
 
