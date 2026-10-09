@@ -9,6 +9,12 @@
 ├── server/                 # 服务端分层模块
 │   ├── config.js           # 环境变量、路径与业务常量（唯一配置来源）
 │   ├── state.js            # 运行期共享状态（连接池 + 限流/会话/上传计数表 + 缓存）
+│   ├── services/           # 业务服务层：按业务域聚合领域逻辑
+│   │   └── account.js      # 账号域：身份会话 / 账号数据 / 套餐用量 / 升级支付 / 团队组织
+│   ├── routes/             # 路由层：只做 HTTP 适配，调用 services
+│   │   ├── account.js      # /api/auth/* + /api/account/{基础}
+│   │   ├── workspace.js    # /api/account/workspace* + /api/organizations/*
+│   │   └── upgrade.js      # /api/account/upgrade-*
 │   └── lib/
 │       ├── env-file.js     # .env 文件加载
 │       ├── http.js         # HTTP 错误构造与通用纯函数
@@ -63,7 +69,8 @@ src/styles/components.css 944 行  原文件第 849–末尾
 | 存储层 | `server/lib/metadata-store.js` | 元数据快照的载入、合并与 CAS 落盘 | 可依赖配置层与状态层 |
 | 规范化层 | `server/lib/metadata-normalizers.js` | 把原始 JSON 规范化为内存模型 | 可依赖以上各层 |
 | 工具层 | `server/lib/*.js` | 无状态纯函数、错误构造 | 可依赖以上各层 |
-| 路由层 | `server/routes/*.js`（待建） | 按业务域注册路由 | 可依赖以上各层 |
+| 服务层 | `server/services/*.js` | 按业务域聚合领域逻辑（账号域已迁出） | 不得依赖 `routes/` 与入口 |
+| 路由层 | `server/routes/*.js` | 按业务域注册路由，只做 HTTP 适配 | 可依赖服务层及以下 |
 | 入口层 | `server.mjs` | 应用装配、路由注册、启动与优雅退出 | 可依赖以上各层 |
 
 **关键规则：**
@@ -92,7 +99,21 @@ src/styles/components.css 944 行  原文件第 849–末尾
    路由与定时器持有的是同一个引用，替换对象会让它们继续写到废弃的快照上。
    （`applyMergedMetadata` 里有同样说明。）
 
-**验证**：`npm run verify:refactor` 会检查循环依赖、结构约束、未使用导入、缺失导入，并算出依赖层级（当前最大深度 4）。
+7. **`server/services/` 是业务域逻辑的唯一归属，不得反向依赖 `routes/` 与入口。**
+   依赖方向只能 `routes → services → lib → state → config`。
+   同理，`lib/`、`state.js`、`config.js` 都不得 import `services/`。
+   新增业务域时：领域逻辑进 `services/<域>.js`（导出函数），
+   路由只做参数解析与响应封装，放 `routes/<域>.js`，并导出 `registerXxxRoutes(app)`。
+
+8. **路由注册顺序 = Express 匹配顺序，`server.mjs` 中的 `registerXxxRoutes(app)` 调用顺序不可调整。**
+   各路由文件内部按原始顺序排列，新路由追加到所属文件末尾。
+
+9. **搬迁按「先函数、后路由」的顺序。** 路由处理器直接引用业务函数；
+   若先搬路由，就得让入口反向导出函数给路由用，那是循环依赖。
+   搬迁方法：用脚本算 `app.get/post/...` 处理器的**函数闭包**（而非手写清单），
+   再确认闭包对顶层符号零逃逸，然后整块搬移。
+
+**验证**：`npm run verify:refactor` 会检查循环依赖、结构约束、未使用导入、缺失导入，并算出依赖层级（当前最大深度 6）。
 
 ### 前端
 
@@ -251,9 +272,40 @@ initMetadata(normalizeMetadata(await loadMetadata()))   // ② 再初始化
 
 **结果**：`server.mjs` 5873 → 5198 行，新增 `metadata-normalizers.js` 646 行。
 
+### 2026-10-09：抽出账号域（services + routes 两层）
+
+第一个完整的业务域拆分，建立了后续各域可复用的流程。
+
+**做法：用脚本算闭包，不手写清单。** 先把 41 条路由（account / auth / workspace /
+organizations-join / upgrade）的处理器作为种子，算函数依赖闭包 → 105 个函数 / 1237 行。
+再确认三件事后才动手：
+
+1. 闭包对「顶层但不在闭包内」的符号**零引用**（自包含，可整块搬）
+2. 路由处理器的 27 个自由标识符**全部来自 import**，无一来自 `server.mjs` 本地声明
+3. 相关常量（`LOOPBACK_HOSTS`、`VERIFICATION_*`、`REMOTE_PRICING_TTL`）仅闭包内使用
+
+**为什么不按子域继续拆成 4 个文件**：实测「身份 / 套餐 / 组织 / 数据」四块
+**每一对之间都有双向引用边**（11 条子域级环）。硬拆必须引入大范围注入，
+得不偿失。1425 行超出 1000 行软目标，是依赖密度决定的 —— 已在文件头注明。
+
+**搬迁顺序**：先函数（`services/account.js`）后路由（`routes/*.js`）。
+反过来会让入口反向导出函数给路由，那是循环依赖。
+
+**`registerXxxRoutes(app)` 不带 `ctx`**：实践证伪了方案中「必须注入 ctx」的假设 ——
+路由只依赖 import。不加 `ctx` 也避免它长成新的上帝对象。
+
+**验证**：搬迁前后逐条比对 **85 条路由注册的方法/路径/顺序完全一致**（含
+`app.set`/`app.use`）。这是「Express 匹配行为未变」的直接证据。
+另有完整回归矩阵（CAS 12/12、上传 10/10、remediation 61 PASS、支付 UI 10/10、
+真实启动探测、构建）。
+
+**结果**：`server.mjs` 5196 → 2774 行；新增 `services/account.js` 1425 行 +
+`routes/{account,workspace,upgrade}.js` 共 1118 行。
+搬迁途中校验器自动抓出 94 个失效导入。
+
 ## 服务端拆分进度（2026-10-09）
 
-原 `server.mjs` 6261 行 → 现在 **5196 行**，已抽出 5 个模块。
+原 `server.mjs` 6261 行 → 现在 **2774 行**，已抽出 4 层共 8 个模块。
 
 | 已抽出 | 行数 | 说明 |
 |---|---:|---|
@@ -262,42 +314,48 @@ initMetadata(normalizeMetadata(await loadMetadata()))   // ② 再初始化
 | `server/lib/metadata-store.js` | 408 | 元数据载入/合并/CAS 落盘（21 函数） |
 | `server/lib/metadata-normalizers.js` | 671 | 领域规范化闭包（43 函数） |
 | `server/lib/http.js` / `env-file.js` | 78 | 通用纯函数 |
+| `server/services/account.js` | 1425 | 账号域业务逻辑（105 函数） |
+| `server/routes/{account,workspace,upgrade}.js` | 1118 | 41 条路由 |
 
-`verify:refactor` 实测依赖层级（深度 4）：
+`verify:refactor` 实测依赖层级（深度 6）：
 
 ```
 层0  lib/env-file.js, lib/http.js
 层1  config.js
 层2  state.js
 层3  lib/metadata-store.js, lib/metadata-normalizers.js
-层4  server.mjs
+层4  services/account.js
+层5  routes/{account,workspace,upgrade}.js
+层6  server.mjs
 ```
 
 ### 剩余工作
 
-`server.mjs` 余下 5196 行 ≈ 214 个顶层函数（2760 行）+ 80 条路由的内联处理器（1824 行）。
+`server.mjs` 余下 2774 行 ≈ 109 个顶层函数（1523 行）+ 39 条路由的内联处理器（806 行）
++ 装配与启动逻辑。
 
-**顺序不能颠倒**：路由处理器直接引用这些函数，若先搬路由，就得让 `server.mjs`
-反向导出函数给路由用 —— 那是循环依赖。必须先按域把函数搬进 `server/lib/*.js`，
+**顺序不能颠倒**：路由处理器直接引用这些函数，若先搬路由，就得让入口
+反向导出函数给路由用 —— 那是循环依赖。必须先按域把函数搬进 `server/services/*.js`，
 再搬路由。
 
 **路由域边界**（按内联处理器行数排序，可直接当拆分单位）：
 
 | 前缀 | 路由数 | 处理器行数 |
 |---|---:|---:|
-| `/api/account` | 34 | 731 |
 | `/api/upload-sessions` | 4 | 237 |
 | `/api/collections` | 11 | 225 |
-| `/api/auth` | 5 | 173 |
 | `/api/shares` | 10 | 152 |
 | `/api/admin` | 9 | 132 |
-| `/api/organizations` | 2 | 114 |
-| 其余（health / guest / runtime-config / 根路径） | 5 | 60 |
+| `/auth/callback` | 1 | 18 |
+| `/api/health` `/api/guest` `/api/runtime-config` 等 | 4 | 42 |
 
-搬路由时用计划中的 `registerXRoutes(app, ctx)`：`ctx` 只放真正共享的可变状态与
-跨域函数，各域内部专用函数直接 import，避免 `ctx` 长成新的上帝对象。
+搬迁用 `registerXxxRoutes(app)`：本项目的路由只依赖 import 得到的函数，
+不需要 `ctx` 注入（账号域实践已验证 —— 41 条路由的自由标识符全部来自 import）。
 
-全部抽完后，`server.mjs` 预计收敛到 200–400 行（仅装配与启动）。
+**`registerXxxRoutes(app)` 不带 `ctx` 是有意为之**：`ctx` 一旦引入，容易长成新的
+上帝对象；而依赖方向已经由 `services → lib → state → config` 单向约束住了。
+
+全部抽完后，`server.mjs` 预计收敛到 300–500 行（仅装配与启动）。
 
 ## 值得注意的技术债
 
