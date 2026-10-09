@@ -164,6 +164,9 @@ export const GUEST_ID_MAX_AGE_SECONDS = 365 * 24 * 3600
 export const MAX_GUEST_USAGE_ENTRIES = 20000
 
 // ── 数据库 ──
+// 元数据快照的并发写保护：写入走 revision CAS，冲突后重读远端合并再重试。
+// 重试上限用于兜住持续的写竞争，超过后放弃本次落盘并告警，由下一次业务写入重试。
+export const MAX_METADATA_WRITE_ATTEMPTS = 5
 export const databaseEnabled = parseBooleanEnv(process.env.KUNQIONG_DB_ENABLED, false)
 export const databaseHost = String(process.env.KUNQIONG_DB_HOST || '').trim()
 export const databasePort = Number(process.env.KUNQIONG_DB_PORT || 3306)
