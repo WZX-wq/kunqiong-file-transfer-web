@@ -1,0 +1,10 @@
+role,fixture_id,username_or_target,password_setup,expected_scope
+guest,guest-001,,not_applicable,anonymous upload and public collection submit
+owner,owner-001,owner@example.test,create_in_test_env,own shares collections and records
+recipient,recipient-001,recipient@example.test,create_in_test_env,authorized directed access
+stranger,stranger-001,stranger@example.test,create_in_test_env,no directed access
+member,member-001,member@example.test,create_in_test_env,active membership renewal
+team_owner,team-owner-001,team-owner@example.test,create_in_test_env,organization owner
+team_admin,team-admin-001,team-admin@example.test,create_in_test_env,organization manager
+team_member,team-member-001,team-member@example.test,create_in_test_env,ordinary member
+admin,fixture-admin-001,fixture-admin,inject_via_secret_manager,system administration

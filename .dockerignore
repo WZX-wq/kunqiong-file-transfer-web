@@ -1,0 +1,15 @@
+node_modules
+dist
+storage
+.git
+.gitea
+*.log
+dev-server.*.log
+qa-*.png
+_api-*.txt
+_requirements.*
+_requirements_render/
+_docx_extract*/
+登录/
+.env
+.env.*

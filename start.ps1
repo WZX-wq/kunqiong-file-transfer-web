@@ -1,0 +1,131 @@
+$ErrorActionPreference = 'Stop'
+
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$frontendPort = 4173
+$backendPort = 8045
+$url = "http://127.0.0.1:$frontendPort/"
+$healthUrl = "http://127.0.0.1:$backendPort/api/health"
+$logRoot = Join-Path $env:TEMP 'kunqiong-file-transfer'
+$serverLog = Join-Path $logRoot 'server.log'
+$serverErrorLog = Join-Path $logRoot 'server-error.log'
+$viteLog = Join-Path $logRoot 'vite.log'
+$viteErrorLog = Join-Path $logRoot 'vite-error.log'
+$startupErrorLog = Join-Path $logRoot 'startup-error.log'
+
+New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+Clear-Content -Path $startupErrorLog -ErrorAction SilentlyContinue
+try {
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+} catch {
+  # The launcher does not require console encoding support.
+}
+
+function Stop-PortProcess([int]$port) {
+  for ($attempt = 0; $attempt -lt 5; $attempt++) {
+    $listeners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    if (-not $listeners) { return }
+    foreach ($listener in $listeners) {
+      $process = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
+      if ($process -and $process.ProcessName -in @('node', 'nodejs')) {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      } else {
+        throw "Port $port is already used by a non-Node process (PID $($listener.OwningProcess))."
+      }
+    }
+    Start-Sleep -Milliseconds 300
+  }
+  throw "Unable to stop the previous process on port $port."
+}
+
+function Stop-ProjectNodeProcesses {
+  $rootPattern = [regex]::Escape($root)
+  $processes = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+    Where-Object { $_.CommandLine -and $_.CommandLine -match $rootPattern -and $_.CommandLine -match 'server\.mjs|vite\.js' }
+  foreach ($process in $processes) {
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Wait-Ready([string]$targetUrl, [string]$serviceName, [int]$attempts = 60) {
+  for ($attempt = 0; $attempt -lt $attempts; $attempt++) {
+    Start-Sleep -Milliseconds 500
+    try {
+      $response = Invoke-WebRequest -Uri $targetUrl -UseBasicParsing -TimeoutSec 2
+      if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 400) {
+        return
+      }
+    } catch {
+      # Keep waiting while the service starts.
+    }
+  }
+  throw "$serviceName did not become ready. See $logRoot"
+}
+
+function Get-DotEnvValue([string]$name) {
+  $line = Get-Content (Join-Path $root '.env') -ErrorAction SilentlyContinue |
+    Where-Object { $_ -match "^\s*$([regex]::Escape($name))\s*=" } |
+    Select-Object -First 1
+  if ($line -and $line -match '^\s*[^=]+\s*=\s*(.*)$') {
+    return $Matches[1].Trim().Trim('"').Trim("'")
+  }
+  return ''
+}
+
+try {
+  $node = (Get-Command node.exe -ErrorAction Stop).Source
+  $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
+
+  if (-not (Test-Path (Join-Path $root 'node_modules\vite\bin\vite.js'))) {
+    $install = Start-Process -FilePath $npm -ArgumentList @('install') -WorkingDirectory $root -WindowStyle Hidden -Wait -PassThru
+    if ($install.ExitCode -ne 0) {
+      throw 'Dependency installation failed.'
+    }
+  }
+
+  Stop-PortProcess $frontendPort
+  Stop-PortProcess $backendPort
+  Stop-ProjectNodeProcesses
+  Start-Sleep -Milliseconds 500
+
+  $dbEnabled = (Get-DotEnvValue 'KUNQIONG_DB_ENABLED') -match '^(1|true|yes|on)$'
+  $dbHost = Get-DotEnvValue 'KUNQIONG_DB_HOST'
+  $dbPortText = Get-DotEnvValue 'KUNQIONG_DB_PORT'
+  $dbPort = if ($dbPortText -match '^\d+$') { [int]$dbPortText } else { 3306 }
+  if ($dbEnabled -and $dbHost) {
+    $dbAvailable = Test-NetConnection -ComputerName $dbHost -Port $dbPort -InformationLevel Quiet -WarningAction SilentlyContinue
+    if (-not $dbAvailable) {
+      $env:KUNQIONG_DB_ENABLED = 'false'
+      Add-Content -Path $startupErrorLog -Value "$(Get-Date -Format s) Remote database port unavailable; started with local storage for this launch."
+    }
+  }
+
+  $backendProcess = Start-Process -FilePath $node -ArgumentList @('server.mjs') -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $serverLog -RedirectStandardError $serverErrorLog -PassThru
+  try {
+    Wait-Ready $healthUrl 'Backend' 12
+  } catch {
+    if (-not $dbEnabled -or $env:KUNQIONG_DB_ENABLED -eq 'false') { throw }
+    Stop-Process -Id $backendProcess.Id -Force -ErrorAction SilentlyContinue
+    Stop-ProjectNodeProcesses
+    $env:KUNQIONG_DB_ENABLED = 'false'
+    Add-Content -Path $startupErrorLog -Value "$(Get-Date -Format s) Remote database initialization timed out; restarted with local storage for this launch."
+    Start-Process -FilePath $node -ArgumentList @('server.mjs') -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $serverLog -RedirectStandardError $serverErrorLog | Out-Null
+    Wait-Ready $healthUrl 'Backend'
+  }
+
+  Start-Process -FilePath $node -ArgumentList @('node_modules\vite\bin\vite.js', '--host', '0.0.0.0', '--port', $frontendPort) -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $viteLog -RedirectStandardError $viteErrorLog | Out-Null
+
+  Wait-Ready $healthUrl 'Backend'
+  Wait-Ready $url 'Frontend'
+
+  Start-Process $url | Out-Null
+} catch {
+  $reason = $_.Exception.Message
+  $message = "项目启动失败：$reason`n`n日志目录：$logRoot"
+  Add-Content -Path $startupErrorLog -Value ("{0} {1}" -f (Get-Date -Format s), $message) -Encoding utf8
+  try {
+    Add-Type -AssemblyName PresentationFramework
+    [System.Windows.MessageBox]::Show($message, '鲲穹文件传输启动失败', 'OK', 'Error') | Out-Null
+  } catch {
+    # Keep the launcher usable on systems without the WPF assembly.
+  }
+}

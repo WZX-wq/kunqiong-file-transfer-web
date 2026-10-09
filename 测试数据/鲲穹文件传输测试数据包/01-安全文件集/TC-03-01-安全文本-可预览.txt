@@ -1,0 +1,2 @@
+鲲穹文件传输安全测试文件
+ASCII and UTF-8 content.

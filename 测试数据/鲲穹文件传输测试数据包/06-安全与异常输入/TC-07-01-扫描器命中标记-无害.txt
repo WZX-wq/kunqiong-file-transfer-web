@@ -1,0 +1,2 @@
+TEST_THREAT_MARKER
+This is a harmless scanner fixture, not malware.

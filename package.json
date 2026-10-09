@@ -1,0 +1,35 @@
+{
+  "name": "kunqiong-transfer-demo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"node server.mjs\" \"vite --host 0.0.0.0 --port 4173\"",
+    "build": "vite build",
+    "test:remediation": "node scripts/verify-office-html.mjs && node scripts/verify-remediation.mjs",
+    "start": "node server.mjs",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "chart.js": "^4.5.1",
+    "concurrently": "^9.1.2",
+    "dompurify": "^3.4.16",
+    "express": "^4.21.2",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.12.2",
+    "multer": "^2.3.0",
+    "mysql2": "^3.24.4",
+    "nodemailer": "^10.0.0",
+    "pptxviewjs": "^1.1.9",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^29.1.1",
+    "vite": "^6.0.5"
+  }
+}

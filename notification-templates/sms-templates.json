@@ -1,0 +1,61 @@
+{
+  "provider": "tencent-cloud-sms",
+  "language": "zh-CN",
+  "templates": [
+    {
+      "key": "bind_code",
+      "scene": "绑定手机号",
+      "suggestedContent": "【鲲穹文件传输】验证码{1}，用于绑定手机号，{2}分钟内有效。如非本人操作，请忽略本短信。",
+      "variables": [
+        { "name": "code", "placeholder": "{1}", "description": "6位数字验证码" },
+        { "name": "minutes", "placeholder": "{2}", "description": "验证码有效分钟数，例如10" }
+      ]
+    },
+    {
+      "key": "login_code",
+      "scene": "手机号登录或身份验证",
+      "suggestedContent": "【鲲穹文件传输】验证码{1}，用于登录或身份验证，{2}分钟内有效。如非本人操作，请忽略本短信。",
+      "variables": [
+        { "name": "code", "placeholder": "{1}", "description": "6位数字验证码" },
+        { "name": "minutes", "placeholder": "{2}", "description": "验证码有效分钟数，例如10" }
+      ]
+    },
+    {
+      "key": "workspace_invite",
+      "scene": "团队空间邀请",
+      "suggestedContent": "【鲲穹文件传输】{1}邀请你加入团队“{2}”，请登录网页端，在消息中心接受或拒绝邀请。",
+      "variables": [
+        { "name": "inviter", "placeholder": "{1}", "description": "邀请人昵称" },
+        { "name": "workspaceName", "placeholder": "{2}", "description": "团队空间名称" }
+      ]
+    },
+    {
+      "key": "file_share",
+      "scene": "文件分享通知",
+      "suggestedContent": "【鲲穹文件传输】{1}向你分享了文件“{2}”，请登录网页端查看。有效期：{3}。",
+      "variables": [
+        { "name": "sender", "placeholder": "{1}", "description": "分享人昵称" },
+        { "name": "fileName", "placeholder": "{2}", "description": "文件或分享标题" },
+        { "name": "expiresAt", "placeholder": "{3}", "description": "分享截止时间或永久有效" }
+      ]
+    },
+    {
+      "key": "membership_activated",
+      "scene": "会员开通成功",
+      "suggestedContent": "【鲲穹文件传输】你的{1}已开通，有效期至{2}。感谢使用鲲穹文件传输。",
+      "variables": [
+        { "name": "planName", "placeholder": "{1}", "description": "会员版、团队版或企业版" },
+        { "name": "expiresAt", "placeholder": "{2}", "description": "会员到期时间" }
+      ]
+    },
+    {
+      "key": "membership_expiring",
+      "scene": "会员到期提醒",
+      "suggestedContent": "【鲲穹文件传输】你的{1}将于{2}到期，请及时续费，以免影响团队空间和会员权益。",
+      "variables": [
+        { "name": "planName", "placeholder": "{1}", "description": "当前套餐名称" },
+        { "name": "expiresAt", "placeholder": "{2}", "description": "会员到期时间" }
+      ]
+    }
+  ]
+}

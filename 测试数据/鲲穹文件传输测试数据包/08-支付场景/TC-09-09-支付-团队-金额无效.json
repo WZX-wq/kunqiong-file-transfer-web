@@ -1,0 +1,7 @@
+{
+  "generatedAt": "2026-10-09T03:14:42.678Z",
+  "id": "PAY-009",
+  "plan": "team",
+  "status": "invalid_amount",
+  "expected": "reject and no entitlement"
+}

@@ -1,0 +1,112 @@
+node_modules/
+dist/
+storage/
+
+*.log
+dev-server.*.log
+qa-*.png
+# 浏览器验证脚本会把结果落盘成 txt，属本地产物，不入库
+_verify_*.txt
+_invite_browser.txt
+_admin_ui.txt
+_admin_live.txt
+_admin_live_api.txt
+_member_ui.txt
+_plan.log
+_admin_audit.log
+# 验证脚本的隔离沙箱（每个脚本自建自清，异常退出可能残留）
+_*_sandbox/
+_chrome_*/
+# 邀请验证脚本的路由渲染探针产物（_invite_child.mjs 生成）
+_inv_*.json
+
+_api-*.txt
+_requirements.*
+_requirements_render/
+_docx_extract*/
+_docx_render*/
+_manual_preview/
+
+# 回归汇总与本地产物（验证脚本本身入库，报告不入库）
+_regression.txt
+_avatar_probe.txt
+_avatar_restart.txt
+_avatar_e2e.txt
+_avatar_e2e_trace.txt
+_avatar_live.txt
+_fixes.txt
+_atomic_store.txt
+_visual.txt
+_visual_shots/
+_fixes_live.txt
+_transfer_trace.txt
+_transfer_ui_trace.txt
+*.tmp
+
+# 用户手册：截图素材与构建脚本入库（可复现），预览抽查产物不入库
+_manual_preview/
+
+# UI 打磨轮：真浏览器效果截图属验证产物，不入库
+_ui_before_after/
+# 消息中心修复轮：诊断/截图/运行产物（验证脚本 _verify_message_expand.mjs 入库）
+_diag_*.mjs
+_msgdiag_*.png
+_msgui_*
+_build_check.txt
+_email_trace.txt
+_manual_trace*.txt
+_check_manual*.mjs
+_preview_manual.mjs
+_recapture_*.mjs
+_avatar_diag.txt
+
+# 收集页「登录后提交」轮：验证脚本入库，报告/截图/沙箱不入库
+_collect_login.txt
+_collect_login_ui.txt
+_ui_server.log
+
+# 团队空间上传修复轮：验证脚本入库，报告/沙箱不入库
+_team_upload.txt
+_team_upload_ui.txt
+_team_upload_ui_crash.txt
+_probe_team_live.txt
+
+# 团队资源多文件预览修复轮：验证/复现脚本入库，报告/截图不入库
+_team_preview_*.txt
+_repro_team_preview*.mjs
+_probe_team_preview.mjs
+
+.env
+.env.*
+!.env.example
+
+# WorkBuddy 本地产物（AI 记忆、同步脚本、接口快照），含内部地址与部署细节，不入库
+.workbuddy/
+__pycache__/
+
+# 验收会话端点冒烟：脚本入库，报告/沙箱不入库
+_impersonate_smoke.txt
+_impersonate_sandbox/
+_team_preview_live.txt
+_team_preview_live_chrome/
+_ci_now.json
+_health_now.json
+_live_index.html
+_live_bundle.js
+_live_bundle.css
+_admin_sess.txt
+_admin_login.json
+_admin_cookies.txt
+_admin_shares.json
+_admin_ov.json
+
+# 游客配额轮：验证脚本入库，报告/截图/诊断沙箱不入库
+_guest_quota.txt
+_quota_layout_verify.txt
+_quota_layout_fix.png
+_overflow_files/
+_dbg_*.mjs
+
+# 上传面板溢出修复轮：验证脚本入库，报告/截图不入库
+_panel_overflow_*.txt
+_panel_overflow_*.png

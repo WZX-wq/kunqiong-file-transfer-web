@@ -1,0 +1,64 @@
+name: Deploy Test Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    # 固定到测试服本机 runner；runner 标签需与自建 runner 的标签一致，避免被同名公网 runner 抢走
+    runs-on: linux
+    env:
+      PORT: "8045"
+      KUNQIONG_HOST: "0.0.0.0"
+      # The test server deliberately closes containers after deployment.
+      KUNQIONG_DEPLOY_VERIFY_MODE: "configuration"
+      # 以下均为敏感配置，一律走仓库 Secrets，不在仓库内保留明文。
+      # 必配Secrets：
+      #   KUNQIONG_APP_URL / KUNQIONG_AUTH_CALLBACK_URL
+      #   KUNQIONG_OAUTH_CLIENT_ID / KUNQIONG_OAUTH_CLIENT_SECRET
+      #   KUNQIONG_ADMIN_USER_IDS（同时用作企业白名单）
+      # Gitea 与 GitHub 的 Secrets 需分别配置，互不共享。
+      KUNQIONG_APP_URL: "${{ secrets.KUNQIONG_APP_URL }}"
+      KUNQIONG_AUTH_CALLBACK_URL: "${{ secrets.KUNQIONG_AUTH_CALLBACK_URL }}"
+      KUNQIONG_OAUTH_AUTHORIZE_URL: "https://login.kunqiongai.com/authorize.html"
+      KUNQIONG_OAUTH_TOKEN_URL: "https://login.kunqiongai.com/api/oauth/token"
+      KUNQIONG_OAUTH_CLIENT_ID: "${{ secrets.KUNQIONG_OAUTH_CLIENT_ID }}"
+      KUNQIONG_OAUTH_CLIENT_SECRET: "${{ secrets.KUNQIONG_OAUTH_CLIENT_SECRET }}"
+      KUNQIONG_ADMIN_USER_IDS: "${{ secrets.KUNQIONG_ADMIN_USER_IDS }}"
+      KUNQIONG_TEST_ENTERPRISE_USER_KEYS: "${{ secrets.KUNQIONG_ADMIN_USER_IDS }}"
+      KUNQIONG_TEST_ENTERPRISE_ALL: "false"
+      KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST: "true"
+      KUNQIONG_ADMIN_USERNAME: "${{ secrets.KUNQIONG_ADMIN_USERNAME }}"
+      KUNQIONG_ADMIN_PASSWORD: "${{ secrets.KUNQIONG_ADMIN_PASSWORD }}"
+      KUNQIONG_VERIFICATION_DEBUG: "false"
+      KUNQIONG_SMTP_HOST: "${{ secrets.KUNQIONG_SMTP_HOST }}"
+      KUNQIONG_SMTP_PORT: "${{ secrets.KUNQIONG_SMTP_PORT }}"
+      KUNQIONG_SMTP_SECURE: "${{ secrets.KUNQIONG_SMTP_SECURE }}"
+      KUNQIONG_SMTP_USER: "${{ secrets.KUNQIONG_SMTP_USER }}"
+      KUNQIONG_SMTP_PASSWORD: "${{ secrets.KUNQIONG_SMTP_PASSWORD }}"
+      KUNQIONG_SMTP_FROM: "${{ secrets.KUNQIONG_SMTP_FROM }}"
+      KUNQIONG_SMTP_FROM_NAME: "鲲穹文件传输"
+      KUNQIONG_TENCENT_SECRET_ID: "${{ secrets.KUNQIONG_TENCENT_SECRET_ID }}"
+      KUNQIONG_TENCENT_SECRET_KEY: "${{ secrets.KUNQIONG_TENCENT_SECRET_KEY }}"
+      KUNQIONG_TENCENT_SMS_SDK_APP_ID: "${{ secrets.KUNQIONG_TENCENT_SMS_SDK_APP_ID }}"
+      KUNQIONG_TENCENT_SMS_SIGN_NAME: "${{ secrets.KUNQIONG_TENCENT_SMS_SIGN_NAME }}"
+      KUNQIONG_TENCENT_SMS_REGION: "${{ secrets.KUNQIONG_TENCENT_SMS_REGION }}"
+      KUNQIONG_TENCENT_SMS_TEMPLATE_BIND_CODE_ID: "${{ secrets.KUNQIONG_TENCENT_SMS_TEMPLATE_BIND_CODE_ID }}"
+      KUNQIONG_TENCENT_SMS_TEMPLATE_LOGIN_CODE_ID: "${{ secrets.KUNQIONG_TENCENT_SMS_TEMPLATE_LOGIN_CODE_ID }}"
+      KUNQIONG_TENCENT_SMS_TEMPLATE_PASSWORD_CODE_ID: "${{ secrets.KUNQIONG_TENCENT_SMS_TEMPLATE_PASSWORD_CODE_ID }}"
+      KUNQIONG_TENCENT_SMS_TEMPLATE_WORKSPACE_INVITE_ID: "${{ secrets.KUNQIONG_TENCENT_SMS_TEMPLATE_WORKSPACE_INVITE_ID }}"
+      KUNQIONG_TENCENT_SMS_TEMPLATE_FILE_SHARE_ID: "${{ secrets.KUNQIONG_TENCENT_SMS_TEMPLATE_FILE_SHARE_ID }}"
+      KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_ACTIVATED_ID: "${{ secrets.KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_ACTIVATED_ID }}"
+      KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_EXPIRING_ID: "${{ secrets.KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_EXPIRING_ID }}"
+    steps:
+      - name: Checkout from Gitea
+        run: |
+          git clone --depth 1 --branch main "${{ secrets.KUNQIONG_GITEA_CLONE_URL }}" .
+
+      - name: Deploy
+        run: |
+          chmod +x scripts/deploy-test.sh
+          ./scripts/deploy-test.sh
