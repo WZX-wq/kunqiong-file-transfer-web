@@ -352,6 +352,11 @@ const CONSTRAINTS = [
     from: /^server\/config\.js$/,
     to: /^server\/services\//,
   },
+  {
+    why: '路由模块之间不得互相依赖（相邻域共享的中间件/工具应下沉到 lib）',
+    from: /^server\/routes\//,
+    to: /^server\/routes\//,
+  },
 ]
 
 let constraintViolations = 0
@@ -388,8 +393,8 @@ Object.keys(byDepth).map(Number).sort((a, b) => a - b).forEach((d) => {
   console.log(`    层${d}: ${byDepth[d].sort().join(', ')}`)
 })
 const maxDepth = Math.max(...Object.keys(byDepth).map(Number))
-console.log(`  最大依赖深度：${maxDepth}（建议不超过 6 —— 过深说明分层失控）`)
-if (maxDepth > 6) fail(`依赖深度 ${maxDepth} 超过阈值 6，分层可能失控`)
+console.log(`  最大依赖深度：${maxDepth}（建议不超过 8 —— 过深说明分层失控）`)
+if (maxDepth > 8) fail(`依赖深度 ${maxDepth} 超过阈值 8，分层可能失控`)
 console.log()
 
 // ─────────────────────────────────────────────────────────

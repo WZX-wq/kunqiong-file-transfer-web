@@ -43,24 +43,14 @@ import {
 
 import { metadata, persistMetadata } from '../lib/metadata-store.js'
 
+import { normalizeUploadFileName } from '../lib/upload.js'
+
 import {
   oauthStates, paymentReconcileAttempts, paymentSessionTokens, remotePricingCache, runtime,
   upgradeOrderLocks, verificationIpAttempts, verificationTargetLastSent,
 } from '../state.js'
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
-
-export function normalizeUploadFileName(value = '') {
-  const raw = String(value || '').trim()
-  if (!raw) return raw
-  const decoded = Buffer.from(raw, 'latin1').toString('utf8')
-  if (decoded && decoded !== raw && !decoded.includes('\uFFFD') && looksLikeMojibake(raw)) return decoded
-  return raw
-}
-
-export function looksLikeMojibake(value = '') {
-  return /(?:Ã|Â|Ä|Å|Æ|Ç|È|É|Ê|Ë|Ì|Í|Î|Ï|Ð|Ñ|Ò|Ó|Ô|Õ|Ö|Ø|Ù|Ú|Û|Ü|Ý|Þ|ß|à|á|â|ã|ä|å|æ|ç|è|é|ê|ë|ì|í|î|ï|ð|ñ|ò|ó|ô|õ|ö|ø|ù|ú|û|ü|ý|þ|ÿ)/.test(String(value))
-}
 
 export function updateFileCleanupSettings(req, res) {
   const session = authSessionFromRequest(req)
