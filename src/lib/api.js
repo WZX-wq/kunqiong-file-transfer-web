@@ -210,14 +210,35 @@ export function downloadStatusText(task) {
   return task.label || '正在下载'
 }
 
+// 下载错误的状态码中文兜底：任何情况下不向用户展示裸状态码。
+const DOWNLOAD_STATUS_FALLBACK = {
+  400: '下载请求无效，请刷新页面后重试',
+  401: '请先登录后再下载',
+  403: '没有这个文件的下载权限',
+  404: '分享不存在或已失效',
+  410: '分享已失效或下载次数已用完',
+  415: '文件安全检查未通过，无法下载',
+  429: '操作过于频繁，请稍后再试',
+  500: '服务器处理失败，请稍后重试',
+  503: '服务暂不可用，请稍后重试',
+}
+
 export async function downloadResponseError(response) {
+  // 下载预检走 HEAD（无响应体），服务端把文案放在 x-error-message 头里
+  // （值为 encodeURIComponent 后的中文）；其余场景从 JSON body 读 message。
+  // 都拿不到时按状态码给中文兜底。
+  let headerMessage = ''
+  const rawHeader = response.headers?.get('x-error-message') || ''
+  if (rawHeader) headerMessage = decodeURIComponent(rawHeader)
   const text = await response.text().catch(() => '')
-  try {
-    const data = JSON.parse(text)
-    return new Error(data.message || `下载失败（${response.status}）`)
-  } catch {
-    return new Error(text || `下载失败（${response.status}）`)
+  let bodyMessage = ''
+  if (text) {
+    try { bodyMessage = JSON.parse(text).message || '' } catch { bodyMessage = text }
   }
+  const message = headerMessage || bodyMessage || DOWNLOAD_STATUS_FALLBACK[response.status] || '下载失败，请稍后重试'
+  const error = new Error(message)
+  error.status = response.status
+  return error
 }
 
 export function saveBlob(blob, filename) {

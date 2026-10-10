@@ -107,6 +107,19 @@ const app = express()
 
 app.set('trust proxy', true)
 app.use(express.json({ limit: '1mb' }))
+// 4xx/5xx 的 JSON 错误响应统一附带 x-error-message 头：下载预检走 HEAD（无响应体），
+// 前端从该头读取人类可读的错误文案，避免界面出现「下载失败（410）」这类裸状态码。
+// 头值只允许 latin1，中文先 encodeURIComponent，前端拿到后 decodeURIComponent。
+app.use((_req, res, next) => {
+  const originalJson = res.json.bind(res)
+  res.json = (payload) => {
+    if (res.statusCode >= 400 && payload && typeof payload === 'object' && payload.message) {
+      res.setHeader('x-error-message', encodeURIComponent(String(payload.message)))
+    }
+    return originalJson(payload)
+  }
+  next()
+})
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/auth/')) {
     res.setHeader('Cache-Control', 'no-store')
