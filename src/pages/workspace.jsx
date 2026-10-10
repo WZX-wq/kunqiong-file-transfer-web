@@ -97,6 +97,13 @@ export function WorkspaceApp() {
     .then((data) => setGuestQuota(data?.enabled ? data : null))
     .catch(() => {})
 
+  // 主动中止旧的上传会话：服务端会立即释放其预留额度。
+  // 不中止的话，中途放弃的会话要等 TTL 过期才释放，期间会把游客配额占满。
+  const abortUploadSession = (sessionId) => {
+    if (!sessionId) return
+    apiRequest(`/api/upload-sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }).catch(() => {})
+  }
+
   useEffect(() => {
     if (authUser?.id || authLoading) {
       setGuestQuota(null)
@@ -223,6 +230,7 @@ export function WorkspaceApp() {
     setShareResult(null)
     setUploadProgress(0)
     setUploadState(createUploadState())
+    abortUploadSession(uploadRef.current.sessionId)
     uploadRef.current = createUploadSessionState()
   }
 
@@ -247,6 +255,7 @@ export function WorkspaceApp() {
     setIsUploading(true)
     setShareResult(null)
     if (!resume) {
+      abortUploadSession(uploadRef.current.sessionId)
       setUploadProgress(0)
       uploadRef.current = createUploadSessionState()
     }
@@ -291,6 +300,7 @@ export function WorkspaceApp() {
   const resetSend = () => {
     uploadRef.current.paused = true
     uploadRef.current.abortCurrent?.()
+    abortUploadSession(uploadRef.current.sessionId)
     uploadRef.current = createUploadSessionState()
     setFiles([])
     setShareResult(null)

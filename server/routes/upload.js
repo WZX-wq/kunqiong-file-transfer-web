@@ -28,7 +28,7 @@ import {
   addCollectionSubmissionMessage, addGuestUsage, assertAccountCapacity, assertCollectionFiles,
   assertConfiguredUploadLimits, assertGuestQuota, assertSafeUploadFiles, assertServiceWritable,
   assertTeamCapacity, assertUniqueTeamResourceNames, assertUploadCapacity,
-  cleanupUploadedFiles, createShareFromTempFiles, isAllowedType, normalizeUploadChunkSize,
+  cleanupUploadedFiles, createShareFromTempFiles, discardUploadSession, isAllowedType, normalizeUploadChunkSize,
   persistUploadSession, publicShare, publicSubmission, readShareOptions,
   requireUploadSessionOwner, resolveCollectionSubmitter, validateCollection
 } from '../services/shares.js'
@@ -182,6 +182,12 @@ export function registerUploadRoutes(app) {
       targetReady: fs.existsSync(path.join(session.directory, `${fileIndex}.target`)),
     })),
   })
+})
+  // 主动中止上传会话：客户端放弃/重开上传时调用，立即释放其预留额度，
+  // 避免僵尸会话（中途失败后不再续传的会话）把游客配额占满到 TTL 过期。
+  app.delete('/api/upload-sessions/:sessionId', requireUploadSessionOwner, (req, res) => {
+  discardUploadSession(req.uploadSession)
+  res.status(204).end()
 })
   app.post('/api/upload-sessions/:sessionId/complete', requireUploadSessionOwner, async (req, res, next) => {
   let activeSession

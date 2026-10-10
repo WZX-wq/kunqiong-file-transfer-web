@@ -418,11 +418,14 @@ export function formatBytesLabel(bytes = 0) {
   return `${Math.round(value / 1024)} KB`
 }
 
-export function guestQuotaExceededError({ usedBytes, limitBytes, incomingBytes }) {
-  const remaining = Math.max(0, limitBytes - usedBytes)
-  const error = httpError(413, `未登录累计可传输 ${formatBytesLabel(limitBytes)}（本设备已用 ${formatBytesLabel(usedBytes)}，剩余 ${formatBytesLabel(remaining)}，本次还需 ${formatBytesLabel(incomingBytes)}）。免费注册后即可获得 20 GB 个人空间，继续传输不受此限制`)
+export function guestQuotaExceededError({ usedBytes, limitBytes, incomingBytes, reservedBytes = 0 }) {
+  // reservedBytes = 同一游客其他未完成上传会话的预留。单独展示，
+  // 否则「已用」把预留混进去，会和顶部横幅的已计账用量对不上。
+  const remaining = Math.max(0, limitBytes - usedBytes - reservedBytes)
+  const reservedLabel = reservedBytes > 0 ? `，另有进行中上传占用 ${formatBytesLabel(reservedBytes)}` : ''
+  const error = httpError(413, `未登录累计可传输 ${formatBytesLabel(limitBytes)}（本设备已用 ${formatBytesLabel(usedBytes)}${reservedLabel}，剩余 ${formatBytesLabel(remaining)}，本次还需 ${formatBytesLabel(incomingBytes)}）。免费注册后即可获得 20 GB 个人空间，继续传输不受此限制`)
   error.code = 'guest_quota_exceeded'
-  error.guestQuota = { usedBytes, limitBytes, incomingBytes, remainingBytes: remaining }
+  error.guestQuota = { usedBytes, limitBytes, incomingBytes, remainingBytes: remaining, reservedBytes }
   return error
 }
 
@@ -716,11 +719,22 @@ export function pendingUploadBytes(predicate, excludeId) {
   return bytes
 }
 
+// 主动放弃上传会话：从内存移除并清理临时分片，立即释放其预留额度。
+// 客户端在「重置/重新选择文件/放弃续传开新会话」时调用，防止僵尸会话占满游客配额。
+export function discardUploadSession(session) {
+  if (!session) return
+  uploadSessions.delete(session.id)
+  removeDirectory(session.directory)
+}
+
 export function assertUploadCapacity(item, excludeId) {
   const incomingBytes = fileListSize(item.files)
   if (item.guestKey && guestQuotaLimitBytes()) {
-    const usedBytes = guestUsageEntry(item.guestKey).bytes + pendingUploadBytes((other) => other.guestKey === item.guestKey, excludeId)
-    if (usedBytes + incomingBytes > guestQuotaLimitBytes()) throw guestQuotaExceededError({ usedBytes, limitBytes: guestQuotaLimitBytes(), incomingBytes })
+    const usedBytes = guestUsageEntry(item.guestKey).bytes
+    const reservedBytes = pendingUploadBytes((other) => other.guestKey === item.guestKey, excludeId)
+    if (usedBytes + reservedBytes + incomingBytes > guestQuotaLimitBytes()) {
+      throw guestQuotaExceededError({ usedBytes, reservedBytes, limitBytes: guestQuotaLimitBytes(), incomingBytes })
+    }
   }
   if (item.collectionToken) {
     const task = metadata.collections.find((task) => task.token === item.collectionToken)
