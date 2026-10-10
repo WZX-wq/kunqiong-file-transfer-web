@@ -9,7 +9,7 @@ import { addMonths, displayUserName, formatBytes, formatDateInput, formatDuratio
 import { useEffect, useRef, useState } from 'react'
 import { previewSupportLabel, previewTypeLabel } from '../lib/transfer.js'
 import { FeedbackMessage } from './common.jsx'
-import { COLLECTION_TYPE_OPTIONS, TEXT_PREVIEW_MAX_BYTES, fileIcon } from '../lib/constants.js'
+import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, TEXT_PREVIEW_MAX_BYTES, fileIcon } from '../lib/constants.js'
 import { createCollectionManageForm, createShareManageForm, fileFormatLabel, formatAllowedTypes, formatDateInputDisplay, getManageToken, isClosedOrExpiredStatus, isDateInputStillOpen, normalizeCollectionTypes, recordDisplayName, recordExpiryLabel, recordScopeLabel, toggleCollectionType } from '../lib/records.js'
 
 export function DownloadProgressPanel({ task, onRetry }) {
@@ -518,6 +518,15 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
       setError('请填写任务名称')
       return null
     }
+    if (title.length > COLLECTION_TITLE_MAX) {
+      setError(`任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字`)
+      return null
+    }
+    const description = collectionForm.description.trim()
+    if (description.length > COLLECTION_DESCRIPTION_MAX) {
+      setError(`收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字`)
+      return null
+    }
     if (!collectionForm.deadline) {
       setError('请选择截止日期')
       return null
@@ -528,7 +537,7 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
     }
     return {
       title,
-      description: collectionForm.description.trim(),
+      description,
       deadline: collectionForm.deadline,
       allowedTypes: normalizeCollectionTypes(collectionForm.allowedTypes),
       maxFileSizeMb: Number(collectionForm.maxFileSizeMb),
@@ -627,12 +636,12 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
           ) : (
             <>
               <label className="manage-field manage-title-field">
-                <span>任务名称</span>
-                <input className="modal-inline-input" value={collectionForm.title} onChange={(event) => updateCollection({ title: event.target.value })} placeholder="例如：9 月产品素材收集" />
+                <span className="manage-field-label"><span>任务名称</span><small className={collectionForm.title.length >= COLLECTION_TITLE_MAX ? 'field-count at-limit' : 'field-count'}>{collectionForm.title.length}/{COLLECTION_TITLE_MAX}</small></span>
+                <input className="modal-inline-input" value={collectionForm.title} maxLength={COLLECTION_TITLE_MAX} onChange={(event) => updateCollection({ title: event.target.value })} placeholder="例如：9 月产品素材收集" />
               </label>
               <label className="manage-field">
-                <span>收集说明</span>
-                <textarea value={collectionForm.description} onChange={(event) => updateCollection({ description: event.target.value })} placeholder="请上传你负责的文件" />
+                <span className="manage-field-label"><span>收集说明</span><small className={collectionForm.description.length >= COLLECTION_DESCRIPTION_MAX ? 'field-count at-limit' : 'field-count'}>{collectionForm.description.length}/{COLLECTION_DESCRIPTION_MAX}</small></span>
+                <textarea value={collectionForm.description} maxLength={COLLECTION_DESCRIPTION_MAX} onChange={(event) => updateCollection({ description: event.target.value })} placeholder="请上传你负责的文件" />
               </label>
               <label className="manage-field">
                 <span>截止日期</span>
@@ -669,6 +678,7 @@ export function RenameRecordModal({ record, onClose, onSave }) {
   const [name, setName] = useState(() => recordDisplayName(record))
   const [error, setError] = useState('')
   const syncsCollectionTitle = record.kind === 'collection' && record.scope === 'my_collections' && Boolean(record.manageToken || getManageToken(record.manageUrl))
+  const nameLimit = syncsCollectionTitle ? COLLECTION_TITLE_MAX : 80
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -684,6 +694,10 @@ export function RenameRecordModal({ record, onClose, onSave }) {
     const nextName = name.trim()
     if (!nextName) {
       setError('显示名称不能为空')
+      return
+    }
+    if (nextName.length > nameLimit) {
+      setError(syncsCollectionTitle ? `任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字` : `显示名称不能超过 ${nameLimit} 个字`)
       return
     }
     onSave(nextName)
@@ -702,8 +716,8 @@ export function RenameRecordModal({ record, onClose, onSave }) {
             <div><strong>{recordDisplayName(record)}</strong><span>{recordScopeLabel(record.scope)} · {recordExpiryLabel(record)}</span></div>
           </div>
           <label className="manage-field">
-            <span>{syncsCollectionTitle ? '新的任务名称' : '新的显示名称'}</span>
-            <input ref={inputRef} className="modal-inline-input" value={name} maxLength={80} onChange={(event) => { setName(event.target.value); setError('') }} onKeyDown={(event) => { if (event.key === 'Enter') submit() }} placeholder={syncsCollectionTitle ? '请输入新的任务名称' : '请输入新的显示名称'} />
+            <span className="manage-field-label"><span>{syncsCollectionTitle ? '新的任务名称' : '新的显示名称'}</span><small className={name.length >= nameLimit ? 'field-count at-limit' : 'field-count'}>{name.length}/{nameLimit}</small></span>
+            <input ref={inputRef} className="modal-inline-input" value={name} maxLength={nameLimit} onChange={(event) => { setName(event.target.value); setError('') }} onKeyDown={(event) => { if (event.key === 'Enter') submit() }} placeholder={syncsCollectionTitle ? '请输入新的任务名称' : '请输入新的显示名称'} />
           </label>
           <p className="rename-helper">{syncsCollectionTitle ? '会同步修改收集任务名称，管理页和提交入口都会显示新名称。' : '仅修改文件管理中心和收发记录中的显示名称，不改动已上传文件本身。'}</p>
           {error && <p className="manage-form-error">{error}</p>}

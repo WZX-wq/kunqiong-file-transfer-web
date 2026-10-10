@@ -1,6 +1,6 @@
 import React from 'react'
 import { defaultDeadline, displayUserName, formatBytes, formatDate, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
-import { COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, MAX_FILE_SIZE, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
+import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, MAX_FILE_SIZE, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState } from '../lib/api.js'
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
@@ -500,6 +500,14 @@ export function WorkspaceApp() {
     const payload = { ...form, title: form.title.trim(), description: form.description.trim(), allowedTypes: normalizeCollectionTypes(form.allowedTypes) }
     if (!payload.title) {
       setToast('请填写任务名称')
+      return
+    }
+    if (payload.title.length > COLLECTION_TITLE_MAX) {
+      setToast(`任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字，请精简后重试`)
+      return
+    }
+    if (payload.description.length > COLLECTION_DESCRIPTION_MAX) {
+      setToast(`收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字，请精简后重试`)
       return
     }
     apiRequest('/api/collections', { method: 'POST', body: JSON.stringify(payload) })
@@ -1230,8 +1238,14 @@ export function CollectView({ result, manageData, manageLoading, records, onCrea
                 </div>
               </div>
               <div className="builder-form">
-                <label>任务名称<input value={form.title} onChange={(event) => update('title', event.target.value)} maxLength={80} placeholder="例如：9 月产品素材收集" /></label>
-                <label>收集说明<input value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={500} placeholder="例如：请上传你负责的图片、文档或视频素材" /></label>
+                <label>
+                  <span className="builder-label"><span>任务名称</span><small className={form.title.length >= COLLECTION_TITLE_MAX ? 'field-count at-limit' : 'field-count'}>{form.title.length}/{COLLECTION_TITLE_MAX}</small></span>
+                  <input value={form.title} onChange={(event) => update('title', event.target.value)} maxLength={COLLECTION_TITLE_MAX} placeholder="例如：9 月产品素材收集" />
+                </label>
+                <label>
+                  <span className="builder-label"><span>收集说明</span><small className={form.description.length >= COLLECTION_DESCRIPTION_MAX ? 'field-count at-limit' : 'field-count'}>{form.description.length}/{COLLECTION_DESCRIPTION_MAX}</small></span>
+                  <input value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={COLLECTION_DESCRIPTION_MAX} placeholder="例如：请上传你负责的图片、文档或视频素材" />
+                </label>
                 <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} ariaLabel="截止时间" /></label>
                 <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
                 <label>单人大小限制<select value={form.maxFileSizeMb} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select></label>

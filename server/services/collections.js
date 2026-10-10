@@ -8,7 +8,7 @@
 // 本模块从其 import。
 
 import {
-  collectionsRoot
+  COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, collectionsRoot
 } from '../config.js'
 import {
   httpError
@@ -77,12 +77,15 @@ export function collectionZipEntries(task, targetSubmission = null) {
 
 export function applyCollectionUpdate(task, body = {}) {
   if (Object.prototype.hasOwnProperty.call(body, 'title')) {
-    const title = String(body.title || '').trim().slice(0, 80)
+    const title = String(body.title || '').trim()
     if (!title) throw httpError(400, '请填写任务名称')
+    if (title.length > COLLECTION_TITLE_MAX) throw httpError(400, `任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字`)
     task.title = title
   }
   if (Object.prototype.hasOwnProperty.call(body, 'description')) {
-    task.description = String(body.description || '').trim().slice(0, 500) || '请上传你负责的文件'
+    const description = String(body.description || '').trim()
+    if (description.length > COLLECTION_DESCRIPTION_MAX) throw httpError(400, `收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字`)
+    task.description = description || '请上传你负责的文件'
   }
   if (Object.prototype.hasOwnProperty.call(body, 'deadline')) {
     const deadline = normalizeExpiryInput(body.deadline, '截止时间')

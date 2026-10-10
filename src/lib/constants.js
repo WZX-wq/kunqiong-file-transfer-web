@@ -20,6 +20,10 @@ export const defaultSettings = {
 }
 
 export const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']
+// 收集任务字段长度上限（与后端 server/config.js 的 COLLECTION_TITLE_MAX / COLLECTION_DESCRIPTION_MAX 保持一致）
+// 超长文本会把预览卡、管理页头部、公开提交页撑变形，两端同时设限并给出可理解的错误。
+export const COLLECTION_TITLE_MAX = 40
+export const COLLECTION_DESCRIPTION_MAX = 120
 export const COLLECTION_TYPE_EXTENSIONS = {
   图片: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif', 'ico'],
   文档: ['pdf', 'doc', 'docx', 'txt', 'rtf', 'xls', 'xlsx', 'csv', 'ppt', 'pptx', 'md'],

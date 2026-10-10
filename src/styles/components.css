@@ -389,9 +389,9 @@
 .public-safe { display: flex; align-items: center; gap: 6px; margin-left: auto; color: #637a74; font-size: 12px; }
 .public-page { flex: 1; display: grid; place-items: center; padding: 48px 20px 70px; }
 .public-card { width: min(570px, 100%); min-width: 0; padding: 34px; background: #fff; border: 1px solid #dfebe7; border-radius: 14px; box-shadow: var(--shadow); }
-.public-card h1 { margin: 0 0 10px; color: var(--ink); font-size: 28px; line-height: 1.25; letter-spacing: -0.03em; }
+.public-card h1 { margin: 0 0 10px; color: var(--ink); font-size: 28px; line-height: 1.25; letter-spacing: -0.03em; overflow-wrap: anywhere; }
 .public-icon { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 22px; color: var(--accent); background: var(--accent-pale); border-radius: 13px; }
-.public-copy { margin: 0 0 20px; color: #687975; font-size: 13px; line-height: 1.7; }
+.public-copy { margin: 0 0 20px; color: #687975; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .public-files { margin: 18px 0 22px; padding: 0 14px; background: #f7fbf9; border: 1px solid #e3eeea; border-radius: 9px; }
 .public-files.compact { max-height: 190px; overflow: auto; margin-bottom: 16px; }
 .public-files .file-row { border-bottom-color: #e4efeb; }
@@ -971,3 +971,10 @@
 .message-code-chip:hover { background: #e2f2ea; }
 .message-code-open { color: #4b6e65; background: #ffffff; border: 1px solid #dbe8e4; }
 .message-code-open:hover { background: #f4faf7; }
+
+/* 【设计增强层】收集任务字段长度限制的可见反馈：标签行内嵌字数计数（上限 40/120 字）。
+   与前端 maxLength / 后端 COLLECTION_TITLE_MAX / COLLECTION_DESCRIPTION_MAX 三处保持一致。 */
+.builder-form label > .builder-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%; }
+.manage-field > .manage-field-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.field-count { color: #93a09b; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.field-count.at-limit { color: #a7564b; }

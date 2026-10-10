@@ -172,6 +172,12 @@ export const ACCOUNT_RECORD_SCOPES = new Set(['my_sent', 'sent_to_me', 'my_colle
 export const ACCOUNT_RECORD_KINDS = new Set(['share', 'collection'])
 export const ACCOUNT_MESSAGE_CATEGORIES = new Set(['system', 'official', 'other'])
 
+// ── 收集任务字段长度上限 ──
+// 与前端 maxLength 保持一致；服务端超长直接拒绝（明确报错，不做静默截断）。
+// 超长文本会把收集页骨架（预览卡、管理页头部、公开提交页）撑变形，必须两端同时设限。
+export const COLLECTION_TITLE_MAX = 40
+export const COLLECTION_DESCRIPTION_MAX = 120
+
 // ── 管理员认证 ──
 export const ADMIN_USER_IDS = new Set(splitConfigValues(process.env.KUNQIONG_ADMIN_USER_IDS))
 export const ADMIN_ACCOUNT_USERNAME = String(process.env.KUNQIONG_ADMIN_USERNAME || '').trim()

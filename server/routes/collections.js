@@ -3,7 +3,7 @@
 // 依赖方向：routes → services → lib → state → config（单向）
 // 注册顺序即 Express 匹配顺序，调用点顺序不可调整。
 import {
-  MAX_FILES, collectionsRoot
+  COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, MAX_FILES, collectionsRoot
 } from '../config.js'
 import {
   createToken, httpError, parseJson, removeDirectory
@@ -44,13 +44,16 @@ export function registerCollectionRoutes(app) {
       assertServiceWritable(req)
       const ownerSession = authSessionFromRequest(req)
       // 与 applyCollectionUpdate 保持一致的服务端校验：
-      // 标题/说明截断（防止超长文本原样入库拖大快照），单人大小限制必须为有限正数
-      // （此前负数/NaN 会被接受并创建出「永远无法提交」的废任务）。
-      const title = String(req.body.title || '').trim().slice(0, 80)
+      // 标题/说明超长直接拒绝（400 + 可理解的错误信息，不再静默截断入库），
+      // 单人大小限制必须为有限正数（此前负数/NaN 会被接受并创建出「永远无法提交」的废任务）。
+      const title = String(req.body.title || '').trim()
       if (!title) return res.status(400).json({ message: '请填写任务名称' })
+      if (title.length > COLLECTION_TITLE_MAX) return res.status(400).json({ message: `任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字` })
       const maxFileSizeMbRaw = Number(req.body.maxFileSizeMb ?? 500)
       if (!Number.isFinite(maxFileSizeMbRaw) || maxFileSizeMbRaw <= 0) return res.status(400).json({ message: '单人大小限制不正确' })
-      const description = String(req.body.description || '').trim().slice(0, 500) || '请上传你负责的文件'
+      const descriptionRaw = String(req.body.description || '').trim()
+      if (descriptionRaw.length > COLLECTION_DESCRIPTION_MAX) return res.status(400).json({ message: `收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字` })
+      const description = descriptionRaw || '请上传你负责的文件'
       const token = createToken(10)
       const manageToken = createToken(18)
       const deadline = normalizeExpiryInput(req.body.deadline || new Date(Date.now() + 7 * 86400000).toISOString(), '截止时间')

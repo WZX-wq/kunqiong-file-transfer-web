@@ -341,7 +341,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
               )
             )}
             {(!signedIn || !authChecked) && (
-              <label className="public-label">提交人名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：张三 / 市场部" /></label>
+              <label className="public-label">提交人名称<input value={name} maxLength={40} onChange={(event) => setName(event.target.value)} placeholder="例如：张三 / 市场部" /></label>
             )}
             <div className="public-drop" onClick={() => inputRef.current?.click()}>
               <input ref={inputRef} type="file" multiple hidden accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => handleSelectFiles(event.target.files)} />

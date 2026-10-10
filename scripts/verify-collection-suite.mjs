@@ -135,14 +135,29 @@ try {
   check('空标题 400 且提示可理解', emptyTitle.status === 400 && /名称/.test(emptyTitle.data.message || ''), `status=${emptyTitle.status} msg=${emptyTitle.data.message}`)
   const badDate = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: 'x', deadline: 'not-a-date' } })
   check('非法日期 400', badDate.status === 400, `status=${badDate.status} msg=${badDate.data.message}`)
+  // 超长标题/说明：服务端直接拒绝（400 + 明确字数提示），不再静默截断入库。
+  // 上限 40/120 与前端 maxLength（constants.js）及 config.js 的 COLLECTION_TITLE_MAX / COLLECTION_DESCRIPTION_MAX 一致。
   const longTitle = '超长标题'.repeat(100)
   const longTitleRes = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: longTitle } })
-  const longTitleStored = longTitleRes.status === 201 ? (diskCollections().find((item) => item.token === longTitleRes.data.collection?.token)?.title || '') : ''
-  check('超长标题有服务端约束（拒绝或截断，未原样落库）', longTitleRes.status !== 201 || longTitleStored.length < longTitle.length, `status=${longTitleRes.status} stored=${longTitleStored.length}/${longTitle.length}`)
+  check('超长标题被拒绝（400 + 提示 40 字上限）', longTitleRes.status === 400 && /40/.test(longTitleRes.data.message || ''), `status=${longTitleRes.status} msg=${longTitleRes.data.message}`)
+  const limitTitleRes = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '标'.repeat(40) } })
+  check('40 字标题恰好允许（边界内）', limitTitleRes.status === 201, `status=${limitTitleRes.status} msg=${limitTitleRes.data.message}`)
+  const overTitleRes = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '标'.repeat(41) } })
+  check('41 字标题被拒绝（边界外）', overTitleRes.status === 400, `status=${overTitleRes.status} msg=${overTitleRes.data.message}`)
+  const longDesc = '说明'.repeat(100)
+  const longDescRes = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '超长说明', description: longDesc } })
+  check('超长说明被拒绝（400 + 提示 120 字上限）', longDescRes.status === 400 && /120/.test(longDescRes.data.message || ''), `status=${longDescRes.status} msg=${longDescRes.data.message}`)
+  const limitDescRes = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '说明边界', description: '明'.repeat(120) } })
+  check('120 字说明恰好允许（边界内）', limitDescRes.status === 201, `status=${limitDescRes.status} msg=${limitDescRes.data.message}`)
+  const longRename = await api(`/api/collections/manage/${created.data.manageToken}`, { user: 'owner', method: 'PATCH', body: { title: longTitle } })
+  check('管理/重命名接口同样拒绝超长标题', longRename.status === 400 && /40/.test(longRename.data.message || ''), `status=${longRename.status} msg=${longRename.data.message}`)
+  const longDescUpdate = await api(`/api/collections/manage/${created.data.manageToken}`, { user: 'owner', method: 'PATCH', body: { description: longDesc } })
+  check('管理接口同样拒绝超长说明', longDescUpdate.status === 400 && /120/.test(longDescUpdate.data.message || ''), `status=${longDescUpdate.status} msg=${longDescUpdate.data.message}`)
   const negSize = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '负数限制', maxFileSizeMb: -5 } })
   check('负数单人大小限制不产生可用任务', negSize.status === 400, `status=${negSize.status}（若 201 则为缺陷：任务永远无法提交）`)
   const afterCount = diskCollections().length
-  check('校验失败不残留半成品任务（仅合法创建落库）', afterCount - beforeCount === (longTitleRes.status === 201 ? 1 : 0), `before=${beforeCount} after=${afterCount}`)
+  // 本段成功落库的仅两个边界用例（40 字标题 + 120 字说明），其余请求全部被拒
+  check('校验失败不残留半成品任务（仅边界用例落库）', afterCount - beforeCount === 2, `before=${beforeCount} after=${afterCount}`)
 
   console.log('\n=== COLL-003 类型限制 ===')
   const imgTask = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '仅图片', allowedTypes: ['图片'], maxFileSizeMb: 10 } })).data.collection

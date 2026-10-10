@@ -349,13 +349,13 @@ h1, h2, p { margin-top: 0; }
 .workspace-heading > div > p:last-child { max-width: 620px; color: #6e7875; font-size: 15px; }
 .workspace-back-button { min-height: 40px; padding: 0 14px; color: #3f786b; background: #edf7f3; border: 1px solid #d4e9e1; font-weight: 800; }
 .workspace-back-button:hover { color: var(--accent-dark); background: #e2f3ed; border-color: #bdded3; }
-.collect-builder { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; padding: 30px; background: #fff; border: 1px solid #e0ebe7; border-radius: 14px; box-shadow: var(--shadow); }
+.collect-builder { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 30px; padding: 30px; background: #fff; border: 1px solid #e0ebe7; border-radius: 14px; box-shadow: var(--shadow); }
 .builder-preview { padding: 22px; background: #f3f8f6; border-radius: 10px; }
 .preview-label { margin-bottom: 38px; color: #677973; font-size: 12px; }
 .preview-card { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 22px; background: #fff; border: 1px solid #e3efeb; border-radius: 10px; box-shadow: 0 12px 28px rgba(47, 92, 81, .05); }
 .preview-icon { display: grid; place-items: center; width: 40px; height: 40px; color: var(--accent); background: #e1f2ed; border-radius: 10px; }
-.preview-card strong { margin-top: 10px; color: var(--ink); font-size: 19px; }
-.preview-card > span:not(.preview-icon) { color: #6a7975; font-size: 13px; line-height: 1.7; }
+.preview-card strong { margin-top: 10px; color: var(--ink); font-size: 19px; overflow-wrap: anywhere; }
+.preview-card > span:not(.preview-icon) { color: #6a7975; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .preview-card small { margin-top: 15px; color: #6d7875; font-size: 11px; }
 .preview-card .collection-limit.compact span { font-size: 11px; }
 .builder-form { display: flex; flex-direction: column; gap: 19px; padding: 9px 4px; }
@@ -370,7 +370,7 @@ h1, h2, p { margin-top: 0; }
 .collection-note { display: flex; align-items: center; gap: 9px; padding: 17px 20px; margin-top: 17px; color: #60736e; background: #eef7f4; border: 1px solid #daebe5; border-radius: 8px; font-size: 12px; }
 .collection-success { grid-column: 1 / -1; display: flex; align-items: center; flex-direction: column; padding: 25px 15px 12px; text-align: center; }
 .success-large { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 17px; color: #fff; background: var(--accent); border-radius: 50%; box-shadow: 0 11px 25px rgba(22,139,115,.2); }
-.collection-success h2 { margin: 0 0 8px; font-size: 25px; }
+.collection-success h2 { margin: 0 0 8px; font-size: 25px; overflow-wrap: anywhere; }
 .collection-success > p:not(.eyebrow) { margin-bottom: 24px; color: #697975; font-size: 13px; }
 .collection-share { display: flex; align-items: center; gap: 9px; width: min(420px, 100%); padding: 13px 15px; color: var(--accent-dark); background: #f4faf8; border: 1px solid #dcece7; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 13px; }
 .collection-share strong { flex: 1; }
@@ -386,7 +386,7 @@ h1, h2, p { margin-top: 0; }
 .collection-files-card.collection-loading { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 220px; color: #657a75; font-size: 13px; }
 .collection-files-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 20px; border-bottom: 1px solid #edf3f0; }
 .collection-files-header > div:first-child { min-width: 0; flex: 1; }
-.collection-files-header h2 { margin: 0 0 7px; color: var(--ink); font-size: 22px; }
+.collection-files-header h2 { margin: 0 0 7px; color: var(--ink); font-size: 22px; overflow-wrap: anywhere; }
 .collection-files-header p:not(.eyebrow) { margin: 0; color: #697975; font-size: 12px; }
 .collection-files-actions { display: flex; align-items: center; justify-content: flex-end; flex: none; flex-wrap: nowrap; gap: 6px; max-width: none; }
 .collection-files-actions .secondary-button { min-height: 38px; padding: 0 11px; font-size: 11px; white-space: nowrap; }
