@@ -272,9 +272,12 @@ export function validateShareRequest(share, req, options = {}) {
   // 团队资源：关闭分享只应切断公开提取链接，文件本体仍在团队空间。
   // 所有者本人登录后始终可以打开自己的资源 —— 否则所有者关闭分享后连自己也打不开文件。
   if (isOwner && share.teamResource && currentShareStatus(share) === 'closed') return { ok: true }
+  // 免密码跳过仅限团队资源：普通分享的所有者访问公开提取链接时与访客同权，
+  // 必须输入提取密码 —— 否则所有者自己测试密码分享时，输任何密码都会被放行，
+  // 既无法验证访客视角的密码防护，也构成「密码形同虚设」的安全观感问题。
   return validateShare(share, options.password ?? req.get('x-share-password'), {
     ...options,
-    skipPassword: isOwner,
+    skipPassword: Boolean(isOwner && share.teamResource),
     hasAccessCookie: hasShareAccessCookie(req, share),
   })
 }

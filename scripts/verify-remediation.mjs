@@ -201,6 +201,15 @@ try {
   check('错误密码即使有 access cookie 仍被拒绝', wrongPwWithCookie.status === 401 || wrongPwWithCookie.status === 403, `status=${wrongPwWithCookie.status}`)
   const correctPwWithCookie = await api(`/api/shares/${protectedShare.id}/download`, { headers: { cookie: cookies, 'x-share-password': 'fixture-password' } })
   check('正确密码 + cookie 仍通过', correctPwWithCookie.status === 200, `status=${correctPwWithCookie.status}`)
+  // 关键回归：所有者本人（已登录）访问自己的密码分享，公开提取链接必须与访客同权。
+  // 此前 skipPassword 对所有分享生效，owner 输任何密码（甚至不输）都直接放行，
+  // 导致所有者自己测试密码防护时「随便输都能过」，密码形同虚设。
+  const ownerNoPw = await api(`/api/shares/${protectedShare.id}/download`, { user: 'owner' })
+  check('所有者不带密码访问自己的密码分享被要求输密码', ownerNoPw.status === 403, `status=${ownerNoPw.status}`)
+  const ownerWrongPw = await api(`/api/shares/${protectedShare.id}/download`, { user: 'owner', headers: { 'x-share-password': 'wrong-password' } })
+  check('所有者错误密码仍被拒绝', ownerWrongPw.status === 401, `status=${ownerWrongPw.status}`)
+  const ownerCorrectPw = await api(`/api/shares/${protectedShare.id}/download`, { user: 'owner', headers: { 'x-share-password': 'fixture-password' } })
+  check('所有者正确密码通过', ownerCorrectPw.status === 200, `status=${ownerCorrectPw.status}`)
   const source = fs.readFileSync(path.join(root, 'src', 'lib', 'api.js'), 'utf8').split('async function downloadBinaryWithProgress')[1].split('async function downloadResponseError')[0]
   check('Client download never buffers file bodies', source.includes("method: 'HEAD'") && !source.includes('new Blob') && !source.includes('getReader') && !source.includes('.blob('))
   const retrievalUi = fs.readFileSync(path.join(root, 'src', 'pages', 'workspace.jsx'), 'utf8')
