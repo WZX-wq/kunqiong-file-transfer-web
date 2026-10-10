@@ -58,6 +58,7 @@ export function registerCollectionRoutes(app) {
       const manageToken = createToken(18)
       const deadline = normalizeExpiryInput(req.body.deadline || new Date(Date.now() + 7 * 86400000).toISOString(), '截止时间')
       if (!deadline) return res.status(400).json({ message: '截止时间格式不正确' })
+      if (new Date(deadline).getTime() <= Date.now()) return res.status(400).json({ message: '截止时间必须晚于当前时间' })
       const task = {
         id: token,
         token,

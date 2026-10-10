@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import {
-  MAX_FILE_SIZE, collectionsRoot, tempRoot
+  GUEST_ID_COOKIE, MAX_FILE_SIZE, collectionsRoot, tempRoot
 } from '../config.js'
 import {
   createToken, httpError, removeDirectory
@@ -22,14 +22,14 @@ import {
   chunkUpload, normalizeUploadFileName
 } from '../lib/upload.js'
 import {
-  accountOrganizationForUser, accountUserById, authSessionFromRequest, safeRelativePath
+  accountOrganizationForUser, accountUserById, authSessionFromRequest, readCookie, safeRelativePath
 } from '../services/account.js'
 import {
   addCollectionSubmissionMessage, addGuestUsage, assertAccountCapacity, assertCollectionFiles,
   assertConfiguredUploadLimits, assertGuestQuota, assertSafeUploadFiles, assertServiceWritable,
   assertTeamCapacity, assertUniqueTeamResourceNames, assertUploadCapacity,
   cleanupUploadedFiles, createShareFromTempFiles, discardUploadSession, isAllowedType, normalizeUploadChunkSize,
-  persistUploadSession, publicShare, publicSubmission, readShareOptions,
+  issueGuestCookie, persistUploadSession, publicShare, publicSubmission, readShareOptions,
   requireUploadSessionOwner, resolveCollectionSubmitter, uploadSessionSignature, validateCollection
 } from '../services/shares.js'
 import {
@@ -87,6 +87,13 @@ export function registerUploadRoutes(app) {
   const sessionDirectory = path.join(tempRoot, 'upload-sessions', sessionId)
   fs.mkdirSync(sessionDirectory, { recursive: true })
   const isTeamResourceSession = req.body.mode === 'team_resource'
+  let ownerGuestId = ''
+  if (collectionTask && !ownerSession?.user?.id) {
+    const existing = readCookie(req, GUEST_ID_COOKIE)
+    // Quota validation may already have issued the cookie on this first request.
+    const issued = [].concat(res.getHeader('Set-Cookie') || []).findLast((cookie) => cookie.startsWith(`${GUEST_ID_COOKIE}=`))?.split(';')[0].slice(GUEST_ID_COOKIE.length + 1)
+    ownerGuestId = existing && /^[A-Za-z0-9]{16,64}$/.test(existing) ? existing : issued || issueGuestCookie(req, res)
+  }
   const session = {
     id: sessionId,
     chunkSize: normalizeUploadChunkSize(req.body.chunkSize),
@@ -94,6 +101,7 @@ export function registerUploadRoutes(app) {
     // 游客计账 key 冻结在会话上：complete 成功时按它补记累计用量（登录用户为空串）。
     guestKey,
     ownerUserId: ownerSession?.user?.id || '',
+    ownerGuestId,
     capacityOwnerUserId: collectionTask ? collectionTask.ownerUserId : ownerSession?.user?.id || '',
     // 团队资源走团队空间权益，不校验上传者的个人 permanent。
     options: readShareOptions(req.body, ownerSession?.user, isTeamResourceSession),
@@ -112,7 +120,7 @@ export function registerUploadRoutes(app) {
   if (session.guestKey) {
     const signature = uploadSessionSignature(session.files)
     for (const [otherId, other] of [...uploadSessions]) {
-      if (otherId !== sessionId && other.guestKey === session.guestKey && other.mode === session.mode && uploadSessionSignature(other.files) === signature) {
+      if (otherId !== sessionId && other.guestKey === session.guestKey && other.mode === session.mode && other.collectionToken === session.collectionToken && uploadSessionSignature(other.files) === signature) {
         discardUploadSession(other)
       }
     }
@@ -186,6 +194,7 @@ export function registerUploadRoutes(app) {
     createdAt: session.createdAt,
     files: session.files.map((file, fileIndex) => ({
       name: file.name,
+      relativePath: file.relativePath,
       size: file.size,
       totalChunks: Math.max(1, Math.ceil(file.size / session.chunkSize)),
       uploadedChunks: Array.from(file.chunks).sort((a, b) => a - b),

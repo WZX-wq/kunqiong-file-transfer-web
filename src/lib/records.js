@@ -95,18 +95,26 @@ export async function syncRecord(record) {
 }
 
 export async function syncShareRecord(record) {
-  const lookupUrl = record.shareId
+  const lookupUrl = record.scope === 'my_sent' && record.manageToken
+    ? `/api/shares/manage/${encodeURIComponent(record.manageToken)}`
+    : record.shareId
     ? `/api/shares/token/${encodeURIComponent(record.shareId)}`
     : record.code
       ? `/api/shares/lookup/${encodeURIComponent(record.code)}`
       : ''
   if (!lookupUrl) return record
   try {
-    const data = await apiRequest(lookupUrl)
+    let data = await apiRequest(lookupUrl)
+    if (record.scope === 'my_sent' && data.share?.manageToken && !data.share.files?.length && data.requiresPassword) {
+      data = await apiRequest(`/api/shares/manage/${encodeURIComponent(data.share.manageToken)}`)
+    }
     const refreshed = createShareRecord(data.share, record.scope)
     refreshed.createdAt = record.createdAt || refreshed.createdAt
     refreshed.updatedAt = record.updatedAt || refreshed.updatedAt
-    return mergeRecord(record, refreshed)
+    // 密码保护返回的是未解锁元数据；只有完整文件列表才能覆盖已有的文件快照。
+    return data.requiresPassword && !data.share.files?.length ? mergeRecord(record, refreshed) : {
+      ...mergeRecord(record, refreshed), files: refreshed.files, fileCount: refreshed.fileCount, totalSize: refreshed.totalSize,
+    }
   } catch (error) {
     // 404 = 资源已被物理删除（过期不会 404）：条目是死链，直接移除而非标记状态
     if (error.status === 404) return null
@@ -133,7 +141,11 @@ export async function syncCollectionRecord(record) {
     })
     refreshed.createdAt = record.createdAt || refreshed.createdAt
     refreshed.updatedAt = record.updatedAt || refreshed.updatedAt
-    return mergeRecord(record, refreshed)
+    // 自己提交的文件只有本人的提交快照；管理视图的文件与提交数则以服务端为准。
+    return record.scope === 'collect_from_me' ? mergeRecord(record, refreshed) : {
+      ...mergeRecord(record, refreshed), files: refreshed.files, submissions: refreshed.submissions,
+      fileCount: refreshed.fileCount, totalSize: refreshed.totalSize, submissionCount: refreshed.submissionCount,
+    }
   } catch (error) {
     // 同步探测 404 = 资源已被物理删除，记录条目随之移除
     if (error.status === 404) return null
@@ -163,19 +175,26 @@ export function compactRecordSubmissions(submissions = []) {
   })).filter((submission) => submission.id || submission.files.length)
 }
 
-export function readRecords() {
+let recordOwner = ''
+export function setRecordOwner(userId = '') { recordOwner = String(userId || '') }
+export function getRecordOwner() { return recordOwner }
+function recordStorageKey(owner = recordOwner) {
+  return owner ? `${RECORD_STORAGE_KEY}:account:${encodeURIComponent(owner)}` : RECORD_STORAGE_KEY
+}
+
+export function readRecords(owner = recordOwner) {
   try {
-    return normalizeRecords(JSON.parse(window.localStorage.getItem(RECORD_STORAGE_KEY) || '[]'))
+    return normalizeRecords(JSON.parse(window.localStorage.getItem(recordStorageKey(owner)) || '[]'))
   } catch {
     return []
   }
 }
 
-export function writeRecords(records) {
+export function writeRecords(records, owner = recordOwner) {
   const next = normalizeRecords(records).slice(0, MAX_LOCAL_RECORDS)
   // 隐私模式 / 存储配额满时 setItem 会抛异常，不能让本地上报中断上传/分享主流程。
   try {
-    window.localStorage.setItem(RECORD_STORAGE_KEY, JSON.stringify(next))
+    window.localStorage.setItem(recordStorageKey(owner), JSON.stringify(next))
   } catch (error) {
     console.warn('本地记录保存失败（存储不可用）', error)
   }
@@ -185,6 +204,16 @@ export function writeRecords(records) {
 
 export function saveLocalRecord(record, currentRecords) {
   return writeRecords(upsertRecords(currentRecords || readRecords(), [record]))
+}
+
+export async function savePublicRecord(record) {
+  try {
+    const { user } = await apiRequest('/api/auth/me')
+    saveLocalRecord(record)
+    if (user?.id) await upsertCloudRecords([record])
+  } catch (error) {
+    if (error.status !== 401) console.warn('收发记录同步失败', error.message)
+  }
 }
 
 export function saveAuthoritativeLocalRecord(record, currentRecords) {

@@ -61,8 +61,13 @@ import QRCode from 'qrcode'
 export function requireUploadSessionOwner(req, res, next) {
   const session = uploadSessions.get(req.params.sessionId)
   if (!session) return res.status(404).json({ message: '上传会话不存在，请重新开始上传' })
-  if (session.ownerUserId && authSessionFromRequest(req)?.user?.id !== session.ownerUserId) {
+  const userId = authSessionFromRequest(req)?.user?.id
+  const taskOwner = session.mode === 'collection' && userId && metadata.collections.some((task) => task.token === session.collectionToken && task.ownerUserId === userId)
+  if (!taskOwner && session.ownerUserId && userId !== session.ownerUserId) {
     return res.status(403).json({ message: '请使用创建上传的账号继续操作' })
+  }
+  if (!taskOwner && session.ownerGuestId && readCookie(req, GUEST_ID_COOKIE) !== session.ownerGuestId) {
+    return res.status(403).json({ message: '请使用创建上传的浏览器继续操作' })
   }
   req.uploadSession = session
   next()
@@ -93,6 +98,7 @@ export function persistUploadSession(session) {
       submitterName: session.submitterName,
       guestKey: session.guestKey || '',
       ownerUserId: session.ownerUserId || '',
+      ownerGuestId: session.ownerGuestId || '',
       capacityOwnerUserId: session.capacityOwnerUserId || '',
       relativePaths: session.relativePaths,
       createdAt: session.createdAt,
@@ -136,10 +142,6 @@ export function restoreUploadSessions() {
       let broken = false
       session.files.forEach((file, fileIndex) => {
         const targetPath = path.join(directory, `${fileIndex}.target`)
-        if (!fs.existsSync(targetPath)) {
-          broken = true
-          return
-        }
         const markerDirectory = path.join(directory, String(fileIndex))
         let markers = []
         try {
@@ -151,6 +153,8 @@ export function restoreUploadSessions() {
           const match = /^(\d+)\.done$/.exec(name)
           if (match) file.chunks.add(Number(match[1]))
         }
+        // A paused session may not have uploaded its first chunk yet.
+        if (file.chunks.size && !fs.existsSync(targetPath)) broken = true
       })
       if (broken) {
         removeDirectory(directory)
@@ -534,6 +538,9 @@ export function sendPreviewFile(req, res, next, filePath, file) {
   res.setHeader('X-Preview-File-Size', String(stat.size))
   // 文本类预览一律按纯文本返回，避免 html/xml 等以 text/html 内联渲染带来 XSS 风险
   res.type(kind === 'text' ? 'text/plain; charset=utf-8' : fileContentType(file))
+  // 仅已通过权限、扫描和存在性检查的 PDF 允许本站嵌入；错误页继续使用 DENY。
+  if (kind === 'pdf') res.setHeader('X-Frame-Options', 'SAMEORIGIN')
+  if (req.method === 'HEAD') { res.setHeader('Content-Length', String(stat.size)); return res.end() }
   const range = req.get('range')
   if (!range) {
     res.setHeader('Content-Length', String(stat.size))

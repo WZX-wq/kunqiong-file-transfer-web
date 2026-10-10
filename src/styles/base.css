@@ -553,11 +553,12 @@ h1, h2, p { margin-top: 0; }
 .date-picker-weekdays { margin-bottom: 5px; }
 .date-picker-weekdays span { color: #6a7975; font-size: 10px; font-weight: 800; text-align: center; }
 .date-picker-day { display: grid; place-items: center; width: 30px; height: 30px; color: #496b62; background: transparent; border: 1px solid transparent; border-radius: 7px; font-family: 'DM Sans', 'Noto Sans SC', sans-serif; font-size: 12px; }
-.date-picker-day:hover { color: var(--accent-dark); background: #eaf6f2; }
+.date-picker-day:hover:not(:disabled) { color: var(--accent-dark); background: #eaf6f2; }
 .date-picker-day.outside { color: #6e7774; }
 .date-picker-day.today { border-color: #a9d5c8; }
 .date-picker-day.selected { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 800; }
 .date-picker-day.selected.today { box-shadow: 0 0 0 2px #d6eee7; }
+.date-picker-day:disabled { color: #a9b5b0; background: transparent; border-color: transparent; box-shadow: none; cursor: not-allowed; }
 .date-picker-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid #edf3f0; }
 .date-picker-footer button { padding: 4px 2px; color: var(--accent-dark); background: transparent; font-size: 11px; font-weight: 700; }
 .date-picker-footer button:hover:not(:disabled) { color: var(--accent); }
@@ -582,7 +583,8 @@ h1, h2, p { margin-top: 0; }
 .modal { width: min(450px, 100%); background: #fff; border: 1px solid #e0ebe7; border-radius: 14px; box-shadow: 0 28px 80px rgba(27, 65, 55, .2); }
 .retrieve-modal { width: min(560px, calc(100vw - 40px)); max-height: min(86dvh, 760px); display: flex; flex-direction: column; overflow: hidden; }
 .retrieve-modal .modal-body { min-height: 0; overflow: auto; }
-.qr-modal { width: min(410px, 100%); overflow: hidden; }
+.qr-modal { position: relative; width: min(410px, 100%); overflow: hidden; }
+.qr-modal .modal-close { position: absolute; top: 12px; right: 12px; margin: 0; }
 .qr-modal-body { display: flex; align-items: center; flex-direction: column; padding: 30px 30px 24px; text-align: center; }
 .qr-modal-body h2 { margin: 0 0 7px; color: var(--ink); font-size: 22px; letter-spacing: -0.02em; }
 .qr-modal-body p:not(.eyebrow) { margin: 0 0 18px; color: #677973; font-size: 13px; }

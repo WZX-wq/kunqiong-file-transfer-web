@@ -145,11 +145,35 @@ export function getUrlParts(value) {
   }
 }
 
+export const ACCOUNT_SESSION_EVENT = 'kunqiong:account-session'
+let sessionUserId = ''
+let sessionGeneration = 0
+
+function reportSession(userId = '', expiresAt = '') {
+  const previousId = sessionUserId
+  sessionUserId = userId
+  if (previousId && previousId !== userId) sessionGeneration += 1
+  window.dispatchEvent(new CustomEvent(ACCOUNT_SESSION_EVENT, { detail: { userId, previousId, expiresAt } }))
+}
+
+export function invalidateAccountSession() {
+  if (sessionUserId) reportSession('')
+}
+
 export async function apiRequest(url, options = {}) {
+  const generation = sessionGeneration
   const { headers = {}, ...fetchOptions } = options
   const response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'Content-Type': 'application/json', ...headers } })
   const data = await response.json().catch(() => ({}))
+  if (generation !== sessionGeneration) {
+    const error = new Error('登录状态已更新，请重试')
+    error.status = 401
+    throw error
+  }
+  if (url === '/api/auth/me' && response.ok) reportSession(data.user?.id || '', data.sessionExpiresAt || '')
+  if (url === '/api/auth/logout' && response.ok) invalidateAccountSession()
   if (!response.ok) {
+    if (response.status === 401 && !String(url).startsWith('/api/admin/')) invalidateAccountSession()
     const error = new Error(data.message || '请求失败')
     error.status = response.status
     error.code = data.code || ''
@@ -378,6 +402,7 @@ export async function upgradeApiRequest(url, options = {}) {
   const response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'Content-Type': 'application/json', ...headers } })
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
+    if (response.status === 401) invalidateAccountSession()
     const error = new Error(data.message || '请求失败')
     error.order = data.order || null
     throw error

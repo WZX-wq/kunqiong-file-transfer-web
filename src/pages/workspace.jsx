@@ -1,16 +1,17 @@
 import React from 'react'
-import { defaultDeadline, displayUserName, formatBytes, formatDate, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
+import { defaultDeadline, displayUserName, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, MAX_FILE_SIZE, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState } from '../lib/api.js'
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
-import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, getCollectionToken, getManageToken, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
+import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
 import { canPreviewFile, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, uploadShareInChunks } from '../lib/transfer.js'
 import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, Clock3, Cloud, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, LogOut, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UploadCloud, UserCheck, UserPlus, UserRound, UserX, X, Zap } from 'lucide-react'
 import { SettingsPage } from './settings.jsx'
 import { RecordsView } from './records.jsx'
 import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FeatureOrb, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, UserAvatar, ValueItem, displayUserSubtitle } from '../components/ui.jsx'
 import { ConfirmModal, Toast } from '../components/common.jsx'
+import { getRecordOwner } from '../lib/records.js'
 
 export const createDefaultCollectionForm = () => ({
   title: '',
@@ -145,14 +146,19 @@ export function WorkspaceApp() {
 
   const syncAccountRecords = async ({ silent = true } = {}) => {
     if (!authUser?.id) return readRecords()
+    const owner = authUser.id
     setRecordsSyncing(true)
     try {
       const cloudRecords = await fetchCloudRecords()
-      const merged = writeRecords(upsertRecords(readRecords(), cloudRecords))
-      const synced = writeRecords(await syncRecords(merged))
+      if (getRecordOwner() !== owner) return []
+      const merged = writeRecords(upsertRecords(readRecords(owner), cloudRecords), owner)
+      const refreshed = await syncRecords(merged)
+      if (getRecordOwner() !== owner) return []
+      const synced = writeRecords(refreshed, owner)
       setRecords(synced)
       const persisted = await replaceCloudRecords(synced)
-      const finalRecords = writeRecords(upsertRecords(synced, persisted.records || []))
+      if (getRecordOwner() !== owner) return []
+      const finalRecords = writeRecords(upsertRecords(synced, persisted.records || []), owner)
       setRecords(finalRecords)
       if (!silent) setToast('账号记录已同步')
       return finalRecords
@@ -508,6 +514,14 @@ export function WorkspaceApp() {
     }
     if (payload.description.length > COLLECTION_DESCRIPTION_MAX) {
       setToast(`收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字，请精简后重试`)
+      return
+    }
+    if (!payload.deadline) {
+      setToast('请设置截止时间，不能为空')
+      return
+    }
+    if (!isDateInputStillOpen(payload.deadline)) {
+      setToast('截止时间不能早于今天，请重新选择')
       return
     }
     apiRequest('/api/collections', { method: 'POST', body: JSON.stringify(payload) })
@@ -870,14 +884,18 @@ export function WorkspaceApp() {
   }
 
   const refreshRecords = async ({ silent = false } = {}) => {
+    const owner = authUser?.id || ''
     setRecordsSyncing(Boolean(authUser?.id))
     try {
-      let baseRecords = readRecords()
+      let baseRecords = readRecords(owner)
       if (authUser?.id) {
         const cloudRecords = await fetchCloudRecords()
-        baseRecords = writeRecords(upsertRecords(baseRecords, cloudRecords))
+        if (getRecordOwner() !== owner) return
+        baseRecords = writeRecords(upsertRecords(baseRecords, cloudRecords), owner)
       }
-      const nextRecords = writeRecords(await syncRecords(baseRecords))
+      const refreshed = await syncRecords(baseRecords)
+      if (getRecordOwner() !== owner) return
+      const nextRecords = writeRecords(refreshed, owner)
       setRecords(nextRecords)
       if (authUser?.id) await replaceCloudRecords(nextRecords)
       if (!silent) setToast(authUser?.id ? '收发记录已刷新并同步' : '收发记录已刷新')
@@ -1246,7 +1264,7 @@ export function CollectView({ result, manageData, manageLoading, records, onCrea
                   <span className="builder-label"><span>收集说明</span><small className={form.description.length >= COLLECTION_DESCRIPTION_MAX ? 'field-count at-limit' : 'field-count'}>{form.description.length}/{COLLECTION_DESCRIPTION_MAX}</small></span>
                   <input value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={COLLECTION_DESCRIPTION_MAX} placeholder="例如：请上传你负责的图片、文档或视频素材" />
                 </label>
-                <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} ariaLabel="截止时间" /></label>
+                <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} min={formatDateInput(new Date())} ariaLabel="截止时间" /></label>
                 <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
                 <label>单人大小限制<select value={form.maxFileSizeMb} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select></label>
                 <button className="primary-button wide" onClick={() => onCreate(form)}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
@@ -1358,8 +1376,10 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
           )}
         </div>
       </div>
+      {data.submissions.length > 0 && <button className="primary-button wide collection-download-all" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
+      <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
       {data.submissions.length ? (
-        <div className="collection-submissions">
+        <div className="collection-submissions" role="region" aria-label="已收提交列表" tabIndex={0}>
           {data.submissions.map((submission) => (
             <div className="collection-submission" key={submission.id}>
               <div className="collection-submission-heading">
@@ -1378,15 +1398,13 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
                   <button className="submission-delete-button" onClick={() => onDeleteSubmission(data, submission.id)}><Trash2 size={14} /> 删除提交</button>
                 </div>
               </div>
-              <div className="submission-files">{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><FileText size={15} /><span>{file.name}</span><small>{formatBytes(file.size)}</small>{canPreviewFile(file) && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}<button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><Download size={15} /></button></div>)}</div>
+              <div className="submission-files" role="region" aria-label={`${submission.participantName}的文件列表`} tabIndex={0}>{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><FileText size={15} /><span>{file.name}</span><small>{formatBytes(file.size)}</small>{canPreviewFile(file) && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}<button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><Download size={15} /></button></div>)}</div>
             </div>
           ))}
         </div>
       ) : (
         <div className="empty-manage collection-empty"><Inbox size={25} /><span>暂时还没有人提交文件</span></div>
       )}
-      {data.submissions.length > 0 && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
-      <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
       {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       {qrOpen && (
         <QrPreviewModal

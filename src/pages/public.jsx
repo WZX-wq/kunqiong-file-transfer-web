@@ -2,12 +2,13 @@ import React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState } from '../lib/api.js'
 import { ConfirmModal, FeedbackMessage, LoadingBlock, PublicShell, StateBlock } from '../components/common.jsx'
-import { Building2, CalendarDays, Clock3, Download, Eye, FileText, Inbox, KeyRound, Link2, QrCode, RefreshCw, Settings2, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
+import { Building2, CalendarDays, Clock3, Download, Eye, FileText, FolderOpen, Inbox, KeyRound, Link2, Pause, Play, QrCode, RefreshCw, Settings2, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
 import { CollectionLimitInfo, DownloadProgressPanel, FileFormatBadge, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, TeamJoinRequestCard, UserAvatar, toFileItems } from '../components/ui.jsx'
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
-import { canReopenCollection, collectionFileAccept, collectionStatusText, createCollectionRecord, createShareRecord, isAllowedCollectionFile, saveAuthoritativeLocalRecord, saveLocalRecord, shareStatusText } from '../lib/records.js'
-import { canPreviewFile, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, uploadShareInChunks } from '../lib/transfer.js'
+import { canReopenCollection, collectionFileAccept, collectionStatusText, createCollectionRecord, createShareRecord, isAllowedCollectionFile, saveAuthoritativeLocalRecord, savePublicRecord, shareStatusText } from '../lib/records.js'
+import { canPreviewFile, clearUploadResume, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, queryUploadResume, readCollectionUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { displayUserName, feedbackTone, formatBytes, formatDate, formatExpiry } from '../lib/format.js'
+import { MAX_FILES } from '../lib/constants.js'
 
 export function TeamInvitePage({ slug }) {
   // 落地页自己探一次团队是否存在：无效 slug 时上方导语必须换成「链接已失效」，
@@ -49,7 +50,7 @@ export function SharePage({ token, enterpriseSlug = '' }) {
     const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
     apiRequest(`/api/shares/token/${token}${query}`).then((result) => {
       setData(result)
-      saveLocalRecord(createShareRecord(result.share, 'sent_to_me'))
+      savePublicRecord(createShareRecord(result.share, 'sent_to_me'))
     }).catch((err) => { setError(err.message); setRequiresLogin(err.code === 'directed_login_required') })
   }, [token, enterpriseSlug])
   const findShare = async () => {
@@ -57,7 +58,7 @@ export function SharePage({ token, enterpriseSlug = '' }) {
       const result = await apiRequest(`/api/shares/lookup/${data.share.code}`, { method: 'POST', body: JSON.stringify({ password }) })
       setData(result)
       setActionError('')
-      saveLocalRecord(createShareRecord(result.share, 'sent_to_me'))
+      savePublicRecord(createShareRecord(result.share, 'sent_to_me'))
     } catch (err) { setActionError(err.message) }
   }
   if (error) return <PublicShell><StateBlock title="这个分享暂时不可用" detail={error} />{requiresLogin && <button className="primary-button" onClick={() => { window.location.href = `/api/auth/login?return_to=${encodeURIComponent(window.location.href)}` }}><UserRound size={16} /> 使用收件账号登录</button>}</PublicShell>
@@ -109,7 +110,7 @@ export function ShareManagePage({ token }) {
   const refreshShare = async () => {
     const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`)
     setShare(result.share)
-    saveLocalRecord(createShareRecord(result.share, 'my_sent'))
+    savePublicRecord(createShareRecord(result.share, 'my_sent'))
   }
 
   useEffect(() => {
@@ -120,7 +121,7 @@ export function ShareManagePage({ token }) {
     try {
       const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify(payload) })
       setShare(result.share)
-      saveLocalRecord(createShareRecord(result.share, 'my_sent'))
+      savePublicRecord(createShareRecord(result.share, 'my_sent'))
       return true
     } catch (err) {
       setError(err.message)
@@ -139,7 +140,7 @@ export function ShareManagePage({ token }) {
     try {
       const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'DELETE' })
       setShare(result.share)
-      saveLocalRecord(createShareRecord(result.share, 'my_sent'))
+      savePublicRecord(createShareRecord(result.share, 'my_sent'))
       return true
     } catch (err) {
       setError(err.message)
@@ -151,7 +152,7 @@ export function ShareManagePage({ token }) {
     try {
       const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify({ ...payload, status: 'active' }) })
       setShare(result.share)
-      saveLocalRecord(createShareRecord(result.share, 'my_sent'))
+      savePublicRecord(createShareRecord(result.share, 'my_sent'))
       return true
     } catch (err) {
       setError(err.message)
@@ -201,7 +202,8 @@ export function ShareManagePage({ token }) {
 
 export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const inputRef = useRef(null)
-  const submitRequestRef = useRef(null)
+  const folderInputRef = useRef(null)
+  const uploadRef = useRef(createUploadSessionState())
   const submitRunRef = useRef(0)
   const [collection, setCollection] = useState(null)
   const [files, setFiles] = useState([])
@@ -210,20 +212,56 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const [name, setName] = useState('')
   const [progress, setProgress] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  const [uploadPhase, setUploadPhase] = useState('idle')
+  const [pendingUpload, setPendingUpload] = useState(null)
   const [message, setMessage] = useState('')
   // 登录后提交：提交者身份由账号决定，不需要也不能手填；
   // 未登录时保留手填入口（匿名提交仍然可用）。
   const signedIn = Boolean(user?.id)
+  const resumeConfig = { resumeScope: `collection:${token}` }
   useEffect(() => {
+    let active = true
+    const restoreRun = submitRunRef.current
     const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
     apiRequest(`/api/collections/${token}${query}`).then((data) => {
       setCollection(data.collection)
-      saveLocalRecord(createCollectionRecord(data.collection, 'collect_from_me'))
+      savePublicRecord(createCollectionRecord(data.collection, 'collect_from_me'))
     }).catch((err) => setMessage(err.message))
     apiRequest('/api/auth/me').then(({ user: current }) => {
       setUser(current || null)
       if (current) setName((existing) => existing.trim() ? existing : (current.nickname || current.username || ''))
     }).catch(() => {}).finally(() => setAuthChecked(true))
+    const entry = readCollectionUploadResume(token)
+    if (entry) {
+      setPendingUpload(entry)
+      setName(entry.participantName)
+      setUploadPhase('paused')
+      queryUploadResume(entry).then((restored) => {
+        if (!active || submitRunRef.current !== restoreRun) return
+        setPendingUpload(restored)
+        setProgress(restored.progress)
+        setMessage('已恢复上传进度，请重新选择原文件后继续上传')
+      }).catch((err) => {
+        if (!active || submitRunRef.current !== restoreRun) return
+        if ([404, 410].includes(err.status)) {
+          clearUploadResume({ resumeScope: `collection:${token}` }, entry.sessionId)
+          setPendingUpload(null)
+          setUploadPhase('idle')
+        }
+        setMessage(err.message)
+      })
+    }
+    const pauseOnLeave = () => {
+      uploadRef.current.paused = true
+      uploadRef.current.abortCurrent?.()
+    }
+    window.addEventListener('pagehide', pauseOnLeave)
+    return () => {
+      active = false
+      submitRunRef.current += 1
+      pauseOnLeave()
+      window.removeEventListener('pagehide', pauseOnLeave)
+    }
   }, [token, enterpriseSlug])
 
   const startLogin = () => {
@@ -240,74 +278,128 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   }
 
   const handleSelectFiles = (incoming) => {
-    const selectedFiles = toFileItems(incoming)
-    setFiles(selectedFiles)
-    const invalidFile = firstInvalidFile(selectedFiles)
-    setMessage(invalidFile ? `${invalidFile.name} 不符合当前收集任务的文件限制` : '')
+    if (submitting || !incoming?.length) return
+    const selectedFiles = toFileItems(incoming).map((item) => ({
+      ...item, id: JSON.stringify([item.relativePath, item.size, item.file.lastModified]),
+    }))
+    setFiles((current) => {
+      const merged = new Map(current.map((item) => [item.id, item]))
+      for (const item of selectedFiles) merged.set(item.id, item)
+      return [...merged.values()]
+    })
+    setMessage('')
+    if (!pendingUpload) setProgress(0)
   }
 
-  const cancelSubmit = () => {
+  const invalidFile = firstInvalidFile(files)
+  const orderedFiles = pendingUpload ? pendingUpload.files.map((saved, index) => files.find((file) => file.name === saved.name && file.size === saved.size && file.relativePath === saved.relativePath && file.file.type === saved.mimeType && (!pendingUpload.fileLastModified || file.file.lastModified === pendingUpload.fileLastModified[index]))) : files
+  const resumeMatches = !pendingUpload || (files.length === pendingUpload.files.length && orderedFiles.every(Boolean))
+  const selectionError = files.length > MAX_FILES
+    ? `单次最多提交 ${MAX_FILES} 个文件，当前已选 ${files.length} 个，请移除多余文件`
+    : invalidFile ? `${invalidFile.name} 不符合当前收集任务的文件限制`
+      : pendingUpload && files.length && !resumeMatches ? '请选择与上次上传一致且未修改的原文件，或放弃本次上传后重新提交' : ''
+  const selectedBytes = files.reduce((sum, file) => sum + file.size, 0)
+
+  const pauseSubmit = () => {
+    if (uploadPhase === 'finalizing') return
+    uploadRef.current.paused = true
+    uploadRef.current.abortCurrent?.()
+    setUploadPhase('pausing')
+    setMessage('正在暂停，保存已上传分片…')
+  }
+
+  const abandonUpload = async () => {
+    if (submitting) return
     submitRunRef.current += 1
-    submitRequestRef.current?.abort()
-    submitRequestRef.current = null
-    setSubmitting(false)
-    setProgress(0)
-    setFiles([])
-    setMessage('已取消提交，可以重新选择文件')
+    const entry = pendingUpload || readCollectionUploadResume(token)
+    setSubmitting(true)
+    try {
+      if (entry?.sessionId) {
+        await apiRequest(`/api/upload-sessions/${encodeURIComponent(entry.sessionId)}`, { method: 'DELETE' }).catch((err) => { if (![404, 410].includes(err.status)) throw err })
+        clearUploadResume(resumeConfig, entry.sessionId)
+      }
+      uploadRef.current = createUploadSessionState()
+      setPendingUpload(null)
+      setFiles([])
+      setProgress(0)
+      setUploadPhase('idle')
+      setMessage('已放弃本次上传，可以重新选择文件')
+    } catch (err) { setMessage(err.message) }
+    finally { setSubmitting(false) }
   }
 
   const removeSelectedFile = (fileId) => {
-    if (submitting) {
-      cancelSubmit()
-      return
-    }
+    if (submitting) return
     setFiles((current) => current.filter((item) => item.id !== fileId))
+    setMessage('')
+    if (!pendingUpload) setProgress(0)
   }
 
   const submit = () => {
+    if (submitting) return
     // 登录后提交者名取账号显示名，服务端也会以会话为准覆写，二者保持一致。
-    const participantName = signedIn ? (displayUserName(user) || name.trim()) : name.trim()
+    const participantName = pendingUpload?.participantName || (signedIn ? (displayUserName(user) || name.trim()) : name.trim())
     if (!participantName || !files.length) {
       setMessage(signedIn ? '请选择要提交的文件' : '请填写提交人名称并选择文件')
       return
     }
-    const invalidFile = firstInvalidFile(files)
-    if (invalidFile) {
-      setMessage(`${invalidFile.name} 不符合当前收集任务的文件限制`)
+    if (selectionError || !resumeMatches) {
+      setMessage(selectionError)
       return
     }
     const submitRun = submitRunRef.current + 1
     submitRunRef.current = submitRun
     setSubmitting(true)
-    const collectionUploadRef = { current: createUploadSessionState() }
-    uploadShareInChunks(files, {}, collectionUploadRef, ({ progress }) => {
-      if (submitRunRef.current === submitRun) setProgress(progress)
+    setUploadPhase('uploading')
+    setMessage('')
+    // Query the server on every continuation: it is authoritative even if an aborted
+    // request finished writing a chunk before the browser saw its response.
+    uploadRef.current = createUploadSessionState()
+    uploadShareInChunks(orderedFiles, {}, uploadRef, ({ progress, status }) => {
+      if (submitRunRef.current === submitRun) {
+        setProgress(progress)
+        if (status === 'finalizing') setUploadPhase('finalizing')
+      }
     }, {
+      ...resumeConfig,
       sessionBody: {
         mode: 'collection',
         collectionToken: token,
         participantName,
-        relativePaths: files.map((item) => item.relativePath),
+        relativePaths: orderedFiles.map((item) => item.relativePath),
+        // The local fingerprint includes modification times to reject changed files.
+        ...(pendingUpload ? pendingUpload.fileLastModified ? { fileLastModified: pendingUpload.fileLastModified } : {} : { fileLastModified: orderedFiles.map((item) => item.file.lastModified) }),
       },
       completeBody: { mode: 'collection' },
     }).then((result) => {
       if (submitRunRef.current !== submitRun) return
       const submittedAt = result.submission?.submittedAt || new Date().toISOString()
-      saveLocalRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt, files: result.submission?.files || files }))
+      savePublicRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt, files: result.submission?.files || files }))
       setMessage('提交成功，感谢你的文件')
       setFiles([])
-    }).catch((err) => {
-      if (submitRunRef.current === submitRun && err.name !== 'UploadCancelledError') setMessage(err.message)
+      setPendingUpload(null)
+      setUploadPhase('idle')
+      uploadRef.current = createUploadSessionState()
+    }).catch(async (err) => {
+      if (submitRunRef.current !== submitRun) return
+      const entry = readCollectionUploadResume(token)
+      setPendingUpload(entry)
+      setUploadPhase(entry ? 'paused' : 'idle')
+      setMessage(err.name === 'UploadPausedError' ? '上传已暂停，已上传分片已保存，可继续上传' : err.message)
+      if (entry) {
+        try {
+          const restored = await queryUploadResume(entry)
+          if (submitRunRef.current === submitRun) { setPendingUpload(restored); setProgress(restored.progress) }
+        } catch { /* Keep the record on transient failure; retry queries it again. */ }
+      }
     }).finally(() => {
       if (submitRunRef.current === submitRun) {
-        submitRequestRef.current = null
         setSubmitting(false)
       }
     })
-    submitRequestRef.current = { abort: () => { collectionUploadRef.current.paused = true; collectionUploadRef.current.abortCurrent?.() } }
   }
   return (
-    <PublicShell>
+    <PublicShell className="collection-submit-shell">
       <div className="public-card collection-submit-card">
         <span className="public-icon"><Inbox size={24} /></span>
         {collection ? (
@@ -326,7 +418,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                     <strong>{displayUserName(user)}</strong>
                     <span>本次提交会记录你的鲲穹账号，收集方可以核对是谁提交的</span>
                   </div>
-                  <button type="button" className="collection-identity-switch" onClick={() => setUser(null)}><UserRound size={14} /> 改用其他名称</button>
+                  <button type="button" className="collection-identity-switch" disabled={submitting || Boolean(pendingUpload)} onClick={() => setUser(null)}><UserRound size={14} /> 改用其他名称</button>
                 </div>
               ) : (
                 <div className="collection-identity anonymous">
@@ -336,24 +428,41 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                     <strong>当前未登录</strong>
                     <span>登录后提交会带上你的账号信息，方便收集方识别；也可以直接填写名称匿名提交</span>
                   </div>
-                  <button type="button" className="secondary-button collection-identity-login" onClick={startLogin}><UserRound size={15} /> 登录后提交</button>
+                  <button type="button" className="secondary-button collection-identity-login" disabled={submitting} onClick={startLogin}><UserRound size={15} /> 登录后提交</button>
                 </div>
               )
             )}
             {(!signedIn || !authChecked) && (
-              <label className="public-label">提交人名称<input value={name} maxLength={40} onChange={(event) => setName(event.target.value)} placeholder="例如：张三 / 市场部" /></label>
+              <label className="public-label">提交人名称<input value={name} maxLength={40} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => setName(event.target.value)} placeholder="例如：张三 / 市场部" /></label>
             )}
-            <div className="public-drop" onClick={() => inputRef.current?.click()}>
-              <input ref={inputRef} type="file" multiple hidden accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => handleSelectFiles(event.target.files)} />
+            {pendingUpload && <div className="collection-resume-notice" role="status">
+              <strong>发现未完成的上传 · {pendingUpload.files.length} 个文件</strong>
+              <span>{pendingUpload.files.map((file) => file.relativePath || file.name).join('、')}</span>
+              <span>{files.length ? '将从已保存的分片继续上传' : '刷新后请重新选择原文件或文件夹，已上传分片会自动跳过'}</span>
+            </div>}
+            <input ref={inputRef} type="file" multiple hidden disabled={submitting} accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
+            <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden disabled={submitting} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
+            <div className="public-drop collection-file-picker">
               <UploadCloud size={24} />
-              <strong>{files.length ? `${files.length} 个文件已选择` : '选择要提交的文件'}</strong>
-              <span>按当前任务限制提交，提交者之间互不可见</span>
+              <strong>{files.length ? '继续添加文件或文件夹' : '选择要提交的文件或文件夹'}</strong>
+              <span>支持追加选择，保留文件夹目录 · 单次最多 {MAX_FILES} 个文件</span>
+              <div className="collection-picker-buttons">
+                <button type="button" className="primary-button" disabled={submitting} onClick={() => inputRef.current?.click()}><FileText size={16} /> 选择文件</button>
+                <button type="button" className="secondary-button" disabled={submitting} onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> 选择文件夹</button>
+              </div>
             </div>
-            {files.length > 0 && <div className="public-files">{files.map((file) => <FileRow key={file.id} file={file} onRemove={() => removeSelectedFile(file.id)} />)}</div>}
-            {submitting && <div className="progress-wrap"><div className="progress-label"><span>正在提交...</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
-            {submitting && <button className="secondary-button wide" onClick={cancelSubmit}><X size={16} /> 取消提交</button>}
-            <button className="primary-button wide" onClick={submit} disabled={submitting}><UploadCloud size={17} /> {submitting ? '提交中...' : '提交文件'}</button>
-            {message && <FeedbackMessage message={message} tone={feedbackTone(message)} />}
+            {files.length > 0 && <div className="public-files collection-selected-files" role="region" aria-label="已选文件列表" tabIndex={0}>{files.map((file) => <FileRow key={file.id} file={file} showPath onRemove={submitting ? undefined : () => removeSelectedFile(file.id)} />)}</div>}
+            <div className="collection-submit-actions">
+              <div className="collection-selection-summary">
+                <span aria-live="polite"><strong>{files.length}</strong> / {MAX_FILES} 个文件 · 共 {formatBytes(selectedBytes)}</span>
+                {files.length > 0 && !pendingUpload && <button type="button" className="collection-clear-files" disabled={submitting} onClick={() => { setFiles([]); setMessage(''); setProgress(0) }}><Trash2 size={13} /> 清空</button>}
+              </div>
+              {(submitting || pendingUpload) && <div className="progress-wrap"><div className="progress-label"><span>{uploadPhase === 'finalizing' ? '正在校验文件并完成提交...' : uploadPhase === 'pausing' ? '正在暂停...' : submitting ? '正在分片上传...' : '已暂停 · 已保存进度'}</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
+              {(selectionError || message) && <FeedbackMessage message={selectionError || message} tone={selectionError ? 'error' : feedbackTone(message)} />}
+              {submitting && ['uploading', 'pausing'].includes(uploadPhase) && <button className="secondary-button wide" disabled={uploadPhase === 'pausing'} onClick={pauseSubmit}><Pause size={16} /> {uploadPhase === 'pausing' ? '正在暂停...' : '暂停上传'}</button>}
+              {pendingUpload && !submitting && <button className="secondary-button wide" onClick={abandonUpload}><X size={16} /> 放弃本次上传</button>}
+              <button className="primary-button wide" onClick={submit} disabled={submitting || !files.length || Boolean(selectionError) || !resumeMatches}>{pendingUpload ? <Play size={17} /> : <UploadCloud size={17} />} {submitting ? uploadPhase === 'finalizing' ? '正在完成提交...' : '提交中...' : pendingUpload ? '继续上传' : '提交文件'}</button>
+            </div>
           </>
         ) : (
           <StateBlock title="无法打开收集任务" detail={message || '正在加载任务'} />
@@ -503,7 +612,9 @@ export function CollectionManagePage({ token }) {
         {actionMessage && <FeedbackMessage message={actionMessage} tone="success" />}
         {actionError && <FeedbackMessage message={actionError} tone="error" />}
         <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
-        <div className="manage-list">
+        {data.submissions.length > 0 && <button className="primary-button wide collection-download-all" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
+        <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+        <div className="manage-list collection-manage-list" role="region" aria-label="已收提交列表" tabIndex={0}>
           {data.submissions.length ? data.submissions.map((submission) => (
             <div className="manage-submission" key={submission.id}>
               <div>
@@ -514,7 +625,7 @@ export function CollectionManagePage({ token }) {
                     : <span className="submission-anon-badge">匿名提交</span>}
                 </div>
                 <span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span>
-                <div className="manage-file-names">{submission.files.map((file, fileIndex) => <span className="manage-file-chip" key={`${submission.id}-${file.relativePath}`}>{canPreviewFile(file) && <button className="manage-file-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={13} /></button>}<button onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><FileText size={13} /> <FileFormatBadge file={file} /> {file.name}</button></span>)}</div>
+                <div className="manage-file-names" role="region" aria-label={`${submission.participantName}的文件列表`} tabIndex={0}>{submission.files.map((file, fileIndex) => <span className="manage-file-chip" key={`${submission.id}-${file.relativePath}`}>{canPreviewFile(file) && <button className="manage-file-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={13} /></button>}<button onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><FileText size={13} /> <FileFormatBadge file={file} /> {file.name}</button></span>)}</div>
               </div>
               <div className="manage-submission-actions">
                 <button className="secondary-button" onClick={() => downloadSubmissionItem(submission)} disabled={downloadBusy}><Download size={15} /> 下载</button>
@@ -525,8 +636,6 @@ export function CollectionManagePage({ token }) {
             <div className="empty-manage"><Inbox size={25} /><span>暂时还没有人提交文件</span></div>
           )}
         </div>
-        {data.submissions.length > 0 && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
-        <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
         {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       </div>
       {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveTaskSettings} onCloseTask={async () => { const closed = await closeTask(); if (closed) setEditing(false); return closed }} onReopenTask={async (payload) => { const reopened = await reopenTask(payload); if (reopened) setEditing(false); return reopened }} />}

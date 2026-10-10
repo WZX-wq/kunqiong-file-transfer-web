@@ -73,6 +73,28 @@ export function registerShareCreateRoutes(app) {
 }
 
 export function registerShareAccessRoutes(app) {
+  // 管理文件与公开提取使用不同入口；账号文件仍需本人登录，游客使用管理令牌。
+  for (const action of ['preview', 'download']) {
+    app.get(`/api/shares/manage/:manageToken/files/:fileIndex/${action}`, async (req, res, next) => {
+      try {
+        const share = findShareByManageToken(req.params.manageToken)
+        if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
+        if (share.ownerUserId) {
+          const viewer = authSessionFromRequest(req)?.user
+          if (!viewer) return res.status(401).json({ message: '请先登录文件所属账号' })
+          if (viewer.id !== share.ownerUserId) return res.status(403).json({ message: '无权访问其他账号的文件' })
+        }
+        enforceDownloadOrigin(req)
+        const file = share.files[Number(req.params.fileIndex)]
+        if (!file) return res.status(404).json({ message: '文件不存在' })
+        await ensureStoredFilesScanned([file], path.join(filesRoot, share.id))
+        const send = action === 'preview' ? sendPreviewFile : sendDownloadFile
+        send(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
+      } catch (error) {
+        next(error)
+      }
+    })
+  }
   app.get('/api/shares/lookup/:code', (req, res) => {
   if (shareLookupRateLimited(req)) return res.status(429).json({ message: '查询过于频繁，请稍后再试' })
   const share = findShareByCode(req.params.code)
@@ -182,6 +204,7 @@ export function registerShareAccessRoutes(app) {
     const file = share.files[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
     await ensureStoredFilesScanned([file], path.join(filesRoot, share.id))
+    if (req.method === 'HEAD') setShareAccessCookie(res, req, share)
     sendPreviewFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
   } catch (error) {
     next(error)

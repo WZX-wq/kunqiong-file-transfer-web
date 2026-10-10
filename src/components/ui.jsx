@@ -4,7 +4,7 @@ import { sanitizeOfficeHtml } from '../office-html.js'
 import * as XLSX from 'xlsx'
 import { PPTXViewer } from 'pptxviewjs'
 import { Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, Eye, FileText, Link2, PencilLine, RefreshCw, RotateCcw, UserPlus, UserRound, X } from 'lucide-react'
-import { apiRequest, downloadStatusText } from '../lib/api.js'
+import { apiRequest, downloadResponseError, downloadStatusText } from '../lib/api.js'
 import { addMonths, displayUserName, formatBytes, formatDateInput, formatDuration, formatLimitSize, isClosedStatus, maskPhone, parseLocalDate, splitFileNameForDisplay, startOfMonth } from '../lib/format.js'
 import { useEffect, useRef, useState } from 'react'
 import { previewSupportLabel, previewTypeLabel } from '../lib/transfer.js'
@@ -55,7 +55,8 @@ export function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, o
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal qr-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="modal qr-modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" className="ghost-icon modal-close" aria-label="关闭二维码预览" title="关闭二维码预览" onClick={onClose}><X size={18} /></button>
         <div className="qr-modal-body">
           <p className="eyebrow">二维码预览</p>
           <h2>{title}</h2>
@@ -109,6 +110,33 @@ export function ContentModal({ content, onClose }) {
 export function FilePreviewModal({ preview, onClose, onDownload, downloadDisabled = false }) {
   const [error, setError] = useState('')
   const [downloadError, setDownloadError] = useState('')
+  const [access, setAccess] = useState({ url: '', status: 'loading', error: '' })
+  const [password, setPassword] = useState('')
+  const [unlocking, setUnlocking] = useState(false)
+  const [accessAttempt, setAccessAttempt] = useState(0)
+
+  useEffect(() => {
+    if (!preview?.url) return
+    const controller = new AbortController()
+    setError('')
+    setDownloadError('')
+    setAccess({ url: preview.url, status: 'loading', error: '' })
+    const checkAccess = async () => {
+      try {
+        const response = await fetch(preview.url, { method: 'HEAD', credentials: 'include', headers: preview.headers || {}, signal: controller.signal })
+        if (!response.ok) throw await downloadResponseError(response)
+        if (!controller.signal.aborted) setAccess({ url: preview.url, status: 'ready', error: '' })
+      } catch (requestError) {
+        if (controller.signal.aborted) return
+        const needsPassword = preview.unlockUrl && [401, 403].includes(requestError.status) && /提取密码/.test(requestError.message)
+        setAccess({ url: preview.url, status: needsPassword ? 'password' : 'error', error: requestError.message || '预览加载失败，请稍后重试。' })
+      }
+    }
+    checkAccess()
+    return () => controller.abort()
+  }, [preview?.url, preview?.headers, accessAttempt])
+
+  useEffect(() => { setPassword('') }, [preview?.url])
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -120,6 +148,24 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
 
   if (!preview) return null
   const file = preview.file || {}
+  const ready = access.url === preview.url && access.status === 'ready'
+  const previewError = error || (access.url === preview.url && access.status === 'error' ? access.error : '')
+  const unlockPreview = async (event) => {
+    event.preventDefault()
+    if (!password || unlocking) return
+    setUnlocking(true)
+    try {
+      // 提取密码错误的 401 不代表账号会话失效。
+      const response = await fetch(preview.unlockUrl, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password }) })
+      if (!response.ok) throw await downloadResponseError(response)
+      setPassword('')
+      setAccessAttempt((attempt) => attempt + 1)
+    } catch (requestError) {
+      setAccess({ url: preview.url, status: 'password', error: requestError.message || '密码验证失败' })
+    } finally {
+      setUnlocking(false)
+    }
+  }
   const handleDownload = async () => {
     if (!onDownload) return
     setDownloadError('')
@@ -132,7 +178,7 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
   }
   return (
     <div className="modal-backdrop preview-backdrop" onMouseDown={onClose}>
-      <div className={`modal preview-modal ${preview.kind}`} onMouseDown={(event) => event.stopPropagation()}>
+      <div className={`modal preview-modal ${preview.kind}`} role="dialog" aria-modal="true" aria-label={`${file.name || '文件'}预览`} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header preview-modal-header">
           <div>
             <p className="eyebrow">{previewTypeLabel(preview.kind)}预览</p>
@@ -142,12 +188,19 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
           <button className="ghost-icon modal-close" aria-label="关闭预览" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="preview-modal-body">
-          {error ? <div className="preview-error"><FileText size={28} /><strong>预览加载失败</strong><span>{error}</span></div> : renderPreviewContent(preview, () => setError('浏览器无法打开这个文件，可下载后查看。'))}
+          {previewError ? <div className="preview-error"><FileText size={28} /><strong>预览加载失败</strong><span>{previewError}</span></div>
+            : access.url === preview.url && access.status === 'password' ? (
+              <form className="preview-error" onSubmit={unlockPreview}>
+                <FileText size={28} /><strong>此文件需要提取密码</strong><span>{access.error}</span>
+                <div className="public-password"><input type="password" aria-label="提取密码" placeholder="请输入提取密码" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="submit" className="primary-button" disabled={unlocking || !password}>{unlocking ? '验证中' : '验证并预览'}</button></div>
+              </form>
+            ) : ready ? renderPreviewContent(preview, () => setError('浏览器无法打开这个文件，可下载后查看。'))
+              : <div className="office-preview-loading"><span className="loading-dot" /><strong>正在加载预览</strong></div>}
         </div>
         <div className="modal-footer preview-modal-footer">
           <span>{previewSupportLabel(preview.kind)}</span>
           {downloadError && <FeedbackMessage message={downloadError} tone="error" />}
-          <button className="secondary-button" onClick={handleDownload} disabled={downloadDisabled}><Download size={15} /> 下载文件</button>
+          <button className="secondary-button" onClick={handleDownload} disabled={downloadDisabled || !ready}><Download size={15} /> 下载文件</button>
         </div>
       </div>
     </div>
@@ -208,8 +261,8 @@ export function TextPreview({ preview }) {
     setState({ status: 'loading', content: '', truncated: false, error: '' })
     const loadPreview = async () => {
       try {
-        const response = await fetch(preview.url, { credentials: 'include' })
-        if (!response.ok) throw new Error(`预览请求失败（${response.status}）`)
+        const response = await fetch(preview.url, { credentials: 'include', headers: preview.headers || {} })
+        if (!response.ok) throw await downloadResponseError(response)
         const buffer = await response.arrayBuffer()
         if (cancelled) return
         const truncated = buffer.byteLength > TEXT_PREVIEW_MAX_BYTES
@@ -243,8 +296,8 @@ export function OfficePreview({ preview }) {
     let cancelled = false
     const loadPreview = async () => {
       try {
-        const response = await fetch(preview.url, { credentials: 'include' })
-        if (!response.ok) throw new Error(`预览请求失败（${response.status}）`)
+        const response = await fetch(preview.url, { credentials: 'include', headers: preview.headers || {} })
+        if (!response.ok) throw await downloadResponseError(response)
         const buffer = await response.arrayBuffer()
         if (cancelled) return
         if (preview.kind === 'document') {
@@ -327,7 +380,7 @@ export function CollectionLimitInfo({ allowedTypes, maxFileSizeMb, compact = fal
   )
 }
 
-export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择日期', className = '' }) {
+export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择日期', className = '', min = '' }) {
   const pickerRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [viewDate, setViewDate] = useState(() => startOfMonth(parseLocalDate(value) || new Date()))
@@ -362,7 +415,9 @@ export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择�
   const monthLabel = `${monthStart.getFullYear()}年${monthStart.getMonth() + 1}月`
 
   const chooseDate = (date) => {
-    onChange(formatDateInput(date))
+    const dateValue = formatDateInput(date)
+    if (min && dateValue < min) return
+    onChange(dateValue)
     setOpen(false)
   }
 
@@ -393,8 +448,9 @@ export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择�
               const isCurrentMonth = date.getMonth() === monthStart.getMonth()
               const isSelected = dateValue === value
               const isToday = dateValue === todayValue
+              const isDisabled = Boolean(min && dateValue < min)
               return (
-                <button type="button" key={dateValue} className={`date-picker-day ${isCurrentMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''}`} onClick={() => chooseDate(date)}>
+                <button type="button" key={dateValue} className={`date-picker-day ${isCurrentMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''}`} disabled={isDisabled} onClick={() => chooseDate(date)}>
                   {date.getDate()}
                 </button>
               )
@@ -402,7 +458,7 @@ export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择�
           </div>
           <div className="date-picker-footer">
             <button type="button" onClick={clearDate} disabled={!value}>清除</button>
-            <button type="button" onClick={setToday}>今天</button>
+            <button type="button" onClick={setToday} disabled={Boolean(min && todayValue < min)}>今天</button>
           </div>
         </div>
       )}
@@ -755,12 +811,12 @@ export function FeatureOrb({ icon: Icon, value, label, tone }) { return <div cla
 
 export function ValueItem({ icon: Icon, title, detail }) { return <div className="value-item"><span className="value-icon"><Icon size={18} /></span><div><strong>{title}</strong><span>{detail}</span></div></div> }
 
-export function FileRow({ file, onRemove, onPreview, onDownload, downloadDisabled = false }) {
+export function FileRow({ file, onRemove, onPreview, onDownload, downloadDisabled = false, showPath = false }) {
   const Icon = fileIcon(file.name)
   return (
     <div className="file-row">
       <span className="file-type"><Icon size={18} /></span>
-      <div className="file-info"><strong>{file.name}</strong><span><FileFormatBadge file={file} /> {formatBytes(file.size)}</span></div>
+      <div className="file-info"><strong title={file.name}>{file.name}</strong>{showPath && file.relativePath && file.relativePath !== file.name && <small className="file-relative-path" title={file.relativePath}>{file.relativePath}</small>}<span><FileFormatBadge file={file} /> {formatBytes(file.size)}</span></div>
       {onPreview && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={onPreview}><Eye size={16} /></button>}
       {onDownload && <button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={onDownload} disabled={downloadDisabled}><Download size={16} /></button>}
       {onRemove && <button className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={onRemove}><X size={16} /></button>}

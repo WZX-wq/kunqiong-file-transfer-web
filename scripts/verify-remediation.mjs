@@ -113,7 +113,7 @@ async function start(extra = {}) {
   const probe = net.createServer(); await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve))
   const port = probe.address().port; await new Promise((resolve) => probe.close(resolve))
   base = `http://127.0.0.1:${port}`
-  child = spawn(process.execPath, ['server.mjs'], { cwd: fixture, windowsHide: true, env: { ...cleanEnv, PORT: String(port), NODE_ENV: 'production', KUNQIONG_HOST: '127.0.0.1', KUNQIONG_SCAN_MODE: 'required', KUNQIONG_CLAMAV_HOST: '127.0.0.1', KUNQIONG_CLAMAV_PORT: String(scanner.address().port), KUNQIONG_WEB_MEMBER_API_BASE: `http://127.0.0.1:${payments.address().port}`, KUNQIONG_OAUTH_AUTHORIZE_URL: `http://127.0.0.1:${payments.address().port}/authorize`, KUNQIONG_OAUTH_TOKEN_URL: `http://127.0.0.1:${payments.address().port}/oauth/token`, KUNQIONG_OAUTH_CLIENT_ID: 'fixture', KUNQIONG_OAUTH_CLIENT_SECRET: 'fixture-only', ...extra }, stdio: ['ignore', 'ignore', 'pipe'] })
+  child = spawn(process.execPath, ['server.mjs'], { cwd: fixture, windowsHide: true, env: { ...cleanEnv, PORT: String(port), NODE_ENV: 'production', KUNQIONG_HOST: '127.0.0.1', KUNQIONG_SCAN_MODE: 'required', KUNQIONG_CLAMAV_HOST: '127.0.0.1', KUNQIONG_CLAMAV_PORT: String(scanner.address().port), KUNQIONG_WEB_MEMBER_API_BASE: `http://127.0.0.1:${payments.address().port}`, KUNQIONG_OAUTH_AUTHORIZE_URL: `http://127.0.0.1:${payments.address().port}/authorize`, KUNQIONG_OAUTH_TOKEN_URL: `http://127.0.0.1:${payments.address().port}/oauth/token`, KUNQIONG_AUTH_CALLBACK_URL: base + '/auth/callback', KUNQIONG_OAUTH_CLIENT_ID: 'fixture', KUNQIONG_OAUTH_CLIENT_SECRET: 'fixture-only', ...extra }, stdio: ['ignore', 'ignore', 'pipe'] })
   child.stderr.on('data', (data) => { errors += data })
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(base + '/api/health')).ok) return } catch {}
@@ -210,6 +210,39 @@ try {
   check('所有者错误密码仍被拒绝', ownerWrongPw.status === 401, `status=${ownerWrongPw.status}`)
   const ownerCorrectPw = await api(`/api/shares/${protectedShare.id}/download`, { user: 'owner', headers: { 'x-share-password': 'fixture-password' } })
   check('所有者正确密码通过', ownerCorrectPw.status === 200, `status=${ownerCorrectPw.status}`)
+
+  const previewForm = form('name,role\nfixture,owner\n', 'records.csv', 'recipient')
+  previewForm.append('password', 'preview-only')
+  const previewShare = (await api('/api/shares', { user: 'owner', method: 'POST', body: previewForm })).data.share
+  const managedFileUrl = `/api/shares/manage/${previewShare.manageToken}/files/0`
+  const csvPreview = await fetch(base + managedFileUrl + '/preview', { headers: { cookie: 'kunqiong_session=owner-session' } })
+  check('Owner record previews password-protected CSV', csvPreview.status === 200 && await csvPreview.text() === 'name,role\nfixture,owner\n')
+  check('Preview does not consume download count', (await api(`/api/shares/manage/${previewShare.manageToken}`)).data.share.downloadCount === 0)
+  for (const action of ['preview', 'download']) {
+    check(`Managed ${action} rejects anonymous account access`, (await api(managedFileUrl + '/' + action)).status === 401)
+    check(`Managed ${action} rejects another account`, (await api(managedFileUrl + '/' + action, { user: 'recipient' })).status === 403)
+  }
+  check('Public preview still requires password', (await api(`/api/shares/${previewShare.id}/files/0/preview`, { user: 'owner' })).status === 403)
+  check('Managed preview rejects untrusted Origin', (await api(managedFileUrl + '/preview', { user: 'owner', headers: { origin: 'https://foreign.example' } })).status === 403)
+  const ownerDownload = await fetch(base + managedFileUrl + '/download', { headers: { cookie: 'kunqiong_session=owner-session' } })
+  check('Owner preview download receives original bytes', ownerDownload.status === 200 && await ownerDownload.text() === 'name,role\nfixture,owner\n')
+  check('Owner file access does not consume public quota', (await api(`/api/shares/manage/${previewShare.manageToken}`)).data.share.downloadCount === 0)
+  check('Managed preview rejects missing file index', (await api(`/api/shares/manage/${previewShare.manageToken}/files/9/preview`, { user: 'owner' })).status === 404)
+  const pdfBytes = '%PDF-1.4\nfixture preview bytes\n%%EOF'
+  const pdfShare = (await api('/api/shares', { user: 'owner', method: 'POST', body: form(pdfBytes, 'records.pdf') })).data.share
+  const pdfUrl = `/api/shares/${pdfShare.id}/files/0/preview`
+  const pdfHead = await api(pdfUrl, { method: 'HEAD', user: 'owner' })
+  check('PDF allows same-origin embedding after validation', pdfHead.status === 200 && pdfHead.response.headers.get('x-frame-options') === 'SAMEORIGIN')
+  check('PDF HEAD has file metadata without body', pdfHead.response.headers.get('content-type').includes('application/pdf') && Number(pdfHead.response.headers.get('content-length')) === Buffer.byteLength(pdfBytes) && await pdfHead.response.text() === '')
+  const pdfRange = await fetch(base + pdfUrl, { headers: { range: 'bytes=0-7' } })
+  check('PDF range preview remains functional', pdfRange.status === 206 && await pdfRange.text() === pdfBytes.slice(0, 8))
+  await api(`/api/shares/manage/${pdfShare.manageToken}`, { method: 'DELETE', user: 'owner' })
+  const closedPublic = await api(pdfUrl, { method: 'HEAD', user: 'owner' })
+  check('Closed public preview stays blocked with readable error', closedPublic.status === 410 && decodeURIComponent(closedPublic.response.headers.get('x-error-message')) === '分享已关闭' && closedPublic.response.headers.get('x-frame-options') === 'DENY')
+  const closedOwner = await fetch(base + `/api/shares/manage/${pdfShare.manageToken}/files/0/preview`, { headers: { cookie: 'kunqiong_session=owner-session' } })
+  check('Owner can preview own file after closing public link', closedOwner.status === 200 && await closedOwner.text() === pdfBytes)
+  fs.unlinkSync(path.join(fixture, 'storage', 'files', pdfShare.id, stored().shares.find(item => item.id === pdfShare.id).files[0].storedName))
+  check('Cleaned owner file returns explicit Gone', (await api(`/api/shares/manage/${pdfShare.manageToken}/files/0/preview`, { user: 'owner' })).status === 410)
   const source = fs.readFileSync(path.join(root, 'src', 'lib', 'api.js'), 'utf8').split('async function downloadBinaryWithProgress')[1].split('async function downloadResponseError')[0]
   check('Client download never buffers file bodies', source.includes("method: 'HEAD'") && !source.includes('new Blob') && !source.includes('getReader') && !source.includes('.blob('))
   const retrievalUi = fs.readFileSync(path.join(root, 'src', 'pages', 'workspace.jsx'), 'utf8')
@@ -262,7 +295,7 @@ try {
   check('Rejected upstream credential is deleted', !stored().upgradeOrders.find((item) => item.id === pending.auth.id)?.paymentQueryCredential)
   const login = await fetch(base + '/api/auth/login?return_to=' + encodeURIComponent(base + '/workspace'), { redirect: 'manual' })
   const state = new URL(login.headers.get('location')).searchParams.get('state')
-  const callback = await fetch(base + '/auth/callback?code=fixture&state=' + state, { redirect: 'manual' })
+  const callback = await fetch(base + '/auth/callback?code=fixture&state=' + state, { redirect: 'manual', headers: { cookie: login.headers.getSetCookie().map(c => c.split(';')[0]).join('; ') } })
   check('Fresh login compensates orders rejected by expired upstream credentials', callback.status === 302 && await waitFor(() => stored().upgradeOrders.find((item) => item.id === pending.auth.id)?.status === 'paid'))
   const loginCookie = callback.headers.getSetCookie().map((item) => item.split(';')[0]).join('; ')
   const freshWorkspace = (await api('/api/account/workspace', { headers: { cookie: loginCookie } })).data
@@ -304,7 +337,7 @@ try {
   loginUserId = 'stranger'
   const raceLogin = await fetch(base + '/api/auth/login?return_to=' + encodeURIComponent(base + '/workspace'), { redirect: 'manual' })
   const raceState = new URL(raceLogin.headers.get('location')).searchParams.get('state')
-  const raceCallback = await fetch(base + '/auth/callback?code=fixture&state=' + raceState, { redirect: 'manual' })
+  const raceCallback = await fetch(base + '/auth/callback?code=fixture&state=' + raceState, { redirect: 'manual', headers: { cookie: raceLogin.headers.getSetCookie().map(c => c.split(';')[0]).join('; ') } })
   heldPaymentQuery()
   check('Fresh login during old-token rejection still compensates without another login', raceCallback.status === 302 && await waitFor(() => stored().upgradeOrders.find((item) => item.id === raceOrder.id)?.status === 'paid'))
   await stop()

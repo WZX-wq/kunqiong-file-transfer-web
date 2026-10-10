@@ -15,7 +15,7 @@ import {
   oauthClientSecret, oauthTokenUrl
 } from '../config.js'
 import {
-  createToken, firstHeader, removeDirectory
+  createToken, firstHeader, hashSecret, removeDirectory
 } from '../lib/http.js'
 import {
   mergeLoginMethods, normalizeAuditLogs, normalizeSystemConfig, publicUser, trimRecordString
@@ -29,7 +29,7 @@ import {
   currentCollectionStatus, currentShareStatus, fileListSize, isSecureRequest,
   parseAccountRecordResource, readCookie, reconcileUserUpgradeOrders,
   retainUserPaymentQueryCredentials, serializeCookie, syncOrganizationMemberProfile,
-  upsertAccountUser
+  upsertAccountUser, oauthStateCookieName
 } from '../services/account.js'
 import {
   adminSessionFromRequest, cleanupExpiredAdminSessions
@@ -414,10 +414,11 @@ export function createAuthSession(tokenData) {
   return session
 }
 
-export function consumeOAuthState(state) {
+export function consumeOAuthState(state, req) {
   cleanupOAuthStates()
   if (!state || !oauthStates.has(state)) return null
   const value = oauthStates.get(state)
+  if (!req || !value.browserHash || hashSecret(readCookie(req, oauthStateCookieName(state))) !== value.browserHash) return null
   oauthStates.delete(state)
   return value
 }

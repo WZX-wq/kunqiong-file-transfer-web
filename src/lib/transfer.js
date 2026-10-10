@@ -38,11 +38,16 @@ export function createShareDownloadConfig(share, { password = '' } = {}) {
 }
 
 export function createShareFilePreviewConfig(share, file, fileIndex, options = {}) {
+  const base = options.managed && share.manageToken
+    ? `${window.location.origin}/api/shares/manage/${encodeURIComponent(share.manageToken)}/files/${fileIndex}`
+    : `${window.location.origin}/api/shares/${encodeURIComponent(share.id)}/files/${fileIndex}`
   return {
     file,
     kind: previewKind(file),
-    url: `${window.location.origin}/api/shares/${encodeURIComponent(share.id)}/files/${fileIndex}/preview`,
-    downloadConfig: createShareFileDownloadConfig(share, file, fileIndex, options),
+    url: `${base}/preview`,
+    headers: options.password ? { 'x-share-password': options.password } : undefined,
+    unlockUrl: share.code && !options.managed ? `/api/shares/lookup/${encodeURIComponent(share.code)}` : '',
+    downloadConfig: { ...createShareFileDownloadConfig(share, file, fileIndex, options), url: `${base}/download` },
   }
 }
 
@@ -84,7 +89,7 @@ export function recordPreviewConfigs(record) {
     const shareId = record.shareId || getShareToken(record.shareUrl || record.publicUrl)
     if (!shareId) return []
     return files
-      .map((file, index) => canPreviewFile(file) ? { ...createShareFilePreviewConfig({ id: shareId }, file, index), key: `share:${shareId}:${index}` } : null)
+      .map((file, index) => canPreviewFile(file) ? { ...createShareFilePreviewConfig({ id: shareId, code: record.code, manageToken: record.manageToken }, file, index, { managed: record.scope === 'my_sent' && Boolean(record.manageToken) }), key: `share:${shareId}:${index}` } : null)
       .filter(Boolean)
   }
   if (record.scope === 'my_collections') {
@@ -144,24 +149,69 @@ export function previewSupportLabel(kind) {
   return '图片在线预览'
 }
 
-export function readUploadResume() {
-  try { return JSON.parse(localStorage.getItem(UPLOAD_RESUME_KEY) || 'null') } catch { return null }
+function uploadResumeKey(config = {}) {
+  return config.resumeScope ? `${UPLOAD_RESUME_KEY}:${config.resumeScope}` : UPLOAD_RESUME_KEY
+}
+
+export function readUploadResume(config = {}) {
+  try { return JSON.parse(localStorage.getItem(uploadResumeKey(config)) || 'null') } catch { return null }
 }
 
 export function saveUploadResume(files, chunkSize, uploadConfig, shareOptions, sessionId) {
   try {
-    localStorage.setItem(UPLOAD_RESUME_KEY, JSON.stringify({ sessionId, chunkSize, savedAt: Date.now(), signature: uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions) }))
+    localStorage.setItem(uploadResumeKey(uploadConfig), JSON.stringify({ sessionId, chunkSize, savedAt: Date.now(), signature: uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions) }))
   } catch { /* 存储满/隐私模式忽略，退化为普通续传 */ }
 }
 
-export function clearUploadResume() {
-  try { localStorage.removeItem(UPLOAD_RESUME_KEY) } catch { /* 忽略 */ }
+export function clearUploadResume(config = {}, sessionId = '') {
+  try {
+    if (!sessionId || readUploadResume(config)?.sessionId === sessionId) localStorage.removeItem(uploadResumeKey(config))
+  } catch { /* 忽略 */ }
+}
+
+export function readCollectionUploadResume(token) {
+  const config = { resumeScope: `collection:${token}` }
+  let entry = readUploadResume(config)
+  // Migrate an unfinished collection upload created by the previous UI.
+  if (!entry) {
+    const legacy = readUploadResume()
+    try {
+      const manifest = JSON.parse(legacy?.signature || 'null')
+      if (manifest?.mode?.mode === 'collection' && manifest.mode.collectionToken === token) {
+        localStorage.setItem(uploadResumeKey(config), JSON.stringify(legacy))
+        clearUploadResume({}, legacy.sessionId)
+        entry = legacy
+      }
+    } catch { /* No valid legacy record. */ }
+  }
+  try {
+    const manifest = JSON.parse(entry?.signature || 'null')
+    if (!entry?.sessionId || manifest?.mode?.mode !== 'collection' || manifest.mode.collectionToken !== token || !Array.isArray(manifest.files)) return null
+    return { ...entry, files: manifest.files, fileLastModified: manifest.mode.fileLastModified, participantName: manifest.mode.participantName || '' }
+  } catch { return null }
+}
+
+export async function queryUploadResume(entry) {
+  const data = await apiRequest(`/api/upload-sessions/${encodeURIComponent(entry.sessionId)}`)
+  const files = entry.files || JSON.parse(entry.signature).files
+  if (Number(data.chunkSize) !== Number(entry.chunkSize) || data.files?.length !== files.length) throw new Error('上传会话的文件清单不一致')
+  let uploadedBytes = 0
+  const resumedChunks = new Map()
+  data.files.forEach((remote, index) => {
+    const file = files[index]
+    if (remote.name !== file.name || Number(remote.size) !== file.size || (remote.relativePath && remote.relativePath !== file.relativePath)) throw new Error('上传会话的文件清单不一致')
+    const done = [...new Set(remote.uploadedChunks || [])].filter((i) => Number.isInteger(i) && i >= 0 && i < Math.max(1, Math.ceil(file.size / entry.chunkSize)))
+    resumedChunks.set(index, done)
+    done.forEach((i) => { uploadedBytes += Math.min(entry.chunkSize, Math.max(0, file.size - i * entry.chunkSize)) })
+  })
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
+  return { ...entry, files, resumedChunks, uploadedBytes, totalBytes, progress: totalBytes ? Math.floor(uploadedBytes / totalBytes * 100) : 0 }
 }
 
 // 跨刷新续传：刷新/重启后用 localStorage 里的会话指纹换回已传分片清单，
 // 文件清单、分片配置、分享参数任一变化即放弃续传重新开session。
 export async function tryResumeUploadSession(files, chunkSize, uploadConfig, shareOptions, session) {
-  const entry = readUploadResume()
+  const entry = readUploadResume(uploadConfig)
   if (!entry?.sessionId) return false
   // 明确不可续传（过期/清单变化/服务端不一致）时标记 abandon：
   // 同步中止服务端旧会话释放其预留额度；网络故障等未知错误不中止，保留续传可能。
@@ -173,33 +223,25 @@ export async function tryResumeUploadSession(files, chunkSize, uploadConfig, sha
   try {
     if (Date.now() - Number(entry.savedAt) > UPLOAD_RESUME_TTL_MS) abandon('上传会话已过期')
     if (Number(entry.chunkSize) !== chunkSize || entry.signature !== uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions)) abandon('文件清单变化')
-    const data = await apiRequest(`/api/upload-sessions/${entry.sessionId}`)
-    if (Number(data.chunkSize) !== chunkSize || !Array.isArray(data.files) || data.files.length !== files.length) abandon('服务端会话不一致')
-    const resumedChunks = new Map()
-    let resumedBytes = 0
-    for (let index = 0; index < data.files.length; index += 1) {
-      const remote = data.files[index]
-      const local = files[index]
-      if (remote.name !== local.name || Number(remote.size) !== local.size) abandon('文件清单变化')
-      const done = Array.isArray(remote.uploadedChunks) ? remote.uploadedChunks : []
-      resumedChunks.set(index, done)
-      for (const chunkIndex of done) resumedBytes += Math.min(chunkSize, Math.max(0, local.size - chunkIndex * chunkSize))
-    }
-    session.sessionId = data.sessionId || entry.sessionId
-    session.resumedChunks = resumedChunks
-    session.uploadedBytes = Math.min(resumedBytes, session.totalBytes)
+    const restored = await queryUploadResume(entry)
+    session.sessionId = entry.sessionId
+    session.resumedChunks = restored.resumedChunks
+    session.uploadedBytes = restored.uploadedBytes
     return true
   } catch (error) {
-    clearUploadResume()
+    // A temporary query failure must not erase the only route back to the session.
+    if (!error.resumeAbandoned && ![404, 410].includes(error.status)) throw error
+    clearUploadResume(uploadConfig, entry.sessionId)
     if (error?.resumeAbandoned) {
       apiRequest(`/api/upload-sessions/${encodeURIComponent(entry.sessionId)}`, { method: 'DELETE' }).catch(() => {})
     }
+    if (uploadConfig.resumeScope) throw error
     return false
   }
 }
 
 export async function uploadShareInChunks(files, settings, uploadRef, onState, uploadConfig = {}) {
-  const chunkSize = pickUploadChunkSize(files)
+  const chunkSize = uploadConfig.resumeScope ? Number(readUploadResume(uploadConfig)?.chunkSize) || pickUploadChunkSize(files) : pickUploadChunkSize(files)
   const concurrency = Math.min(4, Math.max(2, Number(navigator.hardwareConcurrency || 4) >= 8 ? 4 : 2))
   const session = uploadRef.current
   session.totalBytes = files.reduce((sum, item) => sum + item.size, 0)
@@ -226,6 +268,8 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
     }
   }
 
+  if (session.paused) throw new UploadPausedError()
+
   for (let fileIndex = session.fileIndex; fileIndex < files.length; fileIndex += 1) {
     const item = files[fileIndex]
     const totalChunks = Math.max(1, Math.ceil(item.size / chunkSize))
@@ -240,6 +284,7 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
     const worker = async () => {
       while (!firstError) {
         if (session.paused) throw new UploadPausedError()
+        while (completedChunks.has(nextChunk)) nextChunk += 1
         const chunkIndex = nextChunk
         if (chunkIndex >= totalChunks) return
         nextChunk += 1
@@ -249,6 +294,7 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
         const chunkHash = await sha256Hex(chunkData)
         let attempt = 0
         while (attempt < 3) {
+          if (session.paused) throw new UploadPausedError()
           try {
             onState(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, attempt))
             await xhrUploadChunk(`/api/upload-sessions/${session.sessionId}/chunks`, {
@@ -267,6 +313,8 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
             })
             inFlightProgress.delete(chunkIndex)
             completedChunks.add(chunkIndex)
+            if (!(session.resumedChunks instanceof Map)) session.resumedChunks = new Map()
+            session.resumedChunks.set(fileIndex, [...completedChunks])
             while (completedChunks.has(lowestIncomplete)) lowestIncomplete += 1
             session.chunkIndex = lowestIncomplete
             session.uploadedBytes += end - start
@@ -288,10 +336,10 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
       }
     }
     const workers = Array.from({ length: Math.max(0, Math.min(concurrency, totalChunks - nextChunk)) }, () => worker())
-    try {
-      await Promise.all(workers)
-    } catch (error) {
-      if (error.name === 'UploadPausedError' || session.paused) throw new UploadPausedError()
+    const outcomes = await Promise.allSettled(workers)
+    const error = outcomes.find((outcome) => outcome.status === 'rejected')?.reason
+    if (error || session.paused) {
+      if (error?.name === 'UploadPausedError' || session.paused) throw new UploadPausedError()
       throw firstError || error
     }
     session.fileIndex = fileIndex + 1
@@ -299,12 +347,13 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
     onState(uploadStateFromProgress(session, session.uploadedBytes, `上传 ${item.name}`, item.name, 0))
   }
 
-  onState({ status: 'finalizing', phase: '正在生成分享信息', progress: 100, uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: currentSpeed(session, session.totalBytes), etaSeconds: 0, currentFile: '', retryCount: 0, error: '' })
+  if (session.paused) throw new UploadPausedError()
+  onState({ status: 'finalizing', phase: uploadConfig.sessionBody?.mode === 'collection' ? '正在校验文件并完成提交' : '正在生成分享信息', progress: 100, uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: currentSpeed(session, session.totalBytes), etaSeconds: 0, currentFile: '', retryCount: 0, error: '' })
   const result = await apiRequest(`/api/upload-sessions/${session.sessionId}/complete`, {
     method: 'POST',
     body: JSON.stringify({ chunkSize, ...(uploadConfig.completeBody || {}) }),
   })
-  clearUploadResume()
+  clearUploadResume(uploadConfig, session.sessionId)
   return result
 }
 

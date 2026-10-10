@@ -8,7 +8,7 @@ import {
 } from '../config.js'
 
 import {
-  createToken, httpError
+  createToken, hashSecret, httpError
 } from '../lib/http.js'
 
 import {
@@ -29,7 +29,8 @@ import {
   mergeAccountRecords, normalizeContactTarget, pruneOrphanRecordEntries, publicAccountUser,
   purgeOwnedStaleResource, readCookie, removeAuthSession, requireAuthSession, safeReturnUrl,
   sendTencentSmsCode, syncAccountUserSessions, syncOrganizationMemberProfile,
-  updateFileCleanupSettings, upsertAccountUser, verificationSendBlocked, verifyAuthCode
+  updateFileCleanupSettings, upsertAccountUser, verificationSendBlocked, verifyAuthCode,
+  getRequestOrigin, setOAuthStateCookie
 } from '../services/account.js'
 
 import {
@@ -45,10 +46,20 @@ export function registerAccountRoutes(app) {
       }
 
       cleanupOAuthStates()
-      const state = createToken(32)
       const redirectUri = authRedirectUri(req)
       returnTo = alignReturnUrlWithAuthHost(returnTo, redirectUri)
-      oauthStates.set(state, { redirectUri, returnTo, createdAt: Date.now() })
+      // localhost 与 127.0.0.1 不共享 Cookie。先对齐登录发起地址，再生成浏览器绑定。
+      const requestUrl = new URL(req.originalUrl, getRequestOrigin(req))
+      const callbackHost = new URL(redirectUri).hostname
+      const alignedUrl = new URL(alignReturnUrlWithAuthHost(requestUrl.toString(), redirectUri))
+      if (alignedUrl.hostname !== requestUrl.hostname && alignedUrl.hostname === callbackHost) {
+        alignedUrl.searchParams.set('return_to', returnTo)
+        return res.redirect(alignedUrl.toString())
+      }
+      const state = createToken(32)
+      const browserNonce = createToken(48)
+      oauthStates.set(state, { redirectUri, returnTo, browserHash: hashSecret(browserNonce), createdAt: Date.now() })
+      setOAuthStateCookie(res, req, state, browserNonce)
 
       const loginUrl = new URL(oauthAuthorizeUrl)
       loginUrl.searchParams.set('client_id', oauthClientId)
@@ -63,7 +74,7 @@ export function registerAccountRoutes(app) {
   })
   app.get('/api/auth/me', (req, res) => {
     const session = authSessionFromRequest(req)
-    res.json({ user: session ? publicAccountUser(session.user) : null })
+    res.json({ user: session ? publicAccountUser(session.user) : null, sessionExpiresAt: session?.expiresAt || null })
   })
   app.patch('/api/auth/profile', (req, res) => {
     const session = authSessionFromRequest(req)
@@ -82,6 +93,7 @@ export function registerAccountRoutes(app) {
     const patch = { ...stored }
 
     if (hasNickname) {
+      if (/[\u0000-\u001f\u007f]/.test(String(body.nickname || ''))) return res.status(400).json({ message: '昵称不能包含控制字符' })
       const nickname = String(body.nickname || '').trim()
       if (!nickname) return res.status(400).json({ message: '昵称不能为空' })
       if (nickname.length > 40) return res.status(400).json({ message: '昵称最多 40 个字符' })
@@ -89,7 +101,7 @@ export function registerAccountRoutes(app) {
     }
     if (hasAvatar) {
       const avatar = body.avatar === null ? null : String(body.avatar || '')
-      if (avatar && (!/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(avatar) || Buffer.byteLength(avatar, 'utf8') > 600000)) {
+      if (avatar && !validAvatarData(avatar)) {
         return res.status(400).json({ message: '头像格式不支持或图片过大，请上传 600 KB 以内的图片' })
       }
       // 显式写入 avatar 与 avatarSource，mergeAccountUser 才会认为"用户表了态"：
@@ -351,4 +363,17 @@ export function registerAccountRoutes(app) {
     persistMetadata()
     res.json({ settings: metadata.notificationSettings[key] })
   })
+}
+
+function validAvatarData(value) {
+  if (Buffer.byteLength(value, 'utf8') > 600000) return false
+  const match = value.match(/^data:image\/(png|jpe?g|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/i)
+  if (!match) return false
+  const bytes = Buffer.from(match[2], 'base64')
+  if (bytes.toString('base64') !== match[2]) return false
+  const type = match[1].toLowerCase()
+  if (type === 'png') return bytes.length >= 45 && bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) && bytes.subarray(-12, -8).equals(Buffer.from([0,0,0,0])) && bytes.subarray(-8, -4).toString() === 'IEND'
+  if (type === 'jpg' || type === 'jpeg') return bytes.length >= 4 && bytes[0] === 255 && bytes[1] === 216 && bytes.at(-2) === 255 && bytes.at(-1) === 217
+  if (type === 'gif') return bytes.length >= 14 && /^GIF8[79]a$/.test(bytes.subarray(0,6).toString()) && bytes.at(-1) === 59
+  return bytes.length >= 20 && bytes.subarray(0,4).toString() === 'RIFF' && bytes.subarray(8,12).toString() === 'WEBP' && bytes.readUInt32LE(4) + 8 === bytes.length
 }

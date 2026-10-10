@@ -19,7 +19,8 @@ import {
   metadata, persistMetadata
 } from '../lib/metadata-store.js'
 import {
-  accountUserById, appendAuthResult, recordAuditLog, safeReturnUrl, syncAccountUserSessions
+  accountUserById, appendAuthResult, recordAuditLog, safeReturnUrl, syncAccountUserSessions,
+  setOAuthStateCookie
 } from '../services/account.js'
 import {
   adminLoginRateLimited, adminSessionDescriptor, adminUserSummary, buildAdminOverview,
@@ -174,7 +175,7 @@ export function registerAdminRoutes(app) {
   app.get('/auth/callback', async (req, res) => {
     const code = firstValue(req.query.code)
     const state = firstValue(req.query.state)
-    const pendingState = consumeOAuthState(state)
+    const pendingState = consumeOAuthState(state, req)
     const returnTo = pendingState?.returnTo || safeReturnUrl('', req)
 
     if (!pendingState) return res.redirect(appendAuthResult(returnTo, 'failed', '登录状态已过期，请重新登录'))
@@ -184,9 +185,11 @@ export function registerAdminRoutes(app) {
       const tokenData = await exchangeOAuthToken(code, pendingState.redirectUri)
       const session = createAuthSession(tokenData)
       setAuthCookie(res, session.id, session.expiresAt, req)
+      setOAuthStateCookie(res, req, state, '')
       res.redirect(appendAuthResult(returnTo, 'success'))
     } catch (error) {
-      res.redirect(appendAuthResult(returnTo, 'failed', error.message || '登录失败'))
+      setOAuthStateCookie(res, req, state, '')
+      res.redirect(appendAuthResult(returnTo, 'failed', '登录服务暂时不可用，请重新登录'))
     }
   })
 }

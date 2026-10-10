@@ -135,6 +135,15 @@ try {
   check('空标题 400 且提示可理解', emptyTitle.status === 400 && /名称/.test(emptyTitle.data.message || ''), `status=${emptyTitle.status} msg=${emptyTitle.data.message}`)
   const badDate = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: 'x', deadline: 'not-a-date' } })
   check('非法日期 400', badDate.status === 400, `status=${badDate.status} msg=${badDate.data.message}`)
+  const dateInput = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  const yesterday = new Date()
+  yesterday.setDate(yesterday.getDate() - 1)
+  for (const user of ['owner', '']) {
+    for (const deadline of [dateInput(yesterday), new Date(Date.now() - 3600000).toISOString(), new Date().toISOString()]) {
+      const expired = await api('/api/collections', { user, method: 'POST', body: { title: '无效截止时间', deadline } })
+      check(`${user || '匿名'}创建拒绝已截止时间 ${deadline}`, expired.status === 400 && /截止时间/.test(expired.data.message || ''), `status=${expired.status} msg=${expired.data.message}`)
+    }
+  }
   // 超长标题/说明：服务端直接拒绝（400 + 明确字数提示），不再静默截断入库。
   // 上限 40/120 与前端 maxLength（constants.js）及 config.js 的 COLLECTION_TITLE_MAX / COLLECTION_DESCRIPTION_MAX 一致。
   const longTitle = '超长标题'.repeat(100)
@@ -169,6 +178,13 @@ try {
   check('非白名单扩展名（exe）被阻止（按扩展名白名单判定）', renamedExe.status === 413, `status=${renamedExe.status}`)
 
   console.log('\n=== COLL-004 截止时间 ===')
+  const todayEnd = new Date()
+  todayEnd.setHours(23, 59, 59, 999)
+  const today = await api('/api/collections', { method: 'POST', body: { title: '今天截止', deadline: dateInput(todayEnd) } })
+  check('今天截止仍可创建，截止时刻为当天结束', today.status === 201 && today.data.collection?.status === 'active' && today.data.collection.deadline === todayEnd.toISOString(), `status=${today.status} msg=${today.data.message}`)
+  const futureDeadline = new Date(Date.now() + 86400000).toISOString()
+  const futureTask = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '未来截止', deadline: futureDeadline } })
+  check('未来精确截止时间可创建并原样保留', futureTask.status === 201 && futureTask.data.collection?.status === 'active' && futureTask.data.collection.deadline === futureDeadline, `status=${futureTask.status}`)
   const deadlineTask = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '限时任务' } })).data.collection
   const beforeDeadline = await api(`/api/collections/${deadlineTask.token}/submissions`, { method: 'POST', body: form([{ name: 'ok.txt' }], { participantName: '截止前' }) })
   check('截止前可提交', beforeDeadline.status === 201, `status=${beforeDeadline.status}`)
@@ -220,12 +236,12 @@ try {
   check('仅任务相关方可创建分片会话（所有者创建成功）', sessionCreate.status === 201, `status=${sessionCreate.status}`)
   const strangerCreate = await api('/api/upload-sessions', { user: 'stranger', method: 'POST', body: { chunkSize: 1024 * 1024, files: [{ name: 'x.bin', size: 10 }], mode: 'collection', collectionToken: 'unknown-token' } })
   check('未知任务令牌创建会话被拒绝', strangerCreate.status === 404, `status=${strangerCreate.status}`)
-  const putChunk = async (index, bytes) => {
+  const putChunk = async (index, bytes, user = 'owner') => {
     const b = new FormData()
     b.append('chunk', new Blob([bytes]), 'part')
     b.append('fileIndex', '0'); b.append('chunkIndex', String(index)); b.append('totalChunks', '2')
     b.append('filename', '分段大文件.bin')
-    return api(`/api/upload-sessions/${sessionId}/chunks`, { user: 'owner', method: 'POST', body: b })
+    return api(`/api/upload-sessions/${sessionId}/chunks`, { user, method: 'POST', body: b })
   }
   const firstChunk = await putChunk(0, bigChunkA)
   check('首片上传成功', firstChunk.status === 200, `status=${firstChunk.status}`)
@@ -234,6 +250,9 @@ try {
   check('刷新（重启）后可查询进度：首片已完成', sessionAfterRestart.status === 200 && JSON.stringify(sessionAfterRestart.data.files?.[0]?.uploadedChunks) === '[0]', `chunks=${JSON.stringify(sessionAfterRestart.data.files?.[0]?.uploadedChunks)}`)
   const strangerProbe = await api(`/api/upload-sessions/${sessionId}`, { user: 'stranger' })
   check('非会话持有者不能查询会话（403/404）', [403, 404].includes(strangerProbe.status), `status=${strangerProbe.status}`)
+  check('非会话持有者不能上传分片', (await putChunk(1, bigChunkB, 'stranger')).status === 403)
+  check('非会话持有者不能完成提交', (await api(`/api/upload-sessions/${sessionId}/complete`, { user: 'stranger', method: 'POST', body: {} })).status === 403)
+  check('非会话持有者不能删除会话', (await api(`/api/upload-sessions/${sessionId}`, { user: 'stranger', method: 'DELETE' })).status === 403)
   await putChunk(1, bigChunkB)
   const complete = await api(`/api/upload-sessions/${sessionId}/complete`, { user: 'owner', method: 'POST', body: {} })
   const submittedFile = complete.data.submission?.files?.[0]
@@ -241,6 +260,21 @@ try {
   const projSub = diskCollections().find((item) => item.token === chunkTask.token).submissions.find((item) => item.id === complete.data.submission.id)
   const assembled = fs.readFileSync(path.join(fixture, 'storage', 'collections', chunkTask.token, projSub.id, projSub.files[0].storedName))
   check('组装后字节逐位一致（含跨片尾部）', assembled.equals(Buffer.concat([bigChunkA, bigChunkB])))
+
+  const guestCookie = 'kq_guest_id=coll008guestholder12345678'
+  const anonymousSession = await api('/api/upload-sessions', { method: 'POST', headers: { cookie: guestCookie }, body: {
+    mode: 'collection', collectionToken: chunkTask.token, participantName: '匿名续传者', files: [{ name: 'guest.bin', size: 16 }],
+  } })
+  const guestId = anonymousSession.data.sessionId
+  check('匿名提交者可创建自己的会话', anonymousSession.status === 201)
+  for (const [method, suffix] of [['GET', ''], ['POST', '/chunks'], ['POST', '/complete'], ['DELETE', '']]) {
+    const outsider = await api(`/api/upload-sessions/${guestId}${suffix}`, { method, headers: { cookie: 'kq_guest_id=coll008otherbrowser123456' } })
+    check(`其他浏览器不能操作匿名会话：${method}${suffix}`, outsider.status === 403)
+  }
+  await stop(); await start()
+  check('匿名持有者重启后仍可查询会话', (await api(`/api/upload-sessions/${guestId}`, { headers: { cookie: guestCookie } })).status === 200)
+  check('任务所有者可查询提交者的会话', (await api(`/api/upload-sessions/${guestId}`, { user: 'owner' })).status === 200)
+  await api(`/api/upload-sessions/${guestId}`, { method: 'DELETE', headers: { cookie: guestCookie } })
 
   console.log('\n=== COLL-009 管理页数据隔离 ===')
   const taskX = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '任务X' } })).data

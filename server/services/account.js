@@ -11,6 +11,7 @@
 // 硬拆成子模块必须引入大范围注入，得不偿失 —— 故保持单一模块。
 
 import path from 'node:path'
+import crypto from 'node:crypto'
 import nodemailer from 'nodemailer'
 import QRCode from 'qrcode'
 
@@ -568,10 +569,11 @@ export function syncAccountUserSessions(user = {}) {
 }
 
 export function normalizeContactTarget(value) {
-  const raw = trimRecordString(value, 160)
-  if (!raw) return null
+  const raw = String(value || '').trim()
+  if (!raw || raw.length > 160 || /[<>\u0000-\u001f\u007f]/.test(raw)) return null
   const email = normalizeEmailValue(raw)
   if (email) return { type: 'email', value: email, label: email }
+  if (!/^[+\d\s()-]+$/.test(raw)) return null
   const phone = normalizePhoneValue(raw)
   if (phone) return { type: 'phone', value: phone, label: phone }
   return null
@@ -1367,6 +1369,17 @@ export function clearAuthCookie(res, req) {
   }))
 }
 
+export function oauthStateCookieName(state) {
+  return `kunqiong_oauth_${state}`
+}
+
+export function setOAuthStateCookie(res, req, state, value) {
+  res.append('Set-Cookie', serializeCookie(oauthStateCookieName(state), value, {
+    httpOnly: true, maxAge: value ? Math.floor(OAUTH_STATE_TTL_MS / 1000) : 0,
+    path: '/', sameSite: 'Lax', secure: isSecureRequest(req),
+  }))
+}
+
 export function serializeCookie(name, value, options = {}) {
   const parts = [`${name}=${encodeURIComponent(value)}`]
   if (options.maxAge !== undefined) parts.push(`Max-Age=${options.maxAge}`)
@@ -1381,7 +1394,9 @@ export function readCookie(req, name) {
   const cookies = String(req.get('cookie') || '').split(';')
   for (const cookie of cookies) {
     const [key, ...valueParts] = cookie.trim().split('=')
-    if (key === name) return decodeURIComponent(valueParts.join('=') || '')
+    if (key === name) {
+      try { return decodeURIComponent(valueParts.join('=') || '') } catch { return '' }
+    }
   }
   return ''
 }

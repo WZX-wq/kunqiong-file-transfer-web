@@ -145,6 +145,7 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/') || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next()
   const origin = firstHeader(req.get('origin'))
+  if (firstHeader(req.get('sec-fetch-site')) === 'cross-site') return res.status(403).json({ message: '请求来源不受信任' })
   if (!origin) return next()
   if (origin !== getRequestOrigin(req)) {
     // vite dev(4173) 经代理转发时会改写 Host，导致 Origin 与站点不一致；
