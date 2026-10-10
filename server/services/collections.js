@@ -47,13 +47,13 @@ export function publicCollection(task, req, includeManage = false) {
     payload.manageUrl = `${getOrigin(req)}/collect/manage/${task.manageToken}`
   }
   return payload
-}
+}
 
 export async function ensureCollectionQrDataUrl(task, req) {
   if (!task || task.qrDataUrl) return false
   task.qrDataUrl = await QRCode.toDataURL(`${getOrigin(req)}/collect/${task.token}`, { width: 180, margin: 1 })
   return true
-}
+}
 
 export function managerCollection(task, req) {
   return {
@@ -61,7 +61,7 @@ export function managerCollection(task, req) {
     submissions: task.submissions.map(publicSubmission),
     downloadUrl: `${getOrigin(req)}/api/collections/manage/${task.manageToken}/download`,
   }
-}
+}
 
 export function collectionZipEntries(task, targetSubmission = null) {
   const submissions = targetSubmission ? [targetSubmission] : task.submissions
@@ -73,16 +73,16 @@ export function collectionZipEntries(task, targetSubmission = null) {
       size: file.size,
     }))
   })
-}
+}
 
 export function applyCollectionUpdate(task, body = {}) {
   if (Object.prototype.hasOwnProperty.call(body, 'title')) {
-    const title = String(body.title || '').trim()
+    const title = String(body.title || '').trim().slice(0, 80)
     if (!title) throw httpError(400, '请填写任务名称')
     task.title = title
   }
   if (Object.prototype.hasOwnProperty.call(body, 'description')) {
-    task.description = String(body.description || '').trim() || '请上传你负责的文件'
+    task.description = String(body.description || '').trim().slice(0, 500) || '请上传你负责的文件'
   }
   if (Object.prototype.hasOwnProperty.call(body, 'deadline')) {
     const deadline = normalizeExpiryInput(body.deadline, '截止时间')
@@ -109,4 +109,4 @@ export function applyCollectionUpdate(task, body = {}) {
     }
     task.status = status
   }
-}
+}

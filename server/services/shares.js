@@ -1001,7 +1001,7 @@ export function resolveCollectionSubmitter(req) {
   const session = authSessionFromRequest(req)
   const user = session?.user?.id ? accountUserById(session.user.id) : null
   if (!user) {
-    return { submitterUserId: '', submitterName: '', participantName: String(req.body?.participantName || '').trim() }
+    return { submitterUserId: '', submitterName: '', participantName: String(req.body?.participantName || '').trim().slice(0, 40) }
   }
   const name = displayAccountName(user)
   return {

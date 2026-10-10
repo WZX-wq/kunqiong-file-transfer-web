@@ -100,7 +100,7 @@ export function registerUploadRoutes(app) {
     mode: isTeamResourceSession ? 'team_resource' : (req.body.mode === 'collection' ? 'collection' : 'share'),
     organizationId: teamOrganization?.id || '',
     collectionToken: collectionTask?.token || '',
-    participantName: collectionSubmitter ? collectionSubmitter.participantName : String(req.body.participantName || '').trim(),
+    participantName: collectionSubmitter ? collectionSubmitter.participantName : String(req.body.participantName || '').trim().slice(0, 40),
     submitterUserId: collectionSubmitter?.submitterUserId || '',
     submitterName: collectionSubmitter?.submitterName || '',
     relativePaths: Array.isArray(req.body.relativePaths) ? req.body.relativePaths : [],

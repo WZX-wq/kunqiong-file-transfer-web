@@ -43,8 +43,14 @@ export function registerCollectionRoutes(app) {
     try {
       assertServiceWritable(req)
       const ownerSession = authSessionFromRequest(req)
-      const title = String(req.body.title || '').trim()
+      // 与 applyCollectionUpdate 保持一致的服务端校验：
+      // 标题/说明截断（防止超长文本原样入库拖大快照），单人大小限制必须为有限正数
+      // （此前负数/NaN 会被接受并创建出「永远无法提交」的废任务）。
+      const title = String(req.body.title || '').trim().slice(0, 80)
       if (!title) return res.status(400).json({ message: '请填写任务名称' })
+      const maxFileSizeMbRaw = Number(req.body.maxFileSizeMb ?? 500)
+      if (!Number.isFinite(maxFileSizeMbRaw) || maxFileSizeMbRaw <= 0) return res.status(400).json({ message: '单人大小限制不正确' })
+      const description = String(req.body.description || '').trim().slice(0, 500) || '请上传你负责的文件'
       const token = createToken(10)
       const manageToken = createToken(18)
       const deadline = normalizeExpiryInput(req.body.deadline || new Date(Date.now() + 7 * 86400000).toISOString(), '截止时间')
@@ -54,10 +60,10 @@ export function registerCollectionRoutes(app) {
         token,
         manageToken,
         title,
-        description: String(req.body.description || '请上传你负责的文件'),
+        description,
         deadline,
         allowedTypes: normalizeCollectionAllowedTypes(req.body.allowedTypes),
-        maxFileSizeMb: Number(req.body.maxFileSizeMb || 500),
+        maxFileSizeMb: Math.floor(maxFileSizeMbRaw),
         capacityBytes: ownerSession?.user?.id ? null : guestQuotaLimitBytes() || 1024 * 1024 * 1024,
         createdAt: new Date().toISOString(),
         ownerUserId: ownerSession?.user?.id || '',
@@ -71,7 +77,7 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
   app.get('/api/collections/:token', async (req, res, next) => {
     try {
       const task = metadata.collections.find((item) => item.token === req.params.token)
@@ -84,7 +90,7 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
   app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES), normalizeUploadedFileNames, async (req, res, next) => {
     let reservationId
     try {
@@ -153,7 +159,7 @@ export function registerCollectionRoutes(app) {
     } finally {
       if (reservationId) uploadReservations.delete(reservationId)
     }
-  })
+  })
   app.get('/api/collections/manage/:manageToken', async (req, res, next) => {
     try {
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
@@ -163,7 +169,7 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
   app.patch('/api/collections/manage/:manageToken', async (req, res, next) => {
     try {
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
@@ -176,7 +182,7 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
   app.delete('/api/collections/manage/:manageToken', (req, res, next) => {
     try {
       const index = metadata.collections.findIndex((item) => item.manageToken === req.params.manageToken)
@@ -188,7 +194,7 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
   app.delete('/api/collections/manage/:manageToken/submissions/:submissionId', (req, res, next) => {
     try {
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
@@ -203,7 +209,7 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
   app.get('/api/collections/manage/:manageToken/download', async (req, res, next) => {
     try {
       enforceDownloadOrigin(req)
@@ -217,7 +223,7 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
   app.get('/api/collections/manage/:manageToken/submissions/:submissionId/download', async (req, res, next) => {
     try {
       enforceDownloadOrigin(req)
@@ -233,7 +239,7 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
   app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/download', async (req, res, next) => {
     try {
       enforceDownloadOrigin(req)
@@ -248,7 +254,7 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
   app.get('/api/collections/manage/:manageToken/submissions/:submissionId/files/:fileIndex/preview', async (req, res, next) => {
     try {
       enforceDownloadOrigin(req)
@@ -263,5 +269,5 @@ export function registerCollectionRoutes(app) {
     } catch (error) {
       next(error)
     }
-  })
+  })
 }

@@ -1230,8 +1230,8 @@ export function CollectView({ result, manageData, manageLoading, records, onCrea
                 </div>
               </div>
               <div className="builder-form">
-                <label>任务名称<input value={form.title} onChange={(event) => update('title', event.target.value)} placeholder="例如：9 月产品素材收集" /></label>
-                <label>收集说明<input value={form.description} onChange={(event) => update('description', event.target.value)} placeholder="例如：请上传你负责的图片、文档或视频素材" /></label>
+                <label>任务名称<input value={form.title} onChange={(event) => update('title', event.target.value)} maxLength={80} placeholder="例如：9 月产品素材收集" /></label>
+                <label>收集说明<input value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={500} placeholder="例如：请上传你负责的图片、文档或视频素材" /></label>
                 <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} ariaLabel="截止时间" /></label>
                 <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
                 <label>单人大小限制<select value={form.maxFileSizeMb} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select></label>
