@@ -942,3 +942,19 @@
 .upgrade-success-view .upgrade-order-meta { width: 100%; margin-top: 14px; text-align: left; }
 .upgrade-success-amount { font-size: 19px; font-weight: 600; color: var(--accent-dark); }
 .upgrade-success-done { min-width: 180px; }
+
+/* 【设计增强层】值条 2×2 断点（≤900px）：文案换行时图标与标题首行对齐，
+   修复「图标居中于多行文本块导致标题错位」；并避免详情孤字换行。 */
+@media (max-width: 900px) {
+  .value-item { align-items: flex-start; }
+  .value-icon { margin-top: -10px; }
+}
+@media (max-width: 650px) {
+  .value-icon { margin-top: -8px; }
+}
+.value-item > div > span { text-wrap: pretty; }
+/* 【设计增强层】值条 2×2 断点：内容改为左对齐，消除「按内容宽度居中导致
+   同列图标横向参差」的问题（与 ≤650px 断点行为一致）。 */
+@media (max-width: 900px) {
+  .value-item { justify-content: flex-start; }
+}
