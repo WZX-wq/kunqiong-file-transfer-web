@@ -53,5 +53,6 @@ export function parseJson(value, fallback) {
 }
 
 export function removeDirectory(directory) {
-  try { fs.rmSync(directory, { recursive: true, force: true }) } catch {}
+  try { fs.rmSync(directory, { recursive: true, force: true }) }
+  catch (error) { console.warn('[removeDirectory] 删除失败:', directory, '→', error?.message || error) }
 }
