@@ -111,7 +111,14 @@ try {
   const rejected = await api(url + '/chunks', chunk(0, '0'.repeat(64)))
   assert.equal(rejected.status, 400, 'Incorrect SHA-256 must return 400 instead of 500')
   check('Rejected SHA-256 does not mark a chunk complete', (await api(url)).data.files[0].uploadedChunks.length === 0)
-  check('Rejected SHA-256 leaves no temporary upload file', fs.readdirSync(path.join(fixture, 'storage', 'tmp')).every((name) => name === 'upload-sessions'))
+  // 临时文件清理已改为异步（受限文件系统上同步删除会阻塞请求），断言改为轮询等待
+  let tmpClean = false
+  for (let i = 0; i < 100; i++) {
+    tmpClean = fs.readdirSync(path.join(fixture, 'storage', 'tmp')).every((name) => name === 'upload-sessions')
+    if (tmpClean) break
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  check('Rejected SHA-256 leaves no temporary upload file', tmpClean)
   check('Correct SHA-256 tail chunk uploads out of order', (await api(url + '/chunks', chunk(1))).status === 200)
   await stop(); await start()
   assert.deepEqual((await api(url)).data.files[0].uploadedChunks, [1], 'Restart must restore the tail chunk')

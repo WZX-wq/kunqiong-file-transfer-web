@@ -53,6 +53,12 @@ export function parseJson(value, fallback) {
 }
 
 export function removeDirectory(directory) {
-  try { fs.rmSync(directory, { recursive: true, force: true }) }
-  catch (error) { console.warn('[removeDirectory] 删除失败:', directory, '→', error?.message || error) }
+  // 异步删除（不阻塞事件循环）：此前用 fs.rmSync 同步递归删除，删除大目录
+  // （分片上传会话可达上百个文件）或删除系统调用变慢时，会堵住主线程，
+  // 所有 API 请求排队（表现为整站周期性卡 10s+）。删除失败的目录由调用方
+  // 的清扫/恢复逻辑兜底（过期会话不再恢复，不再反复重试）。
+  if (!directory) return
+  fs.rm(directory, { recursive: true, force: true }, (error) => {
+    if (error && error.code !== 'ENOENT') console.warn('[removeDirectory] 删除失败:', directory, '→', error?.message || error)
+  })
 }

@@ -156,6 +156,16 @@ export function restoreUploadSessions() {
         removeDirectory(directory)
         continue
       }
+      // 已过期会话不再恢复进内存：恢复只会让清扫器每分钟对它发起一次删除，
+      // 目录残余时反复产生无效 IO/日志。过期口径与 sweepStaleUploadSessions 一致：
+      // 超过 12h TTL，或零进度且超过 30min。
+      const createdAt = new Date(raw.createdAt).getTime()
+      const age = Number.isFinite(createdAt) ? Date.now() - createdAt : 0
+      const hasProgress = session.files.some((file) => file.chunks.size > 0)
+      if (age > UPLOAD_SESSION_TTL_MS || (!hasProgress && age > UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS)) {
+        removeDirectory(directory)
+        continue
+      }
       uploadSessions.set(session.id, session)
     } catch {
       removeDirectory(directory)
@@ -1238,6 +1248,8 @@ export function isAllowedType(filename, allowedTypes) {
 
 export function cleanupUploadedFiles(files = []) {
   for (const file of files) {
-    try { fs.unlinkSync(file.path) } catch {}
+    // 异步清理（不阻塞请求）：受限文件系统上删除操作可能同步阻塞数百毫秒，
+    // 而临时文件清理失败无需让请求方感知（残留文件由后续清理兜底）。
+    try { fs.unlink(file.path, () => {}) } catch {}
   }
 }

@@ -294,30 +294,38 @@ export function persistMetadata() {
 }
 
 export function withLocalMetadataLock(task) {
-  // 本地模式没有数据库那样的原子 CAS，用「独占创建锁文件」把多进程写入串行化。
-  // 拿不到锁（异常退出残留锁文件等）时直接执行：退化成「读最新内容再合并写」，
-  // 最坏情况仍是合并而非覆盖，不会把服务卡死。
+  // 本地模式没有数据库那样的原子 CAS，用锁文件把多进程写入串行化。
+  // 锁文件采用「常驻 + 内容标记」而非「创建/删除」：部分受限文件系统（企业沙箱、
+  // 归档挂载）对删除操作有审查，fs.rmSync 可能同步阻塞数百毫秒——此前每个写请求
+  // 释放锁时都要删除锁文件，导致增删改查全部被拖慢。写入不受影响（毫秒级）。
+  //   文件内容 { pid, at }：pid=0 表示空闲；pid 非 0 且未超时（10s）表示持有中。
+  // 获取失败（正在被其他进程持有）时短暂等待重试；超时后照旧执行，
+  // 退化成「读最新内容再合并写」，最坏情况仍是合并而非覆盖，不会把服务卡死。
   const lockPath = `${metadataPath}.lock`
   const deadline = Date.now() + 2000
-  let handle = null
+  let acquired = false
+  const writeMark = (pid) => {
+    try { fs.writeFileSync(lockPath, JSON.stringify({ pid, at: Date.now() }), 'utf8') } catch {}
+  }
   while (Date.now() < deadline) {
+    let idle = true
     try {
-      handle = fs.openSync(lockPath, 'wx')
-      break
+      const info = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
+      idle = !info?.pid || info.pid === 0 || Date.now() - Number(info.at) > 10000
     } catch {
-      try {
-        if (Date.now() - fs.statSync(lockPath).mtimeMs > 10000) fs.rmSync(lockPath, { force: true })
-      } catch {}
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+      idle = true // 文件不存在或为旧格式（空文件/不可解析）→ 视为空闲
     }
+    if (idle) {
+      writeMark(process.pid)
+      acquired = true
+      break
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
   }
   try {
     task()
   } finally {
-    if (handle !== null) {
-      try { fs.closeSync(handle) } catch {}
-      try { fs.rmSync(lockPath, { force: true }) } catch {}
-    }
+    if (acquired) writeMark(0)
   }
 }
 
