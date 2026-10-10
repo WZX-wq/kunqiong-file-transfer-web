@@ -104,6 +104,37 @@ export function WorkspaceApp() {
     apiRequest(`/api/upload-sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }).catch(() => {})
   }
 
+  // 释放名下全部未完成上传会话（横幅「释放占用」按钮）：立即归还预留额度。
+  const releaseGuestUploads = () => {
+    const pending = guestQuota?.pendingUploads || []
+    for (const item of pending) abortUploadSession(item.id)
+    if (pending.length) setTimeout(refreshGuestQuota, 400)
+  }
+
+  // 页面卸载（关闭标签页/刷新/跳转离开）时的会话处理：
+  // - 已传字节为 0 的会话没有续传价值 → 立即 DELETE 释放预留额度；
+  // - 有上传进度的会话保留（跨刷新续传依赖它），由服务端 TTL 清扫兜底。
+  // fetch + keepalive 保证卸载过程中请求仍能发出。
+  useEffect(() => {
+    const releaseOnLeave = () => {
+      const current = uploadRef.current
+      if (!current?.sessionId || current.uploadedBytes > 0) return
+      try {
+        void fetch(`/api/upload-sessions/${encodeURIComponent(current.sessionId)}`, {
+          method: 'DELETE',
+          keepalive: true,
+          credentials: 'include',
+        })
+      } catch { /* 卸载阶段尽力而为 */ }
+    }
+    window.addEventListener('pagehide', releaseOnLeave)
+    window.addEventListener('beforeunload', releaseOnLeave)
+    return () => {
+      window.removeEventListener('pagehide', releaseOnLeave)
+      window.removeEventListener('beforeunload', releaseOnLeave)
+    }
+  }, [])
+
   useEffect(() => {
     if (authUser?.id || authLoading) {
       setGuestQuota(null)
@@ -1047,7 +1078,7 @@ export function SendView({ files, inputRef, folderInputRef, isDragging, setIsDra
                 {guestQuota?.enabled && (
                   <div className="guest-quota-hint">
                     <Gauge size={15} />
-                    <span>未登录累计可传 <strong>{formatBytes(guestQuota.limitBytes)}</strong>，本设备已用 {formatBytes(guestQuota.usedBytes)}，剩余 <strong>{formatBytes(guestQuota.remainingBytes)}</strong></span>
+                    <span>未登录累计可传 <strong>{formatBytes(guestQuota.limitBytes)}</strong>，本设备已用 {formatBytes(guestQuota.usedBytes)}{guestQuota.reservedBytes ? <>，未完成上传占用 <strong>{formatBytes(guestQuota.reservedBytes)}</strong><button type="button" className="guest-quota-release" onClick={releaseGuestUploads} aria-label="释放未完成上传占用的额度">释放</button></> : null}，剩余 <strong>{formatBytes(guestQuota.remainingBytes)}</strong></span>
                     <button type="button" onClick={onLogin}><UserPlus size={13} /> 免费注册解锁 20 GB</button>
                   </div>
                 )}

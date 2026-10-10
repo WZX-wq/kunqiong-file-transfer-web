@@ -16,7 +16,8 @@ import {
   ADMIN_COOKIE_NAME, ADMIN_USER_IDS, COLLECTION_TYPE_EXTENSIONS, COLLECTION_TYPE_OPTIONS,
   GUEST_ID_COOKIE, GUEST_ID_MAX_AGE_SECONDS, SHARE_ACCESS_COOKIE_PREFIX,
   SHARE_ACCESS_TTL_SECONDS, UPLOAD_CHUNK_DEFAULT_BYTES, UPLOAD_CHUNK_MAX_BYTES,
-  UPLOAD_CHUNK_MIN_BYTES, clamavHost, clamavPort, configuredAppUrl, configuredCallbackUrls,
+  UPLOAD_CHUNK_MIN_BYTES, UPLOAD_SESSION_TTL_MS, UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS,
+  clamavHost, clamavPort, configuredAppUrl, configuredCallbackUrls,
   filesRoot, scanMode, scanTimeoutMs, shareEmailTemplatePath, smtpFrom, smtpFromName, tempRoot
 } from '../config.js'
 
@@ -725,6 +726,43 @@ export function discardUploadSession(session) {
   if (!session) return
   uploadSessions.delete(session.id)
   removeDirectory(session.directory)
+}
+
+// 上传会话文件清单指纹：同一游客重复上传相同文件时，用于识别「该被替换的旧会话」。
+export function uploadSessionSignature(files = []) {
+  return files
+    .map((file) => `${file.relativePath || file.name}|${file.name}|${file.size}`)
+    .sort()
+    .join('\n')
+}
+
+// 游客名下未完成上传会话明细：供配额接口展示「进行中占用」，让用户可见、可主动释放。
+export function listGuestPendingUploads(guestKey) {
+  const sessions = []
+  for (const [, item] of uploadSessions) {
+    if (item.guestKey === guestKey) {
+      sessions.push({ id: item.id, bytes: fileListSize(item.files), createdAt: item.createdAt })
+    }
+  }
+  return sessions.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+}
+
+// 上传会话定时清扫：TTL 过期的会话、以及创建后长期零进度（一个分片都没传成功）的
+// 会话。零进度会话没有续传价值，却占着容量预留，是「看不见的占用」的主要来源。
+export function sweepStaleUploadSessions(now = Date.now()) {
+  const swept = []
+  for (const [, item] of [...uploadSessions]) {
+    const createdAt = new Date(item.createdAt).getTime()
+    const age = Number.isFinite(createdAt) ? now - createdAt : 0
+    const hasProgress = item.files.some((file) => file.chunks instanceof Set && file.chunks.size > 0)
+    const expired = age > UPLOAD_SESSION_TTL_MS
+    const idleZeroProgress = !hasProgress && age > UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS
+    if (expired || idleZeroProgress) {
+      discardUploadSession(item)
+      swept.push(item.id)
+    }
+  }
+  return swept
 }
 
 export function assertUploadCapacity(item, excludeId) {

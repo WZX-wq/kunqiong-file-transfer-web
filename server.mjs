@@ -13,16 +13,16 @@ import path from 'node:path'
 import express from 'express'
 
 import {
-  MAX_FILES, UPLOAD_SESSION_TTL_MS, collectionsRoot, distRoot, filesRoot, releaseSha,
+  MAX_FILES, collectionsRoot, distRoot, filesRoot, releaseSha,
   serverPort, storageRoot, tempRoot, testEnterpriseForAllUsers, testVerificationDebugMode
 } from './server/config.js'
 
 import {
-  firstHeader, removeDirectory
+  firstHeader
 } from './server/lib/http.js'
 
 import {
-  databasePool, runtime, uploadSessions
+  databasePool, runtime
 } from './server/state.js'
 
 import {
@@ -60,8 +60,8 @@ import { registerUploadRoutes } from './server/routes/upload.js'
 
 // 分享/上传域业务逻辑（路由仍在本文件注册，按域逐步迁移）
 import {
-  guestQuotaLimitBytes, guestUsageEntry, resolveGuestKey, resolveRecipientUserIds,
-  restoreUploadSessions
+  guestQuotaLimitBytes, guestUsageEntry, listGuestPendingUploads, resolveGuestKey, resolveRecipientUserIds,
+  restoreUploadSessions, sweepStaleUploadSessions
 } from './server/services/shares.js'
 // 后台/身份域
 import {
@@ -174,14 +174,20 @@ app.get('/api/guest/quota', (req, res) => {
   const limitBytes = guestQuotaLimitBytes()
   const guestKey = resolveGuestKey(req, res)
   if (!limitBytes || !guestKey) {
-    return res.json({ enabled: false, limitBytes: 0, usedBytes: 0, remainingBytes: null })
+    return res.json({ enabled: false, limitBytes: 0, usedBytes: 0, remainingBytes: null, reservedBytes: 0, pendingUploads: [] })
   }
   const usedBytes = guestUsageEntry(guestKey).bytes
+  // 未完成上传会话的预留单独返回：让前端展示「进行中占用」并支持主动释放，
+  // 剩余额度扣除预留，避免「横幅说剩 523MB、上传却报额度不足」的矛盾。
+  const pendingUploads = listGuestPendingUploads(guestKey)
+  const reservedBytes = pendingUploads.reduce((sum, item) => sum + Number(item.bytes || 0), 0)
   res.json({
     enabled: true,
     limitBytes,
     usedBytes,
-    remainingBytes: Math.max(0, limitBytes - usedBytes),
+    remainingBytes: Math.max(0, limitBytes - usedBytes - reservedBytes),
+    reservedBytes,
+    pendingUploads,
   })
 })
 // 按域注册业务路由（顺序即 Express 匹配顺序，不可调整）
@@ -277,12 +283,9 @@ process.once('SIGINT', () => { shutdown('SIGINT').catch(() => process.exit(1)) }
 process.once('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)) })
 
 function cleanupUploadSessions() {
-  const cutoff = Date.now() - UPLOAD_SESSION_TTL_MS
-  for (const [sessionId, session] of uploadSessions.entries()) {
-    if (new Date(session.createdAt).getTime() > cutoff) continue
-    uploadSessions.delete(sessionId)
-    removeDirectory(session.directory)
-  }
+  // 委托给 services 层统一清扫：TTL 12h 过期 + 创建后 30min 零进度
+  // （零进度会话没有续传价值，却占着容量预留，挡住后续上传）。
+  sweepStaleUploadSessions()
 }
 
 function qrDataUrlAttachment(value) {

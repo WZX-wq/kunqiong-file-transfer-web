@@ -958,3 +958,7 @@
 @media (max-width: 900px) {
   .value-item { justify-content: flex-start; }
 }
+
+/* 【设计增强层】游客配额条：未完成上传占用的「释放」按钮 */
+.guest-quota-release { margin-left: 8px; padding: 1px 9px; border: 1px solid #bfded4; border-radius: 999px; background: #ffffff; color: var(--accent-dark); font-size: 11px; font-weight: 700; cursor: pointer; vertical-align: 1px; }
+.guest-quota-release:hover { background: #eef7f3; }

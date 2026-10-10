@@ -154,6 +154,9 @@ export const SHARE_ACCESS_COOKIE_PREFIX = 'kunqiong_share_access_'
 export const SHARE_ACCESS_TTL_SECONDS = 15 * 60
 export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 export const UPLOAD_SESSION_TTL_MS = 12 * 60 * 60 * 1000
+// 创建后长期零进度（一个分片都没传成功）的会话没有续传价值，提前回收，
+// 避免其容量预留以「进行中占用」挡住后续上传。
+export const UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS = 30 * 60 * 1000
 // 分片直写模式：会话级分片大小固定，服务端按 chunkIndex*chunkSize 定位写入，
 // complete 阶段零合并（旧实现 readSync/writeSync 同步合并会阻塞整个事件循环）。
 

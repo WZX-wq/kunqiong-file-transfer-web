@@ -163,17 +163,24 @@ export function clearUploadResume() {
 export async function tryResumeUploadSession(files, chunkSize, uploadConfig, shareOptions, session) {
   const entry = readUploadResume()
   if (!entry?.sessionId) return false
+  // 明确不可续传（过期/清单变化/服务端不一致）时标记 abandon：
+  // 同步中止服务端旧会话释放其预留额度；网络故障等未知错误不中止，保留续传可能。
+  const abandon = (message) => {
+    const error = new Error(message)
+    error.resumeAbandoned = true
+    throw error
+  }
   try {
-    if (Date.now() - Number(entry.savedAt) > UPLOAD_RESUME_TTL_MS) throw new Error('上传会话已过期')
-    if (Number(entry.chunkSize) !== chunkSize || entry.signature !== uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions)) throw new Error('文件清单变化')
+    if (Date.now() - Number(entry.savedAt) > UPLOAD_RESUME_TTL_MS) abandon('上传会话已过期')
+    if (Number(entry.chunkSize) !== chunkSize || entry.signature !== uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions)) abandon('文件清单变化')
     const data = await apiRequest(`/api/upload-sessions/${entry.sessionId}`)
-    if (Number(data.chunkSize) !== chunkSize || !Array.isArray(data.files) || data.files.length !== files.length) throw new Error('服务端会话不一致')
+    if (Number(data.chunkSize) !== chunkSize || !Array.isArray(data.files) || data.files.length !== files.length) abandon('服务端会话不一致')
     const resumedChunks = new Map()
     let resumedBytes = 0
     for (let index = 0; index < data.files.length; index += 1) {
       const remote = data.files[index]
       const local = files[index]
-      if (remote.name !== local.name || Number(remote.size) !== local.size) throw new Error('文件清单变化')
+      if (remote.name !== local.name || Number(remote.size) !== local.size) abandon('文件清单变化')
       const done = Array.isArray(remote.uploadedChunks) ? remote.uploadedChunks : []
       resumedChunks.set(index, done)
       for (const chunkIndex of done) resumedBytes += Math.min(chunkSize, Math.max(0, local.size - chunkIndex * chunkSize))
@@ -182,8 +189,11 @@ export async function tryResumeUploadSession(files, chunkSize, uploadConfig, sha
     session.resumedChunks = resumedChunks
     session.uploadedBytes = Math.min(resumedBytes, session.totalBytes)
     return true
-  } catch {
+  } catch (error) {
     clearUploadResume()
+    if (error?.resumeAbandoned) {
+      apiRequest(`/api/upload-sessions/${encodeURIComponent(entry.sessionId)}`, { method: 'DELETE' }).catch(() => {})
+    }
     return false
   }
 }

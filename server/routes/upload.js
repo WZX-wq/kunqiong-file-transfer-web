@@ -30,7 +30,7 @@ import {
   assertTeamCapacity, assertUniqueTeamResourceNames, assertUploadCapacity,
   cleanupUploadedFiles, createShareFromTempFiles, discardUploadSession, isAllowedType, normalizeUploadChunkSize,
   persistUploadSession, publicShare, publicSubmission, readShareOptions,
-  requireUploadSessionOwner, resolveCollectionSubmitter, validateCollection
+  requireUploadSessionOwner, resolveCollectionSubmitter, uploadSessionSignature, validateCollection
 } from '../services/shares.js'
 import {
   uploadSessions
@@ -106,6 +106,16 @@ export function registerUploadRoutes(app) {
     relativePaths: Array.isArray(req.body.relativePaths) ? req.body.relativePaths : [],
     directory: sessionDirectory,
     createdAt: new Date().toISOString(),
+  }
+  // 同一游客重新上传相同文件清单 = 对旧会话的放弃重试：直接替换并释放旧预留。
+  // 否则失败/放弃的旧会话会以「进行中占用」挡住重试，且对用户不可见。
+  if (session.guestKey) {
+    const signature = uploadSessionSignature(session.files)
+    for (const [otherId, other] of [...uploadSessions]) {
+      if (otherId !== sessionId && other.guestKey === session.guestKey && other.mode === session.mode && uploadSessionSignature(other.files) === signature) {
+        discardUploadSession(other)
+      }
+    }
   }
   assertUploadCapacity(session)
   uploadSessions.set(sessionId, session)
