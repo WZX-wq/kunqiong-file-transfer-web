@@ -1506,6 +1506,8 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
   const unreadCount = messages.filter((message) => message.unread).length
   // 长消息默认两行截断，点击展开/收起完整正文（展开的同时保留标已读行为）
   const [expandedIds, setExpandedIds] = useState(() => new Set())
+  // 取件码复制反馈：{ code, ok }，1.8s 后自动清除
+  const [codeFeedback, setCodeFeedback] = useState(null)
   const toggleExpanded = (message) => {
     setExpandedIds((current) => {
       const next = new Set(current)
@@ -1513,6 +1515,30 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
       else next.add(message.id)
       return next
     })
+  }
+  // 从消息正文提取取件码（服务端固定生成「…取件码 XXXXXX。」格式）
+  const shareCodeOf = (message) => {
+    const match = /取件码\s*([A-Z0-9]{4,8})/.exec(message.body || '')
+    return match ? match[1] : ''
+  }
+  const flashCodeFeedback = (code, ok) => {
+    setCodeFeedback({ code, ok })
+    window.setTimeout(() => setCodeFeedback((current) => (current && current.code === code ? null : current)), 1800)
+  }
+  const copyMessageCode = async (message, code) => {
+    if (!code) return
+    try {
+      await copyTextToClipboard(code)
+      flashCodeFeedback(code, true)
+      onMarkRead?.(message)
+    } catch {
+      flashCodeFeedback(code, false)
+    }
+  }
+  const openMessageAction = (message) => {
+    if (!message.actionUrl) return
+    onMarkRead?.(message)
+    window.location.href = message.actionUrl
   }
 
   useEffect(() => {
@@ -1537,17 +1563,32 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
             <div className="message-empty"><MessageCircle size={22} /><strong>登录后查看消息</strong><span>登录后可以接收系统、官方和他人发送的消息。</span><button className="secondary-button" onClick={onLogin}><UserRound size={15} /> 前往登录</button></div>
           ) : messages.length ? (
             <div className="message-list">
-              {messages.map((message) => (
+              {messages.map((message) => {
+                const shareCode = shareCodeOf(message)
+                return (
                 <div key={message.id} className={`message-item ${message.unread ? 'unread' : ''}`}>
                   <button className="message-item-main" onClick={() => { onMarkRead(message); toggleExpanded(message) }} aria-expanded={expandedIds.has(message.id)}>
                   <span className={`message-item-icon ${message.category}`}><MessageIcon category={message.category} /></span>
                   <span className="message-item-content"><strong>{message.title}</strong><span className={expandedIds.has(message.id) ? 'expanded' : ''}>{message.body}</span><small>{formatMessageTime(message.createdAt)}{message.body.length > 60 ? ` · ${expandedIds.has(message.id) ? '点击收起' : '点击展开'}` : ''}</small></span>
                   {message.unread && <i className="message-item-dot" />}
                   </button>
+                  {shareCode && (
+                    <div className="message-code-actions">
+                      <button type="button" className="message-code-chip" onClick={(event) => { event.stopPropagation(); copyMessageCode(message, shareCode) }}>
+                        <Copy size={12} /> {codeFeedback?.code === shareCode ? (codeFeedback.ok ? '已复制，去提取页粘贴即可' : '复制失败，请手动选取') : `复制取件码 ${shareCode}`}
+                      </button>
+                      {message.actionUrl && (
+                        <button type="button" className="message-code-open" onClick={(event) => { event.stopPropagation(); openMessageAction(message) }}>
+                          <ArrowRight size={12} /> 去提取
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {message.actionType === 'workspace_invite' && <div className="message-invite-actions"><button type="button" className="secondary-button" onClick={() => onInvitationAction?.(message, 'decline')}><UserX size={15} /> 拒绝</button><button type="button" className="primary-button" onClick={() => onInvitationAction?.(message, 'accept')}><UserCheck size={15} /> 接受加入</button></div>}
                   <button className="message-item-delete" aria-label={`删除消息：${message.title}`} title="删除消息" onClick={(event) => { event.stopPropagation(); onDelete(message) }}><Trash2 size={14} /></button>
                 </div>
-              ))}
+                )
+              })}
             </div>
           ) : (
             <div className="message-empty"><Bell size={22} /><strong>暂无消息</strong><span>新的动态会显示在这里。</span></div>

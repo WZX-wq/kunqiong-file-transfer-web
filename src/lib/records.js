@@ -236,11 +236,13 @@ export async function markAllCloudMessagesRead() {
 }
 
 export async function deleteCloudMessage(id) {
-  return apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  // keepalive：用户点删除后立即刷新/关闭页面时，浏览器默认会取消飞行中的请求，
+  // 服务端收不到 DELETE，刷新后消息「复活」。keepalive 保证请求送达（msg 体很小，无 64KB 限制风险）。
+  return apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true })
 }
 
 export async function deleteAllCloudMessages() {
-  return apiRequest('/api/account/messages', { method: 'DELETE' })
+  return apiRequest('/api/account/messages', { method: 'DELETE', keepalive: true })
 }
 
 export async function respondWorkspaceInvitation(invitationId, decision) {

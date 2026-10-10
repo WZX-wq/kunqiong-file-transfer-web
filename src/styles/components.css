@@ -962,3 +962,12 @@
 /* 【设计增强层】游客配额条：未完成上传占用的「释放」按钮 */
 .guest-quota-release { margin-left: 8px; padding: 1px 9px; border: 1px solid #bfded4; border-radius: 999px; background: #ffffff; color: var(--accent-dark); font-size: 11px; font-weight: 700; cursor: pointer; vertical-align: 1px; }
 .guest-quota-release:hover { background: #eef7f3; }
+
+/* 【设计增强层】消息中心：取件码「复制/去提取」操作行。
+   消息正文里的取件码不可选中，这里提供一键复制与直达提取页的入口。 */
+.message-code-actions { display: flex; grid-column: 1; gap: 7px; margin: 9px 0 0 40px; }
+.message-code-chip, .message-code-open { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 10px; font-size: 10px; font-weight: 700; border-radius: 6px; cursor: pointer; transition: background .16s ease, border-color .16s ease; }
+.message-code-chip { color: var(--accent-dark); background: #eef7f3; border: 1px solid #bfded4; }
+.message-code-chip:hover { background: #e2f2ea; }
+.message-code-open { color: #4b6e65; background: #ffffff; border: 1px solid #dbe8e4; }
+.message-code-open:hover { background: #f4faf7; }
