@@ -195,6 +195,12 @@ try {
   check('HEAD grants password access without downloading/counting', head.status === 200 && !!cookies && (await api(`/api/shares/token/${protectedShare.id}`)).data.share.downloadCount === before)
   const native = await fetch(base + `/api/shares/${protectedShare.id}/download`, { headers: { cookie: cookies, range: 'bytes=0-3' } })
   check('Native password download preserves byte ranges', native.status === 206 && await native.text() === 'pass')
+  // 关键回归：拿到 access cookie 后，再主动带「错误密码」访问，必须仍被拒绝。
+  // 此前 access cookie 分支无条件放行，导致输错密码也能凭 cookie 拿到文件（安全漏洞）。
+  const wrongPwWithCookie = await api(`/api/shares/${protectedShare.id}/download`, { headers: { cookie: cookies, 'x-share-password': 'wrong-password' } })
+  check('错误密码即使有 access cookie 仍被拒绝', wrongPwWithCookie.status === 401 || wrongPwWithCookie.status === 403, `status=${wrongPwWithCookie.status}`)
+  const correctPwWithCookie = await api(`/api/shares/${protectedShare.id}/download`, { headers: { cookie: cookies, 'x-share-password': 'fixture-password' } })
+  check('正确密码 + cookie 仍通过', correctPwWithCookie.status === 200, `status=${correctPwWithCookie.status}`)
   const source = fs.readFileSync(path.join(root, 'src', 'lib', 'api.js'), 'utf8').split('async function downloadBinaryWithProgress')[1].split('async function downloadResponseError')[0]
   check('Client download never buffers file bodies', source.includes("method: 'HEAD'") && !source.includes('new Blob') && !source.includes('getReader') && !source.includes('.blob('))
   const retrievalUi = fs.readFileSync(path.join(root, 'src', 'pages', 'workspace.jsx'), 'utf8')

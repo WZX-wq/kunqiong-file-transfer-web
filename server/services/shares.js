@@ -1189,7 +1189,9 @@ export function validateShare(share, password, { allowMissingPassword = false, h
     return { ok: false, status: 410, message: '下载次数已用完' }
   }
   if (skipPassword) return { ok: true }
-  if (hasAccessCookie && share.passwordHash) return { ok: true }
+  // access cookie 只应放行「未主动提供密码」的请求（记住已解锁的分享）；
+  // 一旦请求带了密码，就必须校验密码本身，否则输错密码也能凭 cookie 蒙混过关。
+  if (hasAccessCookie && share.passwordHash && !password) return { ok: true }
   if (allowMissingPassword && share.passwordHash && !password) return { ok: true }
   if (share.passwordHash && hashSecret(password || '') !== share.passwordHash) {
     return { ok: false, status: password ? 401 : 403, message: password ? '提取密码不正确' : '请输入提取密码' }
