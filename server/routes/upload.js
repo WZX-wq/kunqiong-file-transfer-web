@@ -19,10 +19,10 @@ import {
   metadata, persistMetadata
 } from '../lib/metadata-store.js'
 import {
-  chunkUpload, normalizeUploadFileName
+  chunkUpload
 } from '../lib/upload.js'
 import {
-  accountOrganizationForUser, accountUserById, authSessionFromRequest, readCookie, safeRelativePath
+  accountOrganizationForUser, accountUserById, authSessionFromRequest, readCookie
 } from '../services/account.js'
 import {
   addCollectionSubmissionMessage, addGuestUsage, assertAccountCapacity, assertCollectionFiles,
@@ -35,6 +35,8 @@ import {
 import {
   uploadSessions
 } from '../state.js'
+import { fileMetadataInput, relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
+import { integerInput, textInput } from '../lib/input-validation.js'
 
 export function registerUploadRoutes(app) {
   app.post('/api/upload-sessions', (req, res) => {
@@ -44,13 +46,11 @@ export function registerUploadRoutes(app) {
   const config = normalizeSystemConfig(metadata.systemConfig)
   if (files.length > config.maxBatchFiles) return res.status(413).json({ message: `单次最多上传 ${config.maxBatchFiles} 个文件` })
 
-  const normalizedFiles = files.map((file, index) => ({
-    name: normalizeUploadFileName(file.name || `文件 ${index + 1}`),
-    relativePath: safeRelativePath(normalizeUploadFileName(file.relativePath || file.name || `文件 ${index + 1}`)),
-    size: Number(file.size || 0),
-    mimeType: String(file.mimeType || 'application/octet-stream'),
-    chunks: new Set(),
-  }))
+  if (req.body.mode !== undefined && !['share','collection','team_resource'].includes(req.body.mode)) throw httpError(400,'上传模式不支持')
+  const normalizedFiles = files.map(file => ({ ...fileMetadataInput(file), chunks:new Set() }))
+  const paths = relativePathsInput(req.body.relativePaths, normalizedFiles)
+  normalizedFiles.forEach((file,index) => { file.relativePath = paths[index] })
+  uniqueFilePaths(normalizedFiles)
   if (normalizedFiles.some((file) => !Number.isSafeInteger(file.size) || file.size < 0)) return res.status(400).json({ message: '文件大小必须为有效的非负整数' })
   const invalid = normalizedFiles.find((file) => file.size > MAX_FILE_SIZE)
   if (invalid) return res.status(413).json({ message: `${invalid.name} 超过 5 GB 限制` })
@@ -83,10 +83,12 @@ export function registerUploadRoutes(app) {
     assertAccountCapacity(collectionTask ? accountUserById(collectionTask.ownerUserId) : ownerSession?.user, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
   }
 
+  const isTeamResourceSession = req.body.mode === 'team_resource'
+  const options = readShareOptions(req.body, ownerSession?.user, isTeamResourceSession)
+  if (req.body.chunkSize !== undefined) integerInput(req.body.chunkSize, '分片大小', 1, Number.MAX_SAFE_INTEGER, {string:false})
   const sessionId = createToken(18)
   const sessionDirectory = path.join(tempRoot, 'upload-sessions', sessionId)
   fs.mkdirSync(sessionDirectory, { recursive: true })
-  const isTeamResourceSession = req.body.mode === 'team_resource'
   let ownerGuestId = ''
   if (collectionTask && !ownerSession?.user?.id) {
     const existing = readCookie(req, GUEST_ID_COOKIE)
@@ -104,14 +106,14 @@ export function registerUploadRoutes(app) {
     ownerGuestId,
     capacityOwnerUserId: collectionTask ? collectionTask.ownerUserId : ownerSession?.user?.id || '',
     // 团队资源走团队空间权益，不校验上传者的个人 permanent。
-    options: readShareOptions(req.body, ownerSession?.user, isTeamResourceSession),
+    options,
     mode: isTeamResourceSession ? 'team_resource' : (req.body.mode === 'collection' ? 'collection' : 'share'),
     organizationId: teamOrganization?.id || '',
     collectionToken: collectionTask?.token || '',
     participantName: collectionSubmitter ? collectionSubmitter.participantName : String(req.body.participantName || '').trim().slice(0, 40),
     submitterUserId: collectionSubmitter?.submitterUserId || '',
     submitterName: collectionSubmitter?.submitterName || '',
-    relativePaths: Array.isArray(req.body.relativePaths) ? req.body.relativePaths : [],
+    relativePaths: paths,
     directory: sessionDirectory,
     createdAt: new Date().toISOString(),
   }
@@ -128,14 +130,14 @@ export function registerUploadRoutes(app) {
   assertUploadCapacity(session)
   uploadSessions.set(sessionId, session)
   persistUploadSession(session)
-  res.status(201).json({ sessionId, uploaded: session.files.map((file) => ({ name: file.name, chunks: [] })) })
+  res.status(201).json({ sessionId, chunkSize:session.chunkSize, uploaded: session.files.map((file) => ({ name: file.name, chunks: [] })) })
 })
   app.post('/api/upload-sessions/:sessionId/chunks', requireUploadSessionOwner, chunkUpload.single('chunk'), async (req, res, next) => {
   try {
     const session = req.uploadSession
-    const fileIndex = Number(req.body.fileIndex)
-    const chunkIndex = Number(req.body.chunkIndex)
-    const totalChunks = Number(req.body.totalChunks)
+    const fileIndex = integerInput(req.body.fileIndex,'文件索引',0,session.files.length-1)
+    const chunkIndex = integerInput(req.body.chunkIndex,'分片索引',0,Number.MAX_SAFE_INTEGER)
+    const totalChunks = integerInput(req.body.totalChunks,'分片总数',1,Number.MAX_SAFE_INTEGER)
     if (!Number.isInteger(fileIndex) || !Number.isInteger(chunkIndex) || !Number.isInteger(totalChunks) || fileIndex < 0 || fileIndex >= session.files.length || chunkIndex < 0 || totalChunks < 1 || chunkIndex >= totalChunks) {
       cleanupUploadedFiles(req.file ? [req.file] : [])
       return res.status(400).json({ message: '分片参数不完整' })
@@ -144,6 +146,11 @@ export function registerUploadRoutes(app) {
     if (!file || !req.file) {
       cleanupUploadedFiles(req.file ? [req.file] : [])
       return res.status(400).json({ message: '分片文件不存在' })
+    }
+    const expectedChunks = Math.max(1, Math.ceil(file.size / session.chunkSize))
+    if (totalChunks !== expectedChunks || chunkIndex >= expectedChunks) {
+      cleanupUploadedFiles([req.file])
+      return res.status(400).json({ message: '分片位置或总数与上传会话配置不一致' })
     }
     if (file.totalChunks && file.totalChunks !== totalChunks) {
       cleanupUploadedFiles(req.file ? [req.file] : [])
@@ -215,6 +222,14 @@ export function registerUploadRoutes(app) {
     if (session.completing) return res.status(409).json({ message: '此上传正在发布，请稍后重试' })
     activeSession = session
     session.completing = true
+    // 恢复的会话也必须经过当前写入校验，不能把旧清单直接当成可信文件元数据。
+    if (!['share','collection','team_resource'].includes(session.mode) || !Array.isArray(session.files) || !session.files.length) throw httpError(400, '上传会话格式不正确，请重新上传')
+    integerInput(session.chunkSize, '分片大小', 1048576, 16777216, {string:false})
+    const checkedFiles = session.files.map(fileMetadataInput)
+    const checkedPaths = relativePathsInput(session.relativePaths, checkedFiles)
+    checkedFiles.forEach((file,index) => { file.relativePath = checkedPaths[index] })
+    uniqueFilePaths(checkedFiles)
+    assertConfiguredUploadLimits(req, checkedFiles)
     assertUploadCapacity(session, session.id)
     // 分片直写模式：这里只做完整性校验（逐 index 齐片 + 目标文件大小），
     // 不再合并 —— 旧版同步合并 5GB 文件会阻塞事件循环 10~35 秒。
@@ -234,10 +249,7 @@ export function registerUploadRoutes(app) {
         throw httpError(400, `${file.name} 文件大小校验失败，请重新上传`)
       }
       return {
-        name: file.name,
-        relativePath: file.relativePath,
-        size: file.size,
-        mimeType: file.mimeType,
+        ...checkedFiles[fileIndex],
         tempPath: targetPath,
       }
     })
@@ -249,9 +261,9 @@ export function registerUploadRoutes(app) {
       if (!access.ok) return res.status(access.status).json({ message: access.message })
       assertCollectionFiles(task, mergedFiles)
       assertUploadCapacity(session, session.id)
-      const participantName = session.participantName.trim()
+      const participantName = textInput(session.participantName, '提交人名称', 40)
       const files = mergedFiles.map((file, index) => {
-        const relativePath = safeRelativePath(session.relativePaths[index] || file.relativePath || file.name)
+        const relativePath = file.relativePath
         const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
         return { ...file, relativePath, storedName }
       })

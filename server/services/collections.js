@@ -17,9 +17,10 @@ import {
   currentCollectionStatus, fileListSize, getOrigin
 } from '../services/account.js'
 import {
-  collectionCapacityBytes, enterpriseOrganizationForUser, normalizeCollectionAllowedTypes,
+  collectionCapacityBytes, enterpriseOrganizationForUser, normalizeCollectionAllowedTypes, collectionTypesInput,
   normalizeExpiryInput, publicSubmission, zipEntryPath
 } from '../services/shares.js'
+import { integerInput, objectInput, textInput } from '../lib/input-validation.js'
 import path from 'node:path'
 import QRCode from 'qrcode'
 
@@ -76,14 +77,20 @@ export function collectionZipEntries(task, targetSubmission = null) {
 }
 
 export function applyCollectionUpdate(task, body = {}) {
+  objectInput(body, ['title','description','deadline','allowedTypes','maxFileSizeMb','status'], {nonempty:true})
+  const draft = structuredClone(task)
+  applyCollectionUpdateDraft(draft, body)
+  Object.assign(task, draft)
+}
+function applyCollectionUpdateDraft(task, body = {}) {
   if (Object.prototype.hasOwnProperty.call(body, 'title')) {
-    const title = String(body.title || '').trim()
+    const title = textInput(body.title, '任务名称', COLLECTION_TITLE_MAX)
     if (!title) throw httpError(400, '请填写任务名称')
     if (title.length > COLLECTION_TITLE_MAX) throw httpError(400, `任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字`)
     task.title = title
   }
   if (Object.prototype.hasOwnProperty.call(body, 'description')) {
-    const description = String(body.description || '').trim()
+    const description = textInput(body.description, '收集说明', COLLECTION_DESCRIPTION_MAX, {optional:true,multiline:true})
     if (description.length > COLLECTION_DESCRIPTION_MAX) throw httpError(400, `收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字`)
     task.description = description || '请上传你负责的文件'
   }
@@ -97,15 +104,15 @@ export function applyCollectionUpdate(task, body = {}) {
     if (task.notificationFlags?.collectionExpiring) task.notificationFlags = { ...task.notificationFlags, collectionExpiring: false }
   }
   if (Object.prototype.hasOwnProperty.call(body, 'allowedTypes')) {
-    task.allowedTypes = normalizeCollectionAllowedTypes(body.allowedTypes)
+    task.allowedTypes = collectionTypesInput(body.allowedTypes)
   }
   if (Object.prototype.hasOwnProperty.call(body, 'maxFileSizeMb')) {
-    const maxFileSizeMb = Number(body.maxFileSizeMb)
+    const maxFileSizeMb = integerInput(body.maxFileSizeMb,'单文件大小限制',1,5120)
     if (!Number.isFinite(maxFileSizeMb) || maxFileSizeMb <= 0) throw httpError(400, '单人大小限制不正确')
     task.maxFileSizeMb = Math.floor(maxFileSizeMb)
   }
   if (Object.prototype.hasOwnProperty.call(body, 'status')) {
-    const status = String(body.status || '').trim()
+    const status = textInput(body.status, '收集任务状态', 20)
     if (!['active', 'closed'].includes(status)) throw httpError(400, '收集任务状态不支持')
     if (status === 'active' && new Date(task.deadline).getTime() <= Date.now()) {
       throw httpError(400, '截止时间已过，请先延长截止时间')

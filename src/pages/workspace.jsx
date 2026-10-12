@@ -12,6 +12,8 @@ import { RecordsView } from './records.jsx'
 import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FeatureOrb, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, UserAvatar, ValueItem, displayUserSubtitle } from '../components/ui.jsx'
 import { ConfirmModal, Toast } from '../components/common.jsx'
 import { getRecordOwner } from '../lib/records.js'
+import { RECIPIENT_TEXT_MAX, recipientInputError } from '../../server/lib/contact-input.js'
+import { limitInputText } from '../lib/input-limits.js'
 
 export const createDefaultCollectionForm = () => ({
   title: '',
@@ -274,6 +276,11 @@ export function WorkspaceApp() {
   const uploadFiles = async ({ resume = false } = {}) => {
     if (!files.length) {
       inputRef.current?.click()
+      return
+    }
+    const recipientError = recipientInputError(settings.recipients, authUser)
+    if (recipientError) {
+      setToast(recipientError)
       return
     }
     // 未登录预检：额度不够就直接引导注册，不浪费一次上传。
@@ -959,6 +966,7 @@ export function WorkspaceApp() {
         {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} onOpenWorkspace={() => { window.location.href = '/workspace' }} />}
         {!isSettingsRoute && activeView === 'send' && (
           <SendView
+            user={authUser}
             files={files}
             inputRef={inputRef}
             folderInputRef={folderInputRef}
@@ -1068,8 +1076,9 @@ export function GuestQuotaModal({ quota, onClose, onLogin }) {
   )
 }
 
-export function SendView({ files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
+export function SendView({ user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
   const showUploadStatus = ['uploading', 'paused', 'failed', 'finalizing'].includes(uploadState.status)
+  const recipientError = recipientInputError(settings.recipients, user)
   return (
     <>
       <section className="hero-layout">
@@ -1098,7 +1107,8 @@ export function SendView({ files, inputRef, folderInputRef, isDragging, setIsDra
                 </div>
                 <label className="delivery-field">
                   <span><Mail size={14} /> 定向发送</span>
-                  <input value={settings.recipients} onChange={(event) => onUpdateSettings({ recipients: event.target.value })} placeholder="输入手机号或邮箱，多个用逗号分隔（可选）" />
+                  <input maxLength={RECIPIENT_TEXT_MAX} value={settings.recipients} disabled={isUploading} onChange={(event) => onUpdateSettings({ recipients: limitInputText(event.target.value, RECIPIENT_TEXT_MAX) })} aria-invalid={Boolean(recipientError)} aria-describedby="delivery-recipient-hint" placeholder="输入手机号或邮箱，多个用逗号分隔（可选）" />
+                  <small id="delivery-recipient-hint" className={`contact-input-hint ${recipientError ? 'invalid' : ''}`} aria-live="polite">{recipientError || '可留空；最多 50 个收件人，不能填写自己的手机号或邮箱。'}</small>
                 </label>
                 <div className="file-list">{files.map((file) => <FileRow key={file.id} file={file} onRemove={() => removeFile(file.id)} />)}</div>
                 {guestQuota?.enabled && (
@@ -1108,7 +1118,7 @@ export function SendView({ files, inputRef, folderInputRef, isDragging, setIsDra
                     <button type="button" onClick={onLogin}><UserPlus size={13} /> 免费注册解锁 20 GB</button>
                   </div>
                 )}
-                {showUploadStatus ? <UploadProgressPanel progress={uploadProgress} uploadState={uploadState} isUploading={isUploading} onPause={onPause} onResume={onResume} onRetry={onRetry} /> : <div className="queue-actions"><button className="secondary-button" onClick={onSettings}><Settings2 size={16} /> 分享设置</button><button className="primary-button" onClick={() => uploadFiles()}><Send size={16} /> 开始上传 <ArrowRight size={15} /></button></div>}
+                {showUploadStatus ? <UploadProgressPanel progress={uploadProgress} uploadState={uploadState} isUploading={isUploading} onPause={onPause} onResume={onResume} onRetry={onRetry} /> : <div className="queue-actions"><button className="secondary-button" onClick={onSettings}><Settings2 size={16} /> 分享设置</button><button className="primary-button" disabled={Boolean(recipientError)} onClick={() => uploadFiles()}><Send size={16} /> 开始上传 <ArrowRight size={15} /></button></div>}
               </div>
             )}
             {shareResult && <ShareResult result={shareResult} settings={settings} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onReset={onReset} />}
@@ -1266,7 +1276,7 @@ export function CollectView({ result, manageData, manageLoading, records, onCrea
                 </label>
                 <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} min={formatDateInput(new Date())} ariaLabel="截止时间" /></label>
                 <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
-                <label>单人大小限制<select value={form.maxFileSizeMb} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select></label>
+                <label>单文件大小限制<select value={form.maxFileSizeMb} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select></label>
                 <button className="primary-button wide" onClick={() => onCreate(form)}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
               </div>
             </>
@@ -1470,7 +1480,7 @@ export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
           ) : (
             <>
               <p className="modal-intro">{result.requiresPassword ? '这个分享已开启提取密码，验证后即可查看文件。' : `${share.files.length} 个文件 · ${formatExpiry(share.expiresAt)}`}</p>
-              {result.requiresPassword && <input className="modal-inline-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') verify() }} placeholder="请输入提取密码" />}
+              {result.requiresPassword && <input maxLength={128} className="modal-inline-input" type="password" value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} onKeyDown={(event) => { if (event.key === 'Enter') verify() }} placeholder="请输入提取密码，最多 128 个字符" />}
               {result.requiresPassword && <button className="secondary-button verify-button" onClick={verify}>验证密码</button>}
               {share.files.length > 0 && (
                 <div className="public-files compact">
@@ -1492,6 +1502,11 @@ export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
 
 export function SettingsModal({ settings, setSettings, user, onClose, onSave }) {
   const canUsePermanent = Boolean(user?.plan?.permanent)
+  const count = Number(settings.customDownloadLimit)
+  const settingError = settings.downloadLimit === 'custom' && (!/^\d+$/.test(String(settings.customDownloadLimit)) || !Number.isSafeInteger(count) || count < 1 || count > 9999)
+    ? '下载次数请输入 1–9999 的整数'
+    : settings.passwordEnabled && (!settings.password.trim() || settings.password.length > 128)
+      ? '提取密码请输入 1–128 个字符，不能全部为空格' : ''
   const updateExpiry = (label, value) => {
     if (value === '0' && !canUsePermanent) return
     setSettings({ ...settings, expiry: label, expiryDays: value })
@@ -1519,9 +1534,10 @@ export function SettingsModal({ settings, setSettings, user, onClose, onSave }) 
             <div className="option-grid compact-grid">{[['4 位', '4'], ['5 位', '5'], ['6 位', '6']].map(([label, value]) => <button key={value} className={settings.codeLength === value ? 'selected' : ''} onClick={() => setSettings({ ...settings, codeLength: value })}>{label}{settings.codeLength === value && <Check size={14} />}</button>)}</div>
           </div>
           <div className="switch-row"><div><strong>提取密码</strong><span>取件时需要额外输入密码</span></div><button className={`switch ${settings.passwordEnabled ? 'on' : ''}`} aria-label={settings.passwordEnabled ? '关闭提取密码' : '开启提取密码'} onClick={() => setSettings({ ...settings, passwordEnabled: !settings.passwordEnabled })}><span /></button></div>
-          {settings.passwordEnabled && <label className="password-field"><span>密码内容</span><input className="modal-inline-input" type="password" value={settings.password} onChange={(event) => setSettings({ ...settings, password: event.target.value })} placeholder="例如：QK2026" /></label>}
+          {settings.passwordEnabled && <label className="password-field"><span>密码内容</span><input maxLength={128} className="modal-inline-input" type="password" value={settings.password} onChange={(event) => setSettings({ ...settings, password: limitInputText(event.target.value, 128) })} placeholder="请输入密码，最多 128 个字符" /><small>{settings.password.length}/128</small></label>}
+          {settingError && <p className="public-message" role="alert">{settingError}</p>}
         </div>
-        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" onClick={onSave}><Save size={15} /> 保存设置</button></div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={Boolean(settingError)} onClick={onSave}><Save size={15} /> 保存设置</button></div>
       </div>
     </div>
   )

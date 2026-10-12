@@ -8,6 +8,7 @@
     "build": "vite build",
     "test:remediation": "node scripts/verify-office-html.mjs && node scripts/verify-remediation.mjs && node scripts/verify-payment-ui.mjs",
     "test:upload": "node scripts/verify-upload-chunks.mjs",
+    "test:boundaries": "node scripts/verify-boundary-suite.mjs && node scripts/verify-avatar-boundaries.mjs && node scripts/verify-office-boundaries.mjs && node scripts/verify-boundary-ui.mjs",
     "test:audit": "node --test scripts/audit-store.test.mjs && node scripts/verify-audit-persistence.mjs",
     "test:auth": "node scripts/verify-auth-suite.mjs && node scripts/verify-auth-ui.mjs",
     "test:acceptance": "node scripts/verify-finance-admin-suite.mjs && node scripts/verify-finance-admin-ui.mjs && node scripts/verify-nfr-smoke.mjs",
@@ -36,6 +37,7 @@
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sharp": "^0.35.5",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

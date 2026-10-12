@@ -11,19 +11,22 @@ const code=bundle.output.find(x=>x.type==='chunk').code
 let passed=0,failures=[],cases=[]
 function check(name,value){assert.ok(value,name);passed++;console.log('PASS '+name)}
 async function waitFor(fn,name){for(let i=0;i<200;i++){if(fn())return;await delay(10)}assert.fail(name)}
-async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,displayName=userId) {
+async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,displayName=userId,contacts={}) {
  const errors=[],virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',e=>errors.push(e))
  const dom=new JSDOM('<div id="root"></div>',{url:'http://fixture.local'+route,pretendToBeVisual:true,runScripts:'outside-only',virtualConsole})
  const {window}=dom,document=window.document
  for(const [key,value]of Object.entries(storage))window.localStorage.setItem(key,value)
  let currentUser=userId,calls=[]
  let holdProfile=false,releaseProfile=null
+ let codeResponse={status:201,data:{message:'验证码已发送'}}
  const expiresAt=ttl?Date.now()+ttl:0
  const records=id=>Array.from({length:11},(_,i)=>({id:`${i===9?'sent_to_me':'my_sent'}:share:${id}-${i}`,kind:'share',scope:i===9?'sent_to_me':'my_sent',name:`${id}文件${i}`,shareId:`${id}-${i}`,shareUrl:`http://fixture.local/share/${id}-${i}`,status:'有效',createdAt:new Date().toISOString(),files:[{name:`${id}-${i}.txt`,size:4}]}))
  window.fetch=async(url,options={})=>{
   const method=options.method||'GET';calls.push({url,method,body:options.body});let status=200,data={}
   if(expiresAt&&Date.now()>=expiresAt)currentUser=''
-  if(url==='/api/auth/me') data={user:currentUser?{id:currentUser,nickname:displayName,email:'',notificationSettings:{},fileCleanup:{enabled:false,days:3}}:null,sessionExpiresAt:expiresAt?new Date(expiresAt).toISOString():null}
+  if(url==='/api/auth/me') data={user:currentUser?{id:currentUser,nickname:displayName,email:'',...contacts,notificationSettings:{},fileCleanup:{enabled:false,days:3}}:null,sessionExpiresAt:expiresAt?new Date(expiresAt).toISOString():null}
+  else if(url==='/api/auth/code'){status=codeResponse.status;data=codeResponse.data}
+  else if(url==='/api/account/bind'){const target=JSON.parse(options.body).target;data={user:{id:currentUser,nickname:displayName,...contacts,[target.includes('@')?'email':'phone']:target}}}
   else if(url==='/api/auth/profile'&&!currentUser){status=401;data={message:'请先登录'}}
   else if(url==='/api/auth/profile'){
    data={user:{id:currentUser,nickname:displayName,fileCleanup:{enabled:false,days:3}}}
@@ -45,9 +48,56 @@ async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,d
  window.eval(code)
  await waitFor(()=>document.querySelector('.app-shell,.public-shell'), 'app mounts')
  await delay(80)
- return {dom,window,document,calls,errors,expire:()=>currentUser='',holdProfile:()=>holdProfile=true,profilePending:()=>Boolean(releaseProfile),releaseProfile:()=>releaseProfile?.(),storage:()=>Object.fromEntries(Array.from({length:window.localStorage.length},(_,i)=>{const key=window.localStorage.key(i);return[key,window.localStorage.getItem(key)]})),click:async(text)=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===text||b.getAttribute('aria-label')===text);assert.ok(b,'button '+text);b.click();await delay(40)}}
+ return {dom,window,document,calls,errors,setCodeResponse:response=>codeResponse=response,expire:()=>currentUser='',holdProfile:()=>holdProfile=true,profilePending:()=>Boolean(releaseProfile),releaseProfile:()=>releaseProfile?.(),storage:()=>Object.fromEntries(Array.from({length:window.localStorage.length},(_,i)=>{const key=window.localStorage.key(i);return[key,window.localStorage.getItem(key)]})),click:async(text)=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===text||b.getAttribute('aria-label')===text);assert.ok(b,'button '+text);b.click();await delay(40)}}
 }
 async function scenario(id,fn){try{await fn();cases.push({id,status:'PASS'});console.log('CASE '+id+' PASS')}catch(e){failures.push({id,message:e.message});cases.push({id,status:'FAIL',message:e.message});console.log('CASE '+id+' FAIL: '+e.message)}}
+async function input(f,element,value){assert.ok(element,'input found');Object.getOwnPropertyDescriptor(f.window.HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new f.window.Event('input',{bubbles:true}));await delay(30)}
+await scenario('AUTH-live-phone-format',async()=>{
+ const f=await mount('/settings/security');try{
+  await f.click('绑定手机号');const target=f.document.querySelector('.account-bind-modal .settings-input-field input');const send=()=>f.document.querySelector('.account-bind-code-row button'),submit=()=>f.document.querySelector('.account-bind-modal button[type="submit"]')
+  check('empty phone cannot request verification',send().disabled&&submit().disabled)
+  await input(f,target,'12507786589');check('invalid prefix is explained live',target.getAttribute('aria-invalid')==='true'&&f.document.getElementById(target.getAttribute('aria-describedby'))?.textContent.includes('11')&&send().disabled)
+  await input(f,target,'135077865891111');check('phone paste limited to eleven digits',target.value==='13507786589')
+  check('valid phone enables code only',!send().disabled&&submit().disabled)
+  send().click();await delay(40);check('valid phone requests SMS type',JSON.parse(f.calls.find(c=>c.url==='/api/auth/code').body).type==='phone')
+  const codeInput=f.document.querySelector('.account-bind-code-row input');await input(f,codeInput,'12345');check('incomplete code cannot bind',submit().disabled)
+  await input(f,codeInput,'123456');check('complete verification enables binding',!submit().disabled)
+  await input(f,target,'13800001111');check('changing phone clears previous code',codeInput.value===''&&submit().disabled&&!f.document.body.textContent.includes('验证码已发送'))
+  check('no phone binding runtime errors',f.errors.length===0)
+ }finally{f.dom.window.close()}
+})
+await scenario('AUTH-live-email-format',async()=>{
+ const f=await mount('/settings/security');try{
+  await f.click('绑定邮箱');const target=f.document.querySelector('.account-bind-modal .settings-input-field input');const send=()=>f.document.querySelector('.account-bind-code-row button')
+  for(const value of ['1160012403@qq.com111111','a..b@example.test','a@-example.test','<b>@example.test']){await input(f,target,value);check('malformed email blocked in real time: '+value,target.getAttribute('aria-invalid')==='true'&&send().disabled)}
+  check('invalid email never requests a code',!f.calls.some(c=>c.url==='/api/auth/code'))
+  await input(f,target,'name+tag@sub.example.test');check('valid subdomain and plus address accepted',target.getAttribute('aria-invalid')!=='true'&&!send().disabled)
+  await input(f,target,'x'.repeat(200));check('email paste has bounded length',target.value.length<=160&&send().disabled)
+ }finally{f.dom.window.close()}
+})
+await scenario('AUTH-sms-failure-clears-demo',async()=>{
+ const f=await mount('/settings/security');try{
+  const tickers=[],setInterval=f.window.setInterval.bind(f.window);f.window.setInterval=(fn,ms,...args)=>{if(ms===1000)tickers.push(fn);return setInterval(fn,ms,...args)}
+  await f.click('绑定手机号');const target=f.document.querySelector('.account-bind-modal .settings-input-field input');await input(f,target,'13500007777')
+  f.setCodeResponse({status:201,data:{debugCode:'123456',message:'测试环境未配置短信服务'}});await f.click('获取验证码')
+  check('test-only demo code initially visible',f.document.body.textContent.includes('演示验证码'))
+  for(let i=0;i<60;i++)tickers.forEach(fn=>fn());await delay(30)
+  f.setCodeResponse({status:400,data:{message:'手机号格式不正确，请检查 11 位中国大陆手机号'}});await f.click('重新发送')
+  check('rejected SMS displays a readable error',f.document.querySelector('[role="alert"]')?.textContent.includes('手机号格式不正确'))
+  check('rejected SMS clears old demo and success notice',!f.document.body.textContent.includes('演示验证码')&&!f.document.body.textContent.includes('测试环境未配置短信服务'))
+ }finally{f.dom.window.close()}
+})
+await scenario('SHARE-self-contact-live',async()=>{
+ const f=await mount('/','alice',{},0,'alice',{email:'sender@example.test',phone:'13507786589'});try{
+  const picker=f.document.querySelector('input[type="file"]');Object.defineProperty(picker,'files',{configurable:true,value:[new File(['safe'],'safe.txt',{type:'text/plain',lastModified:123})]});picker.dispatchEvent(new f.window.Event('change',{bubbles:true}));await delay(50)
+  const target=f.document.querySelector('.delivery-field input');const start=()=>[...f.document.querySelectorAll('.queue-actions button')].find(b=>b.textContent.includes('开始上传'))
+  for(const value of ['13507786589','+8613507786589','SENDER@EXAMPLE.TEST','other@example.test，sender@example.test']){await input(f,target,value);check('self recipient explained and blocked: '+value,target.getAttribute('aria-invalid')==='true'&&/自己|本人/.test(f.document.getElementById(target.getAttribute('aria-describedby'))?.textContent)&&start().disabled)}
+  check('self recipient makes no upload request',!f.calls.some(c=>c.url==='/api/upload-sessions'))
+  await input(f,target,'other@example.test');check('other recipient restores upload button',!start().disabled&&target.getAttribute('aria-invalid')!=='true')
+  await input(f,target,'');check('public sharing remains allowed',!start().disabled)
+  check('no recipient runtime errors',f.errors.length===0)
+ }finally{f.dom.window.close()}
+})
 await scenario('AUTH-008',async()=>{
  const f=await mount();try{
   for(const [label,suffix]of [['账号与安全','security'],['消息通知','notice'],['文件清理','cleanup'],['个人资料','profile']]){

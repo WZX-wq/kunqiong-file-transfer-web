@@ -12,9 +12,12 @@ import {
 } from '../lib/http.js'
 
 import {
-  accountRecordOwnerKey, mergeLoginMethods, normalizeAccountRecords, normalizeEmailValue,
-  normalizeFileCleanupSettings, normalizeNotificationSettings, normalizePhoneValue
+  accountRecordOwnerKey, mergeLoginMethods, normalizeAccountRecords,
+  normalizeFileCleanupSettings, normalizeNotificationSettings
 } from '../lib/metadata-normalizers.js'
+import { normalizeBindingTarget } from '../lib/contact-input.js'
+import { booleanSettings, objectInput, recordInputs, textInput } from '../lib/input-validation.js'
+import { normalizeAvatarData } from '../lib/avatar-validation.js'
 
 import {
   metadata, persistMetadata
@@ -24,9 +27,9 @@ import {
   accountMessagesForUser, accountNotificationSettingsForUser, accountRecordsForUser,
   accountUserById, alignReturnUrlWithAuthHost, appendAuthResult, authRedirectUri,
   authSessionFromRequest, boundMethodForTargetType, cleanupOAuthStates, clearAuthCookie,
-  createVerificationCode, discardVerificationCode, findAccountUserByTarget,
+  createVerificationCode, discardVerificationCode, assertContactAvailable,
   getEmailTransporter, isOAuthConfigured, isTencentSmsConfigured, mailErrorReason,
-  mergeAccountRecords, normalizeContactTarget, pruneOrphanRecordEntries, publicAccountUser,
+  mergeAccountRecords, pruneOrphanRecordEntries, publicAccountUser,
   purgeOwnedStaleResource, readCookie, removeAuthSession, requireAuthSession, safeReturnUrl,
   sendTencentSmsCode, syncAccountUserSessions, syncOrganizationMemberProfile,
   updateFileCleanupSettings, upsertAccountUser, verificationSendBlocked, verifyAuthCode,
@@ -76,54 +79,46 @@ export function registerAccountRoutes(app) {
     const session = authSessionFromRequest(req)
     res.json({ user: session ? publicAccountUser(session.user) : null, sessionExpiresAt: session?.expiresAt || null })
   })
-  app.patch('/api/auth/profile', (req, res) => {
-    const session = authSessionFromRequest(req)
-    if (!session) return res.status(401).json({ message: '请先登录' })
+  app.patch('/api/auth/profile', async (req, res, next) => {
+    try {
+      const session = authSessionFromRequest(req)
+      if (!session) return res.status(401).json({ message: '请先登录' })
 
-    const body = req.body || {}
-    const hasNickname = Object.prototype.hasOwnProperty.call(body, 'nickname')
-    const hasAvatar = Object.prototype.hasOwnProperty.call(body, 'avatar')
-    if (!hasNickname && !hasAvatar) return res.status(400).json({ message: '没有可保存的资料' })
+      const body = objectInput(req.body, ['nickname', 'avatar'], { nonempty: true })
+      const hasNickname = Object.prototype.hasOwnProperty.call(body, 'nickname')
+      const hasAvatar = Object.prototype.hasOwnProperty.call(body, 'avatar')
+      if (!hasNickname && !hasAvatar) return res.status(400).json({ message: '没有可保存的资料' })
 
-    // ⚠️ session.user 是**快照**，可能已经落后于用户表（例如这次登录后另一台设备刚改过头像）。
-    // 用快照整体覆盖 upsertAccountUser 会把过期的 avatar / avatarSource 一并写回，
-    // 造成"保存昵称顺手把头像改没了"或"恢复登录头像不生效"。
-    // 因此这里始终以**用户表**为准来做合并。
-    const stored = accountUserById(session.user.id) || {}
-    const patch = { ...stored }
-
-    if (hasNickname) {
-      if (/[\u0000-\u001f\u007f]/.test(String(body.nickname || ''))) return res.status(400).json({ message: '昵称不能包含控制字符' })
-      const nickname = String(body.nickname || '').trim()
-      if (!nickname) return res.status(400).json({ message: '昵称不能为空' })
-      if (nickname.length > 40) return res.status(400).json({ message: '昵称最多 40 个字符' })
-      patch.nickname = nickname
-    }
-    if (hasAvatar) {
-      const avatar = body.avatar === null ? null : String(body.avatar || '')
-      if (avatar && !validAvatarData(avatar)) {
-        return res.status(400).json({ message: '头像格式不支持或图片过大，请上传 600 KB 以内的图片' })
+      const nickname = hasNickname ? textInput(body.nickname, '昵称', 40) : undefined
+      const avatar = hasAvatar ? await normalizeAvatarData(body.avatar === null ? '' : body.avatar) : undefined
+      // 解码会让出事件循环：再次检查会话，再读取最新资料，避免覆盖并发保存。
+      const currentSession = authSessionFromRequest(req)
+      if (!currentSession || currentSession.user.id !== session.user.id) return res.status(401).json({ message: '登录已失效，请重新登录' })
+      const stored = accountUserById(currentSession.user.id) || currentSession.user
+      const patch = { ...stored }
+      if (hasNickname) patch.nickname = nickname
+      if (hasAvatar) {
+        // 显式写入 avatar 与 avatarSource，mergeAccountUser 才会认为"用户表了态"：
+        // avatar 有值 → custom；avatar 为 null → 恢复登录头像（回落 provider）。
+        const providerAvatar = stored.providerAvatar || currentSession.user.providerAvatar || null
+        patch.avatar = avatar || providerAvatar || null
+        if (avatar) {
+          patch.avatarSource = 'custom'
+        } else {
+          // 「恢复登录头像」：必须显式清空 avatarSource，并带上一个可识别的标记，
+          // 否则 mergeAccountUser 会把这次操作误判成"没有表态的旧快照"而保留 custom。
+          patch.avatarSource = ''
+          patch.avatarRestoreRequested = true
+        }
       }
-      // 显式写入 avatar 与 avatarSource，mergeAccountUser 才会认为"用户表了态"：
-      // avatar 有值 → custom；avatar 为 null → 恢复登录头像（回落 provider）。
-      const providerAvatar = stored.providerAvatar || session.user.providerAvatar || null
-      patch.avatar = avatar || providerAvatar || null
-      if (avatar) {
-        patch.avatarSource = 'custom'
-      } else {
-        // 「恢复登录头像」：必须显式清空 avatarSource，并带上一个可识别的标记，
-        // 否则 mergeAccountUser 会把这次操作误判成"没有表态的旧快照"而保留 custom。
-        patch.avatarSource = ''
-        patch.avatarRestoreRequested = true
-      }
-    }
 
-    const user = upsertAccountUser(patch)
-    syncAccountUserSessions(user)
-    // 改名/换头像后同步团队 roster，否则团队空间会一直显示入团时的旧快照。
-    syncOrganizationMemberProfile(user)
-    persistMetadata()
-    res.json({ user: publicAccountUser(user) })
+      const user = upsertAccountUser(patch)
+      syncAccountUserSessions(user)
+      // 改名/换头像后同步团队 roster，否则团队空间会一直显示入团时的旧快照。
+      syncOrganizationMemberProfile(user)
+      persistMetadata()
+      res.json({ user: publicAccountUser(user) })
+    } catch(error) { next(error) }
   })
   app.get('/api/account/file-cleanup-settings', (req, res) => {
     const session = authSessionFromRequest(req)
@@ -137,8 +132,9 @@ export function registerAccountRoutes(app) {
     try {
       const session = requireAuthSession(req, res)
       if (!session) return
-      const target = normalizeContactTarget(req.body?.target)
+      const target = normalizeBindingTarget(req.body?.target, req.body?.type)
       if (!target) return res.status(400).json({ message: '请输入正确的邮箱或手机号' })
+      assertContactAvailable(target, session.user.id)
       const blockedMessage = verificationSendBlocked(target, req)
       if (blockedMessage) return res.status(429).json({ message: blockedMessage })
       const debugCode = createVerificationCode(target, 'bind')
@@ -201,17 +197,9 @@ export function registerAccountRoutes(app) {
       try {
         await sendTencentSmsCode(target.value, debugCode, tencentSmsBindTemplateId)
       } catch (error) {
-        if (testVerificationDebugMode) {
-          return res.status(201).json({
-            ok: true,
-            channel: 'sms',
-            debugCode,
-            expiresIn: Math.floor(VERIFICATION_CODE_TTL_MS / 1000),
-            message: `测试环境短信投递失败，已生成演示验证码（${error.message || '腾讯云短信服务异常'}）。`,
-          })
-        }
         discardVerificationCode(target, 'bind')
-        throw httpError(502, `验证码短信发送失败：${error.message || '腾讯云短信服务异常'}`)
+        const invalidNumber = /IncorrectPhoneNumber|InvalidPhoneNumber|incorrect.*number.*format|invalid.*phone.*number/i.test(`${error.code || ''} ${error.message || ''}`)
+        throw httpError(invalidNumber ? 400 : 502, invalidNumber ? '手机号格式不正确，请检查 11 位中国大陆手机号' : '验证码短信发送失败，请稍后重试')
       }
       res.status(201).json({
         ok: true,
@@ -227,24 +215,17 @@ export function registerAccountRoutes(app) {
     try {
       const session = requireAuthSession(req, res)
       if (!session) return
-      const target = normalizeContactTarget(req.body?.target)
+      const target = normalizeBindingTarget(req.body?.target, req.body?.type)
       if (!target) return res.status(400).json({ message: '请输入正确的邮箱或手机号' })
+      // 检查到写入均为同步操作；并发请求也只能有一个账号占用该联系方式。
+      assertContactAvailable(target, session.user.id)
       verifyAuthCode(target, req.body?.code, 'bind')
-      const existingUser = findAccountUserByTarget(target)
-      const boundByAnotherAccount = Object.values(metadata.users || {}).some((user) => (
-        user.id !== session.user.id
-        && (target.type === 'email'
-          ? normalizeEmailValue(user.email) === target.value
-          : normalizePhoneValue(user.phone) === target.value)
-      ))
-      if ((existingUser && existingUser.id !== session.user.id) || boundByAnotherAccount) {
-        return res.status(409).json({ message: target.type === 'email' ? '该邮箱已绑定其他账号' : '该手机号已绑定其他账号' })
-      }
       // 同样以用户表为准：绑定手机/邮箱不应把 session 快照里可能过期的头像写回去。
       const stored = accountUserById(session.user.id) || session.user
       const user = upsertAccountUser({
         ...stored,
         [target.type]: target.value,
+        contactBindingType: target.type,
         loginMethods: mergeLoginMethods(stored.loginMethods, [boundMethodForTargetType(target.type)]),
       })
       syncAccountUserSessions(user)
@@ -269,7 +250,7 @@ export function registerAccountRoutes(app) {
     const session = requireAuthSession(req, res)
     if (!session) return
     const key = accountRecordOwnerKey(session.user.id)
-    metadata.records[key] = pruneOrphanRecordEntries(normalizeAccountRecords(req.body?.records))
+    metadata.records[key] = pruneOrphanRecordEntries(normalizeAccountRecords(recordInputs(req.body?.records)))
     persistMetadata()
     res.json({ records: metadata.records[key] })
   })
@@ -279,6 +260,7 @@ export function registerAccountRoutes(app) {
     const body = req.body || {}
     const incoming = Array.isArray(body.records) ? body.records : body.record ? [body.record] : []
     if (!incoming.length) return res.status(400).json({ message: '没有可同步的记录' })
+    recordInputs(incoming)
     const key = accountRecordOwnerKey(session.user.id)
     metadata.records[key] = mergeAccountRecords(accountRecordsForUser(session.user.id), incoming)
     persistMetadata()
@@ -288,7 +270,10 @@ export function registerAccountRoutes(app) {
     const session = requireAuthSession(req, res)
     if (!session) return
     const key = accountRecordOwnerKey(session.user.id)
-    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : []
+    const body = objectInput(req.body, ['ids','all'], { nonempty:true })
+    const clearAll = body.all === true && !Object.hasOwn(body,'ids')
+    if (!clearAll && (Object.hasOwn(body,'all') || !Array.isArray(body.ids) || !body.ids.length || body.ids.length > 200)) return res.status(400).json({ message: '请选择要删除的记录；全部清空需要明确确认' })
+    const ids = clearAll ? [] : [...new Set(body.ids.map(id => textInput(id,'记录 ID',180)))]
     // 记录联动清理：删除记录时，把该用户名下「已关闭/过期」的底层分享/收集任务连同磁盘文件一并清掉，
     // 否则记录删了、后台统计和磁盘上还挂着僵尸资源（后台「分享/收集任务/待清理」不同步的根源）。
     // 仍在有效期的资源照旧保留，对方的提取链接不受影响。
@@ -359,21 +344,9 @@ export function registerAccountRoutes(app) {
     const session = requireAuthSession(req, res)
     if (!session) return
     const key = accountRecordOwnerKey(session.user.id)
-    metadata.notificationSettings[key] = normalizeNotificationSettings(req.body?.settings)
+    const current = accountNotificationSettingsForUser(session.user.id)
+    metadata.notificationSettings[key] = booleanSettings(req.body?.settings, Object.keys(current), current)
     persistMetadata()
     res.json({ settings: metadata.notificationSettings[key] })
   })
-}
-
-function validAvatarData(value) {
-  if (Buffer.byteLength(value, 'utf8') > 600000) return false
-  const match = value.match(/^data:image\/(png|jpe?g|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/i)
-  if (!match) return false
-  const bytes = Buffer.from(match[2], 'base64')
-  if (bytes.toString('base64') !== match[2]) return false
-  const type = match[1].toLowerCase()
-  if (type === 'png') return bytes.length >= 45 && bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) && bytes.subarray(-12, -8).equals(Buffer.from([0,0,0,0])) && bytes.subarray(-8, -4).toString() === 'IEND'
-  if (type === 'jpg' || type === 'jpeg') return bytes.length >= 4 && bytes[0] === 255 && bytes[1] === 216 && bytes.at(-2) === 255 && bytes.at(-1) === 217
-  if (type === 'gif') return bytes.length >= 14 && /^GIF8[79]a$/.test(bytes.subarray(0,6).toString()) && bytes.at(-1) === 59
-  return bytes.length >= 20 && bytes.subarray(0,4).toString() === 'RIFF' && bytes.subarray(8,12).toString() === 'WEBP' && bytes.readUInt32LE(4) + 8 === bytes.length
 }

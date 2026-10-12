@@ -4,6 +4,7 @@
 // 注册顺序即 Express 匹配顺序，server.mjs 中的调用点顺序不可调整。
 import fs from 'node:fs'
 import path from 'node:path'
+import { INVALID_TEXT, textInput } from '../lib/input-validation.js'
 import {
   createToken, httpError
 } from '../lib/http.js'
@@ -33,7 +34,7 @@ const teamResourceRemovals = new Map()
 const INVITATION_TTL_MS = 7 * 86400000
 function validateTeamName(value, organizationId = '') {
   const name = typeof value === 'string' ? value.trim() : ''
-  if (!name || name.length > TEAM_NAME_MAX || /[\u0000-\u001f\u007f]/.test(value)) return { status: 400, message: `团队名称须为 1–${TEAM_NAME_MAX} 个字符，且不能包含控制字符` }
+  if (!name || name.length > TEAM_NAME_MAX || INVALID_TEXT.test(value) || !name.isWellFormed()) return { status: 400, message: `团队名称须为 1–${TEAM_NAME_MAX} 个字符，且不能包含控制字符` }
   if (Object.values(metadata.organizations || {}).some(item => item.id !== organizationId && item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) return { status: 409, message: '团队名称已存在，请使用其他名称' }
   return { name }
 }
@@ -396,7 +397,7 @@ export function registerWorkspaceRoutes(app) {
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
     if (organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以转让团队' })
-    const targetMemberId = trimRecordString(req.body?.targetMemberId, 40)
+    const targetMemberId = textInput(req.body?.targetMemberId,'目标成员 ID',40)
     if (!targetMemberId) return res.status(400).json({ message: '请指定要接管的成员' })
     const targetMember = organization.members.find((member) => member.id === targetMemberId)
     if (!targetMember || targetMember.status !== 'active') return res.status(400).json({ message: '只能转让给已加入团队的正式成员' })
@@ -549,7 +550,7 @@ export function registerWorkspaceRoutes(app) {
       return res.status(429).json({ message: '申请提交过于频繁，请稍后再试' })
     }
 
-    const joinMessage = trimRecordString(req.body?.message, 120)
+    const joinMessage = textInput(req.body?.message ?? '', '入团留言', 120, {optional:true,multiline:true})
     const now = new Date().toISOString()
     const requestId = createToken(16)
     const account = accountUserById(viewer.id) || viewer

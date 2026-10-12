@@ -43,6 +43,8 @@ import {
 } from '../lib/metadata-normalizers.js'
 
 import { metadata, persistMetadata, persistAuditLog } from '../lib/metadata-store.js'
+import { contactMatchesUser } from '../lib/contact-input.js'
+import { booleanInput, dateInput, integerInput, objectInput } from '../lib/input-validation.js'
 
 import { normalizeUploadFileName } from '../lib/upload.js'
 
@@ -56,7 +58,14 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 export function updateFileCleanupSettings(req, res) {
   const session = authSessionFromRequest(req)
   if (!session) return res.status(401).json({ message: '请先登录' })
-  const settings = normalizeFileCleanupSettings(req.body?.settings)
+  const input = objectInput(req.body?.settings, ['enabled','days'], { nonempty:true })
+  const settings = { ...normalizeFileCleanupSettings(accountUserById(session.user.id)?.fileCleanup) }
+  if (Object.hasOwn(input,'enabled')) settings.enabled = booleanInput(input.enabled,'文件清理开关')
+  if (Object.hasOwn(input,'days')) {
+    const days = integerInput(input.days,'清理天数',1,7)
+    if (![1,3,7].includes(days)) throw httpError(400,'清理天数仅支持 1、3、7 天')
+    settings.days = days
+  }
   session.user = { ...session.user, fileCleanup: settings }
   const user = upsertAccountUser(session.user)
   syncAccountUserSessions(user)
@@ -548,7 +557,15 @@ export function upsertAccountUser(user = {}) {
   const normalized = normalizeAccountUser(user)
   if (!normalized?.id) return publicUser(user)
   if (!metadata.users || typeof metadata.users !== 'object' || Array.isArray(metadata.users)) metadata.users = {}
-  metadata.users[normalized.id] = mergeAccountUser(metadata.users[normalized.id], user)
+  const existing = metadata.users[normalized.id]
+  const merged = mergeAccountUser(existing, user)
+  // OAuth 导入等路径也不能新增重复联系方式；历史记录保持原样，不做隐式解绑。
+  for (const type of ['email', 'phone']) {
+    if (!merged[type]) continue
+    const target = { type, value: merged[type] }
+    if (!contactMatchesUser(target, existing)) assertContactAvailable(target, normalized.id)
+  }
+  metadata.users[normalized.id] = merged
   return metadata.users[normalized.id]
 }
 
@@ -579,7 +596,13 @@ export function normalizeContactTarget(value) {
 export function findAccountUserByTarget(target) {
   if (!target) return null
   const users = Object.values(metadata.users || {})
-  return users.find((user) => target.type === 'email' ? normalizeEmailValue(user.email) === target.value : normalizePhoneValue(user.phone) === target.value) || null
+  return users.find((user) => contactMatchesUser(target, user)) || null
+}
+
+export function assertContactAvailable(target, userId) {
+  if (Object.values(metadata.users || {}).some(user => user.id !== userId && contactMatchesUser(target, user))) {
+    throw httpError(409, target.type === 'email' ? '该邮箱已绑定其他账号，请使用其他邮箱' : '该手机号已绑定其他账号，请使用其他手机号')
+  }
 }
 
 export function findAccountUserByInvitationTarget(value) {
@@ -692,11 +715,11 @@ export async function sendTencentSmsCode(phone, code, templateId) {
   const result = await response.json().catch(() => ({}))
   const error = result.Response?.Error
   if (!response.ok || error) {
-    throw new Error(error?.Message || `腾讯云短信返回 HTTP ${response.status}`)
+    throw Object.assign(new Error(error?.Message || `腾讯云短信返回 HTTP ${response.status}`), { code: error?.Code })
   }
   const sendStatus = result.Response?.SendStatusSet?.[0]
   if (sendStatus?.Code !== 'Ok') {
-    throw new Error(sendStatus?.Message || '腾讯云短信未接受发送请求')
+    throw Object.assign(new Error(sendStatus?.Message || '腾讯云短信未接受发送请求'), { code: sendStatus?.Code })
   }
   return result.Response
 }
@@ -711,7 +734,8 @@ export function hmac(key, value) {
 
 export function verifyAuthCode(target, value, scene) {
   cleanupVerificationCodes()
-  const codeHash = hashSecret(trimRecordString(value, 12))
+  // 非标量、非六位码也记为一次失败；不能通过错误格式绕过错误次数限制。
+  const codeHash = typeof value === 'string' && /^\d{6}$/.test(value) ? hashSecret(value) : null
   const list = metadata.verificationCodes
   const index = list.findIndex((item) => item.type === target.type && item.target === target.value && item.scene === scene)
   if (index < 0) throw httpError(400, '验证码不正确或已过期')
@@ -865,7 +889,7 @@ export function validateShareRecipient(share, viewer) {
   const account = accountUserById(viewer.id)
   const contactMatch = account && (share.recipientContacts || []).some((recipient) => {
     const contact = normalizeContactTarget(recipient)
-    return contact && (contact.type === 'email' ? normalizeEmailValue(account.email) === contact.value : normalizePhoneValue(account.phone) === contact.value)
+    return contact && contactMatchesUser(contact, account)
   })
   return contactMatch ? { ok: true } : { ok: false, status: 403, code: 'directed_access_denied', message: '当前账号不是此分享的指定收件人' }
 }
@@ -1213,14 +1237,23 @@ export async function reconcileUserUpgradeOrders(session, force = false) {
 
 export function activatePaidUpgradeOrder(order, expireAt = null) {
   if (order.status === 'paid') return
+  let checkedExpiry = null
+  if (expireAt !== null && expireAt !== undefined && expireAt !== '') {
+    try { checkedExpiry = dateInput(expireAt,'支付套餐有效期') } catch { throw httpError(502,'支付服务返回的套餐有效期无效，请稍后重新查询') }
+  }
   const account = accountUserById(order.userId)
   if (!account) throw httpError(404, '支付用户不存在')
   const plan = configuredAccountPlan(order.planId)
-  const currentExpiry = account.planExpiresAt ? new Date(account.planExpiresAt).getTime() : 0
-  const remoteExpiry = expireAt ? new Date(expireAt).getTime() : 0
+  const storedExpiry = account.planExpiresAt ? new Date(account.planExpiresAt).getTime() : 0
+  const currentExpiry = Number.isFinite(storedExpiry) ? storedExpiry : 0
+  const remoteExpiry = checkedExpiry ? new Date(checkedExpiry).getTime() : 0
   const currentPlan = accountPlanForUser(account)
   const renewalBase = currentPlan.id === order.planId ? Math.max(Date.now(), currentExpiry || 0) : Date.now()
-  const nextExpiry = Math.max(remoteExpiry || 0, renewalBase + (Number(order.remotePackageDays) || plan.validityDays || 30) * 86400000)
+  let packageDays
+  try { packageDays = integerInput(order.remotePackageDays ?? plan.validityDays ?? 30,'套餐有效天数',1,3650) }
+  catch { throw httpError(502,'支付服务返回的套餐有效天数无效，请稍后重新查询') }
+  const nextExpiry = Math.max(remoteExpiry, renewalBase + packageDays * 86400000)
+  if (nextExpiry > Date.now() + 3650 * 86400000) throw httpError(502,'套餐有效期超出允许范围')
   const keepHigherPlan = accountPlanRank(currentPlan.id) > accountPlanRank(order.planId)
   if (!keepHigherPlan) account.planId = order.planId
   account.planStartedAt = account.planStartedAt || new Date().toISOString()
@@ -1278,7 +1311,7 @@ export function authSessionFromRequest(req) {
   if (!sessionId) return null
   const session = metadata.sessions.find((item) => item.id === sessionId)
   if (!session) return null
-  if (new Date(session.expiresAt).getTime() <= Date.now()) {
+  if (!Number.isFinite(new Date(session.expiresAt).getTime()) || new Date(session.expiresAt).getTime() <= Date.now()) {
     removeAuthSession(sessionId)
     return null
   }

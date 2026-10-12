@@ -194,6 +194,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .account-bind-debug svg { color: var(--accent); }
 .account-bind-message { margin: -4px 0 0; color: #5f7b73; font-size: 11px; line-height: 1.6; }
 .account-bind-error, .settings-notice-error { margin: -4px 0 0; }
+.contact-input-hint { margin: 0; color: #607c73; font-size: 12px; font-weight: 400; line-height: 1.6; overflow-wrap: anywhere; }
+.account-bind-body > .contact-input-hint { margin-top: -8px; }
+.contact-input-hint.invalid { color: #a34435; }
+.contact-input-hint.valid { color: #128c73; }
+.settings-input-field input[aria-invalid="true"], .delivery-field input[aria-invalid="true"] { border-color: #c16b59; }
 .settings-notice-error { padding: 0 30px 22px; }
 .settings-list { padding: 0 30px; }
 .settings-action-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 76px; border-bottom: 1px solid #edf3f0; }

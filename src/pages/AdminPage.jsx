@@ -8,6 +8,7 @@ import { useConfirmDialog } from '../hooks.js'
 import { apiRequest, copyTextToClipboard } from '../lib/api.js'
 import { ConfirmModal, PublicShell } from '../components/common.jsx'
 import { formatBytes, formatDate } from '../lib/format.js'
+import { limitInputText } from '../lib/input-limits.js'
 export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -30,8 +31,9 @@ export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome
           <label className="admin-login-field">
             <span><UserRound size={14} /> 账号</span>
             <input
+              maxLength={120}
               value={username}
-              onChange={(event) => setUsername(event.target.value)}
+              onChange={(event) => setUsername(limitInputText(event.target.value, 120))}
               placeholder="请输入管理员账号"
               autoComplete="username"
               autoFocus
@@ -42,8 +44,9 @@ export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome
             <span><LockKeyhole size={14} /> 密码</span>
             <div className="admin-login-password">
               <input
+                maxLength={128}
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => setPassword(limitInputText(event.target.value, 128))}
                 type={showPassword ? 'text' : 'password'}
                 placeholder="请输入管理员密码"
                 autoComplete="current-password"
@@ -302,7 +305,7 @@ export function AdminResources({ resources = [], total = 0, requestConfirm, onCh
       setBusyId('')
     }
   }
-  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">分享与收集</p><h2>资源管理</h2></div><span>共 {total} 个资源{total > resources.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索资源名称、ID、提取码或归属用户" /></label><div className="admin-table">{filteredResources.length ? visibleResources.map((item) => <div className="admin-table-row" key={`${item.kind}-${item.id}`}><div className="admin-user-identity"><strong>{kindLabel(item)} · {item.name}</strong><span>{statusLabel(item.status)} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)} · 归属 {item.ownerUserId || '匿名'} · 建于 {formatDate(item.createdAt)}</span><span className="admin-resource-id-row"><button type="button" className="admin-resource-id" title={`资源 ID（${item.kind === 'share' ? '即分享链接 /share/ 末段' : '即收集链接 /collect/ 末段'}），点击复制`} onClick={() => copyResourceId(item)}>{copiedId === item.id ? <Check size={11} /> : <Copy size={11} />}<i>{item.id}</i>{copiedId === item.id ? '已复制' : ''}</button>{item.code ? <em className="admin-resource-code" title="提取码">提取码 {item.code}</em> : null}</span></div><div className="admin-user-actions"><small className="admin-user-usage">{item.expiresAt ? `截止 ${formatDate(item.expiresAt)}` : '永久有效'}</small><button className="secondary-button danger-lite" disabled={busyId === item.id} onClick={() => removeResource(item)}><Trash2 size={14} /> {busyId === item.id ? '删除中' : '删除'}</button></div></div>) : <div className="empty-manage"><Database size={25} /><span>没有匹配的资源</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredResources.length} pageSize={pageSize} onPageChange={setPage} /></div>
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">分享与收集</p><h2>资源管理</h2></div><span>共 {total} 个资源{total > resources.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索资源名称、ID、提取码或归属用户" /></label><div className="admin-table">{filteredResources.length ? visibleResources.map((item) => <div className="admin-table-row" key={`${item.kind}-${item.id}`}><div className="admin-user-identity"><strong>{kindLabel(item)} · {item.name}</strong><span>{statusLabel(item.status)} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)} · 归属 {item.ownerUserId || '匿名'} · 建于 {formatDate(item.createdAt)}</span><span className="admin-resource-id-row"><button type="button" className="admin-resource-id" title={`资源 ID（${item.kind === 'share' ? '即分享链接 /share/ 末段' : '即收集链接 /collect/ 末段'}），点击复制`} onClick={() => copyResourceId(item)}>{copiedId === item.id ? <Check size={11} /> : <Copy size={11} />}<i>{item.id}</i>{copiedId === item.id ? '已复制' : ''}</button>{item.code ? <em className="admin-resource-code" title="提取码">提取码 {item.code}</em> : null}</span></div><div className="admin-user-actions"><small className="admin-user-usage">{item.expiresAt ? `截止 ${formatDate(item.expiresAt)}` : '永久有效'}</small><button className="secondary-button danger-lite" disabled={busyId === item.id} onClick={() => removeResource(item)}><Trash2 size={14} /> {busyId === item.id ? '删除中' : '删除'}</button></div></div>) : <div className="empty-manage"><Database size={25} /><span>没有匹配的资源</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredResources.length} pageSize={pageSize} onPageChange={setPage} /></div>
 }
 
 export function AdminUsers({ users = [], total = 0, onUpdate }) {
@@ -317,7 +320,7 @@ export function AdminUsers({ users = [], total = 0, onUpdate }) {
   const safePage = Math.min(page, pageCount)
   const visibleUsers = filteredUsers.slice((safePage - 1) * pageSize, safePage * pageSize)
   useEffect(() => { setPage(1) }, [users.length, normalizedQuery])
-  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">账号与权益</p><h2>用户管理</h2></div><span>共 {total || users.length} 个用户{total > users.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索账号、手机号、邮箱或用户 ID" /></label><div className="admin-table">{filteredUsers.length ? visibleUsers.map((user) => <div className="admin-table-row" key={user.id}><div className="admin-user-identity"><strong>{user.nickname || user.username || user.id}</strong><span>{user.email || user.phone || user.id}</span></div><div className="admin-user-actions"><select className="admin-user-plan" value={user.planId} onChange={(event) => onUpdate(user, { planId: event.target.value })} aria-label={`${user.nickname || user.username || user.id}的套餐`}><option value="free">基础版</option><option value="member">会员版</option><option value="team">团队版</option><option value="enterprise">企业版</option></select><button className={user.status === 'disabled' ? 'secondary-button' : 'secondary-button danger-lite'} onClick={() => onUpdate(user, { status: user.status === 'disabled' ? 'active' : 'disabled' })}>{user.status === 'disabled' ? '启用' : '禁用'}</button><small className="admin-user-usage">{user.planLabel} · {formatBytes(user.usageBytes || 0)}</small></div></div>) : <div className="empty-manage"><Search size={25} /><span>没有匹配的用户</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredUsers.length} pageSize={pageSize} onPageChange={setPage} /></div>
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">账号与权益</p><h2>用户管理</h2></div><span>共 {total || users.length} 个用户{total > users.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索账号、手机号、邮箱或用户 ID" /></label><div className="admin-table">{filteredUsers.length ? visibleUsers.map((user) => <div className="admin-table-row" key={user.id}><div className="admin-user-identity"><strong>{user.nickname || user.username || user.id}</strong><span>{user.email || user.phone || user.id}</span></div><div className="admin-user-actions"><select className="admin-user-plan" value={user.planId} onChange={(event) => onUpdate(user, { planId: event.target.value })} aria-label={`${user.nickname || user.username || user.id}的套餐`}><option value="free">基础版</option><option value="member">会员版</option><option value="team">团队版</option><option value="enterprise">企业版</option></select><button className={user.status === 'disabled' ? 'secondary-button' : 'secondary-button danger-lite'} onClick={() => onUpdate(user, { status: user.status === 'disabled' ? 'active' : 'disabled' })}>{user.status === 'disabled' ? '启用' : '禁用'}</button><small className="admin-user-usage">{user.planLabel} · {formatBytes(user.usageBytes || 0)}</small></div></div>) : <div className="empty-manage"><Search size={25} /><span>没有匹配的用户</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredUsers.length} pageSize={pageSize} onPageChange={setPage} /></div>
 }
 
 export function AdminConfig({ config = {}, saving = false, onSubmit }) {

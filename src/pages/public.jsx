@@ -9,6 +9,7 @@ import { canReopenCollection, collectionFileAccept, collectionStatusText, create
 import { canPreviewFile, clearUploadResume, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, queryUploadResume, readCollectionUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { displayUserName, feedbackTone, formatBytes, formatDate, formatExpiry } from '../lib/format.js'
 import { MAX_FILES } from '../lib/constants.js'
+import { limitInputText } from '../lib/input-limits.js'
 
 export function TeamInvitePage({ slug }) {
   // 落地页自己探一次团队是否存在：无效 slug 时上方导语必须换成「链接已失效」，
@@ -77,9 +78,10 @@ export function SharePage({ token, enterpriseSlug = '' }) {
           <>
             <p className="public-copy">此分享受提取密码保护，验证密码后即可查看文件内容。</p>
             <div className="public-password">
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入提取密码" />
+              <input maxLength={128} type="password" value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} placeholder="请输入提取密码，最多 128 个字符" />
               <button className="primary-button" onClick={findShare}><KeyRound size={15} /> 验证密码</button>
             </div>
+            <small>{password.length}/128</small>
           </>
         ) : (
           <>

@@ -49,8 +49,10 @@ import {
   adminSessions, reservedShareCodes, shareLookupAttempts, uploadReservations, uploadSessions
 } from '../state.js'
 
+import { booleanInput, dateInput, integerInput, objectInput, textInput } from '../lib/input-validation.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import { contactMatchesUser, recipientInputError } from '../lib/contact-input.js'
 import crypto from 'node:crypto'
 import net from 'node:net'
 import { once } from 'node:events'
@@ -61,6 +63,11 @@ import QRCode from 'qrcode'
 export function requireUploadSessionOwner(req, res, next) {
   const session = uploadSessions.get(req.params.sessionId)
   if (!session) return res.status(404).json({ message: '上传会话不存在，请重新开始上传' })
+  const created = new Date(session.createdAt).getTime()
+  if (!Number.isFinite(created) || Date.now() - created >= UPLOAD_SESSION_TTL_MS) {
+    discardUploadSession(session)
+    return res.status(410).json({ message: '上传会话已过期，请重新开始上传' })
+  }
   const userId = authSessionFromRequest(req)?.user?.id
   const taskOwner = session.mode === 'collection' && userId && metadata.collections.some((task) => task.token === session.collectionToken && task.ownerUserId === userId)
   if (!taskOwner && session.ownerUserId && userId !== session.ownerUserId) {
@@ -539,17 +546,27 @@ export function shareAccessCookieValue(share) {
   return hashSecret(`share-preview:${share.id}:${share.passwordHash}`)
 }
 
+const pendingDownloads = new WeakMap()
 export function registerShareDownload(share, res) {
   if (res.req.method === 'HEAD') return
-  let counted = false
+  const pending = pendingDownloads.get(share) || 0
+  if (share.downloadLimit && share.downloadCount + pending >= share.downloadLimit) throw httpError(410,'下载次数已用完')
+  pendingDownloads.set(share, pending + 1)
+  let settled = false
+  const release = () => {
+    if (settled) return false
+    settled = true
+    pendingDownloads.set(share, Math.max(0,(pendingDownloads.get(share) || 0)-1))
+    return true
+  }
   res.on('finish', () => {
-    if (counted || res.statusCode < 200 || res.statusCode >= 300) return
-    counted = true
+    if (!release() || res.statusCode < 200 || res.statusCode >= 300) return
     share.downloadCount += 1
     share.updatedAt = new Date().toISOString()
     addShareDownloadedMessage(share)
     persistMetadata()
   })
+  res.on('close', release)
 }
 
 export function sendPreviewFile(req, res, next, filePath, file) {
@@ -867,7 +884,7 @@ export function resolveRecipientUserIds(recipients = [], legacy = false) {
     const contact = normalizeContactTarget(recipient)
     const raw = String(recipient).trim().toLowerCase()
     const matches = Object.values(metadata.users || {}).filter((user) => contact
-      ? (contact.type === 'email' ? normalizeEmailValue(user.email) === contact.value : normalizePhoneValue(user.phone) === contact.value)
+      ? contactMatchesUser(contact, user)
       : [user.id, user.username].some((value) => String(value || '').toLowerCase() === raw))
     if (!contact && matches.length !== 1 && !legacy) throw httpError(400, '指定账号不存在或不唯一，请使用账号 ID、邮箱或手机号')
     for (const user of matches) ids.add(user.id)
@@ -876,14 +893,20 @@ export function resolveRecipientUserIds(recipients = [], legacy = false) {
 }
 
 export function findUsersByRecipient(recipient) {
-  const raw = trimRecordString(recipient, 160).toLowerCase()
-  if (!raw) return []
-  const target = normalizeContactTarget(raw)
-  return Object.values(metadata.users || {}).filter((user) => {
-    if (target?.type === 'email' && normalizeEmailValue(user.email) === target.value) return true
-    if (target?.type === 'phone' && normalizePhoneValue(user.phone) === target.value) return true
-    return [user.id, user.username, user.nickname].some((value) => trimRecordString(value, 160).toLowerCase() === raw)
-  })
+  // 展示昵称不能参与寻址，通知对象与资源授权使用相同的账号/联系方式解析。
+  return resolveRecipientUserIds([recipient], true).map(accountUserById).filter(Boolean)
+}
+
+function uniqueRecipients(recipients) {
+  const targets = new Map()
+  for (const recipient of recipients) {
+    const ids = resolveRecipientUserIds([recipient]).sort()
+    const contact = normalizeContactTarget(recipient)
+    const key = ids.length ? 'users:' + JSON.stringify(ids) : 'contact:' + (contact?.value || recipient.toLowerCase())
+    // 同一账号填写邮箱和账号 ID 时保留邮箱入口，同时只发送一次站内通知。
+    if (!targets.has(key) || contact?.type === 'email') targets.set(key, recipient)
+  }
+  return [...targets.values()]
 }
 
 export async function notifyShareRecipients(share, req, ownerUser = null) {
@@ -1034,7 +1057,7 @@ export function resolveCollectionSubmitter(req) {
   const session = authSessionFromRequest(req)
   const user = session?.user?.id ? accountUserById(session.user.id) : null
   if (!user) {
-    return { submitterUserId: '', submitterName: '', participantName: String(req.body?.participantName || '').trim().slice(0, 40) }
+    return { submitterUserId: '', submitterName: '', participantName: textInput(req.body?.participantName ?? '', '提交人名称', 40, { optional:true }) }
   }
   const name = displayAccountName(user)
   return {
@@ -1049,6 +1072,9 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
   let reservedCode = ''
   try {
     const ownerSession = authSessionFromRequest(req)
+    // 断点恢复期间可能更换绑定，发布时仍需以当前用户资料校验收件人。
+    const recipientError = recipientInputError(options.recipients, accountUserById(ownerSession?.user?.id) || ownerSession?.user)
+    if (recipientError) throw httpError(400, recipientError)
     const totalSize = tempFiles.reduce((sum, file) => sum + Number(file.size || 0), 0)
     if (options.teamResource) {
       const organization = Object.values(metadata.organizations || {}).find((item) => item.id === options.teamOrganizationId)
@@ -1118,11 +1144,21 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
 // 会因个人 permanent=false 而无法往团队空间上传文件。
 export function readShareOptions(body = {}, user = null, isTeamResource = false) {
   const config = normalizeSystemConfig(metadata.systemConfig)
-  const recipients = parseRecipients(body.recipients, { max: 50 })
+  const rawRecipients = body.recipients ?? ''
+  const rawRecipientError = recipientInputError(rawRecipients, accountUserById(user?.id) || user)
+  if (rawRecipientError) throw httpError(400, rawRecipientError)
+  const recipients = uniqueRecipients(parseRecipients(rawRecipients))
   if (recipients.length && !user?.id) throw httpError(401, '定向发送需要先登录')
+  const recipientError = recipientInputError(recipients, accountUserById(user?.id) || user)
+  if (recipientError) throw httpError(400, recipientError)
   const recipientUserIds = resolveRecipientUserIds(recipients)
+  if (user?.id && recipientUserIds.includes(user.id)) throw httpError(400, '定向发送不能填写自己的手机号、邮箱或账号')
   // 兼容数字 0：'0'/'0'（永久）是合法值，不能被 || 吞掉回落默认天数。
-  const rawExpiryDays = body.expiryDays
+  const rawExpiryDays = body.expiryDays === undefined || body.expiryDays === '' ? config.defaultShareDays : body.expiryDays
+  integerInput(rawExpiryDays,'保存天数',0,config.maxShareDays)
+  if (body.codeLength !== undefined) integerInput(body.codeLength,'取件码长度',4,6)
+  const checkedDownloadLimit = normalizeDownloadLimit(body.downloadLimit)
+  const password = sharePasswordInput(body.password)
   const requestedExpiryDays = String(rawExpiryDays === 0 || rawExpiryDays === '0' ? '0' : (rawExpiryDays || config.defaultShareDays))
   const maxShareDays = config.maxShareDays
   if (requestedExpiryDays === '0' && !isTeamResource && !accountEffectivePlanForUser(user || {}).permanent) {
@@ -1130,8 +1166,8 @@ export function readShareOptions(body = {}, user = null, isTeamResource = false)
   }
   return {
     expiryDays: requestedExpiryDays === '0' ? '0' : String(Math.min(maxShareDays, Math.max(1, Number(requestedExpiryDays) || config.defaultShareDays))),
-    downloadLimit: String(body.downloadLimit || 'unlimited'),
-    password: String(body.password || ''),
+    downloadLimit: checkedDownloadLimit === null ? 'unlimited' : String(checkedDownloadLimit),
+    password,
     codeLength: Number(body.codeLength || 6),
     // 收件人上限：防止一次创建触发海量外发邮件（邮件放大/发信域名被封）。
     recipients,
@@ -1142,9 +1178,12 @@ export function readShareOptions(body = {}, user = null, isTeamResource = false)
 }
 
 export function normalizeDownloadLimit(value) {
-  if (!value || value === 'unlimited') return null
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null
+  if (value === 'unlimited' || value === null || value === undefined) return null
+  return integerInput(value,'下载次数',1,9999)
+}
+export function sharePasswordInput(value) {
+  if (value === undefined || value === '') return ''
+  return textInput(value,'提取密码',128)
 }
 
 export function findShareByManageToken(manageToken) {
@@ -1152,6 +1191,14 @@ export function findShareByManageToken(manageToken) {
 }
 
 export function applyShareUpdate(share, body = {}, ownerUser = null) {
+  objectInput(body, ['expiresAt','downloadLimit','clearPassword','password','status'], { nonempty:true })
+  if (Object.hasOwn(body,'clearPassword')) booleanInput(body.clearPassword,'清除密码')
+  if (Object.hasOwn(body,'password')) sharePasswordInput(body.password)
+  const draft = structuredClone(share)
+  applyShareUpdateDraft(draft, body, ownerUser)
+  Object.assign(share, draft)
+}
+function applyShareUpdateDraft(share, body = {}, ownerUser = null) {
   // 团队资源的有效期/永久权益由团队决定（与上传路径 readShareOptions(isTeamResource=true) 同口径），
   // 不按上传者个人套餐校验 —— 否则基础版成员上传的团队资源，连团队所有者都无法重新开启或调整有效期。
   const plan = share.teamResource ? { permanent: true } : accountEffectivePlanForUser(ownerUser || {})
@@ -1181,10 +1228,10 @@ export function applyShareUpdate(share, body = {}, ownerUser = null) {
   if (body.clearPassword) {
     share.passwordHash = null
   } else if (Object.prototype.hasOwnProperty.call(body, 'password') && String(body.password || '').trim()) {
-    share.passwordHash = hashSecret(String(body.password).trim())
+    share.passwordHash = hashSecret(sharePasswordInput(body.password))
   }
   if (Object.prototype.hasOwnProperty.call(body, 'status')) {
-    const status = String(body.status || '').trim()
+    const status = textInput(body.status, '分享状态', 20)
     if (!['active', 'closed'].includes(status)) throw httpError(400, '分享状态不支持')
     if (status === 'active') {
       if (!fs.existsSync(path.join(filesRoot, share.id))) {
@@ -1209,17 +1256,12 @@ export function applyShareUpdate(share, body = {}, ownerUser = null) {
 
 export function normalizeExpiryInput(value, label) {
   if (value === null || value === 'permanent' || value === 'unlimited') return null
-  const raw = String(value || '').trim()
-  if (!raw) return null
-  let date
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    const [year, month, day] = raw.split('-').map(Number)
-    date = new Date(year, month - 1, day, 23, 59, 59, 999)
-  } else {
-    date = new Date(raw)
+  dateInput(value, label)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number)
+    return new Date(year, month - 1, day, 23, 59, 59, 999).toISOString()
   }
-  if (Number.isNaN(date.getTime())) throw httpError(400, `${label}格式不正确`)
-  return date.toISOString()
+  return dateInput(value, label)
 }
 
 export function findShareByCode(code) {
@@ -1270,6 +1312,10 @@ export function normalizeCollectionAllowedTypes(types) {
   const allowed = Array.isArray(types) ? types.map(String).filter((type) => COLLECTION_TYPE_OPTIONS.includes(type)) : []
   if (!allowed.length || allowed.includes('全部格式')) return ['全部格式']
   return Array.from(new Set(allowed))
+}
+export function collectionTypesInput(types) {
+  if (!Array.isArray(types) || !types.length || types.length > COLLECTION_TYPE_OPTIONS.length || types.some(type => typeof type !== 'string' || !COLLECTION_TYPE_OPTIONS.includes(type))) throw httpError(400,'请选择有效的文件类型')
+  return normalizeCollectionAllowedTypes(types)
 }
 
 export function isAllowedType(filename, allowedTypes) {
