@@ -155,7 +155,7 @@ export function normalizePlanOverrides(value = {}) {
   const overrides = {}
   for (const planId of Object.keys(ACCOUNT_PLANS)) {
     const plan = source[planId] && typeof source[planId] === 'object' ? source[planId] : {}
-    const totalGb = Number(plan.totalGb ?? plan.totalGB)
+    const totalGb = Number(plan.totalGb ?? plan.totalGB ?? (Number(plan.totalBytes) / 1024 ** 3))
     const monthlyPrice = Number(plan.monthlyPrice)
     const validityDays = plan.validityDays === null || plan.validityDays === '' ? null : Number(plan.validityDays)
     const normalized = {}
@@ -169,7 +169,11 @@ export function normalizePlanOverrides(value = {}) {
 
 export function normalizeAuditLogs(value = []) {
   if (!Array.isArray(value)) return []
-  return value.map((item) => ({
+  return value.map(normalizeAuditLog).filter((item) => item.action).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, MAX_AUDIT_LOGS)
+}
+
+export function normalizeAuditLog(item) {
+  return {
     id: trimRecordString(item?.id, 80) || createToken(10),
     type: trimRecordString(item?.type, 30) || 'access',
     action: trimRecordString(item?.action, 180),
@@ -180,7 +184,7 @@ export function normalizeAuditLogs(value = []) {
     ip: trimRecordString(item?.ip, 80),
     details: item?.details && typeof item.details === 'object' ? item.details : {},
     createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
-  })).filter((item) => item.action).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, MAX_AUDIT_LOGS)
+  }
 }
 
 export function normalizeOrganizations(value = []) {
@@ -206,6 +210,7 @@ export function normalizeOrganizations(value = []) {
       reviewedAt: normalizeRecordDate(member?.reviewedAt),
       joinedAt: normalizeRecordDate(member?.joinedAt),
       invitedAt: normalizeRecordDate(member?.invitedAt),
+      invitationExpiresAt: normalizeRecordDate(member?.invitationExpiresAt),
     })) : []
     organizations[item.id] = {
       id: trimRecordString(item.id, 80),

@@ -16,6 +16,7 @@ import path from 'node:path'
 import os from 'node:os'
 import net from 'node:net'
 import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -157,20 +158,27 @@ while (Date.now() < deadline) {
   if (child.exitCode !== null) break
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`)
+    await res.arrayBuffer()
     if (res.ok) { ok = true; break }
   } catch { /* 还没起来 */ }
 }
 
-try { child.kill('SIGKILL') } catch { /* ignore */ }
+// Drain child-process handles before exiting; immediate process.exit after kill
+// can abort Node/libuv on Windows while its pipe close callbacks are pending.
+if (child.exitCode === null && child.signalCode === null) {
+  const closed = once(child, 'close')
+  try { child.kill('SIGKILL') } catch { /* ignore */ }
+  await closed
+}
 
 if (ok) {
   console.log('\n✓ /api/health 返回 200 —— 按 Dockerfile 的 COPY 清单能正常启动')
   console.log(`  物化目录：${stage}`)
-  process.exit(0)
+  process.exitCode = 0
+} else {
+  console.log('\n✗ 启动后 /api/health 未就绪')
+  if (stderr.trim()) console.log(`--- stderr ---\n${stderr.split('\n').slice(0, 15).join('\n')}`)
+  if (stdout.trim()) console.log(`--- stdout ---\n${stdout.split('\n').slice(0, 10).join('\n')}`)
+  console.log(`物化目录保留在 ${stage} 供排查`)
+  process.exitCode = 1
 }
-
-console.log('\n✗ 启动后 /api/health 未就绪')
-if (stderr.trim()) console.log(`--- stderr ---\n${stderr.split('\n').slice(0, 15).join('\n')}`)
-if (stdout.trim()) console.log(`--- stdout ---\n${stdout.split('\n').slice(0, 10).join('\n')}`)
-console.log(`物化目录保留在 ${stage} 供排查`)
-process.exit(1)

@@ -2,9 +2,12 @@
 //
 // 依赖方向：routes → services → lib → state → config（单向）
 // 注册顺序即 Express 匹配顺序，server.mjs 中的调用点顺序不可调整。
+import fs from 'node:fs'
+import path from 'node:path'
 import {
-  createToken
+  createToken, httpError
 } from '../lib/http.js'
+import { TEAM_NAME_MAX, TEAM_QUERY_MAX, filesRoot } from '../config.js'
 
 import {
   normalizeEmailValue, normalizePhoneValue, trimRecordString
@@ -19,11 +22,21 @@ import {
   accountTeamUsageForOrganization, accountUserById, accountWorkspacePayload, addAccountMessage,
   authSessionFromRequest, createOrganization, currentShareStatus, displayAccountName,
   fileListSize, findAccountUserByInvitationTarget, getOrigin, isJoinRequestRateLimited,
-  isOrganizationManager, joinRequestCooldownRemaining, organizationBySlug, publicFile,
+  isOrganizationManager, joinRequestCooldownRemaining, organizationBySlug, parseAccountRecordResource, publicFile,
   publicJoinRequestsForOrganization, publicOrganization, reconcileUserUpgradeOrders,
   recordAuditLog, recordJoinRequestAttempt, requireAuthSession, syncAccountUserSessions,
   upsertAccountUser, validateShareRecipient
 } from '../services/account.js'
+// 每分钟按真实来源与操作者限流，避免通过候选查询批量枚举账号。
+const memberSearchAttempts = new Map()
+const teamResourceRemovals = new Map()
+const INVITATION_TTL_MS = 7 * 86400000
+function validateTeamName(value, organizationId = '') {
+  const name = typeof value === 'string' ? value.trim() : ''
+  if (!name || name.length > TEAM_NAME_MAX || /[\u0000-\u001f\u007f]/.test(value)) return { status: 400, message: `团队名称须为 1–${TEAM_NAME_MAX} 个字符，且不能包含控制字符` }
+  if (Object.values(metadata.organizations || {}).some(item => item.id !== organizationId && item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) return { status: 409, message: '团队名称已存在，请使用其他名称' }
+  return { name }
+}
 export function registerWorkspaceRoutes(app) {
   app.get('/api/account/workspace', async (req, res) => {
     const session = requireAuthSession(req, res)
@@ -38,9 +51,8 @@ export function registerWorkspaceRoutes(app) {
     if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
     // 待审批的入团申请（status='requested'）不是成员，不计入成员观察/成员列表，也不应参与团队资源归属判定。
     const rosterMembers = organization.members.filter((member) => member.status !== 'requested')
-    const memberIds = new Set(rosterMembers.map((member) => member.userId).filter(Boolean))
     const memberUsage = rosterMembers.map((member) => {
-      const shares = metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && item.ownerUserId === member.userId)
+      const shares = metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && item.ownerUserId === member.userId && !item.cleanedAt)
       const shareBytes = shares.reduce((sum, item) => sum + fileListSize(item.files), 0)
       return {
         id: member.id,
@@ -62,7 +74,7 @@ export function registerWorkspaceRoutes(app) {
     // 避免越过上传者编辑他人资源（回归见 _verify_team_token_leak.mjs）。
     const canManageTeam = isOrganizationManager(organization, session.user.id)
     const resources = [
-      ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && memberIds.has(item.ownerUserId) && (canManageTeam || validateShareRecipient(item, session.user).ok)).map((item) => ({
+      ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && (canManageTeam || validateShareRecipient(item, session.user).ok)).map((item) => ({
         id: item.id,
         kind: 'share',
         name: item.files?.[0]?.name || '文件分享',
@@ -75,6 +87,7 @@ export function registerWorkspaceRoutes(app) {
         downloadCount: item.downloadCount || 0,
         createdAt: item.createdAt,
         expiresAt: item.expiresAt || null,
+        canDelete: item.ownerUserId === session.user.id || canManageTeam,
         ...(item.ownerUserId === session.user.id || canManageTeam ? {
           manageToken: item.manageToken,
           manageUrl: `${getOrigin(req)}/share/manage/${item.manageToken}`,
@@ -91,6 +104,49 @@ export function registerWorkspaceRoutes(app) {
       resources: resources.slice(0, 200),
     })
   })
+  app.delete('/api/account/team/resources/:resourceId', async (req, res, next) => {
+    try {
+      const session = requireAuthSession(req, res)
+      if (!session) return
+      // 以当前成员关系及资源固定组织归属判断权限，不信任客户端的角色、上传者或管理令牌。
+      const organization = accountOrganizationForUser(session.user.id)
+      if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
+      const share = metadata.shares.find(item => item.id === req.params.resourceId && item.teamResource && item.teamOrganizationId === organization.id)
+      if (!share) return res.status(404).json({ message: '团队资源不存在或已删除' })
+      if (!isOrganizationManager(organization, session.user.id) && share.ownerUserId !== session.user.id) return res.status(403).json({ message: '仅资源上传者或团队所有者可以删除该团队资源' })
+
+      const directory = path.resolve(filesRoot, share.id)
+      if (path.dirname(directory) !== path.resolve(filesRoot)) throw httpError(500, '资源存储路径无效，无法删除')
+      const deletedFileCount = share.files?.length || 0
+      const releasedBytes = fileListSize(share.files)
+      // 文件删除成功后再释放容量；失败保留资源记录供重试。
+      const pendingRemoval = teamResourceRemovals.get(share.id)
+      if (pendingRemoval) {
+        await pendingRemoval.catch(() => {})
+        if (!metadata.shares.some(item => item.id === share.id)) return res.status(404).json({ message: '团队资源已删除' })
+      }
+      const removal = fs.promises.rm(directory, { recursive: true, force: true })
+      teamResourceRemovals.set(share.id, removal)
+      try { await removal } finally {
+        if (teamResourceRemovals.get(share.id) === removal) teamResourceRemovals.delete(share.id)
+      }
+      // await 期间另一次删除可能已移除该资源，重新定位，避免删除相邻记录。
+      const index = metadata.shares.indexOf(share)
+      if (index < 0) return res.status(404).json({ message: '团队资源已删除' })
+      metadata.shares.splice(index, 1)
+      const removedKeys = new Set([share.id, share.manageToken, share.code].filter(Boolean))
+      for (const [userId, records] of Object.entries(metadata.records || {})) {
+        metadata.records[userId] = records.filter(record => {
+          const parsed = parseAccountRecordResource(record.id)
+          return parsed?.kind !== 'share' || !removedKeys.has(parsed.key)
+        })
+      }
+      persistMetadata()
+      recordAuditLog({ type: 'account', action: '删除团队资源', userId: session.user.id, targetId: share.id, details: { organizationId: organization.id, deletedFileCount, releasedBytes } })
+      res.json({ ok: true, deletedResourceId: share.id, deletedFileCount, releasedBytes, capacity: accountTeamUsageForOrganization(organization) })
+    } catch (error) { next(error) }
+  })
+
   app.get('/api/account/workspace/member-search', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -98,31 +154,45 @@ export function registerWorkspaceRoutes(app) {
     if (!organization || !isOrganizationManager(organization, session.user.id)) {
       return res.status(403).json({ message: '只有团队所有者可以检索可邀请成员' })
     }
-    const query = trimRecordString(req.query.q, 160).toLowerCase()
-    if (!query) return res.json({ users: [] })
+    const now = Date.now()
+    for (const [key, entry] of memberSearchAttempts) if (now - entry.startedAt >= 60000) memberSearchAttempts.delete(key)
+    const key = `${req.socket?.remoteAddress || 'unknown'}:${session.user.id}`
+    const attempts = memberSearchAttempts.get(key) || { startedAt: now, count: 0 }
+    if (attempts.count >= 30) return res.status(429).json({ message: '成员搜索过于频繁，请稍后再试' })
+    attempts.count++
+    memberSearchAttempts.set(key, attempts)
+    const rawQuery = req.query.q ?? ''
+    if (typeof rawQuery !== 'string' || rawQuery.length > TEAM_QUERY_MAX || /[\u0000-\u001f\u007f]/.test(rawQuery)) return res.status(400).json({ message: `搜索内容不能超过 ${TEAM_QUERY_MAX} 个字符，且不能包含控制字符` })
+    const query = rawQuery.trim().toLowerCase()
+    if (query.length < 3) return res.json({ users: [], page: 1, hasMore: false })
+    const page = Math.max(1, Math.min(1000, Number.parseInt(req.query.page, 10) || 1))
     const existingIds = new Set(organization.members.map((member) => String(member.userId || '')))
     const users = Object.values(metadata.users || {})
       .filter((user) => !existingIds.has(String(user.id)))
-      .filter((user) => [user.id, user.username, user.nickname, user.email, user.phone].some((value) => String(value || '').toLowerCase().includes(query)))
-      .slice(0, 8)
+      .filter((user) => user.status !== 'disabled' && user.status !== 'banned')
+      // 联系方式只允许精确匹配；昵称/账号允许模糊匹配。
+      .filter((user) => [user.id, user.email, user.phone].some(value => value && String(value).toLowerCase() === query) || [user.username === user.email || user.username === user.phone ? '' : user.username, user.nickname].some(value => value && String(value).toLowerCase().includes(query)))
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    const hasMore = users.length > page * 8
+    const candidates = users.slice((page - 1) * 8, page * 8)
       .map((user) => ({
         id: user.id,
-        username: user.username || '',
+        username: user.username === user.email || user.username === user.phone ? '' : user.username || '',
         nickname: user.nickname || '',
-        email: user.email || '',
-        phone: user.phone || '',
+        email: user.email ? `${user.email.slice(0, 1)}***@${user.email.split('@')[1] || ''}` : '',
+        phone: user.phone ? `${user.phone.slice(0, 3)}****${user.phone.slice(-4)}` : '',
         displayName: displayAccountName(user),
       }))
-    res.json({ users })
+    res.json({ users: candidates, page, hasMore })
   })
   app.post('/api/account/workspace', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
     if (!accountEffectivePlanForUser(session.user).team) return res.status(403).json({ message: '团队空间需要团队版或企业版权益' })
     if (accountOrganizationForUser(session.user.id)) return res.status(409).json({ message: '你已经加入一个团队空间' })
-    const name = trimRecordString(req.body?.name, 80)
-    if (!name) return res.status(400).json({ message: '请填写团队名称' })
-    const organization = createOrganization(session.user, name)
+    const result = validateTeamName(req.body?.name)
+    if (result.status) return res.status(result.status).json({ message: result.message })
+    const organization = createOrganization(session.user, result.name)
     persistMetadata()
     res.status(201).json(accountWorkspacePayload(session.user))
   })
@@ -132,9 +202,9 @@ export function registerWorkspaceRoutes(app) {
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
     if (organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以修改团队空间' })
-    const name = trimRecordString(req.body?.name, 80)
-    if (!name) return res.status(400).json({ message: '请填写团队名称' })
-    organization.name = name
+    const result = validateTeamName(req.body?.name, organization.id)
+    if (result.status) return res.status(result.status).json({ message: result.message })
+    organization.name = result.name
     organization.updatedAt = new Date().toISOString()
     persistMetadata()
     res.json(accountWorkspacePayload(session.user))
@@ -146,15 +216,22 @@ export function registerWorkspaceRoutes(app) {
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '请先创建团队空间' })
     if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以管理成员' })
-    const rawTarget = trimRecordString(req.body?.target, 160)
-    const userId = trimRecordString(req.body?.userId, 120)
+    const targetValue = req.body?.target ?? ''
+    const userIdValue = req.body?.userId ?? ''
+    // Validate before trimming/looking up so oversized input cannot invite a
+    // different account by silently truncating its identifier.
+    if (typeof targetValue !== 'string' || targetValue.length > TEAM_QUERY_MAX || /[\u0000-\u001f\u007f]/.test(targetValue)) return res.status(400).json({ message: `邀请目标不能超过 ${TEAM_QUERY_MAX} 个字符，且不能包含控制字符` })
+    if (typeof userIdValue !== 'string' || userIdValue.length > 120 || /[\u0000-\u001f\u007f]/.test(userIdValue)) return res.status(400).json({ message: '成员账号 ID 无效，不能超过 120 个字符或包含控制字符' })
+    const rawTarget = targetValue.trim()
+    const userId = userIdValue.trim()
     const matchedUser = userId ? accountUserById(userId) : findAccountUserByInvitationTarget(rawTarget)
     if (!rawTarget && !userId) return res.status(400).json({ message: '请输入成员邮箱、手机号或登录账号' })
     if (!matchedUser) return res.status(404).json({ message: '未找到对应的鲲穹账号，请确认邮箱、手机号或登录账号正确' })
     if (matchedUser.id === session.user.id) return res.status(409).json({ message: '不能邀请自己加入团队空间' })
     const existingOrganization = accountOrganizationForUser(matchedUser.id)
     if (existingOrganization && existingOrganization.id !== organization.id) return res.status(409).json({ message: '该账号已经加入其他团队空间' })
-    if (organization.members.some((member) => member.userId === matchedUser.id || (member.email && matchedUser.email && member.email === matchedUser.email) || (member.phone && matchedUser.phone && member.phone === matchedUser.phone))) {
+    const previousInvitation = organization.members.find(member => member.userId === matchedUser.id && member.status === 'invited' && (!member.invitationId || new Date(member.invitationExpiresAt || new Date(new Date(member.invitedAt).getTime() + INVITATION_TTL_MS)).getTime() <= Date.now()))
+    if (organization.members.some((member) => member !== previousInvitation && (member.userId === matchedUser.id || (member.email && matchedUser.email && member.email === matchedUser.email) || (member.phone && matchedUser.phone && member.phone === matchedUser.phone)))) {
       return res.status(409).json({ message: '该成员已在团队空间中' })
     }
     const invitationId = createToken(16)
@@ -169,7 +246,9 @@ export function registerWorkspaceRoutes(app) {
       invitationId,
       joinedAt: null,
       invitedAt: new Date().toISOString(),
+      invitationExpiresAt: new Date(Date.now() + INVITATION_TTL_MS).toISOString(),
     }
+    if (previousInvitation) organization.members = organization.members.filter(item => item !== previousInvitation)
     organization.members.push(member)
     addAccountMessage(matchedUser.id, {
       category: 'other',
@@ -193,6 +272,8 @@ export function registerWorkspaceRoutes(app) {
     if (!organization) return res.status(404).json({ message: '团队邀请不存在或已处理' })
     const member = organization.members.find((item) => item.invitationId === invitationId && item.userId === session.user.id)
     if (!member || member.status !== 'invited') return res.status(409).json({ message: '该团队邀请已经处理' })
+    const expiresAt = member.invitationExpiresAt ? new Date(member.invitationExpiresAt).getTime() : new Date(member.invitedAt).getTime() + INVITATION_TTL_MS
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return res.status(410).json({ message: '团队邀请已过期，请联系所有者重新邀请' })
 
     const invitationMessages = accountMessagesForUser(session.user.id).filter((item) => item.actionId === invitationId)
     if (decision === 'decline') {
@@ -388,7 +469,14 @@ export function registerWorkspaceRoutes(app) {
         })) notifiedCount += 1
       }
     }
+    // 团队资源保留文件本体便于后续运维清理，立即关闭全部团队提取入口。
+    for (const share of metadata.shares.filter(item => item.teamResource && item.teamOrganizationId === organization.id)) {
+      share.status = 'closed'
+      share.closeReason = 'team_dissolved'
+      share.updatedAt = now
+    }
     delete metadata.organizations[organization.id]
+    persistMetadata()
     recordAuditLog({
       type: 'team',
       action: '解散团队',

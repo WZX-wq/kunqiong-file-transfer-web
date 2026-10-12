@@ -2,7 +2,7 @@ import React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState } from '../lib/api.js'
 import { ConfirmModal, FeedbackMessage, LoadingBlock, PublicShell, StateBlock } from '../components/common.jsx'
-import { Building2, CalendarDays, Clock3, Download, Eye, FileText, FolderOpen, Inbox, KeyRound, Link2, Pause, Play, QrCode, RefreshCw, Settings2, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
+import { ArrowLeft, Building2, CalendarDays, Clock3, Download, Eye, FileText, FolderOpen, Inbox, KeyRound, Link2, Pause, Play, QrCode, RefreshCw, Settings2, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
 import { CollectionLimitInfo, DownloadProgressPanel, FileFormatBadge, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, TeamJoinRequestCard, UserAvatar, toFileItems } from '../components/ui.jsx'
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canReopenCollection, collectionFileAccept, collectionStatusText, createCollectionRecord, createShareRecord, isAllowedCollectionFile, saveAuthoritativeLocalRecord, savePublicRecord, shareStatusText } from '../lib/records.js'
@@ -173,6 +173,7 @@ export function ShareManagePage({ token }) {
   return (
     <PublicShell>
       <div className="public-card manage-card">
+        <a className="secondary-button manage-back-link" href={share.enterpriseUrl ? '/team?tab=resources' : '/?view=records'}><ArrowLeft size={16} aria-hidden="true" />{share.enterpriseUrl ? '返回团队资源' : '返回收发记录'}</a>
         <p className="eyebrow">分享管理</p>
         <div className="manage-title-row">
           <h1>{share.files?.[0]?.name || '文件分享'}</h1>

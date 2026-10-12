@@ -1,0 +1,249 @@
+// TEAM-001–013：真实接口和磁盘持久化，一次性副本中的合成账号，不操作真实团队。
+import assert from 'node:assert/strict'
+import { readFixtureMetadata } from './lib/read-audit-fixture.mjs'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import net from 'node:net'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { setTimeout as delay } from 'node:timers/promises'
+import { fileURLToPath } from 'node:url'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-team-'))
+function copy(from,to){fs.mkdirSync(to,{recursive:true});for(const e of fs.readdirSync(from,{withFileTypes:true})){const source=path.join(from,e.name),target=path.join(to,e.name);if(e.isDirectory())copy(source,target);else if(e.isFile())fs.copyFileSync(source,target)}}
+copy(path.join(root, 'server'), path.join(fixture, 'server'))
+fs.copyFileSync(path.join(root, 'package.json'), path.join(fixture, 'package.json'))
+fs.symlinkSync(path.join(root, 'node_modules'), path.join(fixture, 'node_modules'), 'junction')
+const control = `
+const { default: fixtureFs } = await import('node:fs');
+const fixtureRm = fixtureFs.promises.rm;
+let failResourceRemoval = false;
+fixtureFs.promises.rm = async (directory, ...args) => {
+ if (failResourceRemoval && String(directory).endsWith('delete-failure')) { failResourceRemoval = false; const error = new Error('fixture: storage cannot remove resource'); error.code = 'EACCES'; throw error; }
+ return fixtureRm(directory, ...args);
+};
+app.post('/__team_fixture', async (req, res) => {
+ const { metadata, persistMetadata } = await import('./server/lib/metadata-store.js');
+ if (req.body.expireInvitation) for (const org of Object.values(metadata.organizations)) for (const member of org.members) if (member.invitationId === req.body.expireInvitation) { member.invitedAt = new Date(Date.now()-8*86400000).toISOString(); member.invitationExpiresAt = new Date(Date.now()-1).toISOString(); }
+ if (req.body.quota !== undefined) { metadata.shares = metadata.shares.filter(s=>s.id!=='quota-filler'); if (req.body.quota < 1024**4) metadata.shares.push({id:'quota-filler',ownerUserId:'transfer',teamResource:true,teamOrganizationId:'main',status:'active',createdAt:new Date().toISOString(),files:[{name:'quota-filler.bin',size:1024**4-req.body.quota}]}); }
+ if (req.body.failResourceRemoval) failResourceRemoval = true;
+ persistMetadata(); res.json({ok:true});
+});
+`
+fs.writeFileSync(path.join(fixture, 'server.mjs'), fs.readFileSync(path.join(root, 'server.mjs'), 'utf8').replace('registerWorkspaceRoutes(app)', control + '\nregisterWorkspaceRoutes(app)'))
+const now = new Date().toISOString(), future = new Date(Date.now() + 30*86400000).toISOString()
+const ids = ['owner','member','member2','transfer','owner2','other','removeOwner','victim','leaveOwner','leaver','dissolveOwner','dissolveMember','outsider','accept','decline','expired','create','empty','long','control','duplicate',...Array.from({length:12},(_,i)=>'candidate'+i)]
+const users = Object.fromEntries(ids.map((id,i)=>[id,{id,username:id,nickname:id,email:id+'@example.test',phone:'138'+String(i).padStart(8,'0'),planId:['member','member2','victim','leaver','dissolveMember','other','outsider','accept','decline','expired'].includes(id)?'free':'enterprise',status:'active',fileCleanup:{enabled:false,days:7}}]))
+const boundaryUserId = 'u'.repeat(120)
+users[boundaryUserId] = { id: boundaryUserId, username: 'id-boundary-fixture', nickname: 'ID边界用户', planId: 'free', status: 'active' }
+for (const id of ['name-min', 'name-max', 'name-html', 'name-emoji', 'name-invalid', 'name-duplicate']) users[id] = { id, username: id, nickname: id, planId: 'enterprise', status: 'active' }
+const org = (id, owner, members) => ({id,slug:id+'-slug',name:id+'团队',ownerUserId:owner,createdAt:now,updatedAt:now,members:[owner,...members].map(userId=>({id:'m-'+userId,userId,displayName:userId,role:userId===owner?'owner':'member',status:'active',joinedAt:now}))})
+const organizations = Object.fromEntries([org('main','owner',['member','member2','transfer']),org('second','owner2',['other']),org('remove','removeOwner',['victim']),org('leave','leaveOwner',['leaver']),org('dissolve','dissolveOwner',['dissolveMember'])].map(o=>[o.id,o]))
+for(const o of Object.values(organizations)) for(const m of o.members) Object.assign(users[m.userId],{organizationId:o.id,organizationRole:m.role})
+const safe = fs.readFileSync(path.join(root,'测试数据/鲲穹文件传输测试数据包/01-安全文件集/TC-03-01-安全文本-可预览.txt'))
+const makeShare = (id,ownerUserId,teamOrganizationId='') => ({id,code:id.toUpperCase(),manageToken:id+'-manage',ownerUserId,teamResource:!!teamOrganizationId,teamOrganizationId,status:'active',files:[{name:'safe.txt',storedName:'safe.txt',size:safe.length,reviewStatus:'clean',scanEngine:'clamav',scannedAt:now}],createdAt:now,expiresAt:future,downloadCount:0})
+const shares = [makeShare('main-file','member','main'),makeShare('victim-team','victim','remove'),makeShare('victim-personal','victim'),makeShare('dissolve-team','dissolveMember','dissolve'),makeShare('dissolve-personal','dissolveMember'),makeShare('enterprise-personal','owner2'),makeShare('delete-own','member','main'),makeShare('delete-peer','member2','main'),makeShare('delete-race','member2','main'),makeShare('delete-cross','member','second'),makeShare('delete-personal','member'),makeShare('delete-removed','victim','remove')]
+shares.find(s => s.id === 'delete-own').files.push({ name: 'second.txt', relativePath: 'folder/second.txt', storedName: 'second.txt', size: safe.length, reviewStatus: 'clean', scanEngine: 'clamav', scannedAt: now })
+shares.find(s => s.id === 'delete-personal').ownerUserId = 'member2'
+const records = { member: [{ id: 'my_sent:share:delete-own' }, { id: 'my_sent:share:main-file' }], owner: [{ id: 'sent_to_me:share:delete-own-manage' }, { id: 'sent_to_me:share:DELETE-OWN' }, { id: 'sent_to_me:share:main-file' }] }
+shares.push(makeShare('delete-failure', 'member', 'main'), makeShare('delete-ownership', 'member2', 'main'), { ...makeShare('delete-closed', 'member', 'main'), status: 'closed' })
+const collections = [{id:'task',token:'tasktoken',manageToken:'taskmanage',ownerUserId:'owner2',title:'TEAM collection',deadline:future,maxFileSizeMb:10,allowedTypes:['全部格式'],submissions:[],createdAt:now}]
+fs.mkdirSync(path.join(fixture,'storage'),{recursive:true})
+const metadataFile = path.join(fixture,'storage/metadata.json')
+fs.writeFileSync(metadataFile,JSON.stringify({users,organizations,shares,collections,records,sessions:[...Object.values(users).map(user=>({id:user.id+'-session',user,expiresAt:future})),{id:'delete-expired-session',user:users.member,expiresAt:new Date(Date.now()-1000).toISOString()}],messages:{},upgradeOrders:[]}))
+for(const share of shares){const dir=path.join(fixture,'storage/files',share.id);fs.mkdirSync(dir,{recursive:true});for(const file of share.files)fs.writeFileSync(path.join(dir,file.storedName),safe)}
+let scans=0
+// 模拟 ClamAV INSTREAM 协议，验证实际上传和扫描调用；不是病毒引擎检出率测试。
+const scanner=net.createServer(socket=>{let input=Buffer.alloc(0),command=false;socket.on('error',()=>{});socket.on('data',part=>{input=Buffer.concat([input,part]);if(!command){const end=input.indexOf(0);if(end<0)return;assert.equal(input.subarray(0,end).toString(),'zINSTREAM');input=input.subarray(end+1);command=true}while(input.length>=4){const n=input.readUInt32BE(0);if(input.length<n+4)return;input=input.subarray(n+4);if(!n){scans++;socket.end('stream: OK\0');return}}})})
+await new Promise(r=>scanner.listen(0,'127.0.0.1',r))
+let child,base,stderr='',passed=0,currentCase='',failures=[],cases=[],requests=[]
+const cleanEnv={...process.env};for(const key of Object.keys(cleanEnv))if(/^(KUNQIONG_|OAUTH_)/.test(key))delete cleanEnv[key]
+async function start(){const probe=net.createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));base='http://127.0.0.1:'+port;child=spawn(process.execPath,['server.mjs'],{cwd:fixture,windowsHide:true,env:{...cleanEnv,PORT:String(port),NODE_ENV:'production',KUNQIONG_DB_ENABLED:'false',KUNQIONG_HOST:'127.0.0.1',KUNQIONG_SCAN_MODE:'required',KUNQIONG_CLAMAV_HOST:'127.0.0.1',KUNQIONG_CLAMAV_PORT:String(scanner.address().port)},stdio:['ignore','ignore','pipe']});child.stderr.on('data',d=>stderr+=d);for(let i=0;i<100;i++){try{if((await fetch(base+'/api/health')).ok)return}catch{}await delay(50)}throw Error(stderr||'fixture did not start')}
+async function stop(){if(!child||child.exitCode!==null)return;const ended=once(child,'exit');child.kill();await Promise.race([ended,delay(3000)])}
+const stored=()=>readFixtureMetadata(metadataFile)
+async function api(url,{user='owner',method='GET',body,headers={}}={}){const response=await fetch(base+url,{method,redirect:'manual',headers:{...(user?{cookie:`kunqiong_session=${user}-session`}:{}),...(body&&! (body instanceof FormData)?{'content-type':'application/json'}:{}),...headers},body:body instanceof FormData?body:body?JSON.stringify(body):undefined});const bytes=Buffer.from(await response.arrayBuffer());let data;try{data=JSON.parse(bytes.toString())}catch{data={bytes:bytes.length}}requests.push({case:currentCase,method,url,user:user||'anonymous',status:response.status,response:JSON.parse(JSON.stringify(data,(k,v)=>/Token|sessionId|invitationId/.test(k)?'[redacted]':v))});return {status:response.status,data,bytes}}
+function check(label,condition){if(condition){passed++;console.log('PASS '+currentCase+' '+label)}else{failures.push({id:currentCase,message:label});console.log('FAIL '+currentCase+' '+label)}}
+async function group(id,fn){currentCase=id;const before=failures.length;try{await fn()}catch(e){failures.push({id,message:e.message});console.log('ERROR '+id+' '+e.stack)}cases.push({id,status:failures.length===before?'PASS':'FAIL'})}
+const sessionBody=(name,size=safe.length)=>({mode:'team_resource',files:[{name,relativePath:name,size,mimeType:'text/plain'}],expiryDays:'0',downloadLimit:'unlimited'})
+async function createUpload(user,name,size=safe.length){return api('/api/upload-sessions',{user,method:'POST',body:sessionBody(name,size)})}
+async function chunks(user,sid,files=[{name:'safe.txt',content:safe}]){for(let i=0;i<files.length;i++){const fd=new FormData();fd.append('fileIndex',String(i));fd.append('chunkIndex','0');fd.append('totalChunks','1');fd.append('chunk',new Blob([files[i].content]),'chunk');const r=await api(`/api/upload-sessions/${sid}/chunks`,{user,method:'POST',body:fd});assert.equal(r.status,200,JSON.stringify(r.data))}}
+async function invite(user){const r=await api('/api/account/workspace/members',{method:'POST',body:{userId:user}});assert.equal(r.status,201,JSON.stringify(r.data));return stored().organizations.main.members.find(m=>m.userId===user).invitationId}
+try{
+ await start()
+ await group('TEAM-INPUT-LIMITS', async () => {
+  const before = stored().organizations.main.members.length
+  for (const body of [
+   { target: 'x'.repeat(161) },
+   { target: 'x'.repeat(160) + ' ' },
+   { userId: boundaryUserId + 'x' },
+   { target: 'accept\u0000' },
+   { target: ['accept'] },
+  ]) {
+   const result = await api('/api/account/workspace/members', { method: 'POST', body })
+   check('非法邀请输入明确拒绝 ' + JSON.stringify(body).slice(0, 35), result.status === 400)
+  }
+  check('非法邀请不增加成员或邀请', stored().organizations.main.members.length === before)
+  check('160字符邀请目标无需截断且正常查找', (await api('/api/account/workspace/members', { method: 'POST', body: { target: 'x'.repeat(160) } })).status === 404)
+  check('120字符账号ID可正常邀请', (await api('/api/account/workspace/members', { method: 'POST', body: { userId: boundaryUserId } })).status === 201)
+  for (const query of ['x'.repeat(161), 'x'.repeat(160) + ' ']) check('超长搜索拒绝 ' + query.length, (await api('/api/account/workspace/member-search?q=' + encodeURIComponent(query))).status === 400)
+  check('160字符搜索正常处理', (await api('/api/account/workspace/member-search?q=' + 'x'.repeat(160))).status === 200)
+ })
+ await group('TEAM-NAME-BOUNDARIES', async () => {
+  const before = Object.keys(stored().organizations).length
+  for (const name of ['', '   ', '名'.repeat(81), '名'.repeat(79) + '😀', 'name\n', 'name\u0000', null, ['team']]) {
+   check('非法创建名称拒绝 ' + JSON.stringify(name).slice(0, 20), (await api('/api/account/workspace', { user: 'name-invalid', method: 'POST', body: { name } })).status === 400)
+  }
+  check('非法创建不产生组织或账号归属', Object.keys(stored().organizations).length === before && !stored().users['name-invalid'].organizationId)
+  for (const [user, name] of [['name-min', '一'], ['name-max', '名'.repeat(80)], ['name-html', '<img src=x onerror=alert(1)>'], ['name-emoji', '名'.repeat(78) + '😀']]) {
+   const result = await api('/api/account/workspace', { user, method: 'POST', body: { name } })
+   check('合法名称边界完整创建 ' + user, result.status === 201 && result.data.organization.name === name)
+  }
+  check('重复名称去空白后拒绝', (await api('/api/account/workspace', { user: 'name-duplicate', method: 'POST', body: { name: ' 一 ' } })).status === 409)
+  const snapshot = (await api('/api/account/workspace', { user: 'name-max' })).data.organization
+  for (const name of ['', '   ', '名'.repeat(81), 'name\u007f', ['team']]) check('修改非法名称拒绝', (await api('/api/account/workspace', { user: 'name-max', method: 'PATCH', body: { name } })).status === 400)
+  check('失败修改保留原名和ID', (await api('/api/account/workspace', { user: 'name-max' })).data.organization.name === snapshot.name)
+  check('修改为重复名称拒绝', (await api('/api/account/workspace', { user: 'name-max', method: 'PATCH', body: { name: '一' } })).status === 409)
+  await stop(); await start()
+  const after = (await api('/api/account/workspace', { user: 'name-max' })).data.organization
+  check('80字符名称重启后完整且ID/slug稳定', after.name === snapshot.name && after.id === snapshot.id && after.slug === snapshot.slug)
+ })
+ await group('TEAM-001',async()=>{for(const url of ['/api/account/workspace','/api/account/team/overview','/api/account/workspace/member-search?q=owner']){const r=await api(url,{user:''});check('游客拒绝 '+url,r.status===401&&!JSON.stringify(r.data).includes('main团队'))}})
+ await group('TEAM-002',async()=>{
+  for(const [user,name] of [['empty','  '],['long','名'.repeat(81)],['control','name\u0000']])check('异常名称拒绝 '+user,(await api('/api/account/workspace',{user,method:'POST',body:{name}})).status===400)
+  const valid=await api('/api/account/workspace',{user:'create',method:'POST',body:{name:'TEAM合法团队'}});check('合法创建',valid.status===201);assert.ok(valid.data.organization);check('slug唯一',new Set(Object.values(stored().organizations).map(o=>o.slug)).size===Object.keys(stored().organizations).length)
+  check('重复名称拒绝',(await api('/api/account/workspace',{user:'duplicate',method:'POST',body:{name:'TEAM合法团队'}})).status===409)
+  check('同账号重复创建拒绝',(await api('/api/account/workspace',{user:'create',method:'POST',body:{name:'另一个团队'}})).status===409)
+  check('创建后的邀请入口可探测',(await api('/api/organizations/'+valid.data.organization.slug+'/join-request',{user:''})).data.reason==='anonymous')
+ })
+ await group('TEAM-003',async()=>{
+  const before=stored().organizations.main
+  check('普通成员不能修改团队名称',(await api('/api/account/workspace',{user:'member',method:'PATCH',body:{name:'无权改名'}})).status===403)
+  check('拒绝改名后原名保留',stored().organizations.main.name===before.name)
+  const r=await api('/api/account/workspace',{method:'PATCH',body:{name:'TEAM重命名'}})
+  check('名称修改',r.status===200)
+  await stop();await start()
+  const after=(await api('/api/account/workspace')).data.organization
+  check('重启持久化且ID slug不变',after.name==='TEAM重命名'&&after.id===before.id&&after.slug===before.slug)
+  check('邀请入口名称同步',(await api('/api/organizations/main-slug/join-request',{user:''})).data.organizationName===after.name)
+  check('资源归属不变',stored().shares.find(s=>s.id==='main-file').teamOrganizationId==='main')
+  check('修改超长拒绝',(await api('/api/account/workspace',{method:'PATCH',body:{name:'a'.repeat(81)}})).status===400)
+ })
+ await group('TEAM-RESOURCE-DELETE', async () => {
+  const ownUrl = '/api/account/team/resources/delete-own'
+  const before = (await api('/api/account/team/overview')).data
+  const ownerResources = before.resources
+  const memberResources = (await api('/api/account/team/overview', { user: 'member' })).data.resources
+  check('所有者可删除团队资源', ownerResources.every(r => r.canDelete === true))
+  check('普通成员仅可删除本人上传资源', memberResources.every(r => r.canDelete === (r.ownerUserId === 'member')))
+  const snapshot = JSON.stringify(stored().shares)
+  for (const [label, url, options, status] of [
+   ['游客', ownUrl, { user: '' }, 401],
+   ['无效会话', ownUrl, { user: 'no-session' }, 401],
+   ['过期会话', ownUrl, { user: 'delete-expired' }, 401],
+   ['他人资源和伪造上传者', ownUrl, { user: 'member2', body: { ownerUserId: 'member2', canDelete: true, manageToken: 'delete-own-manage' } }, 403],
+   ['跨团队所有者', ownUrl, { user: 'owner2' }, 404],
+   ['跨团队上传者', '/api/account/team/resources/delete-cross', { user: 'member' }, 404],
+   ['个人资源', '/api/account/team/resources/delete-personal', { user: 'member2' }, 404],
+   ['尚未入团账号', ownUrl, { user: 'decline' }, 404],
+   ['跨域来源', ownUrl, { user: 'owner', headers: { origin: 'https://evil.example.test', 'sec-fetch-site': 'cross-site' } }, 403],
+  ]) check(label + '删除拒绝', (await api(url, { method: 'DELETE', ...options })).status === status)
+  check('GET不执行删除', (await api(ownUrl)).status === 404)
+  check('非法请求不改变资源或文件', JSON.stringify(stored().shares) === snapshot && fs.existsSync(path.join(fixture, 'storage/files/delete-own/second.txt')))
+  const own = await api(ownUrl, { user: 'member', method: 'DELETE' })
+  check('上传者可删除本人整组文件', own.status === 200 && own.data.deletedResourceId === 'delete-own' && own.data.deletedFileCount === 2 && own.data.releasedBytes === safe.length * 2)
+  check('整组目录和元数据删除', !fs.existsSync(path.join(fixture, 'storage/files/delete-own')) && !stored().shares.some(s => s.id === 'delete-own'))
+  const after = (await api('/api/account/team/overview')).data
+  check('团队与成员用量准确释放', before.capacity.usedBytes - after.capacity.usedBytes === safe.length * 2 && before.memberUsage.find(m => m.userId === 'member').usedBytes - after.memberUsage.find(m => m.userId === 'member').usedBytes === safe.length * 2)
+  check('团队列表移除且返回最新容量', !after.resources.some(r => r.id === 'delete-own') && own.data.capacity?.usedBytes === after.capacity.usedBytes)
+  for (const url of ['/api/shares/token/delete-own', '/api/shares/manage/delete-own-manage', '/api/shares/delete-own/files/0/preview', '/api/shares/delete-own/files/0/download', '/api/shares/delete-own/download']) check('删除后原链接失效 ' + url, (await api(url, { user: 'member' })).status === 404)
+  check('相关记录清理且无关记录保留', ['owner', 'member'].every(user => stored().records[user].length === 1 && stored().records[user][0].id.endsWith(':main-file')))
+  const restore = await api('/api/account/records', { user: 'member', method: 'POST', body: { record: { id: 'my_sent:share:delete-own' } } })
+  check('客户端同步不能复活死记录', restore.status === 201 && !restore.data.records.some(r => r.id === 'my_sent:share:delete-own'))
+  check('重复删除明确返回不存在', (await api(ownUrl, { user: 'member', method: 'DELETE' })).status === 404)
+  check('所有者可删除其他成员资源', (await api('/api/account/team/resources/delete-peer', { method: 'DELETE' })).status === 200)
+  const race = await Promise.all(['owner', 'member2'].map(user => api('/api/account/team/resources/delete-race', { user, method: 'DELETE' })))
+  check('并发删除安全且无关资源保留', race.some(r => r.status === 200) && race.every(r => [200, 404].includes(r.status)) && !stored().shares.some(s => s.id === 'delete-race') && stored().shares.some(s => s.id === 'main-file') && fs.readFileSync(path.join(fixture, 'storage/files/main-file/safe.txt')).equals(safe))
+  check('删除记录操作者与组织审计', stored().auditLogs.some(log => log.action === '删除团队资源' && log.userId === 'member' && log.targetId === 'delete-own' && log.details.organizationId === 'main'))
+  const releasedPath = await api('/api/upload-sessions', { user: 'member', method: 'POST', body: { ...sessionBody('second.txt'), files: [{ name: 'second.txt', relativePath: 'folder/second.txt', size: 4, mimeType: 'text/plain' }] } })
+  check('删除后的完整路径可以再次上传', releasedPath.status === 201)
+  if (releasedPath.data.sessionId) await api('/api/upload-sessions/' + releasedPath.data.sessionId, { user: 'member', method: 'DELETE' })
+  const failureBefore = (await api('/api/account/team/overview')).data.capacity.usedBytes
+  await api('/__team_fixture', { method: 'POST', body: { failResourceRemoval: true } })
+  const failedDelete = await api('/api/account/team/resources/delete-failure', { user: 'member', method: 'DELETE' })
+  check('存储删除失败不虚报成功或释放容量', failedDelete.status === 500 && stored().shares.some(s => s.id === 'delete-failure') && fs.existsSync(path.join(fixture, 'storage/files/delete-failure/safe.txt')) && (await api('/api/account/team/overview')).data.capacity.usedBytes === failureBefore)
+  check('存储删除失败可重试', (await api('/api/account/team/resources/delete-failure', { user: 'member', method: 'DELETE' })).status === 200)
+  check('已关闭资源仍可按权限删除并释放容量', (await api('/api/account/team/resources/delete-closed', { user: 'member', method: 'DELETE' })).status === 200 && !fs.existsSync(path.join(fixture, 'storage/files/delete-closed')))
+  await stop(); await start()
+  check('删除和容量重启后持久化', !(await api('/api/account/team/overview')).data.resources.some(r => ['delete-own', 'delete-peer', 'delete-race'].includes(r.id)) && !stored().shares.some(s => s.id === 'delete-own'))
+ })
+ await group('TEAM-004',async()=>{
+  for(const q of ['accept',users.accept.email,users.accept.phone]){const r=await api('/api/account/workspace/member-search?q='+encodeURIComponent(q));check('精确搜索 '+q,r.status===200&&r.data.users.some(u=>u.id==='accept'));check('候选联系方式脱敏',r.data.users.every(u=>u.email!==users.accept.email&&u.phone!==users.accept.phone))}
+  for(const q of ['missing','<script>alert(1)</script>',"' OR 1=1 --",'138'])check('不存在、恶意、模糊联系方式不枚举 '+q,(await api('/api/account/workspace/member-search?q='+encodeURIComponent(q))).data.users.length===0)
+  const first=await api('/api/account/workspace/member-search?q=candidate');const second=await api('/api/account/workspace/member-search?q=candidate&page=2');check('分页不重复且页面大小受限',first.data.users.length===8&&second.data.users.length===4&&!first.data.users.some(u=>second.data.users.some(v=>v.id===u.id)))
+  check('普通成员不能搜索',(await api('/api/account/workspace/member-search?q=accept',{user:'member'})).status===403)
+  let limited=false;for(let i=0;i<35;i++){if((await api('/api/account/workspace/member-search?q=accept')).status===429){limited=true;break}}check('搜索限流',limited)
+ })
+ await group('TEAM-005',async()=>{const r=await api('/api/organizations/main-slug/join-request',{user:'outsider'});check('入团落地接口对应正确团队',r.status===200&&r.data.available&&r.data.organizationName==='TEAM重命名');check('无token不泄漏管理信息',!('members'in r.data)&&!('ownerUserId'in r.data));check('错误slug不可申请',!(await api('/api/organizations/bad-slug/join-request',{user:''})).data.available)})
+ await group('TEAM-006',async()=>{
+  const a=await invite('accept');check('非目标账号不能接受',(await api('/api/account/workspace/invitations/'+a,{user:'outsider',method:'POST',body:{decision:'accept'}})).status===404);check('目标接受',(await api('/api/account/workspace/invitations/'+a,{user:'accept',method:'POST',body:{decision:'accept'}})).status===200)
+  const repeat=await api('/api/account/workspace/invitations/'+a,{user:'accept',method:'POST',body:{decision:'accept'}});check('重复接受无第二次流转',[200,409].includes(repeat.status)&&stored().organizations.main.members.filter(m=>m.userId==='accept'&&m.status==='active').length===1)
+  const d=await invite('decline');check('拒绝邀请',(await api('/api/account/workspace/invitations/'+d,{user:'decline',method:'POST',body:{decision:'decline'}})).status===200);check('拒绝后重放不能加入',(await api('/api/account/workspace/invitations/'+d,{user:'decline',method:'POST',body:{decision:'accept'}})).status===404&&!(await api('/api/account/workspace',{user:'decline'})).data.organization)
+  const e=await invite('expired');await api('/__team_fixture',{method:'POST',body:{expireInvitation:e}});await stop();await start();const expired=await api('/api/account/workspace/invitations/'+e,{user:'expired',method:'POST',body:{decision:'accept'}});check('过期邀请重启后仍拒绝',expired.status===410&&!(await api('/api/account/workspace',{user:'expired'})).data.organization)
+  const fresh=await invite('expired');check('过期后可重新邀请且旧邀请失效',fresh!==e&&(await api('/api/account/workspace/invitations/'+e,{user:'expired',method:'POST',body:{decision:'accept'}})).status===404);check('新邀请可接受',(await api('/api/account/workspace/invitations/'+fresh,{user:'expired',method:'POST',body:{decision:'accept'}})).status===200)
+  const request=await api('/api/organizations/main-slug/join-request',{user:'outsider',method:'POST',body:{message:'TEAM申请验证'}});check('邀请落地页可提交入团申请',request.status===201);assert.ok(request.data.requestId);check('重复申请不产生第二条记录',(await api('/api/organizations/main-slug/join-request',{user:'outsider',method:'POST',body:{}})).status===409)
+  check('普通成员不能审批',(await api('/api/account/workspace/join-requests/'+request.data.requestId,{user:'member2',method:'POST',body:{decision:'approve'}})).status===403);check('正式成员不看到待审批申请',!(await api('/api/account/team/overview',{user:'member2'})).data.organization.members.some(m=>m.userId==='outsider'))
+  check('所有者审批申请成功',(await api('/api/account/workspace/join-requests/'+request.data.requestId,{method:'POST',body:{decision:'approve'}})).status===200);check('重复审批不重复加入',(await api('/api/account/workspace/join-requests/'+request.data.requestId,{method:'POST',body:{decision:'approve'}})).status===404&&stored().organizations.main.members.filter(m=>m.userId==='outsider').length===1)
+  const rejected=await api('/api/organizations/main-slug/join-request',{user:'decline',method:'POST',body:{}});assert.equal(rejected.status,201);check('所有者拒绝申请',(await api('/api/account/workspace/join-requests/'+rejected.data.requestId,{method:'POST',body:{decision:'reject'}})).status===200);check('拒绝后冷却与提示一致',(await api('/api/organizations/main-slug/join-request',{user:'decline',method:'POST',body:{}})).status===429&&(await api('/api/organizations/main-slug/join-request',{user:'decline'})).data.reason==='cooldown')
+ })
+ await group('TEAM-007',async()=>{
+  check('所有者有管理权限',(await api('/api/account/team/overview')).data.canManage);const member=(await api('/api/account/team/overview',{user:'member2'})).data;check('成员无管理权限和他人管理令牌',!member.canManage&&member.resources.every(r=>r.ownerUserId==='member2'||!r.manageToken))
+  for(const [url,method,body] of [['/api/account/workspace','PATCH',{name:'attack'}],['/api/account/workspace/transfer-ownership','POST',{targetMemberId:'m-transfer'}],['/api/account/workspace/dissolve','POST',{}],['/api/account/workspace/members/m-member','DELETE',{}]])check('成员操作拒绝 '+url,(await api(url,{user:'member2',method,body})).status===403)
+  check('管理令牌不能绕过登录',(await api('/api/shares/manage/main-file-manage',{user:''})).status===401)
+  check('知道他人令牌不能改团队资源',(await api('/api/shares/manage/main-file-manage',{user:'member2',method:'PATCH',body:{action:'close'}})).status===403)
+  check('团队所有者可管理资源',(await api('/api/shares/manage/main-file-manage')).status===200)
+  check('所有者不能被移除',(await api('/api/account/workspace/members/m-owner',{method:'DELETE'})).status===400&&stored().organizations.main.members.some(m=>m.userId==='owner'))
+ })
+ await group('TEAM-008',async()=>{
+  const pending=await createUpload('victim','pending-removal.txt');assert.equal(pending.status,201);await chunks('victim',pending.data.sessionId)
+  check('移除成功',(await api('/api/account/workspace/members/m-victim',{user:'removeOwner',method:'DELETE'})).status===200)
+  check('旧会话无团队',(await api('/api/account/workspace',{user:'victim'})).data.organization===null)
+  for(const url of ['/api/shares/token/victim-team','/api/shares/victim-team/files/0/preview','/api/shares/manage/victim-team-manage'])check('移除后原链接拒绝 '+url,(await api(url,{user:'victim'})).status===403)
+  check('移除后未完成上传不能提交',(await api('/api/upload-sessions/'+pending.data.sessionId+'/complete',{user:'victim',method:'POST',body:{}})).status===403)
+  check('个人文件仍可读取',(await api('/api/shares/manage/victim-personal-manage/files/0/preview',{user:'victim'})).status===200)
+  check('移除上传者后团队资源仍归团队',(await api('/api/account/team/overview',{user:'removeOwner'})).data.resources.some(r=>r.id==='victim-team'))
+  check('移除上传者后正确团队slug仍有效',(await api('/api/shares/token/victim-team?organization=remove-slug',{user:'removeOwner'})).status===200)
+  check('移除上传者后团队所有者可管理资源',(await api('/api/shares/manage/victim-team-manage',{user:'removeOwner'})).status===200)
+  check('被移除上传者旧会话不能删除自己的团队资源', (await api('/api/account/team/resources/delete-removed', { user: 'victim', method: 'DELETE' })).status === 404 && stored().shares.some(s => s.id === 'delete-removed'))
+  check('所有者可删除已移除成员留下的团队资源', (await api('/api/account/team/resources/delete-removed', { user: 'removeOwner', method: 'DELETE' })).status === 200 && !fs.existsSync(path.join(fixture, 'storage/files/delete-removed')))
+ })
+ await group('TEAM-009',async()=>{const r=await api('/api/account/workspace/transfer-ownership',{method:'POST',body:{targetMemberId:'m-transfer'}});check('转让成功',r.status===200&&stored().organizations.main.ownerUserId==='transfer');check('新所有者获取权限',(await api('/api/account/team/overview',{user:'transfer'})).data.canManage);check('原所有者降级',!(await api('/api/account/team/overview')).data.canManage);check('旧请求不可再次转让',(await api('/api/account/workspace/transfer-ownership',{method:'POST',body:{targetMemberId:'m-member2'}})).status===403&&stored().organizations.main.ownerUserId==='transfer');check('仍只有一个所有者',stored().organizations.main.members.filter(m=>m.role==='owner').length===1)
+  check('原所有者不能再删除他人成员资源', (await api('/api/account/team/resources/delete-ownership', { method: 'DELETE' })).status === 403 && stored().shares.some(s => s.id === 'delete-ownership'))
+  check('转让后新所有者可删除团队成员资源', (await api('/api/account/team/resources/delete-ownership', { user: 'transfer', method: 'DELETE' })).status === 200)
+ })
+ await group('TEAM-010',async()=>{check('唯一所有者退出拒绝',(await api('/api/account/workspace/leave',{user:'leaveOwner',method:'POST'})).status===400);check('普通成员可退出',(await api('/api/account/workspace/leave',{user:'leaver',method:'POST'})).status===200);check('旧会话已无团队',(await api('/api/account/workspace',{user:'leaver'})).data.organization===null);check('原所有者转让后可退出',(await api('/api/account/workspace/leave',{method:'POST'})).status===200)})
+ await group('TEAM-011',async()=>{check('解散成功',(await api('/api/account/workspace/dissolve',{user:'dissolveOwner',method:'POST'})).status===200);check('组织和成员归属清除',!stored().organizations.dissolve&&!(await api('/api/account/workspace',{user:'dissolveMember'})).data.organization);check('团队公开链接停用',(await api('/api/shares/token/dissolve-team',{user:''})).status===404);check('团队文件标记关闭',stored().shares.find(s=>s.id==='dissolve-team').status==='closed');check('专属入口失效',(await api('/api/organizations/dissolve-slug/join-request',{user:''})).data.reason==='unavailable');check('个人文件和套餐保留',(await api('/api/shares/manage/dissolve-personal-manage/files/0/preview',{user:'dissolveMember'})).status===200&&stored().users.dissolveMember.planId==='free')})
+ await group('TEAM-012',async()=>{
+  const nested=[{name:'同名.txt',relativePath:'批量资料/甲/同名.txt',content:Buffer.from('甲目录内容')},{name:'同名.txt',relativePath:'批量资料/乙/同名.txt',content:Buffer.from('乙目录内容')}]
+  const folder=await api('/api/upload-sessions',{user:'member',method:'POST',body:{...sessionBody('unused'),files:nested.map(f=>({name:f.name,relativePath:f.relativePath,size:f.content.length,mimeType:'text/plain'}))}})
+  check('不同目录同名文件可创建上传会话',folder.status===201)
+  await chunks('member',folder.data.sessionId,nested)
+  const folderDone=await api('/api/upload-sessions/'+folder.data.sessionId+'/complete',{user:'member',method:'POST',body:{}})
+  check('文件夹完整上传并保留同名文件层级',folderDone.status===201&&JSON.stringify(folderDone.data.share.files.map(f=>f.relativePath))===JSON.stringify(['批量资料/甲/同名.txt','批量资料/乙/同名.txt']))
+  for(let i=0;i<nested.length;i++){const content=await api('/api/shares/'+folderDone.data.share.id+'/files/'+i+'/download',{user:'member'});check('文件夹同名文件内容独立 '+i,content.status===200&&content.bytes.equals(nested[i].content))}
+  check('相同完整路径重复上传仍拒绝',(await api('/api/upload-sessions',{user:'member',method:'POST',body:{...sessionBody('unused'),files:[{name:'同名.txt',relativePath:'批量资料/甲/同名.txt',size:1,mimeType:'text/plain'}]}})).status===409)
+  const dir=path.join(root,'测试数据/鲲穹文件传输测试数据包/05-目录结构');const files=[];function walk(p){for(const e of fs.readdirSync(p,{withFileTypes:true})){const f=path.join(p,e.name);if(e.isDirectory())walk(f);else if(/TC-06-0[1-4]/.test(e.name))files.push({name:e.name,relativePath:path.relative(dir,f).replaceAll('\\','/'),content:fs.readFileSync(f)})}}walk(dir);assert.equal(files.length,4)
+  const before=(await api('/api/account/team/overview',{user:'member'})).data;const r=await api('/api/upload-sessions',{user:'member',method:'POST',body:{...sessionBody('unused'),files:files.map(f=>({name:f.name,relativePath:f.relativePath,size:f.content.length,mimeType:'text/plain'}))}});assert.equal(r.status,201,JSON.stringify(r.data));await chunks('member',r.data.sessionId,files);const done=await api('/api/upload-sessions/'+r.data.sessionId+'/complete',{user:'member',method:'POST',body:{}});check('成员目录文件完整上传且扫描',done.status===201&&done.data.share.files.length===4&&done.data.share.files.every(f=>f.scanEngine==='clamav')&&scans>=4);assert.ok(done.data.share)
+  const share=stored().shares.find(s=>s.id===done.data.share.id);check('组织归属与路径保存',share.teamResource&&share.teamOrganizationId==='main'&&share.files.some(f=>f.relativePath.includes('/')));const after=(await api('/api/account/team/overview',{user:'member'})).data;const bytes=files.reduce((n,f)=>n+f.content.length,0);check('成员和团队用量准确',after.capacity.usedBytes-before.capacity.usedBytes===bytes&&after.memberUsage.find(m=>m.userId==='member').usedBytes-before.memberUsage.find(m=>m.userId==='member').usedBytes===bytes);check('团队资源不占个人空间',(await api('/api/account/workspace',{user:'member'})).data.capacity.usedBytes===0)
+  for(let i=0;i<files.length;i++){const download=await api('/api/shares/'+share.id+'/files/'+i+'/download',{user:'member'});check('上传文件下载字节完整 '+files[i].name,download.status===200&&download.bytes.equals(files[i].content))}
+  check('成员可关闭自己的资源',(await api('/api/shares/manage/'+share.manageToken,{user:'member',method:'PATCH',body:{status:'closed'}})).status===200);check('关闭链接不释放仍保留文件的容量',(await api('/api/account/team/overview',{user:'member'})).data.capacity.usedBytes===after.capacity.usedBytes)
+  await api('/__team_fixture',{method:'POST',body:{quota:after.capacity.usedBytes+10}});const pending=await createUpload('member','reserve.txt',8);check('额度内会话成功',pending.status===201);check('并发预留防超限',(await createUpload('member2','reserve2.txt',8)).status===507);await api('/api/upload-sessions/'+pending.data.sessionId,{user:'member',method:'DELETE'});check('入口超限拒绝',(await createUpload('member','too-large.txt',11)).status===507)
+  const last=await createUpload('member','quota-changed.txt',8);assert.equal(last.status,201);await chunks('member',last.data.sessionId,[{name:'quota-changed.txt',content:Buffer.from('12345678')}]);await api('/__team_fixture',{method:'POST',body:{quota:after.capacity.usedBytes}});check('完成时重新校验容量',(await api('/api/upload-sessions/'+last.data.sessionId+'/complete',{user:'member',method:'POST',body:{}})).status===507);await api('/__team_fixture',{method:'POST',body:{quota:1024**4}})
+ })
+ await group('TEAM-013',async()=>{for(const [url,user,slug] of [['/api/shares/token/main-file','member','main-slug'],['/api/shares/token/enterprise-personal','','second-slug'],['/api/collections/tasktoken','','second-slug']]){const correct=await api(url+'?organization='+slug,{user});check('正确slug '+url,correct.status===200);for(const wrong of ['wrong',slug==='main-slug'?'second-slug':'main-slug'])check('错/其他组织slug '+url+' '+wrong,(await api(url+'?organization='+wrong,{user})).status===404)}check('上传者移除后不能借其他团队slug访问',(await api('/api/shares/token/victim-team?organization=second-slug',{user:'other'})).status===404)})
+}finally{await stop();await new Promise(r=>scanner.close(r))}
+for(const item of cases) if(item.id==='TEAM-007' && item.status==='PASS') item.status='PARTIAL'
+const result={executedAt:new Date().toISOString(),passed,failures,cases,unsupported:[{id:'TEAM-007',branch:'团队管理员',reason:'产品当前仅实现所有者和普通成员，独立管理员角色及授权流程未实现'}],fixture,scanner:'local INSTREAM emulator',requests}
+if(process.env.TEAM_TEST_EVIDENCE_DIR){fs.mkdirSync(process.env.TEAM_TEST_EVIDENCE_DIR,{recursive:true});fs.writeFileSync(path.join(process.env.TEAM_TEST_EVIDENCE_DIR,'team-api-results.json'),JSON.stringify(result,null,2))}
+console.log(JSON.stringify({...result,requests:undefined},null,2));process.exitCode=failures.length?1:0

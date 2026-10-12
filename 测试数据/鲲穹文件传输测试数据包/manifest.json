@@ -4,18 +4,92 @@
   "safety": "所有内容均为无害测试数据；TC-07-01-扫描器命中标记-无害.txt 仅用于模拟扫描器命中，不是真实恶意样本。",
   "boundaryFiles": [
     {
-      "path": "02-边界大小文件/TC-04-01-单文件大小边界-500MB.bin",
-      "bytes": 524288000,
+      "path": "02-边界大小文件/TC-04-03-游客单文件边界-500MB减1字节.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-03-游客单文件边界-500MB减1字节.bin",
+      "bytes": 524287999,
+      "allocatedBytes": 131072,
       "sparse": true,
-      "sha256": null,
-      "hashNote": "建议在实际测试机上用 certutil -hashfile 或 sha256sum 计算，避免预先读取 500MB。"
+      "sha256": "455db399d3749922152d45b0c68ff8932fac3f0b08cefb6addcf52b8e54091e0",
+      "caseIds": [
+        "SEND-006"
+      ],
+      "scenario": "游客单文件上限前1字节",
+      "expected": "配额充足时允许上传；发布仍须通过扫描"
+    },
+    {
+      "path": "02-边界大小文件/TC-04-01-单文件大小边界-500MB.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-01-单文件大小边界-500MB.bin",
+      "bytes": 524288000,
+      "allocatedBytes": 131072,
+      "sparse": true,
+      "sha256": "bd88e89045a695ac071edd228f6ddf5f2fca1b4ea75bd11f03111ee9a5523161",
+      "caseIds": [
+        "SEND-006",
+        "SEND-012",
+        "SCAN-004",
+        "SHARE-005",
+        "COLL-007",
+        "COLL-008",
+        "NFR-007"
+      ],
+      "scenario": "游客单文件刚好上限",
+      "expected": "配额充足时允许上传；发布仍须通过扫描"
+    },
+    {
+      "path": "02-边界大小文件/TC-04-04-游客单文件超限-500MB加1字节.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-04-游客单文件超限-500MB加1字节.bin",
+      "bytes": 524288001,
+      "allocatedBytes": 196608,
+      "sparse": true,
+      "sha256": "c4b360b4b5fbc5fb2e294c05a7586102f31bcd3d1749af1d858c0a9af4e56966",
+      "caseIds": [
+        "SEND-006"
+      ],
+      "scenario": "游客单文件超出上限1字节",
+      "expected": "游客被大小限制拒绝，接口返回413或页面明确提示超限；不创建资源"
+    },
+    {
+      "path": "02-边界大小文件/TC-04-05-登录单文件边界-5GB减1字节.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-05-登录单文件边界-5GB减1字节.bin",
+      "bytes": 5368709119,
+      "allocatedBytes": 131072,
+      "sparse": true,
+      "sha256": "dfd1db01bc27448bc8371fc33ffaf5f5f8de90240bb1d932e98b4a9f7082e469",
+      "caseIds": [
+        "SEND-007",
+        "NFR-005"
+      ],
+      "scenario": "登录用户单文件上限前1字节",
+      "expected": "登录且账号配额充足时允许分片上传；发布仍须通过扫描"
     },
     {
       "path": "02-边界大小文件/TC-04-02-单文件大小边界-5GB.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-02-单文件大小边界-5GB.bin",
       "bytes": 5368709120,
+      "allocatedBytes": 131072,
       "sparse": true,
-      "sha256": null,
-      "hashNote": "建议在实际测试机上计算，避免预先读取 5GB。"
+      "sha256": "e39785878efe1705f546bbd5ebad93838b1072477680ce3d9ebe79032581d91d",
+      "caseIds": [
+        "SEND-007",
+        "NFR-005",
+        "NFR-008",
+        "NFR-009"
+      ],
+      "scenario": "登录用户单文件刚好上限",
+      "expected": "登录且账号配额充足时允许分片上传；发布仍须通过扫描"
+    },
+    {
+      "path": "02-边界大小文件/TC-04-06-登录单文件超限-5GB加1字节.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-06-登录单文件超限-5GB加1字节.bin",
+      "bytes": 5368709121,
+      "allocatedBytes": 196608,
+      "sparse": true,
+      "sha256": "89297fad89adb988f30ea61ea69c4b22980d0704550d52c7f17c77d14abf3425",
+      "caseIds": [
+        "SEND-007"
+      ],
+      "scenario": "登录用户单文件超出上限1字节",
+      "expected": "单文件5GiB限制拒绝，接口返回413或页面明确提示超限；不创建资源"
     }
   ],
   "quantities": {
@@ -24,7 +98,8 @@
     "batch100Files": 100,
     "batch101Files": 101,
     "accountRoles": 9,
-    "paymentScenarios": 10
+    "paymentScenarios": 10,
+    "boundaryFiles": 6
   },
   "files": [
     {
@@ -74,18 +149,43 @@
     },
     {
       "path": "02-边界大小文件/README-边界文件说明.txt",
-      "bytes": 158,
-      "sha256": "32369ab884b88ebc02983940af15f722dc16f0d1676f7a511a3ee9ccb27aeca1"
+      "bytes": 4302,
+      "sha256": "e0ec22221f79bbc0077b41d67f0b6abc411e03459e5a5ac4483d9a7eff1e605a"
     },
     {
       "path": "02-边界大小文件/TC-04-01-单文件大小边界-500MB.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-01-单文件大小边界-500MB.bin",
       "bytes": 524288000,
-      "sha256": null
+      "allocatedBytes": 131072,
+      "sparse": true,
+      "sha256": "bd88e89045a695ac071edd228f6ddf5f2fca1b4ea75bd11f03111ee9a5523161",
+      "caseIds": [
+        "SEND-006",
+        "SEND-012",
+        "SCAN-004",
+        "SHARE-005",
+        "COLL-007",
+        "COLL-008",
+        "NFR-007"
+      ],
+      "scenario": "游客单文件刚好上限",
+      "expected": "配额充足时允许上传；发布仍须通过扫描"
     },
     {
       "path": "02-边界大小文件/TC-04-02-单文件大小边界-5GB.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-02-单文件大小边界-5GB.bin",
       "bytes": 5368709120,
-      "sha256": null
+      "allocatedBytes": 131072,
+      "sparse": true,
+      "sha256": "e39785878efe1705f546bbd5ebad93838b1072477680ce3d9ebe79032581d91d",
+      "caseIds": [
+        "SEND-007",
+        "NFR-005",
+        "NFR-008",
+        "NFR-009"
+      ],
+      "scenario": "登录用户单文件刚好上限",
+      "expected": "登录且账号配额充足时允许分片上传；发布仍须通过扫描"
     },
     {
       "path": "03-批量文件-100个/TC-05-01-批量上传上限-100文件-第001个.txt",
@@ -1199,8 +1299,72 @@
     },
     {
       "path": "README-文件名对应测试场景.txt",
-      "bytes": 787,
-      "sha256": "6213d160b374d2059534e1c021516e4192aeeea1b3ec016e0e261d1e9a6c18c0"
+      "bytes": 1028,
+      "sha256": "c7b485f86b721fe6ce29bd64f0ba204709531d030e20e002c1e2e005871c284c"
+    },
+    {
+      "path": "02-边界大小文件/TC-04-03-游客单文件边界-500MB减1字节.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-03-游客单文件边界-500MB减1字节.bin",
+      "bytes": 524287999,
+      "allocatedBytes": 131072,
+      "sparse": true,
+      "sha256": "455db399d3749922152d45b0c68ff8932fac3f0b08cefb6addcf52b8e54091e0",
+      "caseIds": [
+        "SEND-006"
+      ],
+      "scenario": "游客单文件上限前1字节",
+      "expected": "配额充足时允许上传；发布仍须通过扫描"
+    },
+    {
+      "path": "02-边界大小文件/TC-04-04-游客单文件超限-500MB加1字节.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-04-游客单文件超限-500MB加1字节.bin",
+      "bytes": 524288001,
+      "allocatedBytes": 196608,
+      "sparse": true,
+      "sha256": "c4b360b4b5fbc5fb2e294c05a7586102f31bcd3d1749af1d858c0a9af4e56966",
+      "caseIds": [
+        "SEND-006"
+      ],
+      "scenario": "游客单文件超出上限1字节",
+      "expected": "游客被大小限制拒绝，接口返回413或页面明确提示超限；不创建资源"
+    },
+    {
+      "path": "02-边界大小文件/TC-04-05-登录单文件边界-5GB减1字节.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-05-登录单文件边界-5GB减1字节.bin",
+      "bytes": 5368709119,
+      "allocatedBytes": 131072,
+      "sparse": true,
+      "sha256": "dfd1db01bc27448bc8371fc33ffaf5f5f8de90240bb1d932e98b4a9f7082e469",
+      "caseIds": [
+        "SEND-007",
+        "NFR-005"
+      ],
+      "scenario": "登录用户单文件上限前1字节",
+      "expected": "登录且账号配额充足时允许分片上传；发布仍须通过扫描"
+    },
+    {
+      "path": "02-边界大小文件/TC-04-06-登录单文件超限-5GB加1字节.bin",
+      "absolutePath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\测试数据\\鲲穹文件传输测试数据包\\02-边界大小文件\\TC-04-06-登录单文件超限-5GB加1字节.bin",
+      "bytes": 5368709121,
+      "allocatedBytes": 196608,
+      "sparse": true,
+      "sha256": "89297fad89adb988f30ea61ea69c4b22980d0704550d52c7f17c77d14abf3425",
+      "caseIds": [
+        "SEND-007"
+      ],
+      "scenario": "登录用户单文件超出上限1字节",
+      "expected": "单文件5GiB限制拒绝，接口返回413或页面明确提示超限；不创建资源"
+    },
+    {
+      "path": "02-边界大小文件/边界文件规格.json",
+      "bytes": 2441,
+      "sha256": "70a1dddecee92e1bf4d32440d0924e4d1f46db0488b0592cad2a741fd7ad9724"
+    },
+    {
+      "path": "02-边界大小文件/边界文件清单.csv",
+      "bytes": 2998,
+      "sha256": "4467444aa644b18afd57b5e0fb79de31af23454091885a815db00b018736ea33"
     }
-  ]
+  ],
+  "boundaryFilesUpdatedAt": "2026-10-10T09:32:57.256892+08:00"
 }

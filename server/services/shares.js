@@ -69,6 +69,11 @@ export function requireUploadSessionOwner(req, res, next) {
   if (!taskOwner && session.ownerGuestId && readCookie(req, GUEST_ID_COOKIE) !== session.ownerGuestId) {
     return res.status(403).json({ message: '请使用创建上传的浏览器继续操作' })
   }
+  if (session.organizationId) {
+    const organization = metadata.organizations?.[session.organizationId]
+    if (!organization) return res.status(404).json({ message: '团队空间不存在' })
+    if (!organization.members.some(member => member.userId === userId && member.status === 'active')) return res.status(403).json({ message: '团队成员权限已失效，无法继续上传' })
+  }
   req.uploadSession = session
   next()
 }
@@ -238,8 +243,24 @@ export function enterpriseOrganizationForUser(userId) {
   return organization
 }
 
+export function resourceEnterpriseOrganization(item) {
+  if (!item?.teamResource) return item?.ownerUserId ? enterpriseOrganizationForUser(item.ownerUserId) : null
+  const organization = metadata.organizations?.[item.teamOrganizationId]
+  return organization && accountEffectivePlanForUser(organization.ownerUserId).team ? organization : null
+}
+
+export function validateTeamShareManager(share, req) {
+  if (!share.teamResource) return { ok: true }
+  const viewer = authSessionFromRequest(req)?.user
+  const access = validateShareRecipient(share, viewer)
+  if (!access.ok) return access
+  const organization = metadata.organizations[share.teamOrganizationId]
+  if (viewer.id !== share.ownerUserId && viewer.id !== organization.ownerUserId) return { ok: false, status: 403, message: '仅资源所有者或团队所有者可以管理该团队资源' }
+  return { ok: true }
+}
+
 export function publicShare(share, req, includeFiles = true, includeManage = false) {
-  const organization = share.ownerUserId ? enterpriseOrganizationForUser(share.ownerUserId) : null
+  const organization = resourceEnterpriseOrganization(share)
   const status = currentShareStatus(share)
   const payload = {
     id: share.id,
@@ -273,7 +294,7 @@ export function publicShare(share, req, includeFiles = true, includeManage = fal
 
 export function validateEnterpriseSlug(item, slug) {
   if (!slug) return true
-  const organization = item?.ownerUserId ? enterpriseOrganizationForUser(item.ownerUserId) : null
+  const organization = resourceEnterpriseOrganization(item)
   return Boolean(organization && organization.slug === String(slug))
 }
 
@@ -321,7 +342,11 @@ export async function scanFileBytes(filePath) {
       if (!response.includes('\0')) return
       const result = response.split('\0')[0].trim()
       if (/^stream: OK$/.test(result)) resolve({ reviewStatus: 'approved', scanEngine: 'clamav', scannedAt: new Date().toISOString() })
-      else if (/ FOUND$/.test(result)) reject(httpError(415, '文件扫描发现威胁或超出扫描安全限制，已阻止发布'))
+      else if (/Heuristics\.Limits\.Exceeded\./.test(result)) {
+        const error = httpError(415, '当前扫描服务无法完整扫描此文件，请联系管理员检查扫描大小限制')
+        error.code = 'scan_size_limit'
+        reject(error)
+      } else if (/ FOUND$/.test(result)) reject(httpError(415, '文件扫描发现威胁，已阻止发布'))
       else reject(httpError(503, '文件扫描未完成，请检查扫描服务和大小限制'))
       socket.destroy()
     })
@@ -553,8 +578,8 @@ export function sendPreviewFile(req, res, next, filePath, file) {
     return res.status(416).end()
   }
   let start = match[1] === '' ? Math.max(0, stat.size - Number(match[2])) : Number(match[1])
-  let end = match[2] === '' ? stat.size - 1 : Number(match[2])
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= stat.size) {
+  let end = match[1] === '' || match[2] === '' ? stat.size - 1 : Number(match[2])
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= stat.size) {
     res.setHeader('Content-Range', `bytes */${stat.size}`)
     return res.status(416).end()
   }
@@ -587,8 +612,8 @@ export function sendDownloadFile(req, res, next, filePath, file) {
     return res.status(416).end()
   }
   let start = match[1] === '' ? Math.max(0, stat.size - Number(match[2])) : Number(match[1])
-  let end = match[2] === '' ? stat.size - 1 : Number(match[2])
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= stat.size) {
+  let end = match[1] === '' || match[2] === '' ? stat.size - 1 : Number(match[2])
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= stat.size) {
     res.setHeader('Content-Range', `bytes */${stat.size}`)
     return res.status(416).end()
   }
@@ -702,19 +727,20 @@ export function assertTeamCapacity(organization, incomingBytes) {
 }
 
 export function assertUniqueTeamResourceNames(organization, files) {
+  const resourcePath = (file) => safeRelativePath(normalizeUploadFileName(file.relativePath || file.name || '')).trim().toLowerCase()
   const existingNames = new Set(
     metadata.shares
       .filter((share) => share.teamResource && share.teamOrganizationId === organization?.id)
       .flatMap((share) => share.files || [])
-      .map((file) => normalizeUploadFileName(file.name || '').trim().toLowerCase())
+      .map(resourcePath)
       .filter(Boolean),
   )
   const incomingNames = new Set()
   for (const file of files || []) {
     const name = normalizeUploadFileName(file.name || '').trim()
-    const normalized = name.toLowerCase()
+    const normalized = resourcePath(file)
     if (!normalized || existingNames.has(normalized) || incomingNames.has(normalized)) {
-      throw httpError(409, `团队空间中已存在同名文件“${name || '未命名文件'}”`)
+      throw httpError(409, `团队空间中已存在相同路径的文件“${file.relativePath || name || '未命名文件'}”`)
     }
     incomingNames.add(normalized)
   }
@@ -1027,6 +1053,7 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
     if (options.teamResource) {
       const organization = Object.values(metadata.organizations || {}).find((item) => item.id === options.teamOrganizationId)
       if (!organization) throw httpError(404, '团队空间不存在')
+      if (!organization.members.some(member => member.userId === ownerSession?.user?.id && member.status === 'active')) throw httpError(403, '团队成员权限已失效，无法提交资源')
       assertUniqueTeamResourceNames(organization, tempFiles)
       assertTeamCapacity(organization, totalSize)
     } else {

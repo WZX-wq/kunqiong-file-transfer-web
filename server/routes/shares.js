@@ -25,7 +25,7 @@ import {
   enforceDownloadOrigin, ensureStoredFilesScanned, findShareByCode, findShareByManageToken,
   publicShare, readShareOptions, registerShareDownload, reserveUploadCapacity,
   sendDownloadFile, sendPreviewFile, setShareAccessCookie, shareLookupRateLimited, streamZip,
-  validateEnterpriseSlug, validateShareRequest
+  validateEnterpriseSlug, validateShareRequest, validateTeamShareManager
 } from '../services/shares.js'
 import {
   uploadReservations
@@ -79,6 +79,8 @@ export function registerShareAccessRoutes(app) {
       try {
         const share = findShareByManageToken(req.params.manageToken)
         if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
+    const access = validateTeamShareManager(share, req)
+    if (!access.ok) return res.status(access.status).json({ message: access.message })
         if (share.ownerUserId) {
           const viewer = authSessionFromRequest(req)?.user
           if (!viewer) return res.status(401).json({ message: '请先登录文件所属账号' })
@@ -126,12 +128,16 @@ export function registerShareAccessRoutes(app) {
   app.get('/api/shares/manage/:manageToken', (req, res) => {
   const share = findShareByManageToken(req.params.manageToken)
   if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
+    const access = validateTeamShareManager(share, req)
+    if (!access.ok) return res.status(access.status).json({ message: access.message })
   res.json({ share: publicShare(share, req, true, true) })
 })
   app.patch('/api/shares/manage/:manageToken', async (req, res, next) => {
   try {
     const share = findShareByManageToken(req.params.manageToken)
     if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
+    const access = validateTeamShareManager(share, req)
+    if (!access.ok) return res.status(access.status).json({ message: access.message })
     applyShareUpdate(share, req.body || {}, accountUserById(share.ownerUserId))
     share.updatedAt = new Date().toISOString()
     persistMetadata()
@@ -144,6 +150,8 @@ export function registerShareAccessRoutes(app) {
   try {
     const share = findShareByManageToken(req.params.manageToken)
     if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
+    const access = validateTeamShareManager(share, req)
+    if (!access.ok) return res.status(access.status).json({ message: access.message })
     share.status = 'closed'
     share.updatedAt = new Date().toISOString()
     persistMetadata()

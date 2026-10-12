@@ -11,8 +11,10 @@
 
 import fs from 'node:fs'
 import crypto from 'node:crypto'
+import path from 'node:path'
+import { LocalAuditStore } from './audit-store.js'
 import {
-  metadataPath, MAX_METADATA_WRITE_ATTEMPTS, DEFAULT_SYSTEM_CONFIG,
+  metadataPath, MAX_METADATA_WRITE_ATTEMPTS, DEFAULT_SYSTEM_CONFIG, MAX_AUDIT_LOGS,
   databaseHost, databaseName, databaseUser,
 } from '../config.js'
 import { databasePool, runtime } from '../state.js'
@@ -22,6 +24,48 @@ import { databasePool, runtime } from '../state.js'
 // 路由与定时器持有的是同一个引用，替换对象会让它们继续写到废弃的快照上。
 // （applyMergedMetadata 的注释里也写了这条不变量。）
 export const metadata = {}
+let auditStore
+
+export function initializeAuditPersistence(normalizeEntry) {
+  if (databasePool) return
+  const migrated = metadata.auditStorage === 'journal-v1'
+  auditStore = new LocalAuditStore(path.join(path.dirname(metadataPath), 'audit'), normalizeEntry, MAX_AUDIT_LOGS)
+  metadata.auditLogs = auditStore.initialize(metadata.auditLogs, migrated)
+  if (!migrated) runtime.metadataNeedsPersist = true
+}
+
+export function readAuditLogs() {
+  if (auditStore) metadata.auditLogs = auditStore.read()
+  return metadata.auditLogs || []
+}
+
+export function persistAuditLog(log) {
+  if (auditStore) {
+    metadata.auditLogs = auditStore.append(log)
+  } else {
+    metadata.auditLogs.unshift(log)
+    metadata.auditLogs.length = Math.min(metadata.auditLogs.length, MAX_AUDIT_LOGS)
+    persistMetadata()
+  }
+}
+
+export function purgeAuditLogsBefore(cutoff) {
+  if (auditStore) {
+    const result = auditStore.purgeBefore(cutoff)
+    metadata.auditLogs = result.logs
+    return result.removed
+  }
+  const before = metadata.auditLogs.length
+  metadata.auditLogs = metadata.auditLogs.filter(log => new Date(log.createdAt).getTime() >= cutoff)
+  const removed = before - metadata.auditLogs.length
+  if (removed) persistMetadata()
+  return removed
+}
+
+function persistedSnapshot() {
+  // Once migrated, audit has its own durable snapshot/journal and does not inflate CAS writes.
+  return auditStore ? { ...metadata, auditLogs: [], auditStorage: 'journal-v1' } : metadata
+}
 
 // 由入口注入的领域规范化函数。注入前保持恒等，保证本模块可独立加载与测试。
 let normalizeSnapshot = (value) => value
@@ -107,6 +151,12 @@ export async function loadMetadata() {
   const localMetadata = loadLocalMetadata()
   runtime.metadataLocalRevision = readLocalMetadataRevision()
   if (!databasePool) return localMetadata
+  if (localMetadata.auditStorage === 'journal-v1') {
+    // Enabling MySQL after a local deployment must migrate the independent audit too.
+    const localAudit = new LocalAuditStore(path.join(path.dirname(metadataPath), 'audit'), entry => entry, MAX_AUDIT_LOGS)
+    localMetadata.auditLogs = localAudit.initialize([], true)
+    delete localMetadata.auditStorage
+  }
   if (!databaseHost || !databaseName || !databaseUser) {
     throw new Error('数据库模式已开启，但数据库连接参数不完整')
   }
@@ -273,6 +323,7 @@ export function applyMergedMetadata(next) {
   // 就地更新：路由与定时器持有的是同一个 metadata 引用，替换对象会让它们写到废弃的快照上。
   for (const key of Object.keys(metadata)) if (!(key in next)) delete metadata[key]
   Object.assign(metadata, next)
+  if (auditStore) metadata.auditLogs = auditStore.read()
 }
 
 export function rememberMetadataBaseIds() {
@@ -341,7 +392,7 @@ export function persistLocalMetadata() {
         fs.copyFileSync(metadataPath, backupTempPath)
         fs.renameSync(backupTempPath, `${metadataPath}.bak`)
       }
-      fs.writeFileSync(tempPath, JSON.stringify(metadata, null, 2), 'utf8')
+      fs.writeFileSync(tempPath, JSON.stringify(persistedSnapshot(), null, 2), 'utf8')
       fs.renameSync(tempPath, metadataPath)
       return
     }
@@ -363,7 +414,7 @@ export function persistLocalMetadata() {
         fs.copyFileSync(metadataPath, backupTempPath)
         fs.renameSync(backupTempPath, `${metadataPath}.bak`)
       }
-      fs.writeFileSync(tempPath, JSON.stringify(metadata, null, 2), 'utf8')
+      fs.writeFileSync(tempPath, JSON.stringify(persistedSnapshot(), null, 2), 'utf8')
       fs.renameSync(tempPath, metadataPath)
       const revisionTempPath = `${metadataRevisionPath}.${instanceTag}.tmp`
       fs.writeFileSync(revisionTempPath, String(runtime.metadataLocalRevision + 1), 'utf8')

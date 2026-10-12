@@ -11,6 +11,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
+import { limitResourceCreation } from './server/lib/resource-rate-limit.js'
 
 import {
   MAX_FILES, collectionsRoot, distRoot, filesRoot, releaseSha,
@@ -18,7 +19,7 @@ import {
 } from './server/config.js'
 
 import {
-  firstHeader
+  createToken, firstHeader
 } from './server/lib/http.js'
 
 import {
@@ -26,13 +27,13 @@ import {
 } from './server/state.js'
 
 import {
-  initMetadata, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata
+  initMetadata, initializeAuditPersistence, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata
 } from './server/lib/metadata-store.js'
 
 // normalizeMetadata 的传递依赖闭包已移至 metadata-normalizers.js；
 // 它同时是注入给 metadata-store 的规范化函数来源。
 import {
-  normalizeMetadata, normalizeSystemConfig
+  normalizeAuditLog, normalizeMetadata, normalizeSystemConfig
 } from './server/lib/metadata-normalizers.js'
 
 // 按域拆出的路由模块
@@ -91,6 +92,7 @@ for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
 installNormalizer(normalizeMetadata)
 // ② 再载入并就地填充 metadata 快照
 initMetadata(normalizeMetadata(await loadMetadata()))
+initializeAuditPersistence(normalizeAuditLog)
 runtime.metadataBaseIds = metadataIdSets(metadata)
 runtime.metadataLocalBaseIds = runtime.metadataBaseIds
 for (const share of metadata.shares) {
@@ -127,17 +129,25 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
   res.setHeader('X-Frame-Options', 'DENY')
+  const requestId = createToken(16)
+  res.setHeader('X-Request-Id', requestId)
+  res.locals.requestId = requestId
   const startedAt = Date.now()
   res.on('finish', () => {
     if (req.path === '/api/health' || (!req.path.startsWith('/api/') && !req.path.startsWith('/auth/'))) return
-    recordAuditLog({
+    try { recordAuditLog({
       type: 'access',
       action: `${req.method} ${sanitizeAuditPath(req.path)}`,
       status: res.statusCode,
       durationMs: Date.now() - startedAt,
+      details: { release: releaseSha, requestId, ...(res.statusCode >= 400 ? { errorCode: res.locals.errorCode || `http_${res.statusCode}` } : {}) },
       userId: authSessionFromRequest(req)?.user?.id || '',
       ip: requestIp(req),
-    })
+    }) } catch (error) {
+      // finish runs after response delivery; report storage failures without an uncaught
+      // exception taking down the service. Operational logs retain sanitized context.
+      console.error(JSON.stringify({ event: 'audit_write_failed', release: releaseSha, requestId, method: req.method, path: sanitizeAuditPath(req.path), status: res.statusCode, code: error.code || 'AUDIT_STORE_FAILED' }))
+    }
   })
   next()
 })
@@ -155,6 +165,8 @@ app.use((req, res, next) => {
   }
   next()
 })
+
+app.use(limitResourceCreation)
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -237,8 +249,11 @@ if (fs.existsSync(distRoot)) {
   })
 }
 
-app.use((error, _req, res, _next) => {
-  console.error(error)
+app.use((error, req, res, _next) => {
+  const errorCode = /^[a-zA-Z_0-9]+$/.test(String(error.code || '')) ? error.code : 'REQUEST_FAILED'
+  res.locals.errorCode = errorCode
+  console.error(JSON.stringify({ event: 'request_failed', release: releaseSha, requestId: res.locals.requestId || '', method: req.method, path: sanitizeAuditPath(req.path), code: errorCode }))
+  if (error.code === 'ENOSPC' || error.code === 'EDQUOT') return res.status(507).json({ message: '存储空间不足，请清理空间后重试', code: error.code })
   if (error.status) {
     // guestQuota 仅在游客配额超限时存在，前端据此渲染引导弹窗；code 供前端区分业务错误。
     const payload = { message: error.message || '请求处理失败' }

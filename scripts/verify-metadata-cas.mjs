@@ -125,13 +125,14 @@ try {
   const first = await startInstance('first')
   const second = await startInstance('second')
   check('两个实例共用同一份 storage 正常启动', true)
+  const initialRevision = diskRevision()
 
   const createdByFirst = await api(first, '/api/shares', { method: 'POST', body: shareBody('from-first.txt') })
   assert.equal(createdByFirst.status, 201, `实例一创建分享失败：${JSON.stringify(createdByFirst.data)}`)
   const firstShareId = createdByFirst.data.share.id
   check('实例一写入后快照有 1 个分享', stored().shares.length === 1)
   const revisionAfterFirst = diskRevision()
-  check('落盘版本号随之递增', revisionAfterFirst === 1, `实际 ${revisionAfterFirst}`)
+  check('落盘版本号随之递增', revisionAfterFirst === initialRevision + 1, `实际 ${initialRevision} → ${revisionAfterFirst}`)
 
   // 关键场景：实例二的内存快照停留在启动时刻（0 个分享），此时才写入。
   const createdBySecond = await api(second, '/api/shares', { method: 'POST', body: shareBody('from-second.txt') })

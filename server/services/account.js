@@ -35,19 +35,19 @@ import {
 import {
   accountRecordOwnerKey, compareAccountRecords, configuredAccountPlan, mergeAccountRecord,
   mergeAccountUser, normalizeAccountMessage, normalizeAccountMessages,
-  normalizeAccountRecords, normalizeAccountUser, normalizeAuditLogs, normalizeEmailValue,
+  normalizeAccountRecords, normalizeAccountUser, normalizeEmailValue,
   normalizeFileCleanupSettings, normalizeNonNegativeInteger, normalizeNotificationSettings,
-  normalizeNullablePositiveInteger, normalizePaymentPayload, normalizePaymentQueryCredential,
+  normalizePaymentPayload, normalizePaymentQueryCredential,
   normalizePhoneValue, normalizePlanId, normalizeVerificationCodes, normalizeWebMemberPayType,
   publicUser, trimRecordString,
 } from '../lib/metadata-normalizers.js'
 
-import { metadata, persistMetadata } from '../lib/metadata-store.js'
+import { metadata, persistMetadata, persistAuditLog } from '../lib/metadata-store.js'
 
 import { normalizeUploadFileName } from '../lib/upload.js'
 
 import {
-  oauthStates, paymentReconcileAttempts, paymentSessionTokens, remotePricingCache, runtime,
+  joinRequestAttempts, oauthStates, paymentReconcileAttempts, paymentSessionTokens, remotePricingCache, runtime,
   upgradeOrderLocks, verificationIpAttempts, verificationTargetLastSent,
 } from '../state.js'
 
@@ -133,8 +133,7 @@ export function findUpgradeOrder(orderId, userId) {
 }
 
 export function recordAuditLog(entry = {}) {
-  if (!metadata.auditLogs) metadata.auditLogs = []
-  metadata.auditLogs.unshift({
+  persistAuditLog({
     id: createToken(12),
     type: trimRecordString(entry.type, 30) || 'access',
     action: trimRecordString(entry.action, 180),
@@ -146,8 +145,6 @@ export function recordAuditLog(entry = {}) {
     details: entry.details && typeof entry.details === 'object' ? entry.details : {},
     createdAt: new Date().toISOString(),
   })
-  metadata.auditLogs = normalizeAuditLogs(metadata.auditLogs)
-  persistMetadata()
 }
 
 export function accountPlanRank(planId) {
@@ -765,7 +762,7 @@ export function accountTeamUsageForOrganization(organization) {
   // 团队空间容量取自所有者套餐（成员不贡献容量），用 personal 而非 effective，
   // 避免所有者本身也是别的团队成员时被套上别人的 teamSpaceBytes。
   const plan = accountPersonalPlanForUser(owner)
-  const shares = metadata.shares.filter((share) => share.teamResource && share.teamOrganizationId === organization?.id && share.status === 'active')
+  const shares = metadata.shares.filter((share) => share.teamResource && share.teamOrganizationId === organization?.id && !share.cleanedAt)
   const usedBytes = shares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const totalBytes = Number(plan.teamSpaceBytes || 0)
   return {
@@ -855,6 +852,13 @@ export function shouldDeliverAccountMessage(userId, eventType) {
 }
 
 export function validateShareRecipient(share, viewer) {
+  // 组织是资源的权限边界，不能把上传者的个人链接/令牌当成永久团队权限。
+  if (share.teamResource) {
+    const organization = metadata.organizations?.[share.teamOrganizationId]
+    if (!organization) return { ok: false, status: 404, message: '团队资源所属团队已不存在' }
+    if (!viewer?.id) return { ok: false, status: 401, message: '请先登录团队成员账号' }
+    if (!organization.members.some(member => member.userId === viewer.id && member.status === 'active')) return { ok: false, status: 403, message: '当前账号不是该团队的有效成员' }
+  }
   if (!share.deliveryRecipients?.length) return { ok: true }
   if (!viewer?.id) return { ok: false, status: 401, code: 'directed_login_required', message: '此文件为定向分享，请使用收件账号登录' }
   if (viewer.id === share.ownerUserId || share.recipientUserIds?.includes(viewer.id)) return { ok: true }
@@ -997,7 +1001,7 @@ export async function webMemberRequest(pathname, token, params = {}) {
   const payload = await response.json().catch(() => ({}))
   if (!response.ok || Number(payload.code) !== 1) {
     const authRejected = response.status === 401 || Number(payload.code) === 401
-    const error = httpError(authRejected ? 401 : response.status >= 400 ? response.status : 502, authRejected ? '会员支付凭证已失效，请重新登录后核对支付状态' : payload.msg || `会员服务返回 ${response.status}`)
+    const error = httpError(authRejected ? 401 : response.status >= 400 ? response.status : 502, authRejected ? '会员支付凭证已失效，请重新登录后核对支付状态' : '会员服务暂时不可用，请稍后重试')
     if (authRejected) error.code = 'payment_login_required'
     throw error
   }
@@ -1010,23 +1014,31 @@ export async function getWebMemberPackageInfo(session) {
   })
 }
 
-export async function resolveWebMemberPackage(session, planId) {
+export function paymentAmountCents(value) {
+  if ((typeof value !== 'number' && typeof value !== 'string') || String(value).trim() === '') throw httpError(502, '会员服务返回无效金额，请稍后重试')
+  const yuan = Number(value)
+  const cents = Math.round(yuan * 100)
+  if (!Number.isFinite(yuan) || yuan <= 0 || !Number.isSafeInteger(cents) || cents <= 0 || Math.abs(yuan * 100 - cents) > 0.000001) throw httpError(502, '会员服务返回无效金额，请稍后重试')
+  return cents
+}
+
+export function selectWebMemberPackage(planId, packages) {
   const envKey = WEB_MEMBER_PACKAGE_ENV_KEYS[planId]
-  const configuredId = envKey
-    ? Number(process.env[envKey] || DEFAULT_WEB_MEMBER_PACKAGE_IDS[planId] || 0)
-    : 0
+  const explicitId = envKey && process.env[envKey]
+  const configuredId = Number(explicitId || DEFAULT_WEB_MEMBER_PACKAGE_IDS[planId] || 0)
+  const pkg = packages.find((item) => Number(item.id) === configuredId)
+    || (!explicitId ? matchWebMemberPackageFromPackages(planId, packages) : null)
+  if (!pkg || !Number.isSafeInteger(Number(pkg.id)) || Number(pkg.id) <= 0) throw httpError(502, '会员套餐不可用，请核对主站套餐配置')
+  paymentAmountCents(pkg.price_yuan)
+  const days = Number(pkg.days)
+  if (pkg.days === null || pkg.days === '' || !Number.isSafeInteger(days) || days < 0
+    || (planId === 'enterprise' ? days !== 0 && days < 36500 : days <= 0 || days >= 36500)) throw httpError(502, '会员服务返回无效有效期，请核对主站套餐配置')
+  return pkg
+}
+
+export async function resolveWebMemberPackage(session, planId) {
   const info = await getWebMemberPackageInfo(session)
-  const packages = Array.isArray(info.packages) ? info.packages : []
-  if (configuredId > 0) {
-    const configured = packages.find((item) => Number(item.id) === configuredId)
-    if (configured) return { info, package: configured }
-  }
-  const matched = matchWebMemberPackageFromPackages(planId, packages)
-  if (!matched) {
-    const planLabel = configuredAccountPlan(planId)?.label || ''
-    throw httpError(502, `会员服务中未找到“${planLabel}”套餐，请配置正确的套餐 ID`)
-  }
-  return { info, package: matched }
+  return { info, package: selectWebMemberPackage(planId, Array.isArray(info.packages) ? info.packages : []) }
 }
 
 // 按套餐 ID 从远端套餐列表里挑出对应套餐（与订单创建同源；远端没有匹配时返回 null，由调用方决定回落策略）
@@ -1062,25 +1074,16 @@ const REMOTE_PRICING_TTL = 60 * 1000
 export async function remoteUpgradePricing(session) {
   const now = Date.now()
   if (remotePricingCache.data && now - remotePricingCache.at < REMOTE_PRICING_TTL) return remotePricingCache.data
+  const info = await getWebMemberPackageInfo(session)
+  const packages = Array.isArray(info.packages) ? info.packages : []
   const pricing = {}
-  try {
-    const info = await getWebMemberPackageInfo(session)
-    const packages = Array.isArray(info.packages) ? info.packages : []
-    for (const planId of ['member', 'team', 'enterprise']) {
-      const pkg = matchWebMemberPackageFromPackages(planId, packages)
-      const priceYuan = Number(pkg?.price_yuan)
-      const days = normalizeNullablePositiveInteger(pkg?.days)
-      if (!pkg || !Number.isFinite(priceYuan) || priceYuan < 0) continue
-      pricing[planId] = {
-        priceCents: Math.round(priceYuan * 100),
-        // ≥100 年的时长视为永久；其余按天数展示，与激活后权益一致
-        validityDays: days && days < 36500 ? days : null,
-        packageName: trimRecordString(pkg.name, 80),
-        packageId: Number(pkg.id) || null,
-      }
+  for (const planId of ['member', 'team', 'enterprise']) {
+    try {
+      const pkg = selectWebMemberPackage(planId, packages)
+      pricing[planId] = { priceCents: paymentAmountCents(pkg.price_yuan), validityDays: planId === 'enterprise' ? null : Number(pkg.days), packageName: trimRecordString(pkg.name, 80), packageId: Number(pkg.id), available: true }
+    } catch {
+      pricing[planId] = { available: false, message: '套餐暂不可用，请稍后重试' }
     }
-  } catch {
-    // 远端不可达/未配置：返回空 pricing，前端回落本地展示价
   }
   remotePricingCache.data = pricing
   remotePricingCache.at = now
@@ -1094,15 +1097,20 @@ export async function createWebMemberPaymentOrder(session, order, payType) {
     pay_type: payType,
     subsite_name: webMemberSubsiteName,
   })
-  order.payType = normalizeWebMemberPayType(data.pay_type || payType)
-  order.remoteOrderNo = trimRecordString(data.order_no, 80)
-  order.remotePackageId = Number(data.package_id || memberPackage.id) || null
-  order.remotePackageName = trimRecordString(data.package_name || memberPackage.name, 80)
-  order.remotePackageDays = normalizeNullablePositiveInteger(data.package_days || memberPackage.days)
-  order.amount = Math.round(Number(data.pay_amount) * 100) || order.amount
+  // Validate the response before attaching a remotely payable order or query credential.
+  const amount = paymentAmountCents(data.pay_amount)
+  const remoteOrderNo = trimRecordString(data.order_no, 80)
+  const days = Number(data.package_days ?? memberPackage.days)
+  if (!remoteOrderNo || Number(data.package_id) !== order.remotePackageId
+    || Number(memberPackage.id) !== order.remotePackageId || amount !== order.amount
+    || paymentAmountCents(memberPackage.price_yuan) !== order.amount
+    || days !== Number(memberPackage.days) || days !== Number(order.remotePackageDays || 0)
+    || Number(data.pay_type ?? payType) !== payType) throw httpError(502, '支付订单金额或套餐不一致，请重新创建订单')
+  order.payType = payType
+  order.remoteOrderNo = remoteOrderNo
+  order.remotePackageName = trimRecordString(memberPackage.name, 80)
   order.payment = normalizePaymentPayload(data)
   order.updatedAt = new Date().toISOString()
-  if (!order.remoteOrderNo) throw httpError(502, '会员服务未返回主站订单号')
   retainPaymentQueryCredential(session, order)
   persistMetadata()
   await ensurePaymentAssets(order.payment)

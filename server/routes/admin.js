@@ -32,6 +32,7 @@ import {
 import {
   adminSessionFromRequest
 } from '../services/shares.js'
+import { systemConfigError, userUpdateError } from '../lib/admin-validation.js'
 import path from 'node:path'
 
 export function registerAdminRoutes(app) {
@@ -103,6 +104,8 @@ export function registerAdminRoutes(app) {
   app.patch('/api/admin/config', (req, res) => {
     const auth = requireAdminSession(req, res)
     if (!auth) return
+    const validationError = systemConfigError(req.body, metadata.systemConfig)
+    if (validationError) return res.status(400).json({ message: validationError })
     metadata.systemConfig = normalizeSystemConfig({
       ...metadata.systemConfig,
       ...req.body,
@@ -115,6 +118,8 @@ export function registerAdminRoutes(app) {
   app.patch('/api/admin/users/:userId', (req, res) => {
     const auth = requireAdminSession(req, res)
     if (!auth) return
+    const validationError = userUpdateError(req.body)
+    if (validationError) return res.status(400).json({ message: validationError })
     const user = accountUserById(req.params.userId)
     if (!user) return res.status(404).json({ message: '用户不存在' })
     const status = req.body?.status ? String(req.body.status) : user.status || 'active'

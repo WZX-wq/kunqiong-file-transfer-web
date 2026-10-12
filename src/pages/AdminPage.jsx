@@ -2,7 +2,7 @@
 // AdminPage 子树：管理登录 + 概览 + 资源/用户/配置/日志。
 // 只被 App 引用，构成完整独立功能域。
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { BarChart3, Check, ChevronLeft, ChevronRight, Copy, Database, Eye, HardDrive, Inbox, KeyRound, Link2, LockKeyhole, LogOut, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, Users, X, XCircle } from 'lucide-react'
 import { useConfirmDialog } from '../hooks.js'
 import { apiRequest, copyTextToClipboard } from '../lib/api.js'
@@ -68,6 +68,7 @@ export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome
 }
 
 export function AdminPage() {
+  const requestGeneration = useRef(0)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -89,10 +90,12 @@ export function AdminPage() {
   }, [notice])
 
   const load = async () => {
+    const generation = ++requestGeneration.current
     setLoading(true)
     setError('')
     try {
       const session = await apiRequest('/api/admin/session')
+      if (generation !== requestGeneration.current) return
       if (!session.authenticated) {
         setAuthenticated(false)
         setAdminInfo(null)
@@ -101,14 +104,31 @@ export function AdminPage() {
       }
       setAuthenticated(true)
       setAdminInfo(session.admin || null)
-      setData(await apiRequest('/api/admin/overview'))
+      const overview = await apiRequest('/api/admin/overview')
+      if (generation === requestGeneration.current) setData(overview)
     } catch (err) {
+      if (generation !== requestGeneration.current) return
+      setAuthenticated(false)
+      setAdminInfo(null)
+      setData(null)
       setError(err.message || '后台数据加载失败')
     } finally {
-      setLoading(false)
+      if (generation === requestGeneration.current) setLoading(false)
     }
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState !== 'hidden') load() }
+    load()
+    window.addEventListener('focus', refresh)
+    window.addEventListener('pageshow', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      requestGeneration.current++
+      window.removeEventListener('focus', refresh)
+      window.removeEventListener('pageshow', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [])
 
   const submitLogin = async ({ username, password }) => {
     setLoginBusy(true)
@@ -127,6 +147,8 @@ export function AdminPage() {
   }
 
   const logoutAdmin = async () => {
+    requestGeneration.current++
+    setLoading(false)
     try {
       await apiRequest('/api/admin/logout', { method: 'POST' })
     } catch { /* 忽略退出异常，前端一律回到登录态 */ }
@@ -152,11 +174,12 @@ export function AdminPage() {
       const form = new FormData(event.currentTarget)
       const planOverrides = {}
       ;['free', 'member', 'team', 'enterprise'].forEach((planId) => {
-        planOverrides[planId] = {
-          totalGb: form.get(`plan-${planId}-gb`),
-          monthlyPrice: form.get(`plan-${planId}-price`),
-          validityDays: form.get(`plan-${planId}-days`) || null,
+        const override = {}
+        for (const [field, suffix] of [['totalGb', 'gb'], ['monthlyPrice', 'price'], ['validityDays', 'days']]) {
+          const value = String(form.get(`plan-${planId}-${suffix}`) ?? '').trim()
+          if (value !== '') override[field] = value
         }
+        planOverrides[planId] = override
       })
       const result = await apiRequest('/api/admin/config', { method: 'PATCH', body: JSON.stringify({
         defaultShareDays: form.get('defaultShareDays'),
@@ -310,7 +333,7 @@ export function AdminConfig({ config = {}, saving = false, onSubmit }) {
       <label className="manage-field"><span>审计日志保留（天）</span><input name="auditLogRetentionDays" type="number" min="1" max="3650" defaultValue={config.auditLogRetentionDays} /></label>
       <label className="manage-field"><span>孤立目录宽限（小时）</span><input name="orphanGraceHours" type="number" min="1" max="720" defaultValue={config.orphanGraceHours} /></label>
     </div>
-    <div className="admin-plan-config"><div className="admin-plan-config-heading"><strong>会员权益配置</strong><span>容量使用 GB，价格使用分；价格仍以主站支付套餐为准。</span></div>{[['free', '基础版'], ['member', '会员版'], ['team', '团队版'], ['enterprise', '企业版']].map(([id, label]) => <div className="admin-plan-row" key={id}><strong>{label}</strong><label><span>容量 GB</span><input name={`plan-${id}-gb`} type="number" min="1" step="1" defaultValue={overrides[id]?.totalBytes ? Math.round(overrides[id].totalBytes / 1024 ** 3) : ''} placeholder="默认" /></label><label><span>价格（分）</span><input name={`plan-${id}-price`} type="number" min="0" step="1" defaultValue={overrides[id]?.monthlyPrice ?? ''} placeholder="默认" /></label><label><span>有效期（天）</span><input name={`plan-${id}-days`} type="number" min="1" max="3650" defaultValue={overrides[id]?.validityDays ?? ''} placeholder="永久/默认" /></label></div>)}</div>
+    <div className="admin-plan-config"><div className="admin-plan-config-heading"><strong>会员权益配置</strong><span>留空恢复默认。容量使用 GB，价格使用分；支付价格以主站为准。</span></div>{[['free', '基础版'], ['member', '会员版'], ['team', '团队版'], ['enterprise', '企业版']].map(([id, label]) => <div className="admin-plan-row" key={id}><strong>{label}</strong><label><span>容量 GB</span><input name={`plan-${id}-gb`} type="number" min="1" step="1" defaultValue={overrides[id]?.totalBytes ? Math.round(overrides[id].totalBytes / 1024 ** 3) : ''} placeholder="默认" /></label><label><span>价格（分）</span><input name={`plan-${id}-price`} type="number" min="0" step="1" defaultValue={overrides[id]?.monthlyPrice ?? ''} placeholder="默认" /></label><label><span>有效期（天）</span><input name={`plan-${id}-days`} type="number" min="1" max="3650" defaultValue={overrides[id]?.validityDays ?? ''} placeholder="默认" /></label></div>)}</div>
     <label className="switch-row"><div><strong>维护模式</strong><span>开启后会阻止非管理员创建分享、收集任务或提交文件。</span></div><input name="maintenanceMode" type="checkbox" defaultChecked={config.maintenanceMode} /></label>
     <button className="primary-button" disabled={saving}><SlidersHorizontal size={15} /> {saving ? '保存中' : '保存配置'}</button>
   </form>

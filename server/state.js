@@ -78,6 +78,9 @@ export const verificationTargetLastSent = new Map()
 export const verificationIpAttempts = new Map()
 // 分享提取码查取
 export const shareLookupAttempts = new Map()
+export const resourceCreateAttempts = new Map()
+// 企业专属入口入团申请：按来源 IP 与申请账号。
+export const joinRequestAttempts = new Map()
 
 // ── 缓存 ─────────────────────────────────────────────────────
 // 远端套餐实价缓存：升级弹窗展示与订单计价必须同源（价格以主站支付套餐为准）

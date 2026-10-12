@@ -31,6 +31,8 @@ export function parseBooleanEnv(value, fallback = false) {
 // ── 上传与限流 ──
 export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
 export const MAX_FILES = 100
+export const TEAM_NAME_MAX = 80
+export const TEAM_QUERY_MAX = 160
 export const EXPIRING_SOON_MS = 24 * 60 * 60 * 1000
 
 export const UPLOAD_CHUNK_MIN_BYTES = 1 * 1024 * 1024

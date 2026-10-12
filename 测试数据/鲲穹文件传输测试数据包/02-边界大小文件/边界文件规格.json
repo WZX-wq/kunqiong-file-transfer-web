@@ -1,0 +1,32 @@
+{
+  "project": "鲲穹文件传输",
+  "unit_note": "界面MB按MiB、GB按GiB计算，依据server/config.js的实际大小限制。",
+  "source": ["server/config.js: MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024", "server/config.js: DEFAULT_SYSTEM_CONFIG.anonymousMaxFileSizeMb = 500", "鲲穹文件传输项目测试用例.docx: SEND-006/SEND-007/NFR-005"],
+  "logical_bytes_budget": 17678991360,
+  "fixtures": [
+    {
+      "id": "TC-04-03", "path": "TC-04-03-游客单文件边界-500MB减1字节.bin", "kind": "binary", "sparse": true, "bytes": 524287999,
+      "case_ids": ["SEND-006"], "scenario": "游客单文件上限前1字节", "expected": "配额充足时允许上传；发布仍须通过扫描"
+    },
+    {
+      "id": "TC-04-01", "path": "TC-04-01-单文件大小边界-500MB.bin", "kind": "binary", "sparse": true, "bytes": 524288000,
+      "case_ids": ["SEND-006", "SEND-012", "SCAN-004", "SHARE-005", "COLL-007", "COLL-008", "NFR-007"], "scenario": "游客单文件刚好上限", "expected": "配额充足时允许上传；发布仍须通过扫描"
+    },
+    {
+      "id": "TC-04-04", "path": "TC-04-04-游客单文件超限-500MB加1字节.bin", "kind": "binary", "sparse": true, "bytes": 524288001,
+      "case_ids": ["SEND-006"], "scenario": "游客单文件超出上限1字节", "expected": "游客被大小限制拒绝，接口返回413或页面明确提示超限；不创建资源"
+    },
+    {
+      "id": "TC-04-05", "path": "TC-04-05-登录单文件边界-5GB减1字节.bin", "kind": "binary", "sparse": true, "bytes": 5368709119,
+      "case_ids": ["SEND-007", "NFR-005"], "scenario": "登录用户单文件上限前1字节", "expected": "登录且账号配额充足时允许分片上传；发布仍须通过扫描"
+    },
+    {
+      "id": "TC-04-02", "path": "TC-04-02-单文件大小边界-5GB.bin", "kind": "binary", "sparse": true, "bytes": 5368709120,
+      "case_ids": ["SEND-007", "NFR-005", "NFR-008", "NFR-009"], "scenario": "登录用户单文件刚好上限", "expected": "登录且账号配额充足时允许分片上传；发布仍须通过扫描"
+    },
+    {
+      "id": "TC-04-06", "path": "TC-04-06-登录单文件超限-5GB加1字节.bin", "kind": "binary", "sparse": true, "bytes": 5368709121,
+      "case_ids": ["SEND-007"], "scenario": "登录用户单文件超出上限1字节", "expected": "单文件5GiB限制拒绝，接口返回413或页面明确提示超限；不创建资源"
+    }
+  ]
+}

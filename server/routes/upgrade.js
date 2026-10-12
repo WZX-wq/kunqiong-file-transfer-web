@@ -11,7 +11,7 @@ import {
 } from '../lib/http.js'
 
 import {
-  configuredAccountPlan, normalizeNullablePositiveInteger, normalizePaymentPayload,
+  normalizeNullablePositiveInteger, normalizePaymentPayload,
   normalizePlanId, normalizeWebMemberPayType, trimRecordString
 } from '../lib/metadata-normalizers.js'
 
@@ -22,7 +22,7 @@ import {
 import {
   accountEffectivePlanForUser, accountPlanRank, accountUserById, accountWorkspacePayload,
   acquireUpgradeLock, createWebMemberPaymentOrder, ensurePaymentAssets, findUpgradeOrder,
-  publicPaymentPayload, reconcileUpgradeOrder, reconcileUserUpgradeOrders,
+  paymentAmountCents, publicPaymentPayload, reconcileUpgradeOrder, reconcileUserUpgradeOrders,
   remoteUpgradePricing, requireAuthSession, resolveWebMemberPackage,
   retainPaymentQueryCredential, upgradeOrderSummary, upgradeOrdersForUser
 } from '../services/account.js'
@@ -36,8 +36,12 @@ export function registerUpgradeRoutes(app) {
   app.get('/api/account/upgrade-pricing', async (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
-    const pricing = await remoteUpgradePricing(session)
-    res.json({ source: Object.keys(pricing).length ? 'remote' : 'local', pricing })
+    try {
+      const pricing = await remoteUpgradePricing(session)
+      res.json({ source: 'remote', pricing })
+    } catch {
+      res.status(502).json({ message: '套餐价格加载失败，请稍后重试' })
+    }
   })
   app.post('/api/account/upgrade-orders', async (req, res) => {
     let release
@@ -74,16 +78,13 @@ export function registerUpgradeRoutes(app) {
 
       const { package: memberPackage } = await resolveWebMemberPackage(session, planId)
       const now = new Date().toISOString()
-      const remotePrice = Number(memberPackage.price_yuan)
       const order = {
         id: createToken(12),
         orderNo: `WM1${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}${createToken(8).toUpperCase()}`,
         userId: stored.id,
         planId,
         status: 'pending_payment',
-        amount: Number.isFinite(remotePrice) && remotePrice >= 0
-          ? Math.round(remotePrice * 100)
-          : configuredAccountPlan(planId)?.monthlyPrice ?? null,
+        amount: paymentAmountCents(memberPackage.price_yuan),
         payType: 1,
         remoteOrderNo: '',
         remotePackageId: Number(memberPackage.id) || null,
@@ -105,16 +106,24 @@ export function registerUpgradeRoutes(app) {
       release?.()
     }
   })
-  app.post('/api/account/upgrade-orders/:orderId/cancel', (req, res) => {
-    const session = requireAuthSession(req, res)
-    if (!session) return
-    const order = findUpgradeOrder(req.params.orderId, session.user.id)
-    if (!order) return res.status(404).json({ message: '升级订单不存在' })
-    if (order.status !== 'pending_payment') return res.status(409).json({ message: '当前订单状态不可取消' })
-    order.status = 'canceled'
-    order.updatedAt = new Date().toISOString()
-    persistMetadata()
-    res.json({ order: upgradeOrderSummary(order), orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
+  app.post('/api/account/upgrade-orders/:orderId/cancel', async (req, res) => {
+    let release
+    try {
+      const session = requireAuthSession(req, res)
+      if (!session) return
+      const order = findUpgradeOrder(req.params.orderId, session.user.id)
+      if (!order) return res.status(404).json({ message: '升级订单不存在' })
+      release = await acquireUpgradeLock(order.id)
+      if (!['pending_payment', 'canceled'].includes(order.status)) return res.status(409).json({ message: '当前订单状态不可取消' })
+      if (order.status !== 'canceled') {
+        order.status = 'canceled'
+        order.updatedAt = new Date().toISOString()
+        persistMetadata()
+      }
+      res.json({ order: upgradeOrderSummary(order), orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
+    } catch {
+      res.status(500).json({ message: '取消订单失败，请稍后重试' })
+    } finally { release?.() }
   })
   app.post('/api/account/upgrade-orders/:orderId/confirm', async (req, res) => {
     let release
@@ -162,7 +171,7 @@ export function registerUpgradeRoutes(app) {
       }
       order.updatedAt = new Date().toISOString()
       persistMetadata()
-      res.json({ message: result.msg || '还未支付', order: upgradeOrderSummary(order), paid: false })
+      res.json({ message: '还未支付', order: upgradeOrderSummary(order), paid: false })
     } catch (error) {
       res.status(error.status || 502).json({ message: error.message || '支付状态查询失败' })
     }

@@ -7,6 +7,7 @@ import { ArrowLeft, BadgeCheck, BarChart3, Building2, Check, ChevronRight, Clock
 import { feedbackTone, formatBytes, formatDate, formatPlanPrice } from '../lib/format.js'
 import { PlanSpaceSummary } from '../components/ui.jsx'
 import { ACCOUNT_PLAN_ICON, ACCOUNT_PLAN_RANK, UPGRADE_ORDER_STATUS_LABELS } from '../lib/constants.js'
+import { TEAM_NAME_MAX, limitInputText } from '../lib/input-limits.js'
 
 export function WorkspacePage() {
   const [user, setUser] = useState(null)
@@ -182,15 +183,6 @@ export function WorkspacePage() {
       setError('当前浏览器不支持自动复制，请手动选中链接复制')
     }
   }
-  const goBack = () => {
-    const referrer = document.referrer
-    const hasSameOriginReferrer = referrer && new URL(referrer, window.location.origin).origin === window.location.origin
-    if (window.history.length > 1 && hasSameOriginReferrer) {
-      window.history.back()
-      return
-    }
-    window.location.href = '/'
-  }
   return (
     <PublicShell>
       <section className="workspace-page">
@@ -198,7 +190,7 @@ export function WorkspacePage() {
       <div className="workspace-grid">
             <div className="public-card workspace-hero">
               <div><p className="eyebrow">会员与企业版</p><h1>{currentPlanLabel}空间</h1><p>存储空间、保存策略、团队协作能力均由账号权益统一管控，升级后立即生效。</p></div>
-              <button className="secondary-button workspace-back-button" onClick={goBack}><ArrowLeft size={15} /> 返回</button>
+              <a className="secondary-button workspace-back-button" href="/"><ArrowLeft size={15} /> 返回首页</a>
             </div>
             <div className="public-card workspace-section workspace-benefits-card">
               <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
@@ -213,7 +205,7 @@ export function WorkspacePage() {
                   <p className="eyebrow">团队空间</p>
                   {organization && editingTeamName ? (
                     <form className="workspace-name-form" onSubmit={saveWorkspaceName}>
-                      <input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} maxLength={80} autoFocus aria-label="团队名称" />
+                      <input value={workspaceName} onChange={(event) => setWorkspaceName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} autoFocus aria-label="团队名称" />
                       <button type="submit" className="ghost-icon" disabled={saving || !workspaceName.trim()} aria-label="保存团队名称" title="保存团队名称"><Check size={16} /></button>
                       <button type="button" className="ghost-icon" disabled={saving} onClick={() => { setWorkspaceName(organization.name); setEditingTeamName(false) }} aria-label="取消编辑团队名称" title="取消编辑"><X size={16} /></button>
                     </form>
@@ -229,7 +221,7 @@ export function WorkspacePage() {
                   : <span className="workspace-status muted team-required-tag" title={canManageTeam ? '当前权益可以创建团队空间。' : '该功能需要升级团队版权限才可解锁。'}>{canManageTeam ? '可创建' : '需团队版'}</span>}
               </div>
               {!organization ? (
-                hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
+                hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
               ) : (
                 <>
                   {teamRole === 'owner' && !canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
@@ -291,11 +283,15 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [payType, setPayType] = useState(1)
+  const [payType, setPayType] = useState(pendingOrder?.payType || 1)
   const [payment, setPayment] = useState(pendingOrder?.payment || null)
+  const attemptedPaymentOrder = useRef(null)
+  const paymentRequestRunning = useRef(false)
   // 远端主站套餐实价：与订单创建/支付同源，避免「展示价 ≠ 下单应付金额」
   const remotePricing = useRemotePlanPricing(true)
   const plans = localPlans.map((item) => mergePlanPricing(item, remotePricing))
+  const priceAvailable = (id) => Boolean(remotePricing?.[id] && remotePricing[id].available !== false && !remotePricing.error)
+  const pricingError = remotePricing?.error || (remotePricing && !priceAvailable(selectedPlanId) ? '套餐暂不可用，请稍后重试' : '')
 
   useEffect(() => {
     if (pendingOrder) setOrderView(pendingOrder)
@@ -336,7 +332,7 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
   const isIncludedPlan = (item) => accountPlanRank(item.id) < currentPlanRank || (item.id === plan.id && item.permanent)
 
   const createOrder = async () => {
-    if (!selectedPlan || busy) return
+    if (!selectedPlan || busy || !priceAvailable(selectedPlan.id)) return
     setBusy(true)
     setError('')
     setNotice('')
@@ -357,8 +353,9 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
     }
   }
 
-  const continuePay = async () => {
-    if (!orderView || busy) return
+  const loadPayment = async () => {
+    if (!orderView || orderView.status !== 'pending_payment' || busy || paymentRequestRunning.current) return
+    paymentRequestRunning.current = true
     setBusy(true)
     setError('')
     setNotice('')
@@ -367,24 +364,30 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
         method: 'POST',
         body: JSON.stringify({ payType }),
       })
-      setOrderView(result.order)
-      setPayment(result.payment || null)
-      onRefresh?.({ silent: true })
-      if (payType === 2) {
-        if (result.payment?.alipaysubmit_html) {
-          setNotice('支付宝收银台已加载，请完成支付后刷新支付状态')
-        } else {
-          setError('支付服务未返回支付宝收银台，请稍后重试')
-        }
-      } else {
-        setNotice(result.message || '微信支付二维码已创建，请扫码支付')
+      const nextPayment = result.payment || result.order?.payment || null
+      const nextPayType = result.order?.payType || payType
+      if (nextPayType === 2 ? !nextPayment?.alipaysubmit_html : !nextPayment?.qrcode_img_url) {
+        throw new Error(nextPayType === 2 ? '支付服务未返回支付宝收银台，请稍后重试' : '支付服务未返回微信支付二维码，请稍后重试')
       }
+      setOrderView(result.order)
+      setPayment(nextPayment)
+      setPayType(nextPayType)
+      onRefresh?.({ silent: true })
+      setNotice(nextPayType === 2 ? '支付宝收银台已加载，请完成支付后刷新支付状态' : result.message || '微信支付二维码已创建，请扫码支付')
     } catch (err) {
       setError(err.message || '支付订单创建失败')
     } finally {
+      paymentRequestRunning.current = false
       setBusy(false)
     }
   }
+
+  useEffect(() => {
+    if (!orderView) { attemptedPaymentOrder.current = null; return }
+    if (orderView.status !== 'pending_payment' || payment || busy || attemptedPaymentOrder.current === orderView.id) return
+    attemptedPaymentOrder.current = orderView.id
+    loadPayment()
+  }, [orderView?.id, orderView?.status, payment, busy])
 
   const checkPayStatus = async () => {
     if (!orderView || busy) return
@@ -414,6 +417,7 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
     try {
       await upgradeApiRequest(`/api/account/upgrade-orders/${encodeURIComponent(orderView.id)}/cancel`, { method: 'POST' })
       setOrderView(null)
+      setPayment(null)
       onRefresh?.({ silent: true })
       onNotify?.('升级订单已取消', 'success')
     } catch (err) {
@@ -422,6 +426,8 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
       setBusy(false)
     }
   }
+
+  const paymentMethodSelector = <div className="upgrade-pay-type" role="group" aria-label="支付方式"><button type="button" className={payType === 1 ? 'selected' : ''} aria-pressed={payType === 1} onClick={() => setPayType(1)} disabled={busy}><ScanLine size={15} /> 微信扫码</button><button type="button" className={payType === 2 ? 'selected' : ''} aria-pressed={payType === 2} onClick={() => setPayType(2)} disabled={busy}><Wallet size={15} /> 支付宝</button></div>
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
@@ -432,6 +438,8 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
         </div>
         <div className="modal-body upgrade-modal-body">
           {error && <FeedbackMessage message={error} tone="error" />}
+          {!orderView && pricingError && <FeedbackMessage message={pricingError} tone="error" />}
+          {!orderView && !remotePricing && <p role="status">正在加载套餐价格…</p>}
           {orderView ? (orderView.status === 'paid' ? (
             <div className="upgrade-success-view" role="status">
               <span className="upgrade-success-icon"><BadgeCheck size={34} /></span>
@@ -458,13 +466,14 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
                 <div><dt>创建时间</dt><dd>{formatDate(orderView.createdAt)}</dd></div>
                 <div><dt>应付金额</dt><dd>{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '价格以支付通道为准'}</dd></div>
               </dl>
-              {!payment && <div className="upgrade-pay-type" role="group" aria-label="支付方式"><button type="button" className={payType === 1 ? 'selected' : ''} onClick={() => setPayType(1)}><ScanLine size={15} /> 微信扫码</button><button type="button" className={payType === 2 ? 'selected' : ''} onClick={() => setPayType(2)}><Wallet size={15} /> 支付宝</button></div>}
+              {orderView.status === 'pending_payment' && !payment && paymentMethodSelector}
+              {orderView.status === 'pending_payment' && !payment && (busy || !error) && <div className="upgrade-payment-qr" role="status"><span className="loading-dot" /><span>{payType === 2 ? '正在加载支付宝收银台…' : '正在加载微信支付二维码…'}</span></div>}
               {payment?.qrcode_img_url && <div className="upgrade-payment-qr"><img src={payment.qrcode_img_url} alt="微信支付二维码" /><span>请使用微信扫码支付</span></div>}
               {payment?.alipaysubmit_html && <div className="upgrade-payment-qr upgrade-payment-alipay"><div className="upgrade-payment-alipay-frame"><iframe title="支付宝收银台" scrolling="no" srcDoc={payment.alipaysubmit_html} /></div><span>请使用支付宝扫码支付</span></div>}
-              <div className="upgrade-order-note"><Clock3 size={15} /><span>{notice || '请选择支付方式并完成支付，支付成功后会员权益会自动开通。'}</span></div>
+              <div className="upgrade-order-note"><Clock3 size={15} /><span>{notice || '支付成功后会员权益会自动开通。'}</span></div>
               {orderView.status === 'pending_payment' ? (
                 <div className="upgrade-order-actions">
-                  <button className="primary-button" onClick={continuePay} disabled={busy}><Zap size={15} /> {busy ? '正在处理…' : '继续支付'}</button>
+                  {!payment && error && <button className="primary-button" onClick={loadPayment} disabled={busy}><RefreshCw size={15} /> {busy ? '正在加载…' : '重新加载支付码'}</button>}
                   {payment && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</button>}
                   <button className="secondary-button" onClick={cancelOrder} disabled={busy}><X size={15} /> 取消订单</button>
                 </div>
@@ -484,7 +493,7 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
                     key={item.id}
                     className={`upgrade-plan-card ${item.id === selectedPlanId ? 'selected' : ''} ${isIncludedPlan(item) ? 'is-current' : ''}`}
                     onClick={() => !isIncludedPlan(item) && setSelectedPlanId(item.id)}
-                    disabled={isIncludedPlan(item)}
+                    disabled={isIncludedPlan(item) || !priceAvailable(item.id)}
                     aria-pressed={item.id === selectedPlanId}
                   >
                     <span className="upgrade-plan-top">{(() => { const PlanIcon = accountPlanIcon(item.id); return <span className="upgrade-plan-icon"><PlanIcon size={16} /></span> })()}<strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
@@ -496,10 +505,11 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
                   </button>
                 ))}
               </div>
+              {selectedPlan && paymentMethodSelector}
               {selectedPlan && (
                 <div className="upgrade-summary">
                   <span><Sparkles size={14} /> {plan.label || '基础版'} → <strong>{selectedPlan.label}</strong>：{selectedPlan.tagline}</span>
-                  <button className="primary-button" onClick={createOrder} disabled={busy}><Zap size={15} /> {busy ? '正在创建…' : selectedPlan.id === plan.id ? '创建续费订单' : '创建升级订单'}</button>
+                  <button className="primary-button" onClick={createOrder} disabled={busy || !priceAvailable(selectedPlan.id)}><Zap size={15} /> {busy ? '正在创建…' : selectedPlan.id === plan.id ? '创建续费订单' : '创建升级订单'}</button>
                 </div>
               )}
               <p className="upgrade-hint">支付成功后权益自动生效，续费会顺延有效期。</p>

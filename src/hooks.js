@@ -34,15 +34,18 @@ export function useConfirmDialog() {
   return { confirmState, requestConfirm, settleConfirm }
 }
 
-// 远端主站套餐实价（与订单支付同源）：拉取失败或非远端来源时返回 null，调用方沿用本地展示价兜底。
+// Remote availability is explicit; do not present a fallback price as purchasable.
 export function useRemotePlanPricing(enabledId) {
   const [remotePricing, setRemotePricing] = useState(null)
   useEffect(() => {
+    setRemotePricing(null)
     if (!enabledId) return undefined
     let cancelled = false
     upgradeApiRequest('/api/account/upgrade-pricing').then((data) => {
-      if (!cancelled && data?.source === 'remote') setRemotePricing(data.pricing || {})
-    }).catch(() => { /* 拉不到远端价就沿用本地展示价 */ })
+      if (!cancelled) setRemotePricing(data?.source === 'remote' ? data.pricing || {} : { error: '套餐价格暂不可用，请稍后重试' })
+    }).catch(() => {
+      if (!cancelled) setRemotePricing({ error: '套餐价格加载失败，请稍后重试' })
+    })
     return () => { cancelled = true }
   }, [enabledId])
   return remotePricing

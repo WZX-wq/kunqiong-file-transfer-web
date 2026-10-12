@@ -26,7 +26,7 @@ async function waitFor(condition, name) {
   for (let i = 0; i < 150; i++) { if (condition()) return; await delay(10) }
   assert.fail(name)
 }
-async function mount({ pending = false } = {}) {
+async function mount({ pending = false, paymentReady = true, confirmationFailures = 0, conflict = false } = {}) {
   const jsErrors = []
   const console = new VirtualConsole()
   console.on('jsdomError', (error) => jsErrors.push(error))
@@ -35,17 +35,17 @@ async function mount({ pending = false } = {}) {
   const timers = new Map()
   let nextTimer = 0, workspace = initialWorkspace(), order = null, loggedIn = true
   if (pending) {
-    order = { ...initialOrder(), remoteOrderNo: 'fixture-remote-order', payment: { qrcode_img_url: 'data:image/png;base64,YQ==' } }
+    order = { ...initialOrder(), ...(paymentReady ? { remoteOrderNo: 'fixture-remote-order', payment: { qrcode_img_url: 'data:image/png;base64,YQ==' } } : {}) }
     workspace.orders = [order]; workspace.paymentReconciliation.pending = true
   }
-  let holdStatus = false, statusAborts = 0
+  let holdStatus = false, statusAborts = 0, createCalls = 0, confirmCalls = 0
   let holdNextWorkspace = false, heldWorkspace = null, workspaceCalls = 0, active = 0, maxActive = 0, statusCalls = 0
   window.setInterval = (callback, ms) => { const id = ++nextTimer; timers.set(id, { callback, ms }); return id }
   window.clearInterval = (id) => timers.delete(id)
   window.fetch = async (url, options = {}) => {
     let payload = {}, status = 200
     if (url === '/api/auth/me') payload = { user: loggedIn ? { id: 'fixture-user', nickname: '测试用户' } : null }
-    else if (url === '/api/account/upgrade-pricing') payload = { source: 'local', pricing: {} }
+    else if (url === '/api/account/upgrade-pricing') payload = { source: 'remote', pricing: { member: { available: true, priceCents: 1900, validityDays: 30 } } }
     else if (url === '/api/account/workspace') {
       workspaceCalls++; active++; maxActive = Math.max(maxActive, active)
       payload = structuredClone(workspace)
@@ -57,11 +57,21 @@ async function mount({ pending = false } = {}) {
         }).finally(() => { heldWorkspace = null; active-- })
       } else active--
     } else if (url === '/api/account/upgrade-orders' && options.method === 'POST') {
+      createCalls++
       order = initialOrder(); workspace.orders = [order]; payload = { order, orders: [order] }
+      if (conflict) { status = 409; payload.message = '已有一个待支付的升级订单' }
     } else if (url.endsWith('/confirm')) {
-      order = { ...order, remoteOrderNo: 'fixture-remote-order', payment: { qrcode_img_url: 'data:image/png;base64,YQ==' } }
-      workspace.orders = [order]; workspace.paymentReconciliation.pending = true
-      payload = { order, payment: order.payment }
+      confirmCalls++
+      if (confirmationFailures > 0) {
+        confirmationFailures--; status = 502; payload = { message: '支付服务暂不可用' }
+      } else {
+        const payType = JSON.parse(options.body).payType
+        order = { ...order, payType, remoteOrderNo: 'fixture-remote-order', payment: payType === 2 ? { alipaysubmit_html: '<form>支付宝测试收银台</form>' } : { qrcode_img_url: 'data:image/png;base64,YQ==' } }
+        workspace.orders = [order]; workspace.paymentReconciliation.pending = true
+        payload = { order, payment: order.payment }
+      }
+    } else if (url.endsWith('/cancel')) {
+      order = { ...order, status: 'canceled' }; workspace.orders = [order]; payload = { order }
     } else if (url.endsWith('/pay-status')) {
       statusCalls++
       if (holdStatus) await new Promise((resolve, reject) => {
@@ -85,6 +95,7 @@ async function mount({ pending = false } = {}) {
     hold: () => { holdNextWorkspace = true }, release: () => heldWorkspace?.(),
     isHeld: () => Boolean(heldWorkspace), calls: () => workspaceCalls, maxActive: () => maxActive,
     statusCalls: () => statusCalls,
+    createCalls: () => createCalls, confirmCalls: () => confirmCalls,
     holdStatus: () => { holdStatus = true }, statusAborts: () => statusAborts,
     paid: () => { workspace = { ...workspace, plan: plans[1], orders: [{ ...order, status: 'paid' }], paymentReconciliation: { pending: false, requiresLogin: false } } },
     requiresLogin: () => { workspace.paymentReconciliation = { pending: false, requiresLogin: true } },
@@ -100,7 +111,9 @@ try {
   fixture.hold()
   await fixture.click('创建升级订单')
   await waitFor(fixture.isHeld, 'Pre-checkout workspace response is held')
-  await fixture.click('继续支付')
+  await waitFor(() => fixture.document.querySelector('img[alt="微信支付二维码"]'), 'Creating the order automatically displays the payment QR code')
+  check('Creating an order opens its QR code without another payment click', fixture.createCalls() === 1 && fixture.confirmCalls() === 1)
+  check('QR checkout has no extra continue-payment step', !fixture.text().includes('继续支付'))
   await fixture.click('关闭升级窗口')
   fixture.release()
   await waitFor(() => fixture.calls() >= 3, 'Checkout refresh is queued behind the earlier workspace snapshot')
@@ -125,9 +138,47 @@ try {
   check('Real React UI completes without runtime errors', fixture.jsErrors.length === 0)
 } finally { fixture.close() }
 
+const alipayFixture = await mount()
+try {
+  await alipayFixture.click('升级权益', '.workspace-benefits-cta button')
+  await alipayFixture.click('支付宝')
+  await alipayFixture.click('创建升级订单')
+  await waitFor(() => alipayFixture.document.querySelector('iframe[title="支付宝收银台"]'), 'Selected Alipay checkout loads automatically')
+  check('Choosing Alipay before creation directly loads its checkout', alipayFixture.createCalls() === 1 && alipayFixture.confirmCalls() === 1 && !alipayFixture.document.querySelector('img[alt="微信支付二维码"]'))
+} finally { alipayFixture.close() }
+
+const retryFixture = await mount({ confirmationFailures: 1 })
+try {
+  await retryFixture.click('升级权益', '.workspace-benefits-cta button')
+  await retryFixture.click('创建升级订单')
+  await waitFor(() => retryFixture.text().includes('支付服务暂不可用'), 'Automatic payment failure is visible')
+  await delay(80)
+  check('Payment failure keeps the order and does not repeatedly create payment requests', !!retryFixture.document.querySelector('.upgrade-order-meta') && retryFixture.createCalls() === 1 && retryFixture.confirmCalls() === 1)
+  await retryFixture.click('重新加载支付码')
+  await waitFor(() => retryFixture.document.querySelector('img[alt="微信支付二维码"]'), 'Retry loads the original order payment')
+  check('Retry uses the existing order without creating a duplicate', retryFixture.createCalls() === 1 && retryFixture.confirmCalls() === 2)
+  await retryFixture.click('取消订单')
+  await waitFor(() => retryFixture.document.querySelector('.upgrade-summary'), 'Cancel returns to plan selection')
+  check('Cancel removes the previous payment QR code', !retryFixture.document.querySelector('.upgrade-payment-qr'))
+  await retryFixture.click('创建升级订单')
+  await waitFor(() => retryFixture.document.querySelector('img[alt="微信支付二维码"]'), 'Another order loads a fresh checkout after cancellation')
+  check('Creating after cancel requests a fresh payment', retryFixture.createCalls() === 2 && retryFixture.confirmCalls() === 3)
+} finally { retryFixture.close() }
+
+for (const options of [{ pending: true, paymentReady: false }, { conflict: true }]) {
+  const restored = await mount(options)
+  try {
+    await restored.click('升级权益', '.workspace-benefits-cta button')
+    if (options.conflict) await restored.click('创建升级订单')
+    await waitFor(() => restored.document.querySelector('img[alt="微信支付二维码"]'), 'Existing unpaid order automatically loads its QR code')
+    check('Existing unpaid order resumes payment automatically ' + (options.conflict ? 'after creation conflict' : 'when reopened'), restored.confirmCalls() === 1 && restored.createCalls() === (options.conflict ? 1 : 0))
+  } finally { restored.close() }
+}
+
 const pendingFixture = await mount({ pending: true })
 try {
   await pendingFixture.click('升级权益', '.workspace-benefits-cta button')
+  check('Reopening an order with a QR code reuses the existing checkout', pendingFixture.confirmCalls() === 0 && !!pendingFixture.document.querySelector('img[alt="微信支付二维码"]'))
   pendingFixture.holdStatus()
   await pendingFixture.tick(2000)
   await pendingFixture.tick(2000)

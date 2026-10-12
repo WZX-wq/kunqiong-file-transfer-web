@@ -274,15 +274,16 @@ deploy_with_docker() {
   fi
 
   # 校验：运行中的容器 release 必须是本次提交，否则说明端口仍被旧容器占用。
+  healthcheck_docker || return 1
   local running_release
   running_release="$(docker exec "$APP_NAME" node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '$PORT') + '/api/health').then(r=>r.json()).then(j=>process.stdout.write(String(j.release||''))).catch(()=>process.stdout.write(''))" 2>/dev/null || true)"
   echo "Deployed release: ${running_release:-<unknown>} (expected: $RELEASE_SHA)"
-  if [ -n "$running_release" ] && [ -n "$RELEASE_SHA" ] \
-    && [ "${running_release:0:7}" != "${RELEASE_SHA:0:7}" ]; then
-    echo "WARNING: running container release does not match the deployed commit." >&2
+  if [ -z "$running_release" ] || [ "$running_release" != "$RELEASE_SHA" ]; then
+    echo "Running container release does not match the deployed commit." >&2
+    return 1
   fi
 
-  healthcheck_docker
+  return 0
 }
 
 copy_to_deploy_dir() {

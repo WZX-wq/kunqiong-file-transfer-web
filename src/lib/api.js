@@ -414,7 +414,7 @@ export async function upgradeApiRequest(url, options = {}) {
 // remotePriced 标记供 formatPlanPrice 区分「天数跟随主站」与本地兜底展示）
 export function mergePlanPricing(plan, remotePricing) {
   const pricing = remotePricing?.[plan?.id]
-  if (!plan || !pricing) return plan
+  if (!plan || !pricing || pricing.available === false) return plan
   return { ...plan, monthlyPrice: pricing.priceCents, validityDays: pricing.validityDays, remotePriced: true, remotePackageName: pricing.packageName || '' }
 }
 

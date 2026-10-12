@@ -18,10 +18,10 @@ import {
   createToken, firstHeader, hashSecret, removeDirectory
 } from '../lib/http.js'
 import {
-  mergeLoginMethods, normalizeAuditLogs, normalizeSystemConfig, publicUser, trimRecordString
+  mergeLoginMethods, normalizeSystemConfig, publicUser, trimRecordString
 } from '../lib/metadata-normalizers.js'
 import {
-  metadata, persistMetadata
+  metadata, persistMetadata, purgeAuditLogsBefore, readAuditLogs
 } from '../lib/metadata-store.js'
 import {
   accountOrganizationForUser, accountPersonalPlanForUser, accountUsageForUser, cleanupExpired,
@@ -207,7 +207,7 @@ export function buildAdminOverview() {
   ].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   const totalBytes = resources.reduce((sum, item) => sum + item.totalSize, 0)
   const trend = adminTrendStats()
-  const auditLogsAll = normalizeAuditLogs(metadata.auditLogs)
+  const auditLogsAll = readAuditLogs()
   return {
     stats: {
       users: users.length,
@@ -232,6 +232,7 @@ export function buildAdminOverview() {
 }
 
 export function adminTrendStats() {
+  const auditLogs = readAuditLogs()
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date()
     date.setHours(0, 0, 0, 0)
@@ -241,7 +242,7 @@ export function adminTrendStats() {
   return days.map((date) => {
     const next = new Date(date)
     next.setDate(next.getDate() + 1)
-    const logs = normalizeAuditLogs(metadata.auditLogs).filter((item) => {
+    const logs = auditLogs.filter((item) => {
       const time = new Date(item.createdAt).getTime()
       return time >= date.getTime() && time < next.getTime()
     })
@@ -344,19 +345,16 @@ export function purgeStaleResources() {
 
 // 按系统配置的保留天数清除过期审计日志；只有真删了才落盘，避免空转写
 export function purgeExpiredAuditLogs() {
-  const before = metadata.auditLogs.length
   const retentionMs = normalizeSystemConfig(metadata.systemConfig).auditLogRetentionDays * 86400000
   const cutoff = Date.now() - retentionMs
-  metadata.auditLogs = normalizeAuditLogs(metadata.auditLogs).filter((item) => new Date(item.createdAt).getTime() >= cutoff)
-  const removed = Math.max(0, before - metadata.auditLogs.length)
-  if (removed > 0) persistMetadata()
-  return removed
+  return purgeAuditLogsBefore(cutoff)
 }
 
 export function runMaintenanceCleanup() {
   cleanupExpired()
   // 真实清除已关闭/过期资源（此前 cleanupExpired 只标记状态不删对象，expiredShares 恒为 0 的假计数由此而来）
   const purged = purgeStaleResources()
+  if (purged.shares || purged.collections) persistMetadata()
   const orphaned = cleanupStorageOrphans()
   const removedAuditLogs = purgeExpiredAuditLogs()
   return {
