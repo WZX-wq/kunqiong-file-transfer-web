@@ -13,8 +13,8 @@ jobs:
     env:
       PORT: "8045"
       KUNQIONG_HOST: "0.0.0.0"
-      # The test server deliberately closes containers after deployment.
-      KUNQIONG_DEPLOY_VERIFY_MODE: "configuration"
+      # A deployment succeeds only when the new service is running and verified.
+      KUNQIONG_DEPLOY_VERIFY_MODE: "runtime"
       # 以下均为敏感配置，一律走仓库 Secrets，不在仓库内保留明文。
       # 必配Secrets：
       #   KUNQIONG_APP_URL / KUNQIONG_AUTH_CALLBACK_URL
@@ -62,3 +62,7 @@ jobs:
         run: |
           chmod +x scripts/deploy-test.sh
           ./scripts/deploy-test.sh
+
+      - name: Verify running release and audit performance
+        run: |
+          node scripts/verify-test-deployment.mjs

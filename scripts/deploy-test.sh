@@ -218,7 +218,8 @@ verify_container_configuration() {
 
 deploy_with_docker() {
   docker info >/dev/null 2>&1 || return 1
-  docker build -t "$IMAGE_NAME" .
+  bash scripts/backup-test-deployment.sh "$APP_NAME" "$COMPOSE_DIR" "$RELEASE_SHA"
+  docker build --label "org.opencontainers.image.revision=$RELEASE_SHA" -t "$IMAGE_NAME" .
 
   mkdir -p "$COMPOSE_DIR"
   write_compose_file "$COMPOSE_DIR/$COMPOSE_FILE"

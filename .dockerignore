@@ -3,6 +3,7 @@ dist
 storage
 .git
 .gitea
+.workbuddy
 *.log
 dev-server.*.log
 qa-*.png
