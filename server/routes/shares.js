@@ -3,13 +3,11 @@
 // 依赖方向：routes → services → lib → state → config（单向）
 // 注册顺序即 Express 匹配顺序，调用点顺序不可调整。
 import path from 'node:path'
+import { relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
 
 import {
   MAX_FILES, filesRoot
 } from '../config.js'
-import {
-  parseJson
-} from '../lib/http.js'
 import {
   metadata, persistMetadata
 } from '../lib/metadata-store.js'
@@ -38,6 +36,8 @@ export function registerShareCreateRoutes(app) {
     assertServiceWritable(req)
     const uploadedFiles = req.files || []
     if (!uploadedFiles.length) return res.status(400).json({ message: '至少选择一个文件' })
+    const relativePaths = relativePathsInput(req.body.relativePaths, uploadedFiles)
+    uniqueFilePaths(relativePaths.map(relativePath => ({relativePath})))
     assertConfiguredUploadLimits(req, uploadedFiles)
     const guestKey = assertGuestQuota(req, res, uploadedFiles)
     const ownerSession = authSessionFromRequest(req)
@@ -45,7 +45,6 @@ export function registerShareCreateRoutes(app) {
     reservationId = reserveUploadCapacity({ files: uploadedFiles, guestKey, ownerUserId: ownerSession?.user?.id || '' })
     await assertSafeUploadFiles(uploadedFiles)
 
-    const relativePaths = parseJson(req.body.relativePaths, [])
     const files = uploadedFiles.map((file, index) => {
       const relativePath = safeRelativePath(relativePaths[index] || file.originalname)
       return {
@@ -59,6 +58,7 @@ export function registerShareCreateRoutes(app) {
         scannedAt: file.scannedAt,
       }
     })
+    uniqueFilePaths(files)
 
     const share = await createShareFromTempFiles(files, options, req)
     addGuestUsage(guestKey, files)

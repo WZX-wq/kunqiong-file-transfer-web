@@ -460,7 +460,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                 <span>搜索</span>
                 <div className="record-search-box">
                   <Search size={15} />
-                  <input value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="文件名 / 取件码 / 提交人" />
+                  <input maxLength={160} value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="文件名 / 取件码 / 提交人" />
                 </div>
               </label>
               <label className="record-filter-field">

@@ -6,6 +6,7 @@ import path from 'node:path'
 import http from 'node:http'
 import net from 'node:net'
 import crypto from 'node:crypto'
+import sharp from 'sharp'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -21,6 +22,11 @@ function copy(from, to) {
   }
 }
 copy(path.join(root, 'server'), path.join(fixture, 'server'))
+// 只替换短信网关 HTTP 传输；真实发送、错误分类和验证码清理由生产服务执行。
+const accountFile=path.join(fixture,'server/services/account.js')
+fs.appendFileSync(accountFile,`\nconst fetch = (...args) => args[0] === 'https://sms.tencentcloudapi.com' && process.env.AUTH_FIXTURE_SMS_ERROR
+ ? Promise.resolve(new Response(JSON.stringify({Response:{Error:{Code:process.env.AUTH_FIXTURE_SMS_ERROR==='invalid'?'InvalidParameterValue.IncorrectPhoneNumber':'FailedOperation',Message:process.env.AUTH_FIXTURE_SMS_ERROR==='invalid'?'incorrect number format':'provider unavailable'}}}),{status:200}))
+ : globalThis.fetch(...args);\n`)
 copy(path.join(root, 'email-templates'), path.join(fixture, 'email-templates'))
 fs.copyFileSync(path.join(root, 'package.json'), path.join(fixture, 'package.json'))
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(fixture, 'node_modules'), 'junction')
@@ -33,12 +39,19 @@ app.post('/__auth_fixture', async (req, res) => {
  if (req.body.session) metadata.sessions.find(s => s.id === req.body.session).expiresAt = new Date(Date.now()-1).toISOString();
  if (req.body.expireCode) metadata.verificationCodes.filter(c=>c.target===req.body.expireCode).forEach(c=>c.expiresAt=new Date(Date.now()-1).toISOString());
  if (req.body.resetLimits) { verificationTargetLastSent.clear(); verificationIpAttempts.clear(); }
+ if (req.body.seedCode) {
+   const { hashSecret, createToken } = await import('./server/lib/http.js');
+   metadata.verificationCodes = metadata.verificationCodes.filter(c=>c.target!==req.body.seedCode);
+   metadata.verificationCodes.push({id:createToken(10),type:req.body.seedCode.includes('@')?'email':'phone',target:req.body.seedCode,scene:'bind',codeHash:hashSecret('123456'),createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+600000).toISOString()});
+ }
  persistMetadata(); res.json({ok:true});
 });
 `
 fs.writeFileSync(path.join(fixture, 'server.mjs'), fs.readFileSync(path.join(root, 'server.mjs'), 'utf8').replace('registerAccountRoutes(app)', control + '\nregisterAccountRoutes(app)'))
 const future = new Date(Date.now() + 86400000 * 30).toISOString()
 const users = Object.fromEntries(['alice','bob','logout','expire'].map(id => [id, { id, username:id, nickname:id, planId:'free', status:'active', providerAvatar:'https://example.invalid/avatar.png' }]))
+users.bob.email = 'occupied@example.test'
+users.bob.phone = '13800009999'
 const share = (id, owner, expiry) => ({ id, code:id.toUpperCase(), ownerUserId:owner, status:'active', createdAt:new Date().toISOString(), expiresAt:expiry, files:[{ name:'safe.txt', storedName:'safe.txt', size:4, scanStatus:'clean' }] })
 const old = new Date(Date.now() - 86400000 * 8).toISOString()
 const recent = new Date(Date.now() - 3600000).toISOString()
@@ -55,7 +68,10 @@ const oauth=http.createServer(async(req,res)=>{
   const data=JSON.parse(raw||'{}');exchanges.push(data)
   res.setHeader('content-type','application/json')
   if(data.code==='fail') res.end(JSON.stringify({code:400,message:'secret=FIXTURE_CLIENT_SECRET token=PRIVATE_FIXTURE_TOKEN'}))
-  else res.end(JSON.stringify({code:200,data:{access_token:'PRIVATE_FIXTURE_TOKEN',expires_in:3600,user:users.alice}}))
+  else {
+    const user=data.code==='contact-conflict'?{...users.alice,id:'duplicate-oauth',email:'occupied@example.test',phone:'13800009999'}:data.code==='stale-contact'?{...users.alice,email:'stale@example.test',phone:'13500003333'}:users.alice
+    res.end(JSON.stringify({code:200,data:{access_token:'PRIVATE_FIXTURE_TOKEN',expires_in:3600,user}}))
+  }
 })
 await new Promise(r=>oauth.listen(0,'127.0.0.1',r))
 // 最小 SMTP 协议接收器，仅接受本机测试邮箱；验证码从邮件取得，不从接口取得。
@@ -78,9 +94,9 @@ const smtp=net.createServer(socket=>{
 await new Promise(r=>smtp.listen(0,'127.0.0.1',r))
 let child,base,stderr='',passed=0,failures=[],cases=[],requests=[]
 const cleanEnv={...process.env};for(const key of Object.keys(cleanEnv))if(/^(KUNQIONG_|OAUTH_)/.test(key))delete cleanEnv[key]
-async function start(mail=false) {
+async function start(mail=false,smsError='') {
  const probe=net.createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));base=`http://127.0.0.1:${port}`
- child=spawn(process.execPath,['server.mjs'],{cwd:fixture,windowsHide:true,env:{...cleanEnv,PORT:String(port),NODE_ENV:'production',KUNQIONG_HOST:'127.0.0.1',KUNQIONG_AUTH_CALLBACK_URL:base+'/auth/callback',KUNQIONG_OAUTH_AUTHORIZE_URL:`http://127.0.0.1:${oauth.address().port}/authorize`,KUNQIONG_OAUTH_TOKEN_URL:`http://127.0.0.1:${oauth.address().port}/token`,KUNQIONG_OAUTH_CLIENT_ID:'fixture-client',KUNQIONG_OAUTH_CLIENT_SECRET:'FIXTURE_CLIENT_SECRET',...(mail?{KUNQIONG_SMTP_HOST:'127.0.0.1',KUNQIONG_SMTP_PORT:String(smtp.address().port),KUNQIONG_SMTP_SECURE:'false',KUNQIONG_SMTP_USER:'fixture',KUNQIONG_SMTP_PASSWORD:'fixture',KUNQIONG_SMTP_FROM:'fixture@example.test'}:{})},stdio:['ignore','ignore','pipe']})
+ child=spawn(process.execPath,['server.mjs'],{cwd:fixture,windowsHide:true,env:{...cleanEnv,PORT:String(port),NODE_ENV:smsError?'test':'production',KUNQIONG_HOST:'127.0.0.1',KUNQIONG_AUTH_CALLBACK_URL:base+'/auth/callback',KUNQIONG_OAUTH_AUTHORIZE_URL:`http://127.0.0.1:${oauth.address().port}/authorize`,KUNQIONG_OAUTH_TOKEN_URL:`http://127.0.0.1:${oauth.address().port}/token`,KUNQIONG_OAUTH_CLIENT_ID:'fixture-client',KUNQIONG_OAUTH_CLIENT_SECRET:'FIXTURE_CLIENT_SECRET',...(smsError?{AUTH_FIXTURE_SMS_ERROR:smsError,KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST:'false',KUNQIONG_TENCENT_SECRET_ID:'fixture',KUNQIONG_TENCENT_SECRET_KEY:'fixture',KUNQIONG_TENCENT_SMS_SDK_APP_ID:'fixture',KUNQIONG_TENCENT_SMS_SIGN_NAME:'fixture',KUNQIONG_TENCENT_SMS_TEMPLATE_BIND_CODE_ID:'fixture'}:{}),...(mail?{KUNQIONG_SMTP_HOST:'127.0.0.1',KUNQIONG_SMTP_PORT:String(smtp.address().port),KUNQIONG_SMTP_SECURE:'false',KUNQIONG_SMTP_USER:'fixture',KUNQIONG_SMTP_PASSWORD:'fixture',KUNQIONG_SMTP_FROM:'fixture@example.test'}:{})},stdio:['ignore','ignore','pipe']})
  child.stderr.on('data',d=>stderr+=d)
  for(let i=0;i<100;i++){try{if((await fetch(base+'/api/health')).ok)return}catch{}await delay(50)}throw new Error('Fixture did not start '+stderr)
 }
@@ -129,8 +145,41 @@ try {
   check('me hides credentials',!JSON.stringify(me.data).includes('PRIVATE_FIXTURE_TOKEN')&&!('apiWebToken'in me.data.user))
   check('malformed cookie treated as anonymous',(await api('/api/auth/me',{cookie:'kunqiong_session=%ZZ'})).data.user===null)
  })
+ await group('AUTH-OAuth-contact-exclusive',async()=>{
+  const before=stored().sessions.length
+  const response=await callback(await login(),'contact-conflict')
+  check('OAuth import cannot duplicate another account contact',new URL(response.headers.get('location')).searchParams.get('login')==='failed'&&stored().sessions.length===before&&!stored().users['duplicate-oauth'])
+ })
  await group('AUTH-004-disabled',async()=>{
   for(const target of ['mail@example.test','13500001111']){const r=await api('/api/auth/code',{method:'POST',body:{target}});check('disabled channel gives clear 503 without code: '+JSON.stringify({status:r.status,...r.data}),r.status===503&&!('debugCode'in r.data)&&/未配置/.test(r.data.message))}
+ })
+ await group('AUTH-contact-format',async()=>{
+  for(const target of ['123456','12507786589','135077865891111','135abc07786589','1160012403@qq.com111111','a..b@example.test','a@-example.test','a@exa_mple.test','a'.repeat(65)+'@example.test']) {
+   const before=stored().verificationCodes.length
+   check('malformed contact rejected before code generation: '+target,(await api('/api/auth/code',{method:'POST',body:{target}})).status===400&&stored().verificationCodes.length===before)
+  }
+  check('phone field cannot bind email',(await api('/api/auth/code',{method:'POST',body:{target:'valid@example.test',type:'phone'}})).status===400)
+  check('email field cannot bind phone',(await api('/api/account/bind',{method:'POST',body:{target:'13500001111',type:'email',code:'123456'}})).status===400)
+  const boundary='a'.repeat(64)+'@'+'b'.repeat(63)+'.'+'c'.repeat(26)+'.test'
+  check('valid 160-character email reaches sending',(await api('/api/auth/code',{method:'POST',body:{target:boundary}})).status===503)
+  check('161-character email rejected',(await api('/api/auth/code',{method:'POST',body:{target:boundary+'a'}})).status===400)
+ })
+ await group('AUTH-contact-exclusive',async()=>{
+  for(const target of ['OCCUPIED@EXAMPLE.TEST','13800009999','+86 13800009999']) {
+   const sent=await api('/api/auth/code',{method:'POST',body:{target}})
+   check('occupied contact rejected before sending: '+target,sent.status===409&&!sent.data.user&&!sent.data.userId)
+   await api('/__auth_fixture',{method:'POST',body:{seedCode:target.includes('@')?'occupied@example.test':'13800009999'}})
+   check('occupied contact rejected at binding: '+target,(await api('/api/account/bind',{method:'POST',body:{target,code:'123456'}})).status===409)
+  }
+  for(const target of ['race@example.test','13900008888']) {
+   await api('/__auth_fixture',{method:'POST',body:{seedCode:target}})
+   const responses=await Promise.all(['bob','alice'].map(user=>api('/api/account/bind',{user,method:'POST',body:{target,code:'123456'}})))
+   check('parallel binding has exactly one winner: '+target,responses.filter(r=>r.status===200).length===1&&responses.filter(r=>r.status===409).length===1)
+   check('contact belongs to one stored account: '+target,Object.values(stored().users).filter(u=>(target.includes('@')?u.email:u.phone)===target).length===1)
+  }
+  await api('/__auth_fixture',{method:'POST',body:{seedCode:'replacement@example.test'}})
+  check('owner can replace own email',(await api('/api/account/bind',{user:'bob',method:'POST',body:{target:'replacement@example.test',code:'123456'}})).status===200)
+  check('previous email released after replacement',(await api('/api/auth/code',{method:'POST',body:{target:'occupied@example.test'}})).status===503)
  })
  await group('AUTH-005',async()=>{
   const r=await api('/api/auth/logout',{user:'logout',method:'POST'});check('logout clears cookie',r.status===200&&r.response.headers.get('set-cookie').includes('Max-Age=0'))
@@ -147,8 +196,12 @@ try {
  })
  const image=fs.readFileSync(path.join(root,'测试数据/鲲穹文件传输测试数据包/01-安全文件集/TC-03-04-图片预览-1x1.png'))
  await group('AUTH-007',async()=>{
-  const avatar='data:image/png;base64,'+image.toString('base64');check('real dataset avatar saved',(await api('/api/auth/profile',{method:'PATCH',body:{avatar}})).data.user.avatar===avatar)
-  check('avatar persists in me',(await api('/api/auth/me')).data.user.avatar===avatar)
+  const avatar='data:image/png;base64,'+image.toString('base64')
+  const saved=(await api('/api/auth/profile',{method:'PATCH',body:{avatar}})).data.user?.avatar
+  check('real dataset avatar saved',Boolean(saved?.startsWith('data:image/webp;base64,')))
+  const decoded=await sharp(Buffer.from(saved.split(',')[1],'base64')).raw().toBuffer({resolveWithObject:true})
+  check('saved avatar is a decodable image',decoded.info.width===1&&decoded.info.height===1)
+  check('avatar persists in me',(await api('/api/auth/me')).data.user.avatar===saved)
   for(const avatar of ['data:image/svg+xml;base64,PHN2Zz4=','data:image/png;base64,bm90LWFuLWltYWdl'])check('invalid image rejected',(await api('/api/auth/profile',{method:'PATCH',body:{avatar}})).status===400)
   check('restore provider avatar',(await api('/api/auth/profile',{method:'PATCH',body:{avatar:null}})).data.user.avatar==='https://example.invalid/avatar.png')
  })
@@ -208,6 +261,25 @@ try {
   check('records restored after restart',(await api('/api/account/records')).data.records.length===3)
   check('cleanup preference restored',!(await api('/api/account/file-cleanup-settings')).data.settings.enabled)
  })
+ await group('AUTH-binding-relogin',async()=>{
+  await api('/__auth_fixture',{method:'POST',body:{seedCode:'13700002222'}})
+  check('phone binding succeeds',(await api('/api/account/bind',{method:'POST',body:{target:'13700002222',type:'phone',code:'123456'}})).status===200)
+  const response=await callback(await login(),'stale-contact')
+  check('login remains usable after local binding',new URL(response.headers.get('location')).searchParams.get('login')==='success')
+  check('relogin preserves verified contacts instead of stale provider values',stored().users.alice.email==='bind@example.test'&&stored().users.alice.phone==='13700002222')
+  const next='13900004444';await api('/__auth_fixture',{method:'POST',body:{seedCode:next}})
+  check('explicit replacement of verified phone remains available',(await api('/api/account/bind',{method:'POST',body:{target:next,type:'phone',code:'123456'}})).status===200&&stored().users.alice.phone===next)
+ })
+ for(const smsError of ['invalid','unavailable']) {
+  await stop();await start(true,smsError)
+  await group('AUTH-sms-no-fallback-'+smsError,async()=>{
+   const target='13500007777',r=await api('/api/auth/code',{method:'POST',body:{target,type:'phone'}})
+   check('gateway rejection is a failure even in debug mode',r.status===(smsError==='invalid'?400:502)&&!('debugCode'in r.data)&&!('code'in r.data)&&!r.data.ok)
+   check('SMS error is explained without demo or provider jargon',/手机号|短信/.test(r.data.message)&&!/演示|incorrect number|provider unavailable/.test(r.data.message))
+   check('failed delivery invalidates the verification code',!stored().verificationCodes.some(c=>c.target===target)&&(await api('/api/account/bind',{method:'POST',body:{target,code:'123456'}})).status===400)
+   check('verified contact survives restart',(await api('/api/auth/me')).data.user.phone==='13900004444')
+  })
+ }
 } finally {await stop();await Promise.all([new Promise(r=>oauth.close(r)),new Promise(r=>smtp.close(r))])}
 const result={executedAt:new Date().toISOString(),passed,failures,cases,fixture}
 if(process.env.AUTH_TEST_EVIDENCE_DIR){fs.mkdirSync(process.env.AUTH_TEST_EVIDENCE_DIR,{recursive:true});fs.writeFileSync(path.join(process.env.AUTH_TEST_EVIDENCE_DIR,'auth-api-results.json'),JSON.stringify({...result,requests},null,2))}

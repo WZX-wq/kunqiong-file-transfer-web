@@ -1,7 +1,5 @@
 import React from 'react'
-import mammoth from 'mammoth'
 import { sanitizeOfficeHtml } from '../office-html.js'
-import * as XLSX from 'xlsx'
 import { PPTXViewer } from 'pptxviewjs'
 import { Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, Eye, FileText, Link2, PencilLine, RefreshCw, RotateCcw, UserPlus, UserRound, X } from 'lucide-react'
 import { apiRequest, downloadResponseError, downloadStatusText } from '../lib/api.js'
@@ -11,6 +9,8 @@ import { previewSupportLabel, previewTypeLabel } from '../lib/transfer.js'
 import { FeedbackMessage } from './common.jsx'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, TEXT_PREVIEW_MAX_BYTES, fileIcon } from '../lib/constants.js'
 import { createCollectionManageForm, createShareManageForm, fileFormatLabel, formatAllowedTypes, formatDateInputDisplay, getManageToken, isClosedOrExpiredStatus, isDateInputStillOpen, normalizeCollectionTypes, recordDisplayName, recordExpiryLabel, recordScopeLabel, toggleCollectionType } from '../lib/records.js'
+import { OFFICE_PREVIEW_LIMITS, assertOfficeFileSize, createOfficePreviewSession, readPreviewResponse, spreadsheetSheetHtml as boundedSpreadsheetSheetHtml } from '../lib/office-preview.js'
+import { limitInputText } from '../lib/input-limits.js'
 
 export function DownloadProgressPanel({ task, onRetry }) {
   if (!task || task.status === 'idle') return null
@@ -153,6 +153,10 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
   const unlockPreview = async (event) => {
     event.preventDefault()
     if (!password || unlocking) return
+    if (password.length > 128) {
+      setAccess({ url: preview.url, status: 'password', error: '提取密码不能超过 128 个字符' })
+      return
+    }
     setUnlocking(true)
     try {
       // 提取密码错误的 401 不代表账号会话失效。
@@ -192,7 +196,8 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
             : access.url === preview.url && access.status === 'password' ? (
               <form className="preview-error" onSubmit={unlockPreview}>
                 <FileText size={28} /><strong>此文件需要提取密码</strong><span>{access.error}</span>
-                <div className="public-password"><input type="password" aria-label="提取密码" placeholder="请输入提取密码" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="submit" className="primary-button" disabled={unlocking || !password}>{unlocking ? '验证中' : '验证并预览'}</button></div>
+                <div className="public-password"><input type="password" aria-label="提取密码" placeholder="请输入提取密码，最多 128 个字符" autoComplete="off" maxLength={128} value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} /><button type="submit" className="primary-button" disabled={unlocking || !password}>{unlocking ? '验证中' : '验证并预览'}</button></div>
+                <small>{password.length}/128 个字符</small>
               </form>
             ) : ready ? renderPreviewContent(preview, () => setError('浏览器无法打开这个文件，可下载后查看。'))
               : <div className="office-preview-loading"><span className="loading-dot" /><strong>正在加载预览</strong></div>}
@@ -288,53 +293,87 @@ export function TextPreview({ preview }) {
 }
 
 export function OfficePreview({ preview }) {
-  const [state, setState] = useState({ status: 'loading', html: '', workbook: null, sheets: [], activeSheet: 0, error: '' })
+  const [state, setState] = useState({ status: 'loading', html: '', sheets: [], activeSheet: 0, page: 0, pages: 1, changingPage: false, error: '' })
   const canvasRef = useRef(null)
   const viewerRef = useRef(null)
+  const sessionRef = useRef(null)
+  const pageRequestRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
+    let deadline
+    setState({ status: 'loading', html: '', sheets: [], activeSheet: 0, page: 0, pages: 1, changingPage: false, error: '' })
+    const stopLoading = () => {
+      if (cancelled) return
+      controller.abort()
+      sessionRef.current?.close()
+      viewerRef.current?.destroy?.()
+      setState((current) => ({ ...current, status: 'error', error: '预览加载超时，已停止解析，请下载后查看。' }))
+    }
+    deadline = setTimeout(stopLoading, OFFICE_PREVIEW_LIMITS.timeoutMs * 2)
     const loadPreview = async () => {
       try {
-        const response = await fetch(preview.url, { credentials: 'include', headers: preview.headers || {} })
+        if (preview.file?.size !== undefined) assertOfficeFileSize(preview.file.size, preview.kind)
+        const response = await fetch(preview.url, { credentials: 'include', headers: preview.headers || {}, signal: controller.signal })
         if (!response.ok) throw await downloadResponseError(response)
-        const buffer = await response.arrayBuffer()
-        if (cancelled) return
+        const buffer = await readPreviewResponse(response, { kind: preview.kind, signal: controller.signal })
+        if (cancelled || controller.signal.aborted) return
+        const session = createOfficePreviewSession({ signal: controller.signal, workerFactory: () => {
+          if (typeof Worker === 'undefined') throw new Error('浏览器不支持安全的 Office 预览，请下载后查看。')
+          return new Worker(new URL('../workers/office-preview.js', import.meta.url), { type: 'module' })
+        } })
+        sessionRef.current = session
+        const result = await session.request('parse', { kind: preview.kind, buffer }, [buffer])
+        if (cancelled || controller.signal.aborted) return
         if (preview.kind === 'document') {
-          const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
-          if (!result.value.trim()) throw new Error('文档没有可显示的正文内容')
-          if (!cancelled) setState({ status: 'ready', html: sanitizeOfficeHtml(result.value), workbook: null, sheets: [], error: '' })
+          session.close()
+          setState((current) => ({ ...current, status: 'ready', html: sanitizeOfficeHtml(result.html), error: '' }))
           return
         }
         if (preview.kind === 'spreadsheet') {
-          const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
-          const sheets = workbook.SheetNames.map((name) => ({
-            name,
-            html: sanitizeOfficeHtml(spreadsheetSheetHtml(workbook.Sheets[name])),
-          }))
-          if (!sheets.length) throw new Error('表格中没有可显示的工作表')
-          if (!cancelled) setState({ status: 'ready', html: '', workbook, sheets, activeSheet: 0, error: '' })
+          setState((current) => ({ ...current, status: 'ready', html: sanitizeOfficeHtml(result.html), sheets: result.sheets, page: result.page, pages: result.pages, activeSheet: 0, error: '' }))
           return
         }
         if (preview.kind === 'presentation') {
+          session.close()
           if (!canvasRef.current) throw new Error('演示文稿画布初始化失败')
           const viewer = new PPTXViewer({ canvas: canvasRef.current })
           viewerRef.current = viewer
-          await viewer.loadFile(buffer)
+          await viewer.loadFile(result.buffer)
+          if (cancelled || controller.signal.aborted) { viewer.destroy?.(); return }
           await viewer.render()
-          if (!cancelled) setState({ status: 'ready', html: '', workbook: null, sheets: [], error: '' })
+          if (!cancelled && !controller.signal.aborted) setState((current) => ({ ...current, status: 'ready', error: '' }))
         }
       } catch (error) {
-        if (!cancelled) setState({ status: 'error', html: '', workbook: null, sheets: [], error: error.message || '文件解析失败' })
-      }
+        sessionRef.current?.close()
+        if (!cancelled && !controller.signal.aborted) setState((current) => ({ ...current, status: 'error', html: '', error: error.message || '文件解析失败' }))
+      } finally { clearTimeout(deadline) }
     }
     loadPreview()
     return () => {
       cancelled = true
+      pageRequestRef.current++
+      clearTimeout(deadline)
+      controller.abort()
+      sessionRef.current?.close()
+      sessionRef.current = null
       viewerRef.current?.destroy?.()
       viewerRef.current = null
     }
-  }, [preview.url, preview.kind])
+  }, [preview.url, preview.kind, preview.headers])
+
+  const showSheetPage = async (sheet, page) => {
+    if (!sessionRef.current || state.changingPage) return
+    const request = ++pageRequestRef.current
+    setState((current) => ({ ...current, changingPage: true }))
+    try {
+      const result = await sessionRef.current.request('page', { sheet, page })
+      if (request === pageRequestRef.current) setState((current) => ({ ...current, html: sanitizeOfficeHtml(result.html), activeSheet: sheet, page: result.page, pages: result.pages, changingPage: false }))
+    } catch (error) {
+      if (request === pageRequestRef.current) setState((current) => ({ ...current, status: 'error', error: error.message || '工作表预览失败', changingPage: false }))
+    }
+  }
 
   if (preview.kind === 'presentation') {
     return (
@@ -351,8 +390,9 @@ export function OfficePreview({ preview }) {
   if (preview.kind === 'spreadsheet') {
     return (
       <div className="spreadsheet-preview">
-        <div className="spreadsheet-tabs">{state.sheets.map((sheet, index) => <span className={index === state.activeSheet ? 'active' : ''} key={sheet.name} onClick={() => setState((prev) => ({ ...prev, activeSheet: index }))}>{sheet.name}</span>)}</div>
-        {state.sheets.map((sheet, index) => <div className="spreadsheet-sheet" key={sheet.name} style={{ display: index === state.activeSheet ? 'block' : 'none' }} dangerouslySetInnerHTML={{ __html: sheet.html }} />)}
+        <div className="spreadsheet-tabs" role="tablist" aria-label="工作表">{state.sheets.map((sheet, index) => <span role="tab" tabIndex={state.changingPage ? -1 : 0} aria-selected={index === state.activeSheet} aria-disabled={state.changingPage} className={index === state.activeSheet ? 'active' : ''} key={sheet.name} onClick={() => showSheetPage(index, 0)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showSheetPage(index, 0) } }}>{sheet.name}</span>)}</div>
+        {state.pages > 1 && <div className="upload-control-row"><button type="button" className="secondary-button" disabled={state.changingPage || state.page === 0} onClick={() => showSheetPage(state.activeSheet, state.page - 1)}><ChevronLeft size={14} /> 上一页</button><span>第 {state.page + 1}/{state.pages} 页 · 每页最多 {OFFICE_PREVIEW_LIMITS.rowsPerPage} 行</span><button type="button" className="secondary-button" disabled={state.changingPage || state.page + 1 >= state.pages} onClick={() => showSheetPage(state.activeSheet, state.page + 1)}>下一页 <ChevronRight size={14} /></button></div>}
+        <div className="spreadsheet-sheet" style={{ display: 'block' }} aria-busy={state.changingPage} dangerouslySetInnerHTML={{ __html: state.html }} />
       </div>
     )
   }
@@ -360,22 +400,14 @@ export function OfficePreview({ preview }) {
 }
 
 export function spreadsheetSheetHtml(sheet) {
-  if (!sheet || typeof sheet !== 'object') return '<div class="spreadsheet-empty">此工作表为空</div>'
-  try {
-    const range = sheet['!ref']
-    if (!range) return '<div class="spreadsheet-empty">此工作表为空</div>'
-    return XLSX.utils.sheet_to_html(sheet, { editable: false, header: '', footer: '' })
-  } catch (error) {
-    console.warn('表格工作表渲染失败', error)
-    return '<div class="spreadsheet-empty">此工作表无法预览，请下载文件查看。</div>'
-  }
+  return boundedSpreadsheetSheetHtml(sheet)
 }
 
 export function CollectionLimitInfo({ allowedTypes, maxFileSizeMb, compact = false }) {
   return (
     <div className={`collection-limit ${compact ? 'compact' : ''}`}>
       <span>文件类型：{formatAllowedTypes(allowedTypes)}</span>
-      <span>单人上限：{formatLimitSize(maxFileSizeMb)}</span>
+      <span>单文件上限：{formatLimitSize(maxFileSizeMb)}</span>
     </div>
   )
 }
@@ -601,6 +633,10 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
   }
 
   const buildSharePayload = ({ reopeningShare = false } = {}) => {
+    if (!shareForm.clearPassword && shareForm.password.length > 128) {
+      setError('提取密码不能超过 128 个字符')
+      return null
+    }
     const customLimit = Number(shareForm.customDownloadLimit)
     if (shareForm.downloadLimit === 'custom' && (!Number.isFinite(customLimit) || customLimit < 1)) {
       setError('请填写正确的下载次数')
@@ -681,8 +717,8 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
                 {shareForm.downloadLimit === 'custom' && <label className="inline-setting-input"><span>最多下载次数</span><input type="number" min="1" max="9999" value={shareForm.customDownloadLimit} onChange={(event) => updateShare({ customDownloadLimit: event.target.value })} placeholder="例如：5" /></label>}
               </div>
               <label className="manage-field manage-password-field">
-                <span>提取密码</span>
-                <input className="modal-inline-input" type="password" value={shareForm.password} disabled={shareForm.clearPassword} onChange={(event) => updateShare({ password: event.target.value })} placeholder={data.requiresPassword ? '输入新密码，留空则不修改' : '可选，设置后下载前需要验证'} />
+                <span className="manage-field-label"><span>提取密码</span><small className="field-count">{shareForm.password.length}/128</small></span>
+                <input className="modal-inline-input" type="password" maxLength={128} value={shareForm.password} disabled={shareForm.clearPassword} onChange={(event) => updateShare({ password: limitInputText(event.target.value, 128) })} placeholder={data.requiresPassword ? '输入新密码，留空则不修改（最多 128 字符）' : '可选，最多 128 个字符'} />
               </label>
               <label className="manage-check-row">
                 <input type="checkbox" checked={shareForm.clearPassword} onChange={(event) => updateShare({ clearPassword: event.target.checked, password: event.target.checked ? '' : shareForm.password })} />
@@ -708,7 +744,7 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
                 <div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={collectionForm.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => toggleAllowedType(type)}>{type}</button>)}</div>
               </label>
               <label className="manage-field">
-                <span>单人大小限制</span>
+                <span>单文件大小限制</span>
                 <select value={collectionForm.maxFileSizeMb} onChange={(event) => updateCollection({ maxFileSizeMb: event.target.value })}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select>
               </label>
             </>

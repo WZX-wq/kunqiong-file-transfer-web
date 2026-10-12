@@ -7,6 +7,7 @@ import { UserAvatar, displayUserSubtitle } from '../components/ui.jsx'
 import { displayUserName, formatBytes, formatDate, formatPlanPrice, maskPhone, planDaysRemaining } from '../lib/format.js'
 import { useRemotePlanPricing } from '../hooks.js'
 import { mergePlanPricing } from '../lib/api.js'
+import { contactInputError, EMAIL_MAX_LENGTH, normalizePhoneContact, PHONE_LENGTH } from '../../server/lib/contact-input.js'
 
 export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile, onUpdateUser, onNavigateSection, onOpenWorkspace }) {
   const [nickname, setNickname] = useState('')
@@ -331,7 +332,8 @@ export function SettingsActionRow({ label, value, detail, action, onAction, disa
 export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
   const isEmail = type === 'email'
   const label = isEmail ? '邮箱' : '手机号'
-  const [target, setTarget] = useState(currentValue || '')
+  const [target, setTarget] = useState(isEmail ? currentValue || '' : normalizePhoneContact(currentValue))
+  const [targetTouched, setTargetTouched] = useState(false)
   const [code, setCode] = useState('')
   const [debugCode, setDebugCode] = useState('')
   const [message, setMessage] = useState('')
@@ -339,6 +341,18 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
   const [sending, setSending] = useState(false)
   const [binding, setBinding] = useState(false)
   const [resendSeconds, setResendSeconds] = useState(0)
+  const targetError = contactInputError(target, type)
+  const showTargetError = targetTouched && Boolean(targetError)
+  const validCode = /^\d{6}$/.test(code)
+
+  const changeTarget = (value) => {
+    setTarget(isEmail ? value.slice(0, EMAIL_MAX_LENGTH) : value.replace(/\D/g, '').slice(0, PHONE_LENGTH))
+    setTargetTouched(true)
+    setCode('')
+    setDebugCode('')
+    setMessage('')
+    setError('')
+  }
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -358,15 +372,17 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
   }, [resendSeconds > 0])
 
   const sendCode = async () => {
-    if (!target.trim()) {
-      setError(`请输入要绑定的${label}`)
+    setTargetTouched(true)
+    if (targetError) {
       return
     }
     setSending(true)
     setError('')
     setMessage('')
+    setDebugCode('')
+    setCode('')
     try {
-      const data = await requestAccountBindCode(target.trim())
+      const data = await requestAccountBindCode(target.trim(), type)
       setDebugCode(data.debugCode || '')
       setMessage(data.message || '绑定验证码已生成')
       setResendSeconds(60)
@@ -379,14 +395,15 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
 
   const submit = async (event) => {
     event.preventDefault()
-    if (!target.trim() || !code.trim()) {
-      setError(`请输入${label}和验证码`)
+    setTargetTouched(true)
+    if (targetError || !validCode) {
+      setError(targetError ? '' : '请输入 6 位数字验证码')
       return
     }
     setBinding(true)
     setError('')
     try {
-      const data = await bindAccountTarget(target.trim(), code.trim())
+      const data = await bindAccountTarget(target.trim(), code, type)
       onComplete(data.user)
     } catch (err) {
       setError(err.message || '绑定失败')
@@ -397,7 +414,7 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
 
   return (
     <div className="modal-backdrop account-bind-backdrop">
-      <form className="modal account-bind-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+      <form className="modal account-bind-modal" noValidate onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">账号绑定</p><h2>绑定{label}</h2></div>
           <button className="ghost-icon modal-close" type="button" aria-label="关闭绑定窗口" onClick={onClose}><X size={18} /></button>
@@ -406,22 +423,25 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
           <p className="modal-intro">登录仍使用鲲穹官方账号；绑定{label}后，可用于站内消息匹配和后续邮件/短信通知。</p>
           <label className="settings-input-field">
             <span>{label}</span>
-            <input value={target} onChange={(event) => { setTarget(event.target.value); setError('') }} placeholder={isEmail ? 'name@example.com' : '请输入手机号'} />
+            <input type={isEmail ? 'email' : 'tel'} inputMode={isEmail ? 'email' : 'numeric'} autoComplete={isEmail ? 'email' : 'tel-national'} maxLength={isEmail ? EMAIL_MAX_LENGTH : PHONE_LENGTH} value={target} onChange={(event) => changeTarget(event.target.value)} onBlur={() => setTargetTouched(true)} disabled={sending || binding} aria-invalid={showTargetError} aria-describedby="account-bind-target-hint" placeholder={isEmail ? 'name@example.com' : '请输入 11 位手机号'} />
           </label>
+          <p id="account-bind-target-hint" className={`contact-input-hint ${showTargetError ? 'invalid' : !targetError ? 'valid' : ''}`} aria-live="polite">
+            {showTargetError ? targetError : !targetError ? `${label}格式正确，验证后完成绑定` : isEmail ? '请输入完整邮箱地址，最多 160 个字符；一个邮箱只能绑定一个账号。' : '请输入 11 位中国大陆手机号；一个手机号只能绑定一个账号。'}
+          </p>
           <div className="account-bind-code-row">
             <label className="settings-input-field">
               <span>验证码</span>
-              <input value={code} maxLength={6} onChange={(event) => { setCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setError('') }} placeholder="6 位验证码" />
+              <input value={code} inputMode="numeric" autoComplete="one-time-code" maxLength={6} onChange={(event) => { setCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setError('') }} disabled={binding} placeholder="6 位验证码" />
             </label>
-            <button className="secondary-button" type="button" onClick={sendCode} disabled={sending || resendSeconds > 0}>{sending ? '发送中' : resendSeconds > 0 ? `${resendSeconds}秒后重发` : debugCode ? '重新发送' : '获取验证码'}<Send size={15} /></button>
+            <button className="secondary-button" type="button" onClick={sendCode} disabled={sending || binding || resendSeconds > 0 || Boolean(targetError)}>{sending ? '发送中' : resendSeconds > 0 ? `${resendSeconds}秒后重发` : debugCode ? '重新发送' : '获取验证码'}<Send size={15} /></button>
           </div>
           {debugCode && <div className="account-bind-debug"><KeyRound size={14} /> 演示验证码：<strong>{debugCode}</strong></div>}
           {message && <p className="account-bind-message">{message}</p>}
-          {error && <p className="settings-form-error account-bind-error">{error}</p>}
+          {error && <p className="settings-form-error account-bind-error" role="alert">{error}</p>}
         </div>
         <div className="modal-footer">
           <button className="secondary-button" type="button" onClick={onClose}>取消</button>
-          <button className="primary-button" type="submit" disabled={binding}><BadgeCheck size={15} /> {binding ? '绑定中' : '确认绑定'}</button>
+          <button className="primary-button" type="submit" disabled={binding || sending || Boolean(targetError) || !validCode}><BadgeCheck size={15} /> {binding ? '绑定中' : '确认绑定'}</button>
         </div>
       </form>
     </div>

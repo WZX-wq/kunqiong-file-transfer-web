@@ -15,10 +15,23 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-share-suite-'))
 const future = new Date(Date.now() + 20 * 86400000).toISOString()
 const users = Object.fromEntries(['owner', 'recipient', 'stranger', 'member'].map((id) => [id, { id, username: id, nickname: id, status: 'active', planId: 'free' }]))
+users.owner.email = 'sender@example.test'
+users.owner.phone = '13507786589'
+users.recipient.email = 'recipient@example.test'
+users.recipient.phone = '13800001111'
 users.member.planId = 'member'
 users.member.planExpiresAt = future
 const sessions = Object.values(users).map((user) => ({ id: user.id + '-session', user, apiWebToken: 'fixture-token-' + user.id, expiresAt: future }))
 fs.copyFileSync(path.join(root, 'server.mjs'), path.join(fixture, 'server.mjs'))
+// 只在隔离副本修改绑定资料，验证上传会话和用户资料变更的交叉行为。
+const control = `
+app.post('/__share_fixture', async (req, res) => {
+ const { metadata, persistMetadata } = await import('./server/lib/metadata-store.js');
+ metadata.users.owner.email = req.body.email;
+ persistMetadata(); res.json({ok:true});
+});
+`
+fs.writeFileSync(path.join(fixture,'server.mjs'),fs.readFileSync(path.join(fixture,'server.mjs'),'utf8').replace('registerShareCreateRoutes(app)',control+'\nregisterShareCreateRoutes(app)'))
 function copyDirectory(source, target) {
   fs.mkdirSync(target, { recursive: true })
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
@@ -92,6 +105,25 @@ function form(text, name = 'fixture.txt', recipients = '') {
 await start()
 
 try {
+  // 绕过页面也必须拒绝本人联系方式；混合收件人不能静默丢掉本人后发布。
+  for (const recipients of ['13507786589','+8613507786589','sender@example.test','SENDER@EXAMPLE.TEST','recipient@example.test，13507786589',Array(50).fill('recipient@example.test').concat('sender@example.test').join(',')]) {
+    const direct = await api('/api/shares', { user:'owner', method:'POST', body:form('self-send', 'self.txt', recipients) })
+    check('普通上传拒绝本人收件人 '+recipients.slice(0,65),direct.status===400&&/自己|本人/.test(direct.data.message))
+    const session = await api('/api/upload-sessions', { user:'owner', method:'POST', body:{recipients,files:[{name:'self.txt',size:4}]} })
+    check('分片会话拒绝本人收件人 '+recipients.slice(0,65),session.status===400&&/自己|本人|收件人/.test(session.data.message))
+  }
+  const directed = await api('/api/shares', { user:'owner', method:'POST', body:form('safe-recipient','recipient.txt','recipient@example.test,13800001111') })
+  check('他人联系方式仍可发送',directed.status===201)
+  check('他人仍可访问定向资源',(await api('/api/shares/token/'+directed.data.share?.id,{user:'recipient'})).status===200)
+  const pending = await api('/api/upload-sessions',{user:'owner',method:'POST',body:{recipients:'new-sender@example.test',files:[{name:'pending.txt',size:4}]}})
+  check('变更绑定前可创建会话',pending.status===201)
+  const bytes = new FormData();bytes.append('chunk',new Blob(['safe']),'pending.txt');bytes.append('fileIndex','0');bytes.append('chunkIndex','0');bytes.append('totalChunks','1')
+  check('待发布会话分片可上传',(await api('/api/upload-sessions/'+pending.data.sessionId+'/chunks',{user:'owner',method:'POST',body:bytes})).status===200)
+  await api('/__share_fixture',{method:'POST',body:{email:'new-sender@example.test'}})
+  check('服务端按最新资料阻止本人，不采信旧会话快照',(await api('/api/shares',{user:'owner',method:'POST',body:form('safe','stale.txt','new-sender@example.test')})).status===400)
+  check('会话完成时重新排除本人',(await api('/api/upload-sessions/'+pending.data.sessionId+'/complete',{user:'owner',method:'POST',body:{}})).status===400)
+  await api('/api/upload-sessions/'+pending.data.sessionId,{user:'owner',method:'DELETE'})
+  await api('/__share_fixture',{method:'POST',body:{email:'sender@example.test'}})
   // ============ SHARE-001 取件码查询 ============
   console.log('\n=== SHARE-001 取件码查询 + 元数据 ===')
   const share = await api('/api/shares', { user: 'owner', method: 'POST', body: form('hello share', 'TC-03-01-安全文本-可预览.txt') })
@@ -173,8 +205,9 @@ try {
   check('member 用户重开 200', memberReopen.status === 200, `status=${memberReopen.status}`)
 
   console.log(`\n========== SHARE 补测：${passed} 通过 / ${failures.length} 失败 ==========`)
-  if (failures.length) { failures.forEach((f) => console.log('  - ' + f)); process.exit(1) }
-  console.log('全部通过')
+  if (failures.length) { failures.forEach((f) => console.log('  - ' + f)); process.exitCode=1 }
+  else console.log('全部通过')
 } finally {
   await stop()
+  await new Promise(resolve => scanner.close(resolve))
 }

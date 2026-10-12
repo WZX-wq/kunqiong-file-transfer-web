@@ -379,8 +379,9 @@ export function mergeAccountUser(existing = null, incoming = {}) {
     ...base,
     ...normalized,
     nickname: normalized.nickname || base.nickname,
-    email: normalized.email || base.email,
-    phone: normalized.phone || base.phone,
+    // 本地验证绑定后，只能通过绑定流程更换；OAuth 和旧会话快照不可覆盖。
+    email: base.loginMethods?.includes('email_bound') && incoming.contactBindingType !== 'email' ? base.email : normalized.email || base.email,
+    phone: base.loginMethods?.includes('phone_bound') && incoming.contactBindingType !== 'phone' ? base.phone : normalized.phone || base.phone,
     avatar: nextAvatar,
     avatarSource: nextAvatarSource,
     providerAvatar: nextProviderAvatar,
@@ -401,6 +402,7 @@ export function mergeAccountUser(existing = null, incoming = {}) {
   }
   // 意图标记只在合并过程中有意义，绝不能落库/下发。
   delete merged.avatarRestoreRequested
+  delete merged.contactBindingType
   return merged
 }
 
@@ -604,8 +606,8 @@ export function mergeAccountRecord(existing, incoming) {
 export function normalizeRecordFiles(files) {
   if (!Array.isArray(files)) return []
   return files.slice(0, MAX_RECORD_FILES).map((file, index) => ({
-    name: trimRecordString(file?.name, 180) || `文件 ${index + 1}`,
-    relativePath: trimRecordString(file?.relativePath || file?.name, 260),
+    name: trimRecordString(file?.name, 240) || `文件 ${index + 1}`,
+    relativePath: trimRecordString(file?.relativePath || file?.name, 1024),
     size: normalizeNonNegativeInteger(file?.size),
     mimeType: trimRecordString(file?.mimeType, 100),
   }))
@@ -647,7 +649,8 @@ export function normalizeNonNegativeInteger(value) {
 
 export function trimRecordString(value, maxLength) {
   const text = String(value ?? '').trim()
-  return text.length > maxLength ? text.slice(0, maxLength) : text
+  const sliced = text.length > maxLength ? text.slice(0,maxLength) : text
+  return sliced.replace(/[\uD800-\uDBFF]$/, '').toWellFormed()
 }
 
 export function legacyScopeFromType(type) {

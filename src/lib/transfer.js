@@ -241,7 +241,7 @@ export async function tryResumeUploadSession(files, chunkSize, uploadConfig, sha
 }
 
 export async function uploadShareInChunks(files, settings, uploadRef, onState, uploadConfig = {}) {
-  const chunkSize = uploadConfig.resumeScope ? Number(readUploadResume(uploadConfig)?.chunkSize) || pickUploadChunkSize(files) : pickUploadChunkSize(files)
+  let chunkSize = uploadConfig.resumeScope ? Number(readUploadResume(uploadConfig)?.chunkSize) || pickUploadChunkSize(files) : pickUploadChunkSize(files)
   const concurrency = Math.min(4, Math.max(2, Number(navigator.hardwareConcurrency || 4) >= 8 ? 4 : 2))
   const session = uploadRef.current
   session.totalBytes = files.reduce((sum, item) => sum + item.size, 0)
@@ -264,6 +264,7 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
         }),
       })
       session.sessionId = response.sessionId
+      if (Number.isSafeInteger(response.chunkSize) && response.chunkSize >= 1024*1024 && response.chunkSize <= 16*1024*1024) chunkSize = response.chunkSize
       saveUploadResume(files, chunkSize, uploadConfig, shareOptions, session.sessionId)
     }
   }

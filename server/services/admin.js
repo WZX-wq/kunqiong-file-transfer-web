@@ -8,6 +8,7 @@
 // 搬回会形成 shares→admin 环，故保留在 shares.js，本模块从其 import。
 
 import crypto from 'node:crypto'
+import { integerInput } from '../lib/input-validation.js'
 
 import {
   ADMIN_ACCOUNT_USERNAME, ADMIN_COOKIE_NAME, ADMIN_LOGIN_MAX_ATTEMPTS, ADMIN_LOGIN_WINDOW_MS,
@@ -387,9 +388,9 @@ export async function exchangeOAuthToken(code, redirectUri) {
 }
 
 export function createAuthSession(tokenData) {
+  const expiresIn = integerInput(tokenData.expires_in === undefined ? 3600 : tokenData.expires_in,'登录会话有效期',1,30*86400,{string:false})
   cleanupExpiredAuthSessions()
   const now = new Date()
-  const expiresIn = Math.max(60, Number(tokenData.expires_in || 3600))
   const user = upsertAccountUser({
     ...(tokenData.user || {}),
     loginMethods: mergeLoginMethods(tokenData.user?.loginMethods, ['oauth']),

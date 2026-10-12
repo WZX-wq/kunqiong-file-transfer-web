@@ -6,7 +6,7 @@ import {
   COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, MAX_FILES, collectionsRoot
 } from '../config.js'
 import {
-  createToken, httpError, parseJson, removeDirectory
+  createToken, httpError, removeDirectory
 } from '../lib/http.js'
 import {
   metadata, persistMetadata
@@ -37,6 +37,9 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import QRCode from 'qrcode'
+import { integerInput, textInput } from '../lib/input-validation.js'
+import { relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
+import { collectionTypesInput } from '../services/shares.js'
 
 export function registerCollectionRoutes(app) {
   app.post('/api/collections', async (req, res, next) => {
@@ -46,17 +49,17 @@ export function registerCollectionRoutes(app) {
       // 与 applyCollectionUpdate 保持一致的服务端校验：
       // 标题/说明超长直接拒绝（400 + 可理解的错误信息，不再静默截断入库），
       // 单人大小限制必须为有限正数（此前负数/NaN 会被接受并创建出「永远无法提交」的废任务）。
-      const title = String(req.body.title || '').trim()
+      const title = textInput(req.body.title, '任务名称', COLLECTION_TITLE_MAX)
       if (!title) return res.status(400).json({ message: '请填写任务名称' })
       if (title.length > COLLECTION_TITLE_MAX) return res.status(400).json({ message: `任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字` })
-      const maxFileSizeMbRaw = Number(req.body.maxFileSizeMb ?? 500)
+      const maxFileSizeMbRaw = integerInput(req.body.maxFileSizeMb ?? 500,'单文件大小限制',1,5120)
       if (!Number.isFinite(maxFileSizeMbRaw) || maxFileSizeMbRaw <= 0) return res.status(400).json({ message: '单人大小限制不正确' })
-      const descriptionRaw = String(req.body.description || '').trim()
+      const descriptionRaw = textInput(req.body.description ?? '', '收集说明', COLLECTION_DESCRIPTION_MAX, {optional:true,multiline:true})
       if (descriptionRaw.length > COLLECTION_DESCRIPTION_MAX) return res.status(400).json({ message: `收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字` })
       const description = descriptionRaw || '请上传你负责的文件'
       const token = createToken(10)
       const manageToken = createToken(18)
-      const deadline = normalizeExpiryInput(req.body.deadline || new Date(Date.now() + 7 * 86400000).toISOString(), '截止时间')
+      const deadline = normalizeExpiryInput(req.body.deadline === undefined ? new Date(Date.now() + 7 * 86400000).toISOString() : req.body.deadline, '截止时间')
       if (!deadline) return res.status(400).json({ message: '截止时间格式不正确' })
       if (new Date(deadline).getTime() <= Date.now()) return res.status(400).json({ message: '截止时间必须晚于当前时间' })
       const task = {
@@ -66,7 +69,7 @@ export function registerCollectionRoutes(app) {
         title,
         description,
         deadline,
-        allowedTypes: normalizeCollectionAllowedTypes(req.body.allowedTypes),
+        allowedTypes: req.body.allowedTypes === undefined ? ['全部格式'] : collectionTypesInput(req.body.allowedTypes),
         maxFileSizeMb: Math.floor(maxFileSizeMbRaw),
         capacityBytes: ownerSession?.user?.id ? null : guestQuotaLimitBytes() || 1024 * 1024 * 1024,
         createdAt: new Date().toISOString(),
@@ -119,6 +122,8 @@ export function registerCollectionRoutes(app) {
       if (!uploadedFiles.length) {
         return res.status(400).json({ message: '至少选择一个文件' })
       }
+      const relativePaths = relativePathsInput(req.body.relativePaths, uploadedFiles)
+      uniqueFilePaths(uploadedFiles.map((file,index) => ({ relativePath:relativePaths[index] })))
       assertConfiguredUploadLimits(req, uploadedFiles)
       const guestKey = assertGuestQuota(req, res, uploadedFiles)
       assertCollectionFiles(task, uploadedFiles)
@@ -137,7 +142,6 @@ export function registerCollectionRoutes(app) {
       const submissionId = createToken(12)
       const submissionDirectory = path.join(collectionsRoot, task.id, submissionId)
       fs.mkdirSync(submissionDirectory, { recursive: true })
-      const relativePaths = parseJson(req.body.relativePaths, [])
       const files = uploadedFiles.map((file, index) => {
         const relativePath = safeRelativePath(relativePaths[index] || file.originalname)
         const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`

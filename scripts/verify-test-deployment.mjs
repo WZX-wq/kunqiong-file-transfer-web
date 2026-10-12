@@ -48,13 +48,23 @@ for (const route of ['/', '/workspace', '/team', '/admin']) {
   assert.equal(await response.text(), fs.readFileSync('/app/dist/index.html', 'utf8'), 'Page serves an old build: ' + route);
 }
 const html = fs.readFileSync('/app/dist/index.html', 'utf8');
-const assets = [...new Set([...html.matchAll(/(?:src|href)="(\\/assets\\/[^"\\s]+)"/g)].map(match => match[1]))];
+const assets = [...new Set([...html.matchAll(/(?:src|href)="(\\/assets\\/[^"\\s]+)"/g)].map(match => match[1]).concat(fs.readdirSync('/app/dist/assets').filter(name => /\\.(?:js|css)$/.test(name)).map(name => '/assets/' + name)))];
 assert.ok(assets.length >= 2, 'Built assets must exist');
 for (const asset of assets) {
   const response = await fetch(base + asset);
   assert.equal(response.status, 200, 'Asset unavailable: ' + asset);
   assert.equal(crypto.createHash('sha256').update(Buffer.from(await response.arrayBuffer())).digest('hex'), hash('/app/dist' + asset), 'Old asset served: ' + asset);
 }
+const workerAssets = assets.filter(asset => /office-preview-.*\\.js$/.test(asset));
+assert.ok(workerAssets.length, 'Office preview worker must be deployed');
+const {default:sharp} = await import('sharp');
+const {normalizeAvatarData} = await import('/app/server/lib/avatar-validation.js');
+const png = await sharp({create:{width:1,height:1,channels:3,background:'#4488ff'}}).png().toBuffer();
+const avatar = await normalizeAvatarData('data:image/png;base64,' + png.toString('base64'));
+assert.ok(avatar.startsWith('data:image/webp;base64,'), 'Native avatar decoder must reencode');
+const avatarInfo = await sharp(Buffer.from(avatar.split(',')[1],'base64')).metadata();
+assert.equal(avatarInfo.width,1); assert.equal(avatarInfo.height,1);
+await assert.rejects(normalizeAvatarData('data:image/png;base64,c2FmZQ=='),error => error.status === 400);
 for (const route of ['/api/account/workspace', '/api/account/team/overview']) {
   const response = await fetch(base + route); await response.arrayBuffer(); assert.equal(response.status, 401, 'Anonymous access must remain protected');
 }
@@ -89,7 +99,7 @@ await new Promise((resolve,reject) => {
   socket.on('data',data=>{body+=data; if(body.includes('PONG')){socket.destroy();resolve();}});
   socket.once('error',reject); socket.once('timeout',()=>{socket.destroy();reject(new Error('Scanner timeout'));});
 });
-console.log(JSON.stringify({release:health.release,sourceFiles:Object.keys(manifest).length,pages:4,assets,auditStorage:stored.auditStorage,readRequests:requestIds.length,businessSnapshotUnchanged:true,auditRequestsPersisted:true,previousDataVerified:Boolean(previous),preservedCounts:previous?Object.fromEntries(Object.entries(previous).map(([kind,ids])=>[kind,ids.length])):null,scanner:'PONG',passed:true}));
+console.log(JSON.stringify({release:health.release,sourceFiles:Object.keys(manifest).length,pages:4,assets,workerAssets,avatarDecoder:'WebP 1x1; corrupt input rejected',auditStorage:stored.auditStorage,readRequests:requestIds.length,businessSnapshotUnchanged:true,auditRequestsPersisted:true,previousDataVerified:Boolean(previous),preservedCounts:previous?Object.fromEntries(Object.entries(previous).map(([kind,ids])=>[kind,ids.length])):null,scanner:'PONG',passed:true}));
 `
 const result = spawnSync('docker', ['exec', '-i', app, 'node', '--input-type=module'], { input: probe, encoding: 'utf8', windowsHide: true, timeout: 60000, maxBuffer: 4 * 1024 ** 2 })
 if (result.status !== 0) throw new Error(`Deployment verification failed (${result.status}): ${result.stderr || result.error?.message || ''}`)

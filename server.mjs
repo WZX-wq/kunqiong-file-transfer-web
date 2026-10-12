@@ -263,6 +263,8 @@ app.use((error, req, res, _next) => {
   }
   if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: '文件超过 5 GB 限制' })
   if (error.code === 'LIMIT_FILE_COUNT') return res.status(413).json({ message: `单次最多上传 ${MAX_FILES} 个文件` })
+  if (['LIMIT_FIELD_VALUE','LIMIT_FIELD_COUNT','LIMIT_PART_COUNT'].includes(error.code)) return res.status(413).json({message:'上传表单内容过大或字段过多'})
+  if (['LIMIT_UNEXPECTED_FILE','LIMIT_FIELD_KEY'].includes(error.code)) return res.status(400).json({message:'上传文件字段或表单字段不正确'})
   res.status(500).json({ message: '服务器处理失败，请稍后重试' })
 })
 

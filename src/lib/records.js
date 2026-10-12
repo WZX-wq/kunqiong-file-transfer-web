@@ -249,7 +249,7 @@ export async function deleteCloudRecords(ids) {
 }
 
 export async function clearCloudRecords() {
-  return apiRequest('/api/account/records', { method: 'DELETE' })
+  return apiRequest('/api/account/records', { method: 'DELETE', body: JSON.stringify({ all: true }) })
 }
 
 export async function fetchCloudMessages() {
@@ -313,17 +313,17 @@ export async function saveCloudFileCleanupSettings(settings) {
   }
 }
 
-export async function requestAccountBindCode(target) {
+export async function requestAccountBindCode(target, type) {
   return apiRequest('/api/auth/code', {
     method: 'POST',
-    body: JSON.stringify({ target, scene: 'bind' }),
+    body: JSON.stringify({ target, type, scene: 'bind' }),
   })
 }
 
-export async function bindAccountTarget(target, code) {
+export async function bindAccountTarget(target, code, type) {
   return apiRequest('/api/account/bind', {
     method: 'POST',
-    body: JSON.stringify({ target, code }),
+    body: JSON.stringify({ target, code, type }),
   })
 }
 

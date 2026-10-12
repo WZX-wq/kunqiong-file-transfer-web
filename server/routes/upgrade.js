@@ -9,6 +9,7 @@ import {
 import {
   createToken
 } from '../lib/http.js'
+import { integerInput } from '../lib/input-validation.js'
 
 import {
   normalizeNullablePositiveInteger, normalizePaymentPayload,
@@ -134,7 +135,7 @@ export function registerUpgradeRoutes(app) {
       if (!order) return res.status(404).json({ message: '升级订单不存在' })
       release = await acquireUpgradeLock(order.id)
       if (order.status !== 'pending_payment') return res.status(409).json({ message: '当前订单不支持支付确认' })
-      const payType = normalizeWebMemberPayType(req.body?.payType || order.payType || 1)
+      const payType = req.body?.payType === undefined ? normalizeWebMemberPayType(order.payType || 1) : integerInput(req.body.payType,'支付方式',1,2)
       const payment = order.remoteOrderNo
         ? { order_no: order.remoteOrderNo, pay_type: order.payType || payType, ...(order.payment || {}) }
         : await createWebMemberPaymentOrder(session, order, payType)

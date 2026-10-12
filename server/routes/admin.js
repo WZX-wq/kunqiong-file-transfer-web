@@ -41,8 +41,10 @@ export function registerAdminRoutes(app) {
     if (adminLoginRateLimited(req)) {
       return res.status(429).json({ message: '登录尝试过于频繁，请稍后再试' })
     }
-    const username = trimRecordString(req.body?.username, 120)
+    if (typeof req.body?.username !== 'string' || req.body.username.length > 120) return res.status(400).json({message:'管理员账号格式不正确或过长'})
+    const username = req.body.username.trim()
     const password = typeof req.body?.password === 'string' ? req.body.password : ''
+    if (password.length > 128) return res.status(400).json({message:'管理员密码不能超过 128 个字符'})
     if (!username || !password) return res.status(400).json({ message: '请输入管理员账号和密码' })
     const matched = safeEqualString(username, ADMIN_ACCOUNT_USERNAME) & safeEqualString(password, ADMIN_ACCOUNT_PASSWORD)
     if (!matched) {
