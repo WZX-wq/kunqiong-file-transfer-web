@@ -1,7 +1,7 @@
 // 线上验收：确认头像修复已生效，并检查团队成员的套餐隔离仍正确
 import fs from 'node:fs'
 
-const BASE = 'http://43.154.197.96:8045'
+const BASE = `${process.env.KQ_LIVE_BASE || 'http://127.0.0.1:8045'}`
 const LOG = 'C:\\Users\\admin\\Desktop\\鲲穹文件传输web\\_avatar_live.txt'
 const out = []
 let pass = 0, fail = 0

@@ -14,7 +14,7 @@ const LOG = join(ROOT, '_team_preview_live.txt')
 const MARK_LOG = join(ROOT, '_team_preview_live_crash.txt')
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const CDP_PORT = 9365
-const LIVE = 'http://43.154.197.96:8045'
+const LIVE = `${process.env.KQ_LIVE_BASE || 'http://127.0.0.1:8045'}`
 const ADMIN_USER = process.env.KUNQIONG_ADMIN_USERNAME || 'ljxkjadmin'
 const ADMIN_PASS = process.env.KUNQIONG_ADMIN_PASSWORD || 'jxljxkj009900'
 

@@ -1,0 +1,1 @@
+TC-08 使用 9 类测试角色：guest、owner、recipient、stranger、member、team_owner、team_admin、team_member、admin。仅使用测试域名和测试账号；不要把真实密码、验证码或 OAuth secret 写入此目录。管理员密码通过部署密钥或本地环境变量注入。

@@ -1,4 +1,5 @@
-const BASE = 'http://43.154.197.96:8045'
+const BASE = `${process.env.KQ_LIVE_BASE || 'http://127.0.0.1:8045'}`
+const WHITELIST_ID = process.env.KQ_ADMIN_USER_ID || 'fixture-admin-id'
 let pass = 0, fail = 0
 const ok = (n, c, d) => { c ? pass++ : fail++; console.log(`  ${c ? 'PASS' : 'FAIL'}  ${n}${d !== undefined ? ' — ' + d : ''}`) }
 
@@ -17,7 +18,7 @@ const cases = [
   ['GET  /api/admin/overview', '/api/admin/overview', {}],
   ['POST /api/admin/cleanup', '/api/admin/cleanup', { method: 'POST' }],
   ['PATCH /api/admin/config', '/api/admin/config', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}' }],
-  ['PATCH /api/admin/users/wx_Ba7AZPo6U9', '/api/admin/users/wx_Ba7AZPo6U9', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{"plan":"pro"}' }],
+  [`PATCH /api/admin/users/${WHITELIST_ID}`, `/api/admin/users/${WHITELIST_ID}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{"plan":"pro"}' }],
   ['DELETE /api/admin/resources/share/x', '/api/admin/resources/share/x', { method: 'DELETE' }],
   ['PATCH /api/admin/resources/share/x/review', '/api/admin/resources/share/x/review', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{"action":"approve"}' }],
 ]

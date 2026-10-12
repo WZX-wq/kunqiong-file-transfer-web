@@ -1,5 +1,5 @@
 // 线上验收：3cacd70 五项交互优化 + 两处缺陷修复
-const BASE = 'http://43.154.197.96:8045'
+const BASE = `${process.env.KQ_LIVE_BASE || 'http://127.0.0.1:8045'}`
 const out = []
 let pass = 0, fail = 0
 const line = (s) => { out.push(s); console.log(s) }

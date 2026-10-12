@@ -1,0 +1,76 @@
+{
+  "generatedAt": "2026-10-09T03:14:42.678Z",
+  "useSandboxOrMockOnly": true,
+  "scenarios": [
+    {
+      "id": "PAY-001",
+      "fileName": "TC-09-01-支付-免费套餐-未开始.json",
+      "plan": "free",
+      "status": "not_started",
+      "expected": "free limits"
+    },
+    {
+      "id": "PAY-002",
+      "fileName": "TC-09-02-支付-会员-待支付.json",
+      "plan": "member",
+      "status": "pending_payment",
+      "expected": "one provider order"
+    },
+    {
+      "id": "PAY-003",
+      "fileName": "TC-09-03-支付-会员-已支付续费.json",
+      "plan": "member",
+      "status": "paid",
+      "expected": "renewal appends remaining time"
+    },
+    {
+      "id": "PAY-004",
+      "fileName": "TC-09-04-支付-团队-并发确认.json",
+      "plan": "team",
+      "status": "concurrent_confirm",
+      "expected": "idempotent provider order"
+    },
+    {
+      "id": "PAY-005",
+      "fileName": "TC-09-05-支付-企业-远端错误.json",
+      "plan": "enterprise",
+      "status": "remote_error",
+      "expected": "no paid transition"
+    },
+    {
+      "id": "PAY-006",
+      "fileName": "TC-09-06-支付-会员-重启后补偿.json",
+      "plan": "member",
+      "status": "paid_after_restart",
+      "expected": "startup compensation once"
+    },
+    {
+      "id": "PAY-007",
+      "fileName": "TC-09-07-支付-会员-已取消.json",
+      "plan": "member",
+      "status": "canceled",
+      "expected": "cannot confirm canceled order"
+    },
+    {
+      "id": "PAY-008",
+      "fileName": "TC-09-08-支付-会员-已过期.json",
+      "plan": "member",
+      "status": "expired",
+      "expected": "rights downgrade and cleanup policy"
+    },
+    {
+      "id": "PAY-009",
+      "fileName": "TC-09-09-支付-团队-金额无效.json",
+      "plan": "team",
+      "status": "invalid_amount",
+      "expected": "reject and no entitlement"
+    },
+    {
+      "id": "PAY-010",
+      "fileName": "TC-09-10-支付-企业-未知套餐.json",
+      "plan": "enterprise",
+      "status": "unknown_package",
+      "expected": "clear configuration error"
+    }
+  ]
+}

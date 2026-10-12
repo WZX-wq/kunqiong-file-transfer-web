@@ -2,6 +2,10 @@ node_modules/
 dist/
 storage/
 
+# 测试用边界大文件（500MB / 5GB），仅供本地压测，超出仓库托管限制。
+# 需要时按 测试数据/鲲穹文件传输测试数据包/02-边界大小文件/README 说明自行生成。
+测试数据/**/*.bin
+
 *.log
 dev-server.*.log
 qa-*.png
@@ -24,7 +28,8 @@ _api-*.txt
 _requirements.*
 _requirements_render/
 _docx_extract*/
-登录/
+_docx_render*/
+_manual_preview/
 
 # 回归汇总与本地产物（验证脚本本身入库，报告不入库）
 _regression.txt
@@ -79,6 +84,10 @@ _probe_team_preview.mjs
 .env.*
 !.env.example
 
+# WorkBuddy 本地产物（AI 记忆、同步脚本、接口快照），含内部地址与部署细节，不入库
+.workbuddy/
+__pycache__/
+
 # 验收会话端点冒烟：脚本入库，报告/沙箱不入库
 _impersonate_smoke.txt
 _impersonate_sandbox/
@@ -105,3 +114,6 @@ _dbg_*.mjs
 # 上传面板溢出修复轮：验证脚本入库，报告/截图不入库
 _panel_overflow_*.txt
 _panel_overflow_*.png
+
+# Word 打开文档时生成的临时锁文件
+~$*.docx

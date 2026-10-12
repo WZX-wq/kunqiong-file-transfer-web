@@ -21,7 +21,7 @@ const ADMIN_USER = 'ljxkjadmin'
 const ADMIN_PASS = 'jxljxkj009900'
 
 // 白名单里的鲲穹账号 —— 修复前它可以完全绕过密码进后台。
-const WHITELIST_ID = 'wx_Ba7AZPo6U9'
+const WHITELIST_ID = process.env.KQ_ADMIN_USER_ID || 'fixture-admin-id'
 const NORMAL_ID = 'u_normal_1'
 const now = new Date().toISOString()
 

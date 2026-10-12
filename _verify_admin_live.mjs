@@ -1,4 +1,4 @@
-// 线上 /admin 最终验收：真实 Chrome 打开 http://43.154.197.96:8045/admin
+// 线上 /admin 最终验收：真实 Chrome 打开 `${process.env.KQ_LIVE_BASE || 'http://127.0.0.1:8045'}`/admin
 // 确认真实站点上「访问 /admin → 居中弹窗 → 输账号密码 → 进后台」全程可用。
 import { spawn } from 'node:child_process'
 import http from 'node:http'
@@ -8,7 +8,7 @@ import path from 'node:path'
 const ROOT = 'C:/Users/admin/Desktop/鲲穹文件传输web'
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const CDP = 9353
-const BASE = 'http://43.154.197.96:8045'
+const BASE = `${process.env.KQ_LIVE_BASE || 'http://127.0.0.1:8045'}`
 const results = []
 const line = (s) => { results.push(s); console.log(s) }
 const check = (l, p, e = '') => line(`  ${p ? 'PASS' : 'FAIL'}  ${l}${e ? ` — ${e}` : ''}`)
@@ -43,7 +43,7 @@ const waitFor = async (sel, tries = 60) => {
 }
 const shot = async (n) => { const r = await cmd('Page.captureScreenshot', { format: 'png' }); if (r.result?.data) fs.writeFileSync(path.join(ROOT, n), Buffer.from(r.result.data, 'base64')) }
 
-line('===== 线上验收：https://43.154.197.96:8045/admin =====')
+line(`===== 线上验收：${BASE}/admin =====`)
 await cmd('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false })
 await cmd('Page.navigate', { url: `${BASE}/admin` })
 check('★ 线上 /admin 弹出管理员登录框', await waitFor('.admin-login-modal'))

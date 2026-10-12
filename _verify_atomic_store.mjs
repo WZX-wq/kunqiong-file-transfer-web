@@ -28,6 +28,16 @@ check('损坏时不再静默返回空库（有告警）', /已从备份还原/.t
 fs.rmSync(SANDBOX, { recursive: true, force: true })
 fs.mkdirSync(path.join(SANDBOX, 'storage'), { recursive: true })
 fs.copyFileSync(path.join(ROOT, 'server.mjs'), path.join(SANDBOX, 'server.mjs'))
+// server.mjs 已拆出 server/ 目录（config.js、lib/），沙箱必须一并复制，
+// 否则子进程启动时会 ERR_MODULE_NOT_FOUND。
+const copyDir = (from, to) => {
+  fs.mkdirSync(to, { recursive: true })
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    if (entry.isDirectory()) copyDir(path.join(from, entry.name), path.join(to, entry.name))
+    else fs.copyFileSync(path.join(from, entry.name), path.join(to, entry.name))
+  }
+}
+copyDir(path.join(ROOT, 'server'), path.join(SANDBOX, 'server'))
 fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(SANDBOX, 'node_modules'), 'junction')
 fs.symlinkSync(path.join(ROOT, 'dist'), path.join(SANDBOX, 'dist'), 'junction')
 

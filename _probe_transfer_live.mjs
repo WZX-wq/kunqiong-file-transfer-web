@@ -1,5 +1,5 @@
 // 线上验收：最新 release、手册与页脚链接、转让/解散接口、消息中心修复已部署
-const BASE = 'http://43.154.197.96:8045'
+const BASE = `${process.env.KQ_LIVE_BASE || 'http://127.0.0.1:8045'}`
 const results = []
 const check = (name, pass, detail = '') => { results.push({ name, pass }); console.log(`${pass ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`) }
 

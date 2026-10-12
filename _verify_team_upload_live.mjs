@@ -10,7 +10,7 @@
 import fs from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
-const BASE = 'http://43.154.197.96:8045'
+const BASE = `${process.env.KQ_LIVE_BASE || 'http://127.0.0.1:8045'}`
 // 线上 release 必须与仓库 main 分支一致 —— 不写死哈希，否则每推一次新提交就误报。
 const expectRelease = (() => {
   // 优先用本地已 fetch 的远端引用；没有就现拉一次，避免退化成「只看非空」。
