@@ -611,6 +611,7 @@
   .account-bind-code-row .secondary-button { width: 100%; }
   .settings-notice-error { padding-left: 18px; padding-right: 18px; }
   .upload-panel, .upload-panel.has-files { min-height: 420px; padding: 20px 17px; }
+  .upload-artwork { width: 184px; margin-bottom: 12px; }
   .upload-choice { flex-direction: column; width: 100%; }
   .upload-choice button { width: 100%; }
   .value-strip { padding: 15px 8px; }
@@ -833,6 +834,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  .upload-artwork img { animation: none !important; }
+  .upload-panel, .upload-panel:hover .upload-artwork, .upload-panel:focus-within .upload-artwork, .upload-panel.dragging .upload-artwork { transform: none; }
 }
 
 /* ============================================================

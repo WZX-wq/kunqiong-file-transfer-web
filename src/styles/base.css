@@ -247,7 +247,15 @@ h1, h2, p { margin-top: 0; }
 .upload-panel.dragging { border-color: var(--accent); background: #f2fbf8; transform: translateY(-2px); }
 .upload-panel.has-files { min-height: 480px; }
 .empty-upload { display: flex; align-items: center; flex-direction: column; text-align: center; }
-.upload-icon { width: 68px; height: 68px; display: grid; place-items: center; margin-bottom: 20px; color: var(--accent); background: var(--accent-pale); border-radius: 20px; }
+.upload-artwork { width: 232px; max-width: 100%; margin-bottom: 16px; pointer-events: none; transition: transform .35s ease; }
+.upload-artwork img { display: block; width: 100%; height: auto; animation: upload-folder-float 5s ease-in-out infinite; }
+.upload-panel:hover .upload-artwork, .upload-panel:focus-within .upload-artwork { transform: translateY(-3px) scale(1.025); }
+.upload-panel.dragging .upload-artwork { transform: translateY(-6px) scale(1.07); }
+.upload-panel.dragging .upload-artwork img { animation-play-state: paused; }
+@keyframes upload-folder-float {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-7px) rotate(-1deg); }
+}
 .empty-upload h2 { margin-bottom: 8px; color: var(--ink); font-size: 20px; letter-spacing: -0.02em; }
 .empty-upload p { margin-bottom: 22px; color: #697975; font-size: 14px; }
 .primary-button, .secondary-button { display: inline-flex; align-items: center; justify-content: center; flex: none; gap: 8px; min-width: max-content; min-height: 44px; padding: 0 19px; border-radius: 8px; font-size: 14px; font-weight: 700; line-height: 1.25; transition: transform .18s, background .18s, box-shadow .18s; }
