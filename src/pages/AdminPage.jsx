@@ -72,6 +72,8 @@ export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome
 
 export function AdminPage() {
   const requestGeneration = useRef(0)
+  const requestInFlight = useRef(null)
+  const overviewLoaded = useRef(false)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -92,41 +94,57 @@ export function AdminPage() {
     return () => window.clearTimeout(timer)
   }, [notice])
 
-  const load = async () => {
+  const clearAdminSession = () => {
+    overviewLoaded.current = false
+    setAuthenticated(false)
+    setAdminInfo(null)
+    setData(null)
+    setNotice(null)
+    settleConfirm(false)
+  }
+
+  const load = async ({ sessionOnly = false } = {}) => {
+    // focus、pageshow、visibilitychange 往往连续触发，共用一次校验。
+    if (requestInFlight.current !== null) return
     const generation = ++requestGeneration.current
-    setLoading(true)
+    requestInFlight.current = generation
+    if (!sessionOnly) setLoading(true)
     setError('')
     try {
       const session = await apiRequest('/api/admin/session')
       if (generation !== requestGeneration.current) return
       if (!session.authenticated) {
-        setAuthenticated(false)
-        setAdminInfo(null)
-        setData(null)
+        clearAdminSession()
         return
       }
       setAuthenticated(true)
       setAdminInfo(session.admin || null)
+      // 恢复窗口只校验权限，保持列表、弹窗和未保存表单挂载。
+      if (sessionOnly && overviewLoaded.current) return
       const overview = await apiRequest('/api/admin/overview')
-      if (generation === requestGeneration.current) setData(overview)
+      if (generation === requestGeneration.current) {
+        overviewLoaded.current = true
+        setData(overview)
+      }
     } catch (err) {
       if (generation !== requestGeneration.current) return
-      setAuthenticated(false)
-      setAdminInfo(null)
-      setData(null)
+      // 网络/服务异常不代表退出登录；明确失去权限时才清除后台数据。
+      if (err.status === 401 || err.status === 403) clearAdminSession()
       setError(err.message || '后台数据加载失败')
     } finally {
       if (generation === requestGeneration.current) setLoading(false)
+      if (requestInFlight.current === generation) requestInFlight.current = null
     }
   }
   useEffect(() => {
-    const refresh = () => { if (document.visibilityState !== 'hidden') load() }
+    const refresh = () => { if (document.visibilityState !== 'hidden') load({ sessionOnly: true }) }
     load()
     window.addEventListener('focus', refresh)
     window.addEventListener('pageshow', refresh)
     document.addEventListener('visibilitychange', refresh)
     return () => {
       requestGeneration.current++
+      requestInFlight.current = null
       window.removeEventListener('focus', refresh)
       window.removeEventListener('pageshow', refresh)
       document.removeEventListener('visibilitychange', refresh)
@@ -134,30 +152,37 @@ export function AdminPage() {
   }, [])
 
   const submitLogin = async ({ username, password }) => {
+    const generation = ++requestGeneration.current
+    requestInFlight.current = generation
+    setLoading(false)
     setLoginBusy(true)
     setLoginError('')
     try {
       const result = await apiRequest('/api/admin/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+      if (generation !== requestGeneration.current) return
+      overviewLoaded.current = Boolean(result.overview)
       setAuthenticated(true)
       setAdminInfo(result.admin || null)
       setData(result.overview || null)
       setError('')
     } catch (err) {
-      setLoginError(err.message || '登录失败')
+      if (generation === requestGeneration.current) setLoginError(err.message || '登录失败')
     } finally {
-      setLoginBusy(false)
+      if (generation === requestGeneration.current) setLoginBusy(false)
+      if (requestInFlight.current === generation) requestInFlight.current = null
     }
   }
 
   const logoutAdmin = async () => {
-    requestGeneration.current++
+    const generation = ++requestGeneration.current
+    requestInFlight.current = generation
     setLoading(false)
+    clearAdminSession()
     try {
       await apiRequest('/api/admin/logout', { method: 'POST' })
     } catch { /* 忽略退出异常，前端一律回到登录态 */ }
-    setAuthenticated(false)
-    setAdminInfo(null)
-    setData(null)
+    finally { if (requestInFlight.current === generation) requestInFlight.current = null }
+    if (generation !== requestGeneration.current) return
     setError('')
     setLoginError('')
   }
@@ -228,7 +253,7 @@ export function AdminPage() {
   if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开后台</h1><p>正在检查管理员登录状态。</p></div></PublicShell>
   // 后台一律先过口令登录。此前这里会因鲲穹白名单账号已登录而直接放行，
   // 表现为「部分账号能直接进后台」—— 白名单通道已移除，访问 /admin 恒定弹登录框。
-  if (!authenticated) return <PublicShell><AdminLoginModal onSubmit={submitLogin} busy={loginBusy} error={loginError} onBackHome={() => { window.location.href = '/' }} /></PublicShell>
+  if (!authenticated) return <PublicShell><AdminLoginModal onSubmit={submitLogin} busy={loginBusy} error={loginError || error} onBackHome={() => { window.location.href = '/' }} /></PublicShell>
   if (error && !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p><button className="primary-button" onClick={load}><RefreshCw size={16} /> 重新加载</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button><a className="secondary-button" href="/">返回首页</a></div></PublicShell>
   if (!data) return null
   const stats = data.stats || {}
