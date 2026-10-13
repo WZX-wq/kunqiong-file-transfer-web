@@ -243,7 +243,7 @@ try{
  })
  await group('TEAM-013',async()=>{for(const [url,user,slug] of [['/api/shares/token/main-file','member','main-slug'],['/api/shares/token/enterprise-personal','','second-slug'],['/api/collections/tasktoken','','second-slug']]){const correct=await api(url+'?organization='+slug,{user});check('正确slug '+url,correct.status===200);for(const wrong of ['wrong',slug==='main-slug'?'second-slug':'main-slug'])check('错/其他组织slug '+url+' '+wrong,(await api(url+'?organization='+wrong,{user})).status===404)}check('上传者移除后不能借其他团队slug访问',(await api('/api/shares/token/victim-team?organization=second-slug',{user:'other'})).status===404)})
 }finally{await stop();await new Promise(r=>scanner.close(r))}
-for(const item of cases) if(item.id==='TEAM-007' && item.status==='PASS') item.status='PARTIAL'
-const result={executedAt:new Date().toISOString(),passed,failures,cases,unsupported:[{id:'TEAM-007',branch:'团队管理员',reason:'产品当前仅实现所有者和普通成员，独立管理员角色及授权流程未实现'}],fixture,scanner:'local INSTREAM emulator',requests}
+
+const result={executedAt:new Date().toISOString(),passed,failures,cases,unsupported:[],fixture,scanner:'local INSTREAM emulator',requests}
 if(process.env.TEAM_TEST_EVIDENCE_DIR){fs.mkdirSync(process.env.TEAM_TEST_EVIDENCE_DIR,{recursive:true});fs.writeFileSync(path.join(process.env.TEAM_TEST_EVIDENCE_DIR,'team-api-results.json'),JSON.stringify(result,null,2))}
 console.log(JSON.stringify({...result,requests:undefined},null,2));process.exitCode=failures.length?1:0

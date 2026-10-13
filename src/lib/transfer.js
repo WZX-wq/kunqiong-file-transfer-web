@@ -26,10 +26,10 @@ export async function copyImageToClipboard(dataUrl) {
   throw new Error('copy-image-not-supported')
 }
 
-export function createShareDownloadConfig(share, { password = '' } = {}) {
+export function createShareDownloadConfig(share, { password = '', managed = false } = {}) {
   const files = share.files || []
   return {
-    url: share.downloadUrl || `${window.location.origin}/api/shares/${encodeURIComponent(share.id)}/download`,
+    url: managed && share.manageToken ? `${window.location.origin}/api/shares/manage/${encodeURIComponent(share.manageToken)}/download` : share.downloadUrl || `${window.location.origin}/api/shares/${encodeURIComponent(share.id)}/download`,
     filename: files.length === 1 ? files[0].name : '鲲穹文件包.zip',
     label: files.length === 1 ? `下载 ${files[0]?.name || '文件'}` : `打包下载 ${files.length} 个文件`,
     totalBytes: totalFileSize(files),

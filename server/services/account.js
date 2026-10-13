@@ -215,9 +215,9 @@ export function organizationTeamSpaceBytes(organization) {
 
 export function publicOrganization(organization, viewerId = '') {
   if (!organization) return null
-  const isManager = organization.ownerUserId === viewerId
-  // 待审批的入团申请只对团队所有者可见，成员与外部访客看到的仍是正式成员列表。
-  const visibleMembers = isManager ? organization.members : organization.members.filter((member) => member.status !== 'requested')
+  const isOwner = organization.ownerUserId === viewerId
+  const isManager = isOrganizationManager(organization, viewerId)
+  const visibleMembers = organization.members.filter(member => isManager ? member.status !== 'requested' : member.status === 'active')
   return {
     id: organization.id,
     slug: organization.slug,
@@ -225,10 +225,35 @@ export function publicOrganization(organization, viewerId = '') {
     ownerUserId: organization.ownerUserId,
     createdAt: organization.createdAt,
     updatedAt: organization.updatedAt,
-    members: visibleMembers.map((member) => ({
-      ...member,
-      canRemove: member.userId !== organization.ownerUserId && isManager,
-    })),
+    members: visibleMembers.map(member => publicOrganizationMember(organization, member, viewerId)),
+    isOwner,
+  }
+}
+
+export function organizationRoleForUser(organization, userId) {
+  if (!organization || !userId) return ''
+  if (organization.ownerUserId === userId) return 'owner'
+  const member = organization.members.find(item => item.userId === userId && item.status === 'active')
+  return member ? (member.role === 'admin' ? 'admin' : 'member') : ''
+}
+
+export function publicOrganizationMember(organization, member, viewerId) {
+  const isOwner = organization.ownerUserId === viewerId
+  const isManager = isOrganizationManager(organization, viewerId)
+  const contactsVisible = isManager || member.userId === viewerId
+  const email = normalizeEmailValue(member.email)
+  const phone = normalizePhoneValue(member.phone)
+  const role = organization.ownerUserId === member.userId ? 'owner' : member.role === 'admin' ? 'admin' : 'member'
+  const account = accountUserById(member.userId)
+  const accountActive = Boolean(account && account.status !== 'disabled')
+  return {
+    id: member.id, userId: member.userId, displayName: member.displayName, role, status: member.status,
+    email: contactsVisible ? email : email ? `${email.slice(0, 1)}***@${email.split('@')[1]}` : '',
+    phone: contactsVisible ? phone : phone ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : '',
+    joinedAt: member.joinedAt || null, invitedAt: member.invitedAt || null,
+    canRemove: isManager && role !== 'owner' && (isOwner || role === 'member'),
+    canChangeRole: isOwner && role !== 'owner' && member.status === 'active' && accountActive,
+    canTransfer: isOwner && role !== 'owner' && member.status === 'active' && accountActive,
   }
 }
 
@@ -239,7 +264,7 @@ export function accountOrganizationForUser(userId) {
 }
 
 export function isOrganizationManager(organization, userId) {
-  return organization?.ownerUserId === userId
+  return ['owner', 'admin'].includes(organizationRoleForUser(organization, userId))
 }
 
 export function organizationBySlug(slug) {
@@ -365,8 +390,8 @@ export function accountWorkspacePayload(user) {
     teamEntitlement: {
       organizationId: organization?.id || '',
       organizationName: organization?.name || '',
-      role: organization ? (organization.ownerUserId === stored.id ? 'owner' : 'member') : '',
-      canManage: Boolean(organization && organization.ownerUserId === stored.id),
+      role: organizationRoleForUser(organization, stored.id),
+      canManage: isOrganizationManager(organization, stored.id),
       teamSpaceBytes: organizationTeamSpaceBytes(organization),
       canUseTeamSpace: Boolean(organization && accountEffectivePlanForUser(stored).team),
     },
@@ -376,6 +401,7 @@ export function accountWorkspacePayload(user) {
     capacity: accountUsageForUser(user.id),
     organization: publicOrganization(organization, user.id),
     canManage: Boolean(organization && isOrganizationManager(organization, user.id)),
+    isOwner: Boolean(organization && organization.ownerUserId === user.id),
     orders: upgradeOrdersForUser(user.id).slice(0, 10).map(upgradeOrderSummary),
     paymentReconciliation: {
       pending: upgradeOrdersForUser(user.id).some((order) => order.status !== 'paid' && order.remoteOrderNo && !order.paymentRequiresLogin && new Date(order.createdAt).getTime() + PAYMENT_QUERY_RETENTION_MS > Date.now()),
@@ -406,6 +432,8 @@ export function purgeOwnedStaleResource(userId, recordId) {
     const index = metadata.shares.findIndex((item) => item.id === parsed.key || item.manageToken === parsed.key)
     if (index < 0) return null
     const share = metadata.shares[index]
+    // 团队文件由团队删除接口授权；个人记录清理不能触碰组织资产。
+    if (share.teamResource) return null
     if (share.ownerUserId !== userId) return null
     if (currentShareStatus(share) === 'active') return null
     metadata.shares.splice(index, 1)
@@ -536,8 +564,8 @@ export function publicAccountUser(user = {}) {
     teamEntitlement: {
       organizationId: organization?.id || '',
       organizationName: organization?.name || '',
-      role: organization ? (organization.ownerUserId === stored.id ? 'owner' : 'member') : '',
-      canManage: Boolean(organization && organization.ownerUserId === stored.id),
+      role: organizationRoleForUser(organization, stored.id),
+      canManage: isOrganizationManager(organization, stored.id),
       teamSpaceBytes: organizationTeamSpaceBytes(organization),
       // 成员可用团队空间上传；这是共享能力，不代表个人升级
       canUseTeamSpace: Boolean(organization && accountTeamEntitlementForUser(stored).team),

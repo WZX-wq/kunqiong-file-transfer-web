@@ -25,7 +25,7 @@ import {
   metadata, persistMetadata, purgeAuditLogsBefore, readAuditLogs
 } from '../lib/metadata-store.js'
 import {
-  accountOrganizationForUser, accountPersonalPlanForUser, accountUsageForUser, cleanupExpired,
+  organizationRoleForUser, accountOrganizationForUser, accountPersonalPlanForUser, accountUsageForUser, cleanupExpired,
   cleanupExpiredAuthSessions, cleanupOAuthStates, configuredAccountPlans,
   currentCollectionStatus, currentShareStatus, fileListSize, isSecureRequest,
   parseAccountRecordResource, readCookie, reconcileUserUpgradeOrders,
@@ -175,7 +175,7 @@ export function adminUserSummary(user) {
     planLabel: plan.label,
     planExpiresAt: user.planExpiresAt || null,
     organizationName: organization?.name || '',
-    organizationRole: organization ? (organization.ownerUserId === user.id ? 'owner' : 'member') : '',
+    organizationRole: organizationRoleForUser(organization, user.id),
     usageBytes: usage.usedBytes,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
