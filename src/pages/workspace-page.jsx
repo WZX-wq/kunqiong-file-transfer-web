@@ -131,7 +131,7 @@ export function WorkspacePage() {
   const saveWorkspaceName = async (event) => {
     event.preventDefault()
     const name = workspaceName.trim()
-    if (!name || !workspace?.organization || !workspace?.canManage) return
+    if (!name || workspace?.organization?.ownerUserId !== user?.id) return
     setSaving(true)
     setError('')
     try {
@@ -203,7 +203,7 @@ export function WorkspacePage() {
               <div className="workspace-section-heading">
                 <div className="workspace-team-heading">
                   <p className="eyebrow">团队空间</p>
-                  {organization && editingTeamName ? (
+                  {organization?.ownerUserId === user.id && editingTeamName ? (
                     <form className="workspace-name-form" onSubmit={saveWorkspaceName}>
                       <input value={workspaceName} onChange={(event) => setWorkspaceName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} autoFocus aria-label="团队名称" />
                       <button type="submit" className="ghost-icon" disabled={saving || !workspaceName.trim()} aria-label="保存团队名称" title="保存团队名称"><Check size={16} /></button>
@@ -212,12 +212,12 @@ export function WorkspacePage() {
                   ) : (
                     <div className="workspace-name-line">
                       <h2><Users size={18} /> {organization?.name || '创建团队空间'}</h2>
-                      {organization?.canManage !== false && workspace?.canManage && <button type="button" className="ghost-icon" onClick={() => setEditingTeamName(true)} aria-label="编辑团队名称" title="编辑团队名称"><PencilLine size={15} /></button>}
+                      {organization?.ownerUserId === user.id && <button type="button" className="ghost-icon" onClick={() => setEditingTeamName(true)} aria-label="编辑团队名称" title="编辑团队名称"><PencilLine size={15} /></button>}
                     </div>
                   )}
                 </div>
                 {organization
-                  ? <span className="workspace-status">{teamRole === 'owner' ? '团队所有者' : '团队成员'}</span>
+                  ? <span className="workspace-status">{teamRole === 'owner' ? '团队所有者' : teamRole === 'admin' ? '团队管理员' : '团队成员'}</span>
                   : <span className="workspace-status muted team-required-tag" title={canManageTeam ? '当前权益可以创建团队空间。' : '该功能需要升级团队版权限才可解锁。'}>{canManageTeam ? '可创建' : '需团队版'}</span>}
               </div>
               {!organization ? (
@@ -233,7 +233,7 @@ export function WorkspacePage() {
                     </div>
                     <div className="workspace-team-block">
                       <p className="workspace-block-label"><Link2 size={14} /> 团队邀请链接</p>
-                      {teamRole === 'owner' ? (
+                      {canManageTeam ? (
                         <>
                           <p className="workspace-block-hint">把它发给同事，对方登录后即可申请加入，申请会出现在团队空间里由你审批。</p>
                           <div className="workspace-invite-link-row">

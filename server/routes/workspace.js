@@ -4,7 +4,7 @@
 // 注册顺序即 Express 匹配顺序，server.mjs 中的调用点顺序不可调整。
 import fs from 'node:fs'
 import path from 'node:path'
-import { INVALID_TEXT, textInput } from '../lib/input-validation.js'
+import { INVALID_TEXT, objectInput, textInput } from '../lib/input-validation.js'
 import {
   createToken, httpError
 } from '../lib/http.js'
@@ -24,7 +24,7 @@ import {
   authSessionFromRequest, createOrganization, currentShareStatus, displayAccountName,
   fileListSize, findAccountUserByInvitationTarget, getOrigin, isJoinRequestRateLimited,
   isOrganizationManager, joinRequestCooldownRemaining, organizationBySlug, parseAccountRecordResource, publicFile,
-  publicJoinRequestsForOrganization, publicOrganization, reconcileUserUpgradeOrders,
+  publicJoinRequestsForOrganization, publicOrganization, publicOrganizationMember, reconcileUserUpgradeOrders,
   recordAuditLog, recordJoinRequestAttempt, requireAuthSession, syncAccountUserSessions,
   upsertAccountUser, validateShareRecipient
 } from '../services/account.js'
@@ -51,18 +51,13 @@ export function registerWorkspaceRoutes(app) {
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
     // 待审批的入团申请（status='requested'）不是成员，不计入成员观察/成员列表，也不应参与团队资源归属判定。
-    const rosterMembers = organization.members.filter((member) => member.status !== 'requested')
+    const canManageTeam = isOrganizationManager(organization, session.user.id)
+    const rosterMembers = organization.members.filter(member => canManageTeam ? member.status !== 'requested' : member.status === 'active')
     const memberUsage = rosterMembers.map((member) => {
       const shares = metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && item.ownerUserId === member.userId && !item.cleanedAt)
       const shareBytes = shares.reduce((sum, item) => sum + fileListSize(item.files), 0)
       return {
-        id: member.id,
-        userId: member.userId,
-        displayName: member.displayName,
-        email: member.email,
-        phone: member.phone,
-        role: member.role,
-        status: member.status,
+        ...publicOrganizationMember(organization, member, session.user.id),
         shareCount: shares.length,
         collectionCount: 0,
         fileCount: shares.reduce((sum, item) => sum + (item.files?.length || 0), 0),
@@ -70,10 +65,7 @@ export function registerWorkspaceRoutes(app) {
         lastActivityAt: shares.map((item) => item.updatedAt || item.createdAt).filter(Boolean).sort().pop() || null,
       }
     })
-    // 团队概览的资源列表：manageToken 是 bearer 管理凭证（可改密/关闭分享，且管理接口
-    // 不校验登录身份），只下发给资源所有者本人或团队所有者 —— 普通成员拿不到他人的，
-    // 避免越过上传者编辑他人资源（回归见 _verify_team_token_leak.mjs）。
-    const canManageTeam = isOrganizationManager(organization, session.user.id)
+    // 管理凭证仅提供给当前有效的管理者或上传者；接口每次重新校验成员与角色。
     const resources = [
       ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && (canManageTeam || validateShareRecipient(item, session.user).ok)).map((item) => ({
         id: item.id,
@@ -89,6 +81,7 @@ export function registerWorkspaceRoutes(app) {
         createdAt: item.createdAt,
         expiresAt: item.expiresAt || null,
         canDelete: item.ownerUserId === session.user.id || canManageTeam,
+        canManage: item.ownerUserId === session.user.id || canManageTeam,
         ...(item.ownerUserId === session.user.id || canManageTeam ? {
           manageToken: item.manageToken,
           manageUrl: `${getOrigin(req)}/share/manage/${item.manageToken}`,
@@ -98,6 +91,7 @@ export function registerWorkspaceRoutes(app) {
     res.json({
       organization: publicOrganization(organization, session.user.id),
       canManage: canManageTeam,
+      isOwner: organization.ownerUserId === session.user.id,
       plan: accountEffectivePlanForUser(organization.ownerUserId),
       capacity: accountTeamUsageForOrganization(organization),
       memberUsage,
@@ -114,7 +108,7 @@ export function registerWorkspaceRoutes(app) {
       if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
       const share = metadata.shares.find(item => item.id === req.params.resourceId && item.teamResource && item.teamOrganizationId === organization.id)
       if (!share) return res.status(404).json({ message: '团队资源不存在或已删除' })
-      if (!isOrganizationManager(organization, session.user.id) && share.ownerUserId !== session.user.id) return res.status(403).json({ message: '仅资源上传者或团队所有者可以删除该团队资源' })
+      if (!isOrganizationManager(organization, session.user.id) && share.ownerUserId !== session.user.id) return res.status(403).json({ message: '仅资源上传者或团队管理者可以删除该团队资源' })
 
       const directory = path.resolve(filesRoot, share.id)
       if (path.dirname(directory) !== path.resolve(filesRoot)) throw httpError(500, '资源存储路径无效，无法删除')
@@ -153,7 +147,7 @@ export function registerWorkspaceRoutes(app) {
     if (!session) return
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization || !isOrganizationManager(organization, session.user.id)) {
-      return res.status(403).json({ message: '只有团队所有者可以检索可邀请成员' })
+      return res.status(403).json({ message: '只有团队所有者或管理员可以检索可邀请成员' })
     }
     const now = Date.now()
     for (const [key, entry] of memberSearchAttempts) if (now - entry.startedAt >= 60000) memberSearchAttempts.delete(key)
@@ -216,7 +210,7 @@ export function registerWorkspaceRoutes(app) {
     if (!accountEffectivePlanForUser(session.user).team) return res.status(403).json({ message: '成员管理需要团队版或企业版权益' })
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '请先创建团队空间' })
-    if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以管理成员' })
+    if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者或管理员可以管理成员' })
     const targetValue = req.body?.target ?? ''
     const userIdValue = req.body?.userId ?? ''
     // Validate before trimming/looking up so oversized input cannot invite a
@@ -325,12 +319,13 @@ export function registerWorkspaceRoutes(app) {
     if (!accountEffectivePlanForUser(session.user).team) return res.status(403).json({ message: '成员管理需要团队版或企业版权益' })
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
-    if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以管理成员' })
+    if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者或管理员可以管理成员' })
     const index = organization.members.findIndex((member) => member.id === req.params.memberId)
     if (index < 0) return res.status(404).json({ message: '团队成员不存在' })
     // 先校验再修改：所有者保护必须发生在 splice 之前，否则 400 返回后内存里
     // 成员已被移除，会被后续任意请求的 persistMetadata 落盘，造成团队数据损坏。
     if (organization.members[index].userId === organization.ownerUserId) return res.status(400).json({ message: '团队所有者不能移除' })
+    if (organization.ownerUserId !== session.user.id && organization.members[index].role === 'admin') return res.status(403).json({ message: '只有团队所有者可以移除管理员' })
     const [removedMember] = organization.members.splice(index, 1)
     const operator = accountUserById(session.user.id) || session.user
     const operatorName = displayAccountName(operator)
@@ -353,6 +348,28 @@ export function registerWorkspaceRoutes(app) {
     recordAuditLog({ type: 'team', action: '移除团队成员', userId: session.user.id, targetId: removedMember.userId, details: { organizationId: organization.id, notifiedInApp } })
     res.json({ ...accountWorkspacePayload(session.user), removedMemberId: removedMember.id, notifiedInApp })
   })
+  app.patch('/api/account/workspace/members/:memberId/role', (req, res) => {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    const organization = accountOrganizationForUser(session.user.id)
+    if (!organization || organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以调整管理员角色' })
+    objectInput(req.body, ['role'], { nonempty: true })
+    if (!['admin', 'member'].includes(req.body.role)) return res.status(400).json({ message: '角色仅支持管理员或普通成员' })
+    const member = organization.members.find(item => item.id === req.params.memberId)
+    if (!member) return res.status(404).json({ message: '团队成员不存在' })
+    if (member.userId === organization.ownerUserId || member.status !== 'active') return res.status(400).json({ message: '只能调整正式成员的角色，不能修改所有者' })
+    const account = accountUserById(member.userId)
+    if (!account || account.status === 'disabled') return res.status(400).json({ message: '该成员账号不可用，无法调整角色' })
+    member.role = req.body.role
+    account.organizationRole = member.role
+    account.updatedAt = organization.updatedAt = new Date().toISOString()
+    upsertAccountUser(account)
+    syncAccountUserSessions(account)
+    persistMetadata()
+    recordAuditLog({ type: 'team', action: '调整团队成员角色', userId: session.user.id, targetId: account.id, details: { organizationId: organization.id, role: member.role } })
+    res.json(accountWorkspacePayload(session.user))
+  })
+
   app.post('/api/account/workspace/leave', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -405,6 +422,7 @@ export function registerWorkspaceRoutes(app) {
     const previousOwner = accountUserById(session.user.id) || session.user
     const nextOwner = accountUserById(targetMember.userId)
     if (!nextOwner) return res.status(404).json({ message: '接管成员的账号不存在' })
+    if (nextOwner.status === 'disabled') return res.status(400).json({ message: '已禁用账号不能接管团队，请选择有效成员' })
     const now = new Date().toISOString()
     const previousOwnerName = displayAccountName(previousOwner)
     const nextOwnerName = displayAccountName(nextOwner)
@@ -610,7 +628,7 @@ export function registerWorkspaceRoutes(app) {
     if (!decision) return res.status(400).json({ message: '审批方式无效' })
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
-    if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者可以审批入团申请' })
+    if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '只有团队所有者或管理员可以审批入团申请' })
     if (!accountEffectivePlanForUser(organization.ownerUserId).team) {
       return res.status(403).json({ message: '团队版权益已失效，请续费后再处理成员申请' })
     }

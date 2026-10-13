@@ -38,7 +38,7 @@ import {
   accountPlanForUser, accountTeamUsageForOrganization, accountUsageForUser, accountUserById,
   addAccountMessage, authSessionFromRequest, currentCollectionStatus, currentShareStatus,
   displayAccountName, fileListSize, formatByteSize, getEmailTransporter, getOrigin,
-  getRequestOrigin, isSecureRequest, isSmtpConfigured, mailErrorReason, normalizeContactTarget,
+  getRequestOrigin, isOrganizationManager, isSecureRequest, isSmtpConfigured, mailErrorReason, normalizeContactTarget,
   publicFile, readCookie, recordAuditLog, safeRelativePath,
   serializeCookie, validateShareRecipient
 } from '../services/account.js'
@@ -259,10 +259,11 @@ export function resourceEnterpriseOrganization(item) {
 export function validateTeamShareManager(share, req) {
   if (!share.teamResource) return { ok: true }
   const viewer = authSessionFromRequest(req)?.user
-  const access = validateShareRecipient(share, viewer)
-  if (!access.ok) return access
   const organization = metadata.organizations[share.teamOrganizationId]
-  if (viewer.id !== share.ownerUserId && viewer.id !== organization.ownerUserId) return { ok: false, status: 403, message: '仅资源所有者或团队所有者可以管理该团队资源' }
+  if (!organization) return { ok: false, status: 404, message: '团队资源所属团队已不存在' }
+  if (!viewer) return { ok: false, status: 401, message: '请先登录团队成员账号' }
+  if (!organization.members.some(member => member.userId === viewer.id && member.status === 'active')) return { ok: false, status: 403, message: '当前账号不是该团队的有效成员' }
+  if (viewer.id !== share.ownerUserId && !isOrganizationManager(organization, viewer.id)) return { ok: false, status: 403, message: '仅资源上传者或团队管理者可以管理该团队资源' }
   return { ok: true }
 }
 
@@ -307,10 +308,11 @@ export function validateEnterpriseSlug(item, slug) {
 
 export function validateShareRequest(share, req, options = {}) {
   const viewer = authSessionFromRequest(req)?.user
+  const manager = share.teamResource && options.allowOwner && validateTeamShareManager(share, req).ok
   const recipientAccess = validateShareRecipient(share, viewer)
-  if (!recipientAccess.ok) return recipientAccess
+  if (!recipientAccess.ok && !manager) return recipientAccess
   assertFilesDownloadable(share.files)
-  const isOwner = options.allowOwner && viewer?.id && share.ownerUserId && viewer.id === share.ownerUserId
+  const isOwner = manager || (options.allowOwner && viewer?.id && share.ownerUserId && viewer.id === share.ownerUserId)
   // 团队资源：关闭分享只应切断公开提取链接，文件本体仍在团队空间。
   // 所有者本人登录后始终可以打开自己的资源 —— 否则所有者关闭分享后连自己也打不开文件。
   if (isOwner && share.teamResource && currentShareStatus(share) === 'closed') return { ok: true }
@@ -1071,6 +1073,10 @@ export function resolveCollectionSubmitter(req) {
 export async function createShareFromTempFiles(tempFiles, options, req) {
   let reservedCode = ''
   try {
+    // 耗时准备在提交之前完成；此后直到元数据提交不再 await，撤权可立即阻止发布。
+    const shareToken = createToken(10)
+    const shareUrl = `${getOrigin(req)}/share/${shareToken}`
+    const qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
     const ownerSession = authSessionFromRequest(req)
     // 断点恢复期间可能更换绑定，发布时仍需以当前用户资料校验收件人。
     const recipientError = recipientInputError(options.recipients, accountUserById(ownerSession?.user?.id) || ownerSession?.user)
@@ -1085,7 +1091,6 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
     } else {
       assertAccountCapacity(ownerSession?.user, totalSize)
     }
-    const shareToken = createToken(10)
     const shareDirectory = path.join(filesRoot, shareToken)
     fs.mkdirSync(shareDirectory, { recursive: true })
     const files = tempFiles.map((file, index) => {
@@ -1125,12 +1130,12 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
       teamResource: Boolean(options.teamResource),
       teamOrganizationId: options.teamResource ? String(options.teamOrganizationId || '') : '',
     }
-    const shareUrl = `${getOrigin(req)}/share/${shareToken}`
-    share.qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
-    share.notificationLog = await notifyShareRecipients(share, req, ownerSession?.user)
+    share.qrDataUrl = qrDataUrl
     metadata.shares.push(share)
     reservedShareCodes.delete(reservedCode)
     persistMetadata()
+    share.notificationLog = await notifyShareRecipients(share, req, ownerSession?.user)
+    if (metadata.shares.includes(share)) persistMetadata()
     return share
   } catch (error) {
     if (reservedCode) reservedShareCodes.delete(reservedCode)
