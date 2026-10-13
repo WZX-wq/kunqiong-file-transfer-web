@@ -843,8 +843,6 @@ export function FileFormatBadge({ file, record, label = '' }) {
   return text ? <span className="file-format-badge">{text}</span> : null
 }
 
-export function FeatureOrb({ icon: Icon, value, label, tone }) { return <div className={`feature-orb ${tone}`}><span className="orb-icon"><Icon size={21} /></span><strong>{value}</strong><span>{label}</span></div> }
-
 export function ValueItem({ icon: Icon, title, detail }) { return <div className="value-item"><span className="value-icon"><Icon size={18} /></span><div><strong>{title}</strong><span>{detail}</span></div></div> }
 
 export function FileRow({ file, onRemove, onPreview, onDownload, downloadDisabled = false, showPath = false }) {

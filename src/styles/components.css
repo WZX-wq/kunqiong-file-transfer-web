@@ -520,11 +520,7 @@
   .settings-layout { grid-template-columns: 220px minmax(0, 1fr); gap: 14px; }
   .settings-panel-header, .settings-form, .settings-list, .settings-notice-group { padding-left: 22px; padding-right: 22px; }
   .settings-notice { margin-left: 22px; margin-right: 22px; }
-  .hero-layout { grid-template-columns: 1fr; gap: 26px; min-height: 0; }
-  .side-rail { display: grid; grid-template-columns: repeat(4, 1fr); min-height: 0; }
-  .side-rail-left { order: 2; }
-  .side-rail-right { order: 3; }
-  .transfer-column { order: 1; }
+  .hero-layout { min-height: 0; }
   .value-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 0; }
   .value-item:nth-child(2) { border-right: 0; }
   .value-item:nth-child(-n + 2) { border-bottom: 1px solid #e2ece9; padding-bottom: 15px; }
@@ -617,12 +613,6 @@
   .upload-panel, .upload-panel.has-files { min-height: 420px; padding: 20px 17px; }
   .upload-choice { flex-direction: column; width: 100%; }
   .upload-choice button { width: 100%; }
-  .side-rail { gap: 12px; }
-  .feature-orb { min-width: 0; gap: 7px; }
-  .orb-icon { width: 46px; height: 46px; }
-  .orb-icon svg { width: 20px; height: 20px; }
-  .feature-orb strong { font-size: 13px; }
-  .feature-orb > span:last-child { font-size: 10px; }
   .value-strip { padding: 15px 8px; }
   .value-item { align-items: flex-start; justify-content: flex-start; gap: 7px; padding: 0 5px; }
   .value-item div { min-width: 0; }
