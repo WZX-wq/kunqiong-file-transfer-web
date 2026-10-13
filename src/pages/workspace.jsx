@@ -6,10 +6,10 @@ import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createS
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
 import { canPreviewFile, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, uploadShareInChunks } from '../lib/transfer.js'
-import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, Clock3, Cloud, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, LogOut, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UploadCloud, UserCheck, UserPlus, UserRound, UserX, X, Zap } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, Clock3, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, LogOut, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UploadCloud, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
 import { SettingsPage } from './settings.jsx'
 import { RecordsView } from './records.jsx'
-import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FeatureOrb, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, UserAvatar, ValueItem, displayUserSubtitle } from '../components/ui.jsx'
+import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, UserAvatar, ValueItem, displayUserSubtitle } from '../components/ui.jsx'
 import { ConfirmModal, Toast } from '../components/common.jsx'
 import { getRecordOwner } from '../lib/records.js'
 import { RECIPIENT_TEXT_MAX, recipientInputError } from '../../server/lib/contact-input.js'
@@ -1082,10 +1082,6 @@ export function SendView({ user, files, inputRef, folderInputRef, isDragging, se
   return (
     <>
       <section className="hero-layout">
-        <aside className="side-rail side-rail-left">
-          <FeatureOrb icon={Cloud} value="5 GB" label="登录后单文件上限" tone="blue" />
-          <FeatureOrb icon={Zap} value="不限速" label="原生带宽传输" tone="green" />
-        </aside>
         <div className="transfer-column">
           <div className="section-intro">
             <div>
@@ -1124,10 +1120,6 @@ export function SendView({ user, files, inputRef, folderInputRef, isDragging, se
             {shareResult && <ShareResult result={shareResult} settings={settings} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onReset={onReset} />}
           </div>
         </div>
-        <aside className="side-rail side-rail-right">
-          <FeatureOrb icon={ShieldCheck} value="私密" label="安全分享" tone="orange" />
-          <FeatureOrb icon={Gauge} value="快" label="上传下载不限速" tone="violet" />
-        </aside>
       </section>
       <section className="value-strip"><ValueItem icon={LockKeyhole} title="无需注册" detail="即开即用，免登录发送" /><ValueItem icon={Link2} title="多种分享" detail="链接、取件码、二维码" /><ValueItem icon={Clock3} title="到期清理" detail="文件到期可自动清理，可在设置开启" /><ValueItem icon={FolderOpen} title="文件夹直传" detail="保留目录结构，不必压缩" /></section>
     </>
