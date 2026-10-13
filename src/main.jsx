@@ -41,6 +41,8 @@ function RoutePage() {
 function App() {
   const [sessionVersion, setSessionVersion] = React.useState(0)
   React.useEffect(() => {
+    // 后台使用独立管理员 Cookie，由 AdminPage 校验；普通账号过期不应重挂后台。
+    if (window.location.pathname.startsWith('/admin')) return undefined
     let userId = '', expiryTimer
     const changed = ({ detail }) => {
       userId = detail.userId
