@@ -21,7 +21,12 @@ export function createUploadSessionState() {
     sessionId: '',
     fileIndex: 0,
     chunkIndex: 0,
+    chunkSize: 0,
     uploadedBytes: 0,
+    // The transport can retry a chunk after the browser has already displayed
+    // part of it. Keep the visual position monotonic for this upload session;
+    // uploadedBytes remains the server-acknowledged byte count.
+    displayedBytes: 0,
     totalBytes: 0,
     startedAt: 0,
     paused: false,
@@ -58,8 +63,8 @@ export function uploadResumeSignature(files, chunkSize, uploadConfig, shareOptio
 }
 
 export function currentSpeed(session, loadedBytes) {
-  const elapsedSeconds = Math.max((Date.now() - session.startedAt) / 1000, 0.3)
-  return loadedBytes / elapsedSeconds
+  const elapsedSeconds = Math.max((Date.now() - (session.speedStartedAt || session.startedAt)) / 1000, 0.3)
+  return Math.max(0, loadedBytes - (session.speedStartBytes || 0)) / elapsedSeconds
 }
 
 // 上传暂停/取消时的专用错误类型：xhrUploadChunk 与 transfer.js 的上传循环共用。
@@ -91,12 +96,20 @@ export function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkD
     uploadState.activeXhrs = activeXhrs
     activeXhrs.add(xhr)
     uploadState.abortCurrent = () => activeXhrs.forEach((request) => request.abort())
+    let settled = false
     const cleanup = () => {
+      settled = true
       activeXhrs.delete(xhr)
       if (!activeXhrs.size) uploadState.abortCurrent = null
     }
     xhr.open('POST', url)
-    xhr.upload.onprogress = (event) => { if (!uploadState.paused && !uploadState.cancelled && event.lengthComputable) onProgress(event.loaded) }
+    xhr.upload.onprogress = (event) => {
+      if (settled || uploadState.paused || uploadState.cancelled || !event.lengthComputable) return
+      // XHR measures the multipart request, including its fields and boundaries.
+      // Convert its ratio to file bytes so tiny chunks never exceed their size.
+      const ratio = event.total > 0 ? event.loaded / event.total : event.loaded / Math.max(chunkData.byteLength, 1)
+      onProgress(Math.round(chunkData.byteLength * Math.max(0, Math.min(1, ratio))))
+    }
     xhr.onload = () => {
       cleanup()
       let data = {}

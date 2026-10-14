@@ -203,7 +203,7 @@ export function AdminPage() {
       const planOverrides = {}
       ;['free', 'member', 'team', 'enterprise'].forEach((planId) => {
         const override = {}
-        for (const [field, suffix] of [['totalGb', 'gb'], ['monthlyPrice', 'price'], ['validityDays', 'days']]) {
+        for (const [field, suffix] of [['totalGb', 'gb'], ['validityDays', 'days']]) {
           const value = String(form.get(`plan-${planId}-${suffix}`) ?? '').trim()
           if (value !== '') override[field] = value
         }
@@ -361,7 +361,7 @@ export function AdminConfig({ config = {}, saving = false, onSubmit }) {
       <label className="manage-field"><span>审计日志保留（天）</span><input name="auditLogRetentionDays" type="number" min="1" max="3650" defaultValue={config.auditLogRetentionDays} /></label>
       <label className="manage-field"><span>孤立目录宽限（小时）</span><input name="orphanGraceHours" type="number" min="1" max="720" defaultValue={config.orphanGraceHours} /></label>
     </div>
-    <div className="admin-plan-config"><div className="admin-plan-config-heading"><strong>会员权益配置</strong><span>留空恢复默认。容量使用 GB，价格使用分；支付价格以主站为准。</span></div>{[['free', '基础版'], ['member', '会员版'], ['team', '团队版'], ['enterprise', '企业版']].map(([id, label]) => <div className="admin-plan-row" key={id}><strong>{label}</strong><label><span>容量 GB</span><input name={`plan-${id}-gb`} type="number" min="1" step="1" defaultValue={overrides[id]?.totalBytes ? Math.round(overrides[id].totalBytes / 1024 ** 3) : ''} placeholder="默认" /></label><label><span>价格（分）</span><input name={`plan-${id}-price`} type="number" min="0" step="1" defaultValue={overrides[id]?.monthlyPrice ?? ''} placeholder="默认" /></label><label><span>有效期（天）</span><input name={`plan-${id}-days`} type="number" min="1" max="3650" defaultValue={overrides[id]?.validityDays ?? ''} placeholder="默认" /></label></div>)}</div>
+    <div className="admin-plan-config"><div className="admin-plan-config-heading"><strong>会员权益配置</strong><span>留空恢复默认，容量使用 GB。购买价格由会员主站统一管理，如需调整请在主站修改。</span></div>{[['free', '基础版'], ['member', '会员版'], ['team', '团队版'], ['enterprise', '企业版']].map(([id, label]) => <div className="admin-plan-row" key={id}><strong>{label}</strong><label><span>容量 GB</span><input name={`plan-${id}-gb`} type="number" min="1" step="1" defaultValue={overrides[id]?.totalBytes ? Math.round(overrides[id].totalBytes / 1024 ** 3) : ''} placeholder="默认" /></label><label><span>有效期（天）</span><input name={`plan-${id}-days`} type="number" min="1" max="3650" defaultValue={overrides[id]?.validityDays ?? ''} placeholder="默认" /></label></div>)}</div>
     <label className="switch-row"><div><strong>维护模式</strong><span>开启后会阻止非管理员创建分享、收集任务或提交文件。</span></div><input name="maintenanceMode" type="checkbox" defaultChecked={config.maintenanceMode} /></label>
     <button className="primary-button" disabled={saving}><SlidersHorizontal size={15} /> {saving ? '保存中' : '保存配置'}</button>
   </form>

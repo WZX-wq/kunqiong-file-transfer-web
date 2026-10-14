@@ -94,6 +94,87 @@ async function test(name, run) {
   finally { f.s.releaseCreate?.(); f.s.releaseDelete?.(); f.s.releaseComplete?.(); f.close() }
 }
 
+function watchProgress(f) {
+  const values = []
+  const read = () => {
+    const label = f.document.querySelector('.progress-label strong')
+    if (label) values.push(Number.parseInt(label.textContent, 10))
+  }
+  const observer = new f.window.MutationObserver(read)
+  observer.observe(f.document.getElementById('root'), { childList: true, subtree: true, characterData: true, attributes: true })
+  read()
+  return { values, stop: () => observer.disconnect() }
+}
+
+await test('Concurrent chunk retries keep continuous progress', async f => {
+  const chunkSize = 8 * 1024 * 1024
+  f.s.holdComplete = true
+  await f.choose([file('progress.bin', chunkSize * 3 + 19)]); await f.start()
+  await waitFor(() => f.s.pending.length >= 2, 'Concurrent progress chunks start')
+  const first = f.s.pending[0], other = f.s.pending[1]
+  const watch = watchProgress(f)
+  first.upload.onprogress({ lengthComputable: true, loaded: chunkSize * 0.75, total: chunkSize })
+  other.upload.onprogress({ lengthComputable: true, loaded: chunkSize * 0.5, total: chunkSize })
+  await delay(30)
+  const beforeRetry = watch.values.at(-1)
+  check('Concurrent requests contribute to total progress', beforeRetry > 40)
+  first.fail(503)
+  await delay(30)
+  check('Retry backoff preserves all concurrent progress', watch.values.at(-1) === beforeRetry)
+  await waitFor(() => f.s.pending.some(x => !x.done && x.body.get('chunkIndex') === first.body.get('chunkIndex')), 'Failed chunk is retried')
+  const retried = f.s.pending.find(x => !x.done && x.body.get('chunkIndex') === first.body.get('chunkIndex'))
+  retried.upload.onprogress({ lengthComputable: true, loaded: chunkSize * 0.1, total: chunkSize })
+  await delay(30)
+  check('Retransmitted bytes do not pull the progress bar backward', watch.values.at(-1) >= beforeRetry)
+  await retried.accept(); await delay(30)
+  const acknowledged = watch.values.at(-1)
+  retried.upload.onprogress({ lengthComputable: true, loaded: chunkSize, total: chunkSize })
+  await delay(30)
+  check('A late progress event cannot count an acknowledged chunk twice', watch.values.at(-1) === acknowledged)
+  const finished = f.finish()
+  await waitFor(() => f.s.releaseComplete && f.document.querySelector('.progress-label strong')?.textContent === '100%', 'Acknowledged upload reaches safety check')
+  f.s.releaseComplete(); await finished
+  watch.stop()
+  check('Progress never falls during retry and completion', watch.values.every((value, index) => !index || value >= watch.values[index - 1]) && watch.values.at(-1) === 100)
+})
+
+await test('Manual retry preserves partially transmitted progress', async f => {
+  const chunkSize = 8 * 1024 * 1024
+  f.s.holdComplete = true
+  await f.choose([file('manual.bin', chunkSize + 19)]); await f.start()
+  await waitFor(() => f.s.pending.length === 2, 'Manual retry chunks start')
+  await f.s.pending[1].accept()
+  const watch = watchProgress(f)
+  f.s.pending[0].upload.onprogress({ lengthComputable: true, loaded: chunkSize * 0.75, total: chunkSize })
+  await delay(30)
+  const original = watch.values.at(-1)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const xhr = f.s.pending.find(x => !x.done)
+    xhr.fail(503)
+    if (attempt < 2) await waitFor(() => f.s.pending.some(x => !x.done), 'Next automatic retry starts')
+  }
+  await waitFor(() => f.button('重试上传'), 'Manual retry becomes available')
+  check('Exhausted retries keep the displayed progress', watch.values.at(-1) === original)
+  await f.click('重试上传'); await waitFor(() => f.s.pending.some(x => !x.done), 'Manual retry continues')
+  check('Manual retry starts from the existing progress', watch.values.at(-1) === original && f.s.next === 1)
+  const finished = f.finish()
+  await waitFor(() => f.s.releaseComplete && f.document.querySelector('.progress-label strong')?.textContent === '100%', 'Retried upload reaches safety check')
+  f.s.releaseComplete(); await finished; watch.stop()
+  check('Manual retry never regresses and preserves original bytes', watch.values.every((value, index) => !index || value >= watch.values[index - 1]) && f.s.completed[0].files[0].bytes.length === chunkSize + 19)
+})
+
+await test('Multipart progress excludes request overhead', async f => {
+  await f.choose([file('small.bin', 24)]); await f.start()
+  await waitFor(() => f.s.pending.length === 1, 'Small file starts')
+  const xhr = f.s.pending[0]
+  xhr.upload.onprogress({ lengthComputable: true, loaded: 1024, total: 2048 })
+  await delay(30)
+  check('Small files use payload ratio without exceeding their size', f.document.querySelector('.progress-label strong').textContent === '50%' && f.document.querySelector('.upload-metrics').textContent.includes('已传 12 B / 24 B'))
+  xhr.upload.onprogress({ lengthComputable: true, loaded: 2048, total: 2048 }); await delay(30)
+  check('Sending the request body waits for server acknowledgement at 99%', f.document.querySelector('.progress-label strong').textContent === '99%' && !f.document.body.textContent.includes('已传 2048'))
+  await f.finish()
+})
+
 await test('Remove active file then select new file', async f => {
   await f.choose([file('old.rar', 8 * 1024 * 1024 + 19)]); await f.start()
   await waitFor(() => f.s.pending.length === 2, 'Old chunks are in flight')

@@ -49,12 +49,16 @@ async function mount(s, storage = {}, token = 'resume-test') {
       if (!session) { status = 404; data = { message: '上传会话不存在' } }
       else if (options.method === 'DELETE') { s.sessions.delete(session.sessionId); status = 204 }
       else if (match[2]) {
+        if (s.holdComplete) { s.holdComplete = false; await new Promise(resolve => { s.releaseComplete = resolve }) }
         const chunks = [...session.chunks].sort(([a], [b]) => a - b).map(([, value]) => value)
         s.completed.push(Buffer.concat(chunks))
         data = { submission: { submittedAt: new Date().toISOString(), files: session.files } }
         status = 201
-      } else if (s.queryError) { status = 503; data = { message: '暂时无法查询进度' } }
-      else data = { sessionId: session.sessionId, chunkSize: session.chunkSize, files: session.files.map((f) => ({ ...f, uploadedChunks: [...session.chunks.keys()] })) }
+      } else {
+        if (s.deferQuery) { s.deferQuery = false; await new Promise(resolve => { s.releaseQuery = resolve }) }
+        if (s.queryError) { status = 503; data = { message: '暂时无法查询进度' } }
+        else data = { sessionId: session.sessionId, chunkSize: session.chunkSize, files: session.files.map((f) => ({ ...f, uploadedChunks: [...session.chunks.keys()] })) }
+      }
     }
     return new Response(status === 204 ? null : JSON.stringify(data), { status })
   }
@@ -99,6 +103,42 @@ async function finish(s, f) {
   check('Completed upload has exactly the original bytes', s.completed[0]?.equals(bytes))
   check('Successful submission clears its resume record', !Object.keys(f.storage()).some((key) => key.startsWith('kunqiong_upload_resume')))
 }
+
+const partial = server()
+partial.holdComplete = true
+const partialUI = await mount(partial)
+try {
+  await partialUI.choose([file()]); await partialUI.click('提交文件')
+  await waitFor(() => partial.pending.length >= 2, 'Partial progress chunks start')
+  await partial.pending.find(xhr => xhr.index === 1).accept()
+  const values = []
+  const observer = new partialUI.window.MutationObserver(() => {
+    const label = partialUI.document.querySelector('.progress-label strong')
+    if (label) values.push(Number.parseInt(label.textContent, 10))
+  })
+  observer.observe(partialUI.document.getElementById('root'), { childList: true, subtree: true, characterData: true, attributes: true })
+  partial.pending.find(xhr => xhr.index === 0).upload.onprogress({ lengthComputable: true, loaded: chunkSize * 0.6, total: chunkSize })
+  await delay(30)
+  const before = values.at(-1)
+  check('Partial collection upload counts confirmed and in-flight bytes', before > 50)
+  await partialUI.click('暂停上传')
+  await waitFor(() => partialUI.button('继续上传')?.disabled === false, 'Partial pause settles')
+  check('Collection pause retains the displayed position', values.at(-1) === before)
+  partial.deferQuery = true
+  await partialUI.click('继续上传')
+  await waitFor(() => partial.releaseQuery, 'Resume query is delayed')
+  check('Resume query does not flash zero while waiting for the server', values.at(-1) === before)
+  partial.releaseQuery()
+  await waitFor(() => partial.pending.some(xhr => xhr.index === 0 && !xhr.done), 'Missing collection chunk restarts')
+  partial.pending.find(xhr => xhr.index === 0 && !xhr.done).upload.onprogress({ lengthComputable: true, loaded: chunkSize * 0.1, total: chunkSize })
+  await delay(30)
+  check('Restarting a partial collection chunk does not rewind progress', values.at(-1) >= before)
+  const finished = finish(partial, partialUI)
+  await waitFor(() => partial.releaseComplete && partialUI.document.querySelector('.progress-label strong')?.textContent === '100%', 'Collection reaches finalization after confirmed chunks')
+  partial.releaseComplete(); await finished
+  observer.disconnect()
+  check('Collection progress is monotonic through pause and completion', values.every((value, index) => !index || value >= values[index - 1]) && values.at(-1) === 100)
+} finally { partial.releaseQuery?.(); partial.releaseComplete?.(); partialUI.close() }
 
 const s = server()
 let f = await mount(s)

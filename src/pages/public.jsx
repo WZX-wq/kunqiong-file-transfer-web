@@ -357,7 +357,13 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     setMessage('')
     // Query the server on every continuation: it is authoritative even if an aborted
     // request finished writing a chunk before the browser saw its response.
-    uploadRef.current = createUploadSessionState()
+    const previousSession = uploadRef.current
+    const nextSession = createUploadSessionState()
+    if (pendingUpload) {
+      nextSession.displayedBytes = Math.max(pendingUpload.uploadedBytes || 0,
+        previousSession.sessionId === pendingUpload.sessionId ? previousSession.displayedBytes || 0 : 0)
+    }
+    uploadRef.current = nextSession
     uploadShareInChunks(orderedFiles, {}, uploadRef, ({ progress, status }) => {
       if (submitRunRef.current === submitRun) {
         setProgress(progress)
@@ -392,7 +398,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       if (entry) {
         try {
           const restored = await queryUploadResume(entry)
-          if (submitRunRef.current === submitRun) { setPendingUpload(restored); setProgress(restored.progress) }
+          if (submitRunRef.current === submitRun) { setPendingUpload(restored); setProgress(current => Math.max(current, restored.progress)) }
         } catch { /* Keep the record on transient failure; retry queries it again. */ }
       }
     }).finally(() => {
@@ -460,7 +466,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                 <span aria-live="polite"><strong>{files.length}</strong> / {MAX_FILES} 个文件 · 共 {formatBytes(selectedBytes)}</span>
                 {files.length > 0 && !pendingUpload && <button type="button" className="collection-clear-files" disabled={submitting} onClick={() => { setFiles([]); setMessage(''); setProgress(0) }}><Trash2 size={13} /> 清空</button>}
               </div>
-              {(submitting || pendingUpload) && <div className="progress-wrap"><div className="progress-label"><span>{uploadPhase === 'finalizing' ? '正在校验文件并完成提交...' : uploadPhase === 'pausing' ? '正在暂停...' : submitting ? '正在分片上传...' : '已暂停 · 已保存进度'}</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
+              {(submitting || pendingUpload) && <div className="progress-wrap"><div className="progress-label"><span>{uploadPhase === 'finalizing' ? '正在校验文件并完成提交...' : uploadPhase === 'pausing' ? '正在暂停...' : submitting ? '正在分片上传...' : '已暂停 · 可继续上传'}</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
               {(selectionError || message) && <FeedbackMessage message={selectionError || message} tone={selectionError ? 'error' : feedbackTone(message)} />}
               {submitting && ['uploading', 'pausing'].includes(uploadPhase) && <button className="secondary-button wide" disabled={uploadPhase === 'pausing'} onClick={pauseSubmit}><Pause size={16} /> {uploadPhase === 'pausing' ? '正在暂停...' : '暂停上传'}</button>}
               {pendingUpload && !submitting && <button className="secondary-button wide" onClick={abandonUpload}><X size={16} /> 放弃本次上传</button>}
