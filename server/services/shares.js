@@ -377,7 +377,7 @@ function scanResultError(result) {
       MaxScanSize: '压缩包解压后的总量超过安全扫描上限，请分成多个较小的压缩包再上传',
       MaxScanTime: '文件安全扫描超过处理时间，请联系管理员调整扫描时间后重试安全检查',
       MaxRecursion: '压缩包嵌套层数超过安全扫描上限，请减少嵌套后再上传',
-      MaxFiles: '压缩包内的文件数量超过安全扫描上限，请分成多个压缩包再上传',
+      MaxFiles: '文件内部展开的文件数量超过安全扫描上限（包括安装程序的内嵌文件），完整检查未完成，暂不能发布；请更换文件，或联系管理员核实扫描限制',
       StreamMaxLength: '文件超过扫描服务的接收上限，请联系管理员调整配置后重试安全检查',
     }
     const kind = limit || 'StreamMaxLength'

@@ -100,7 +100,7 @@ export function recordPreviewConfigs(record) {
           ...createSubmissionFilePreviewConfig({ manageToken: record.manageToken }, submission, index),
           key: `collection:${record.manageToken}:${submission.id}:${index}`,
         }
-      : [])).filter(Boolean)
+      : null)).filter(Boolean)
   }
   return []
 }

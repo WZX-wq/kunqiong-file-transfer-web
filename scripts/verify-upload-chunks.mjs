@@ -151,8 +151,8 @@ try {
   check('Downloaded file matches all original bytes', download.status === 200 && Buffer.from(await download.arrayBuffer()).equals(original))
   check('Completed upload session removed', (await api(url)).status === 404)
 
-  async function prepared() {
-    const upload = await api('/api/upload-sessions', { chunkSize: 1024 * 1024, files: [{ name: 'background.bin', size: original.length }] })
+  async function prepared(name = 'background.bin') {
+    const upload = await api('/api/upload-sessions', { chunkSize: 1024 * 1024, files: [{ name, size: original.length }] })
     assert.equal(upload.status, 201)
     const url = `/api/upload-sessions/${upload.data.sessionId}`
     assert.equal((await api(url + '/chunks', chunk(0))).status, 200)
@@ -222,6 +222,13 @@ try {
   check('Same risky content in a new upload is blocked without another scanner request', repeatedRisk.error.code === 'scan_threat_detected' && scanned.length === blockedCount + 1 && shares().length === beforeShares + 1)
   await stop(); await start()
   check('Threat verdict survives restart with original chunks intact', (await api(blockedUrl)).data.completion.error.code === 'scan_threat_detected' && (await api(blockedUrl)).data.files[0].uploadedChunks.length === 2)
+
+  const installerUrl = await prepared('setup.exe'), beforeInstallerShares = shares().length
+  scannerResult = 'stream: Heuristics.Limits.Exceeded.MaxFiles FOUND'
+  await api(installerUrl + '/complete', { background: true })
+  const installerFailure = await until(async () => { const completion = (await api(installerUrl)).data.completion; return completion.status === 'failed' && completion })
+  check('EXE count limit reports incomplete embedded-content checking without archive instructions', installerFailure.error.status === 415 && installerFailure.error.code === 'scan_size_limit' && installerFailure.error.scanLimit === 'MaxFiles' && installerFailure.error.message.includes('内嵌') && installerFailure.error.message.includes('未完成') && !installerFailure.error.message.includes('分成多个压缩包'))
+  check('EXE exceeding scan budget is never published and retains all uploaded chunks', shares().length === beforeInstallerShares && (await api(installerUrl)).data.files[0].uploadedChunks.length === 2)
 
   const interruptedUrl = await prepared()
   scannerResult = 'stream: OK'; holdScan = true

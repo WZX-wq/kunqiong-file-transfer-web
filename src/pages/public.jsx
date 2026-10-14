@@ -246,7 +246,11 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
         if (!active || submitRunRef.current !== restoreRun) return
         setPendingUpload(restored)
         setProgress(restored.progress)
-        setMessage('已恢复上传进度，请重新选择原文件后继续上传')
+        if (restored.completion?.status === 'failed') {
+          const failure = restored.completion.error
+          setUploadPhase(failure?.code === 'scan_threat_detected' ? 'blocked' : 'scan-failed')
+          setMessage(failure?.message || '文件已上传，安全检查未完成，请重试安全检查')
+        } else setMessage('已恢复上传进度，请重新选择原文件后继续上传')
       }).catch((err) => {
         if (!active || submitRunRef.current !== restoreRun) return
         if ([404, 410].includes(err.status)) {
@@ -293,7 +297,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       for (const item of selectedFiles) merged.set(item.id, item)
       return [...merged.values()]
     })
-    setMessage('')
+    if (pendingUpload?.completion?.status !== 'failed') setMessage('')
     if (!pendingUpload) setProgress(0)
   }
 
@@ -473,7 +477,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
               </div>
               {(submitting || pendingUpload) && <div className="progress-wrap"><div className="progress-label"><span>{uploadPhase === 'finalizing' ? '正在校验文件并完成提交...' : uploadPhase === 'blocked' ? '安全检查发现风险，已阻止提交' : uploadPhase === 'scan-failed' ? '文件已上传，安全检查未完成' : uploadPhase === 'query' ? '文件已上传，处理结果待查询' : uploadPhase === 'pausing' ? '正在暂停...' : submitting ? '正在分片上传...' : '已暂停 · 可继续上传'}</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
               {uploadPhase === 'finalizing' && <SecurityCheckStatus startedAt={checkState.checkStartedAt} stage={checkState.checkStage} currentFile={checkState.currentFile} fileIndex={checkState.checkFileIndex} fileCount={checkState.checkFileCount} completedCount={checkState.checkCompletedCount} activeCount={checkState.checkActiveCount} connectionMessage={checkState.connectionMessage} />}
-              {(selectionError || message) && <FeedbackMessage message={selectionError || message} tone={selectionError ? 'error' : feedbackTone(message)} />}
+              {(selectionError || message) && <FeedbackMessage message={selectionError || message} tone={selectionError || ['blocked', 'scan-failed', 'query'].includes(uploadPhase) ? 'error' : feedbackTone(message)} />}
               {submitting && ['uploading', 'pausing'].includes(uploadPhase) && <button className="secondary-button wide" disabled={uploadPhase === 'pausing'} onClick={pauseSubmit}><Pause size={16} /> {uploadPhase === 'pausing' ? '正在暂停...' : '暂停上传'}</button>}
               {pendingUpload && !submitting && !completionPending && <button className="secondary-button wide" onClick={abandonUpload}><X size={16} /> 放弃本次上传</button>}
               <button className="primary-button wide" onClick={submit} disabled={submitting || uploadPhase === 'blocked' || !files.length || Boolean(selectionError) || !resumeMatches}>{pendingUpload ? <Play size={17} /> : <UploadCloud size={17} />} {submitting ? uploadPhase === 'finalizing' ? '正在完成提交...' : '提交中...' : uploadPhase === 'blocked' ? '风险文件已阻止' : completionPending ? '查询处理结果' : uploadPhase === 'scan-failed' ? '重试安全检查' : pendingUpload ? '继续上传' : '提交文件'}</button>

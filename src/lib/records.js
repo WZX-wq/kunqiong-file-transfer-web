@@ -642,7 +642,7 @@ export function recordDisplayStatus(record) {
     return record.kind === 'collection' ? '已截止' : '已过期'
   }
   if (group === 'expiring') return '即将过期'
-  if (record.kind === 'collection') return record.scope === 'collect_from_me' ? '可提交' : '进行中'
+  if (record.kind === 'collection') return record.scope === 'collect_from_me' ? (record.submittedAt ? '已提交' : '待提交') : '进行中'
   return '有效'
 }
 
@@ -806,7 +806,9 @@ export function recordCopyLabel(record) {
 
 export function recordOpenLabel(record) {
   if (record.kind === 'share') return record.scope === 'my_sent' ? '打开分享链接' : '打开文件链接'
-  return record.scope === 'my_collections' ? '查看已收文件' : '打开提交入口'
+  if (record.scope === 'my_collections') return '查看已收文件'
+  if (recordStatusGroup(record) === 'expired') return '查看任务'
+  return record.submittedAt ? '再次提交' : '提交文件'
 }
 
 export function recordExpiryLabel(record) {

@@ -243,4 +243,24 @@ try {
   await waitFor(() => !rejected.sessions.size, 'Blocked collection upload discarded')
   check('Abandoning a blocked collection resets to a fresh upload', Boolean(f.button('提交文件')) && !f.button('风险文件已阻止'))
 } finally { f.close() }
+const exceeded = server(); exceeded.background = true
+f = await mount(exceeded)
+try {
+  const installer = new File([bytes], 'setup.exe', { type: 'application/octet-stream', lastModified: 123 })
+  await f.choose([installer]); await f.click('提交文件')
+  for (let i = 0; i < 100 && !exceeded.sessions.get('session-1')?.completion; i++) {
+    await Promise.all(exceeded.pending.filter(xhr => !xhr.done).map(xhr => xhr.accept())); await delay(20)
+  }
+  const session = exceeded.sessions.get('session-1')
+  const message = '压缩包内的文件数量超过安全扫描上限，请分成多个压缩包再上传'
+  session.completion = { ...session.completion, status: 'failed', error: { code: 'scan_size_limit', scanLimit: 'MaxFiles', status: 415, message } }
+  await waitFor(() => f.document.body.textContent.includes(message), 'Installer limit is visible')
+  check('EXE scan limit is an alert rather than successful submission', f.document.querySelector('.feedback-message.error[role=alert]')?.textContent.includes(message) && !f.document.body.textContent.includes('提交成功'))
+  check('Scan limit preserves 100% transferred bytes and offers a safety-check retry', f.button('重试安全检查') && !f.button('继续上传') && f.document.querySelector('.progress-label strong').textContent === '100%')
+  const saved = f.storage(); f.close(); f = await mount(exceeded, saved)
+  await f.choose([installer])
+  await waitFor(() => f.button('重试安全检查'), 'Refresh restores failed safety check rather than upload pause')
+  check('Refresh preserves scanner reason as an error', f.document.querySelector('.feedback-message.error[role=alert]')?.textContent.includes(message) && !f.button('继续上传'))
+  check('Restoring scan failure does not resend the installer or restart checking', exceeded.uploads.length === 4 && exceeded.scanStarts === 1 && f.errors.length === 0)
+} finally { f.close() }
 console.log(`Collection resume UI: ${passed} passed`)
