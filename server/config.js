@@ -195,6 +195,10 @@ export const clamavHost = String(process.env.KUNQIONG_CLAMAV_HOST || '').trim()
 export const clamavPort = Number(process.env.KUNQIONG_CLAMAV_PORT || 3310)
 // Allow stream transfer in addition to clamd's 10-minute processing budget.
 export const scanTimeoutMs = Math.max(1000, Number(process.env.KUNQIONG_SCAN_TIMEOUT_MS) || 900000)
+// Bound concurrent scanner jobs across all upload entry points.
+export const scanConcurrency = Math.max(1, Math.min(8, Math.floor(Number(process.env.KUNQIONG_SCAN_CONCURRENCY) || 3)))
+export const scanLargeConcurrency = Math.min(scanConcurrency, Math.max(1, Math.min(4, Math.floor(Number(process.env.KUNQIONG_SCAN_LARGE_CONCURRENCY) || 2))))
+export const scanLargeFileBytes = 128 * 1024 * 1024
 
 // ── 后台会话与限流 ──
 export const ADMIN_COOKIE_NAME = 'kunqiong_admin_session'

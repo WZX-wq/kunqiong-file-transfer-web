@@ -308,6 +308,14 @@ h1, h2, p { margin-top: 0; }
 .upload-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; color: #637a74; font-size: 11px; }
 .upload-metrics span { min-width: 0; overflow: hidden; padding: 8px 9px; background: #fff; border: 1px solid #e6f0ed; border-radius: 7px; text-overflow: ellipsis; white-space: nowrap; }
 .upload-error { margin: 10px 0 0; color: #a76458; font-size: 11px; line-height: 1.6; }
+.security-check-status { margin-top: 13px; color: #526b89; font-size: 12px; line-height: 1.65; }
+.security-check-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.security-check-heading span { margin-left: auto; font-variant-numeric: tabular-nums; }
+.security-check-status p { margin: 7px 0 0; }
+.security-check-file { overflow-wrap: anywhere; }
+.security-check-pulse { animation: security-check-pulse 1.8s ease-in-out infinite; }
+@keyframes security-check-pulse { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .security-check-pulse { animation: none; } }
 .upload-control-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 13px; }
 .secondary-button:disabled { cursor: wait; opacity: .58; transform: none; }
 .share-result { padding: 2px 12px; }

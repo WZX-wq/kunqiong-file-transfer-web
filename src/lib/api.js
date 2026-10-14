@@ -195,7 +195,7 @@ export async function apiRequest(url, options = {}) {
   if (url === '/api/auth/logout' && response.ok) invalidateAccountSession()
   if (!response.ok) {
     if (response.status === 401 && !String(url).startsWith('/api/admin/')) invalidateAccountSession()
-    const error = new Error(data.message || '请求失败')
+    const error = new Error(data.message || ([502, 504].includes(response.status) ? '服务连接暂时中断，请稍后重试' : '请求失败'))
     error.status = response.status
     error.code = data.code || ''
     error.guestQuota = data.guestQuota || null

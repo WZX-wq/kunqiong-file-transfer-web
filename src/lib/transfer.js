@@ -221,7 +221,7 @@ export async function queryUploadResume(entry) {
     done.forEach((i) => { uploadedBytes += Math.min(entry.chunkSize, Math.max(0, file.size - i * entry.chunkSize)) })
   })
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
-  return { ...entry, files, resumedChunks, uploadedBytes, totalBytes, progress: totalBytes ? Math.floor(uploadedBytes / totalBytes * 100) : 0 }
+  return { ...entry, completion: data.completion, files, resumedChunks, uploadedBytes, totalBytes, progress: totalBytes ? Math.floor(uploadedBytes / totalBytes * 100) : 0 }
 }
 
 // 跨刷新续传：刷新/重启后用 localStorage 里的会话指纹换回已传分片清单，
@@ -241,6 +241,7 @@ export async function tryResumeUploadSession(files, chunkSize, uploadConfig, sha
     if (Number(entry.chunkSize) !== chunkSize || entry.signature !== uploadResumeSignature(files, chunkSize, uploadConfig, shareOptions)) abandon('文件清单变化')
     const restored = await queryUploadResume(entry)
     session.sessionId = entry.sessionId
+    session.completion = restored.completion
     session.resumedChunks = restored.resumedChunks
     session.uploadedBytes = restored.uploadedBytes
     session.chunkSize = Number(entry.chunkSize)
@@ -406,14 +407,22 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
   }
 
   assertActive()
-  report({ status: 'finalizing', phase: '文件已上传，正在进行安全检查', progress: 100, uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: currentSpeed(session, session.totalBytes), etaSeconds: 0, currentFile: '', retryCount: 0, error: '' })
+  session.checkStartedAt = session.completion?.startedAt || session.checkStartedAt || new Date().toISOString()
+  const reportCompletion = (completion, connectionMessage = '') => {
+    if (completion) session.completion = completion
+    report({ status: 'finalizing', phase: connectionMessage || (completion?.status === 'publishing' ? '安全检查通过，正在生成分享信息' : '文件已上传，正在进行安全检查'), progress: 100,
+      uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: 0, etaSeconds: null,
+      checkStartedAt: completion?.startedAt || session.checkStartedAt, checkStage: completion?.status || 'scanning',
+      checkFileIndex: completion?.fileIndex || 0, checkFileCount: completion?.fileCount || files.length,
+      checkCompletedCount: completion?.completedFileCount ?? 0, checkActiveCount: completion?.activeFileCount ?? 1,
+      currentFile: completion?.currentFile || '', connectionMessage, retryCount: 0, error: '', failurePhase: '' })
+  }
+  reportCompletion(session.completion)
   let result
   try {
-    result = await apiRequest(`/api/upload-sessions/${session.sessionId}/complete`, {
-      method: 'POST',
-      body: JSON.stringify({ chunkSize, ...(uploadConfig.completeBody || {}) }),
-    })
+    result = await finishUploadSession(session, chunkSize, uploadConfig, reportCompletion, assertActive)
   } catch (error) {
+    error.completionPending = !String(error.code || '').startsWith('scan_') && (!error.status || [408, 429, 502, 503, 504].includes(error.status))
     if ([404, 410].includes(error.status)) {
       clearUploadResume(uploadConfig, session.sessionId)
       error.restartUpload = true
@@ -423,6 +432,64 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
   assertActive()
   clearUploadResume(uploadConfig, session.sessionId)
   return result
+}
+
+// Starts are idempotent. Short status requests recover a lost start/finish response
+// without re-uploading acknowledged chunks or starting a second scanner job.
+async function finishUploadSession(session, chunkSize, config, report, assertActive) {
+  const url = `/api/upload-sessions/${encodeURIComponent(session.sessionId)}`
+  const transient = error => !error.status || [408, 429, 502, 503, 504].includes(error.status)
+  const request = async (path, options) => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15000)
+    try { return await apiRequest(path, { ...options, signal: controller.signal }) }
+    finally { clearTimeout(timer) }
+  }
+  let failures = 0, needsStart = true
+  while (true) {
+    assertActive()
+    let data
+    try {
+      data = needsStart ? await request(`${url}/complete`, {
+        method: 'POST', body: JSON.stringify({ chunkSize, ...(config.completeBody || {}), background: true, retry: session.completion?.status === 'failed' }),
+      }) : await request(url)
+      assertActive()
+      failures = 0
+    } catch (error) {
+      assertActive()
+      if (!transient(error) || String(error.code || '').startsWith('scan_')) throw error
+      failures += 1
+      if (failures >= 5) {
+        error.message = '暂时无法查询处理结果；已上传文件保留，请点击“查询处理结果”继续'
+        throw error
+      }
+      report(session.completion, '连接暂时中断，正在重新查询处理结果')
+      await wait(Math.min(8000, 1000 * 2 ** (failures - 1)))
+      // The start may have succeeded even if its HTTP response was lost.
+      needsStart = false
+      continue
+    }
+    // Compatibility with older servers that return a synchronous final result.
+    if (data.share || data.submission) return data
+    const completion = data.completion
+    if (completion?.status === 'complete') {
+      if (!completion.result) {
+        const error = new Error('文件处理记录已失效，请重新上传')
+        error.status = 410
+        throw error
+      }
+      return completion.result
+    }
+    if (completion?.status === 'failed') {
+      const error = new Error(completion.error?.message || '文件处理失败')
+      Object.assign(error, completion.error || {})
+      session.completion = completion
+      throw error
+    }
+    report(completion)
+    needsStart = !completion
+    await wait(completion ? 1500 : 1000)
+  }
 }
 
 export function uploadStateFromProgress(session, loadedBytes, phase, currentFile, retryCount = 0, error = '') {

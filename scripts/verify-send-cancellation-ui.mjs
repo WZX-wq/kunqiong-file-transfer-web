@@ -42,12 +42,23 @@ async function mount({ server, storage = {}, guest = false } = {}) {
         if (s.holdDelete) { s.holdDelete = false; await new Promise(resolve => { s.releaseDelete = resolve }) }
         s.sessions.delete(id); status = 204
       } else if (url.endsWith('/complete')) {
+        if (s.background) {
+          if (!session.completion || (session.completion.status === 'failed' && JSON.parse(options.body).retry)) {
+            s.scanStarts = (s.scanStarts || 0) + 1
+            session.completion = { status: 'scanning', startedAt: new Date(Date.now() - 61000).toISOString(), currentFile: session.files[0].name, fileIndex: 1, fileCount: session.files.length }
+          }
+          if (s.lostStart) { s.lostStart = false; return new Response('<html>Bad Gateway</html>', { status: 502 }) }
+          return new Response(JSON.stringify({ completion: session.completion }), { status: 202 })
+        }
         if (s.holdComplete) { s.holdComplete = false; await new Promise(resolve => { s.releaseComplete = resolve }) }
         if (s.completeError) return new Response(JSON.stringify(s.completeError.data), { status: s.completeError.status })
         const files = session.files.map((item, index) => ({ ...item, bytes: Buffer.concat([...session.chunks.entries()].filter(([key]) => key.startsWith(index + ':')).sort(([a], [b]) => Number(a.split(':')[1]) - Number(b.split(':')[1])).map(([, bytes]) => bytes)) }))
         s.completed.push({ id, files })
         data = { share: { id, manageToken: 'manage-' + id, code: '123456', files: session.files, totalSize: session.files.reduce((sum, f) => sum + f.size, 0), shareUrl: '/share/' + id, ...(s.notificationData || {}) } }; status = 201
-      } else data = { sessionId: id, chunkSize: session.chunkSize, files: session.files.map((item, index) => ({ ...item, uploadedChunks: [...session.chunks.keys()].filter(key => key.startsWith(index + ':')).map(key => Number(key.split(':')[1])) })) }
+      } else {
+        if (s.failedPolls) { s.failedPolls--; return new Response('<html>Bad Gateway</html>', { status: 502 }) }
+        data = { sessionId: id, completion: session.completion, chunkSize: session.chunkSize, files: session.files.map((item, index) => ({ ...item, uploadedChunks: [...session.chunks.keys()].filter(key => key.startsWith(index + ':')).map(key => Number(key.split(':')[1])) })) }
+      }
     }
     return new Response(status === 204 ? null : JSON.stringify(data), { status })
   }
@@ -257,6 +268,54 @@ await test('Finalization cannot be cancelled accidentally', async f => {
   check('New selection cannot change a publishing batch', f.document.querySelectorAll('.file-row').length === 1 && !f.document.body.textContent.includes('unwanted.bin'))
   f.s.releaseComplete(); await waitFor(() => f.document.querySelector('.share-result'), 'Finalized result shows')
   check('Finalized batch produces exactly one share', f.s.completed.length === 1 && f.s.completed[0].files[0].name === 'publishing.bin')
+})
+
+await test('Background safety check recovers a lost 502 response', async f => {
+  f.s.background = true; f.s.lostStart = true
+  await f.choose([file('background.rar')]); await f.start(); await f.s.pending[0].accept()
+  await waitFor(() => f.document.querySelector('.security-check-status'), 'Waiting UI shown')
+  await waitFor(() => f.document.querySelector('.security-check-status').textContent.includes('正在恢复连接'), 'Lost start is identified as reconnecting')
+  check('A lost response keeps uploaded bytes and does not offer re-upload', f.document.querySelector('.progress-label strong').textContent === '100%' && !f.button('重试上传'))
+  await waitFor(() => f.document.querySelector('.security-check-file'), 'Status query reconnects to scanner')
+  const status = f.document.querySelector('.security-check-status')
+  check('Elapsed time resumes from server start with useful archive explanation', status.textContent.includes('已等待 1 分') && status.textContent.includes('background.rar') && status.textContent.includes('压缩包需要解压检查') && status.textContent.includes('无需重新上传'))
+  const oldTime = status.querySelector('[aria-label="处理已等待时间"]').textContent
+  await delay(1100)
+  check('Waiting time updates while scanner has no verdict', status.querySelector('[aria-label="处理已等待时间"]').textContent !== oldTime)
+  check('Reconnect never starts a second scan or sends duplicate bytes', f.s.scanStarts === 1 && f.s.pending.length === 1 && f.s.completed.length === 0)
+  const session = f.s.sessions.get('session-1')
+  session.completion = { ...session.completion, fileCount: 4, completedFileCount: 2, activeFileCount: 2 }
+  await waitFor(() => status.textContent.includes('已检查 2 / 4 个文件'), 'Batch counters displayed')
+  check('Parallel scan UI reports completed files and active work', status.textContent.includes('2 个文件处理中'))
+  session.completion = { ...session.completion, status: 'publishing', currentFile: '' }
+  await waitFor(() => status.textContent.includes('安全检查通过，正在完成发布'), 'Publication stage shown')
+  session.completion = { ...session.completion, status: 'complete', result: { share: { id: 'session-1', manageToken: 'manage-1', code: '123456', files: session.files, shareUrl: '/share/session-1' } } }
+  await waitFor(() => f.document.querySelector('.share-result'), 'Background result recovered')
+  check('Polling displays final result and clears resume storage', !f.window.localStorage.getItem('kunqiong_upload_resume') && !f.document.querySelector('.security-check-status') && f.s.scanStarts === 1)
+})
+
+await test('Polled threat verdict is shown without a retry loop', async f => {
+  f.s.background = true
+  await f.choose([file('blocked.rar')]); await f.start(); await f.s.pending[0].accept()
+  await waitFor(() => f.s.sessions.get('session-1')?.completion, 'Scan started')
+  const session = f.s.sessions.get('session-1')
+  session.completion = { ...session.completion, status: 'failed', error: { status: 415, code: 'scan_threat_detected', message: '文件扫描发现威胁，已阻止发布' } }
+  await waitFor(() => f.document.querySelector('.upload-error'), 'Polled verdict shown')
+  check('Background threat keeps the specific verdict and no retry action', f.document.querySelector('.upload-error').textContent.includes('文件扫描发现威胁') && !f.button('重试安全检查') && !f.button('重试上传') && f.s.scanStarts === 1)
+  check('A blocked verdict no longer claims to be waiting', !f.document.querySelector('.upload-metrics').textContent.includes('等待安全检查结果') && f.document.querySelector('.upload-metrics').textContent.includes('已阻止发布'))
+})
+
+await test('Exhausted status retries keep the original scan resumable', async f => {
+  f.s.background = true; f.s.failedPolls = 5
+  await f.choose([file('query.rar')]); await f.start(); await f.s.pending[0].accept()
+  for (let i = 0; i < 2000 && !f.button('查询处理结果'); i++) await delay(10)
+  check('Repeated 502 keeps 100 percent and offers a status query', f.button('查询处理结果') && f.document.querySelector('.progress-label strong').textContent === '100%' && f.document.querySelector('.upload-error').textContent.includes('已上传文件保留'))
+  check('Unknown completion cannot be deleted or replaced accidentally', f.button('清空文件').disabled && !f.button('移除 query.rar') && f.s.sessions.size === 1)
+  const session = f.s.sessions.get('session-1')
+  session.completion = { ...session.completion, status: 'complete', result: { share: { id: 'session-1', manageToken: 'manage-1', code: '123456', files: session.files, shareUrl: '/share/session-1' } } }
+  await f.click('查询处理结果')
+  await waitFor(() => f.document.querySelector('.share-result'), 'Manual query recovers result')
+  check('Manual status query never reuploads or rescans', f.s.scanStarts === 1 && f.s.pending.length === 1 && !f.window.localStorage.getItem('kunqiong_upload_resume'))
 })
 
 await test('Network failure still retries successfully', async f => {

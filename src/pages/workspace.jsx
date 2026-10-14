@@ -1,5 +1,6 @@
 import React from 'react'
 import heroFolder from '../assets/hero-folder.webp'
+import { SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { defaultDeadline, displayUserName, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, MAX_FILE_SIZE, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
 import { useEffect, useRef, useState } from 'react'
@@ -267,7 +268,7 @@ export function WorkspaceApp() {
   }
 
   const addFiles = (incoming) => {
-    if (uploadState.status === 'finalizing') return
+    if (uploadState.status === 'finalizing' || uploadState.failurePhase === 'query') return
     const nextFiles = Array.from(incoming || []).map((file, index) => ({
       id: `${file.name}-${file.lastModified}-${index}-${Math.random()}`,
       file,
@@ -291,7 +292,7 @@ export function WorkspaceApp() {
   }
 
   const removeFile = (id) => {
-    if (uploadState.status === 'finalizing') return
+    if (uploadState.status === 'finalizing' || uploadState.failurePhase === 'query') return
     cancelSendUpload({ discardSaved: true })
     setFiles(current => current.filter(file => file.id !== id))
     setShareResult(null)
@@ -371,7 +372,7 @@ export function WorkspaceApp() {
       }
       const scanFailure = String(error.code || '').startsWith('scan_')
       const threatDetected = error.code === 'scan_threat_detected'
-      setUploadState((current) => ({ ...current, status: 'failed', phase: threatDetected ? '安全检查发现威胁，已阻止发布' : scanFailure ? '上传完成，安全检查未通过' : '上传失败', failurePhase: threatDetected ? 'threat' : scanFailure ? 'scan' : '', error: error.message }))
+      setUploadState((current) => ({ ...current, status: 'failed', phase: threatDetected ? '安全检查发现威胁，已阻止发布' : error.completionPending ? '上传完成，暂时无法查询处理结果' : scanFailure ? '上传完成，安全检查未通过' : '上传失败', failurePhase: threatDetected ? 'threat' : error.completionPending ? 'query' : scanFailure ? 'scan' : '', error: error.message }))
       setToast(error.message)
     } finally {
       session.running = false
@@ -385,7 +386,7 @@ export function WorkspaceApp() {
   }
 
   const resetSend = () => {
-    if (uploadState.status === 'finalizing') return
+    if (uploadState.status === 'finalizing' || uploadState.failurePhase === 'query') return
     cancelSendUpload({ discardSaved: true })
     setFiles([])
     setShareResult(null)
@@ -1150,14 +1151,14 @@ export function SendView({ user, files, inputRef, folderInputRef, isDragging, se
               <div className="file-queue">
                 <div className="queue-heading">
                   <div><span className="eyebrow">待发送文件</span><h2>{files.length} 个文件，准备就绪</h2></div>
-                  <button className="ghost-icon" aria-label="清空文件" disabled={uploadState.status === 'finalizing'} onClick={onReset}><X size={17} /></button>
+                  <button className="ghost-icon" aria-label="清空文件" disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'} onClick={onReset}><X size={17} /></button>
                 </div>
                 <label className="delivery-field">
                   <span><Mail size={14} /> 定向发送</span>
                   <input maxLength={RECIPIENT_TEXT_MAX} value={settings.recipients} disabled={isUploading} onChange={(event) => onUpdateSettings({ recipients: limitInputText(event.target.value, RECIPIENT_TEXT_MAX) })} aria-invalid={Boolean(recipientError)} aria-describedby="delivery-recipient-hint" placeholder="输入手机号或邮箱，多个用逗号分隔（可选）" />
                   <small id="delivery-recipient-hint" className={`contact-input-hint ${recipientError ? 'invalid' : ''}`} aria-live="polite">{recipientError || '可留空；最多 50 个收件人，不能填写自己的手机号或邮箱。'}</small>
                 </label>
-                <div className="file-list">{files.map((file) => <FileRow key={file.id} file={file} onRemove={uploadState.status === 'finalizing' ? undefined : () => removeFile(file.id)} />)}</div>
+                <div className="file-list">{files.map((file) => <FileRow key={file.id} file={file} onRemove={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query' ? undefined : () => removeFile(file.id)} />)}</div>
                 {guestQuota?.enabled && (
                   <div className="guest-quota-hint">
                     <Gauge size={15} />
@@ -1187,15 +1188,16 @@ export function UploadProgressPanel({ progress, uploadState, isUploading, onPaus
       <div className="upload-metrics">
         <span>已传 {formatBytes(uploadState.uploadedBytes)} / {formatBytes(uploadState.totalBytes)}</span>
         <span>{checking ? '文件传输已完成' : <>速度 {uploadState.speedBps ? `${formatBytes(uploadState.speedBps)}/s` : '计算中'}</>}</span>
-        <span>{checking ? uploadState.status === 'finalizing' ? '等待安全检查结果' : '请查看安全检查结果' : <>剩余 {formatDuration(uploadState.etaSeconds)}</>}</span>
+        <span>{checking ? uploadState.failurePhase === 'threat' ? '已阻止发布' : uploadState.failurePhase === 'scan' ? '安全检查未通过' : uploadState.failurePhase === 'query' ? '处理结果待查询' : uploadState.checkStage === 'publishing' ? '正在完成发布' : '等待安全检查结果' : <>剩余 {formatDuration(uploadState.etaSeconds)}</>}</span>
       </div>
-      {uploadState.currentFile && <small>当前文件：{uploadState.currentFile}</small>}
+      {uploadState.status === 'finalizing' && <SecurityCheckStatus startedAt={uploadState.checkStartedAt} stage={uploadState.checkStage} currentFile={uploadState.currentFile} fileIndex={uploadState.checkFileIndex} fileCount={uploadState.checkFileCount} completedCount={uploadState.checkCompletedCount} activeCount={uploadState.checkActiveCount} connectionMessage={uploadState.connectionMessage} />}
+      {uploadState.currentFile && !checking && <small>当前文件：{uploadState.currentFile}</small>}
       {uploadState.retryCount > 0 && <small>已自动重试 {uploadState.retryCount} 次</small>}
       {uploadState.error && <p className="upload-error">{uploadState.error}{uploadState.failurePhase === 'threat' && '；请移除风险文件并确认安全后再上传'}</p>}
       <div className="upload-control-row">
         {uploadState.status === 'uploading' && <button className="secondary-button" onClick={onPause} disabled={!isUploading}><Pause size={15} /> 暂停</button>}
         {uploadState.status === 'paused' && <button className="primary-button" onClick={onResume}><Play size={15} /> 继续上传</button>}
-        {uploadState.status === 'failed' && uploadState.failurePhase !== 'threat' && <button className="primary-button" onClick={onRetry}><RotateCcw size={15} /> {uploadState.failurePhase === 'scan' ? '重试安全检查' : '重试上传'}</button>}
+        {uploadState.status === 'failed' && uploadState.failurePhase !== 'threat' && <button className="primary-button" onClick={onRetry}><RotateCcw size={15} /> {uploadState.failurePhase === 'scan' ? '重试安全检查' : uploadState.failurePhase === 'query' ? '查询处理结果' : '重试上传'}</button>}
       </div>
     </div>
   )

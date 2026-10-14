@@ -18,7 +18,7 @@ import {
   SHARE_ACCESS_TTL_SECONDS, UPLOAD_CHUNK_DEFAULT_BYTES, UPLOAD_CHUNK_MAX_BYTES,
   UPLOAD_CHUNK_MIN_BYTES, UPLOAD_SESSION_TTL_MS, UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS,
   clamavHost, clamavPort, configuredAppUrl, configuredCallbackUrls,
-  filesRoot, scanMode, scanTimeoutMs, shareEmailTemplatePath, smtpFrom, smtpFromName, tempRoot
+  filesRoot, scanMode, scanTimeoutMs, scanConcurrency, scanLargeConcurrency, scanLargeFileBytes, shareEmailTemplatePath, smtpFrom, smtpFromName, tempRoot
 } from '../config.js'
 
 import {
@@ -44,6 +44,7 @@ import {
 } from '../services/account.js'
 
 import { normalizeUploadFileName } from '../lib/upload.js'
+import { createScanCoordinator, scanFileBatch } from '../lib/scan-coordinator.js'
 
 import {
   adminSessions, reservedShareCodes, shareLookupAttempts, uploadReservations, uploadSessions
@@ -63,26 +64,51 @@ import QRCode from 'qrcode'
 export function requireUploadSessionOwner(req, res, next) {
   const session = uploadSessions.get(req.params.sessionId)
   if (!session) return res.status(404).json({ message: '上传会话不存在，请重新开始上传' })
+  try {
+    assertUploadSessionOwner(session, req)
+    req.uploadSession = session
+    next()
+  } catch (error) { next(error) }
+}
+
+export function assertUploadSessionOwner(session, req) {
+  if (!session || uploadSessions.get(session.id) !== session) throw httpError(404, '上传会话不存在，请重新开始上传')
   const created = new Date(session.createdAt).getTime()
   if (!Number.isFinite(created) || Date.now() - created >= UPLOAD_SESSION_TTL_MS) {
-    discardUploadSession(session)
-    return res.status(410).json({ message: '上传会话已过期，请重新开始上传' })
+    if (!session.completing) discardUploadSession(session)
+    throw httpError(410, '上传会话已过期，请重新开始上传')
   }
   const userId = authSessionFromRequest(req)?.user?.id
   const taskOwner = session.mode === 'collection' && userId && metadata.collections.some((task) => task.token === session.collectionToken && task.ownerUserId === userId)
   if (!taskOwner && session.ownerUserId && userId !== session.ownerUserId) {
-    return res.status(403).json({ message: '请使用创建上传的账号继续操作' })
+    throw httpError(403, '请使用创建上传的账号继续操作')
   }
   if (!taskOwner && session.ownerGuestId && readCookie(req, GUEST_ID_COOKIE) !== session.ownerGuestId) {
-    return res.status(403).json({ message: '请使用创建上传的浏览器继续操作' })
+    throw httpError(403, '请使用创建上传的浏览器继续操作')
   }
   if (session.organizationId) {
     const organization = metadata.organizations?.[session.organizationId]
-    if (!organization) return res.status(404).json({ message: '团队空间不存在' })
-    if (!organization.members.some(member => member.userId === userId && member.status === 'active')) return res.status(403).json({ message: '团队成员权限已失效，无法继续上传' })
+    if (!organization) throw httpError(404, '团队空间不存在')
+    if (!organization.members.some(member => member.userId === userId && member.status === 'active')) throw httpError(403, '团队成员权限已失效，无法继续上传')
   }
-  req.uploadSession = session
-  next()
+}
+
+// Publication identity is stored with the resource before committing metadata.
+// A lost HTTP response or a process restart must never publish it a second time.
+export function uploadCompletionResult(session, req) {
+  const share = metadata.shares.find(item => item.uploadSessionId === session.id)
+  if (share) return { share: publicShare(share, req, true, true) }
+  for (const task of metadata.collections) {
+    const submission = task.submissions.find(item => item.uploadSessionId === session.id)
+    if (submission) return { submission: publicSubmission(submission) }
+  }
+  return null
+}
+
+export function publicUploadCompletion(session, req) {
+  if (!session.completion) return null
+  const result = session.completion.status === 'complete' ? uploadCompletionResult(session, req) : null
+  return { ...session.completion, ...(result ? { result } : {}) }
 }
 
 // 会话级分片大小：客户端在创建会话时声明，服务端收敛到 [1MB, 16MB]，
@@ -114,6 +140,7 @@ export function persistUploadSession(session) {
       capacityOwnerUserId: session.capacityOwnerUserId || '',
       relativePaths: session.relativePaths,
       createdAt: session.createdAt,
+      completion: session.completion,
     }
     const manifestPath = path.join(session.directory, 'session.json')
     const tmpPath = `${manifestPath}.tmp`
@@ -151,6 +178,13 @@ export function restoreUploadSessions() {
         chunkSize: normalizeUploadChunkSize(raw.chunkSize),
         files: raw.files.map((file) => ({ ...file, totalChunks: 0, chunks: new Set() })),
       }
+      const published = metadata.shares.some(item => item.uploadSessionId === session.id)
+        || metadata.collections.some(task => task.submissions.some(item => item.uploadSessionId === session.id))
+      if (published && raw.completion) {
+        session.completion = { ...raw.completion, status: 'complete', finishedAt: raw.completion.finishedAt || new Date().toISOString() }
+      } else if (['scanning', 'publishing'].includes(raw.completion?.status)) {
+        session.completion = { ...raw.completion, status: 'failed', error: { status: 503, code: 'scan_interrupted', message: '服务重启中断了安全检查，请重试检查；已上传文件已保留' } }
+      }
       let broken = false
       session.files.forEach((file, fileIndex) => {
         const targetPath = path.join(directory, `${fileIndex}.target`)
@@ -166,7 +200,7 @@ export function restoreUploadSessions() {
           if (match) file.chunks.add(Number(match[1]))
         }
         // A paused session may not have uploaded its first chunk yet.
-        if (file.chunks.size && !fs.existsSync(targetPath)) broken = true
+        if (file.chunks.size && !fs.existsSync(targetPath) && !published) broken = true
       })
       if (broken) {
         removeDirectory(directory)
@@ -355,7 +389,7 @@ function scanResultError(result) {
   return scanError(503, '文件安全扫描未完成，请稍后重试安全检查', 'scan_incomplete')
 }
 
-export async function scanFileBytes(filePath) {
+async function scanFileBytesUncached(filePath) {
   if (!clamavHost) {
     if (scanMode === 'required') throw scanError(503, '文件扫描服务未配置，暂时无法发布或读取未扫描文件', 'scan_unavailable')
     return { reviewStatus: 'unscanned', scanEngine: null, scannedAt: null }
@@ -407,8 +441,10 @@ export async function scanFileBytes(filePath) {
   }
 }
 
-export async function assertSafeUploadFiles(files = []) {
-  for (const file of files) {
+export const scanFileBytes = createScanCoordinator({ scan: scanFileBytesUncached, concurrency: scanConcurrency, largeConcurrency: scanLargeConcurrency, largeFileBytes: scanLargeFileBytes })
+
+export async function assertSafeUploadFiles(files = [], onFile) {
+  await scanFileBatch(files, async (file) => {
     try {
       Object.assign(file, await scanFileBytes(file.tempPath || file.path))
     } catch (error) {
@@ -418,7 +454,7 @@ export async function assertSafeUploadFiles(files = []) {
       }
       throw error
     }
-  }
+  }, { concurrency: scanConcurrency, onProgress: onFile })
 }
 
 export async function ensureStoredFilesScanned(files, directory) {
@@ -800,7 +836,7 @@ export function assertCollectionFiles(task, files) {
 export function pendingUploadBytes(predicate, excludeId) {
   let bytes = 0
   for (const [id, item] of [...uploadSessions, ...uploadReservations]) {
-    if (id !== excludeId && predicate(item)) bytes += fileListSize(item.files)
+    if (id !== excludeId && item.completion?.status !== 'complete' && predicate(item)) bytes += fileListSize(item.files)
   }
   return bytes
 }
@@ -809,7 +845,10 @@ export function pendingUploadBytes(predicate, excludeId) {
 // 客户端在「重置/重新选择文件/放弃续传开新会话」时调用，防止僵尸会话占满游客配额。
 export function discardUploadSession(session) {
   if (!session) return
+  session.cancelled = true
   uploadSessions.delete(session.id)
+  // Active writes close their handles first and finish cleanup in their finally.
+  if (session.activeWrites) return
   removeDirectory(session.directory)
 }
 
@@ -825,7 +864,7 @@ export function uploadSessionSignature(files = []) {
 export function listGuestPendingUploads(guestKey) {
   const sessions = []
   for (const [, item] of uploadSessions) {
-    if (item.guestKey === guestKey) {
+    if (item.guestKey === guestKey && item.completion?.status !== 'complete') {
       sessions.push({ id: item.id, bytes: fileListSize(item.files), createdAt: item.createdAt })
     }
   }
@@ -837,6 +876,7 @@ export function listGuestPendingUploads(guestKey) {
 export function sweepStaleUploadSessions(now = Date.now()) {
   const swept = []
   for (const [, item] of [...uploadSessions]) {
+    if (item.completing) continue
     const createdAt = new Date(item.createdAt).getTime()
     const age = Number.isFinite(createdAt) ? now - createdAt : 0
     const hasProgress = item.files.some((file) => file.chunks instanceof Set && file.chunks.size > 0)
@@ -1098,6 +1138,7 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
     const shareUrl = `${getOrigin(req)}/share/${shareToken}`
     const qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
     const ownerSession = authSessionFromRequest(req)
+    if (options.uploadSessionId) assertUploadSessionOwner(uploadSessions.get(options.uploadSessionId), req)
     // 断点恢复期间可能更换绑定，发布时仍需以当前用户资料校验收件人。
     const recipientError = recipientInputError(options.recipients, accountUserById(ownerSession?.user?.id) || ownerSession?.user)
     if (recipientError) throw httpError(400, recipientError)
@@ -1133,6 +1174,7 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
     reservedCode = createCode(options.codeLength)
     const share = {
       id: shareToken,
+      ...(options.uploadSessionId ? { uploadSessionId: options.uploadSessionId } : {}),
       manageToken: createToken(18),
       code: reservedCode,
       files,

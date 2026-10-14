@@ -8,6 +8,7 @@
     "build": "vite build",
     "test:remediation": "node scripts/verify-office-html.mjs && node scripts/verify-remediation.mjs && node scripts/verify-payment-ui.mjs",
     "test:upload": "node scripts/verify-upload-chunks.mjs && node scripts/verify-send-cancellation-ui.mjs",
+    "test:scan-performance": "node scripts/verify-scan-performance.mjs",
     "test:boundaries": "node scripts/verify-boundary-suite.mjs && node scripts/verify-avatar-boundaries.mjs && node scripts/verify-office-boundaries.mjs && node scripts/verify-boundary-ui.mjs",
     "test:audit": "node --test scripts/audit-store.test.mjs && node scripts/verify-audit-persistence.mjs",
     "test:auth": "node scripts/verify-auth-suite.mjs && node scripts/verify-auth-ui.mjs",

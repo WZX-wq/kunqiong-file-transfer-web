@@ -1,4 +1,5 @@
 import React from 'react'
+import { SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState } from '../lib/api.js'
 import { ConfirmModal, FeedbackMessage, LoadingBlock, PublicShell, StateBlock } from '../components/common.jsx'
@@ -216,6 +217,8 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const [progress, setProgress] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [uploadPhase, setUploadPhase] = useState('idle')
+  const [checkState, setCheckState] = useState({})
+  const [completionPending, setCompletionPending] = useState(false)
   const [pendingUpload, setPendingUpload] = useState(null)
   const [message, setMessage] = useState('')
   // 登录后提交：提交者身份由账号决定，不需要也不能手填；
@@ -281,7 +284,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   }
 
   const handleSelectFiles = (incoming) => {
-    if (submitting || !incoming?.length) return
+    if (submitting || completionPending || !incoming?.length) return
     const selectedFiles = toFileItems(incoming).map((item) => ({
       ...item, id: JSON.stringify([item.relativePath, item.size, item.file.lastModified]),
     }))
@@ -312,7 +315,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   }
 
   const abandonUpload = async () => {
-    if (submitting) return
+    if (submitting || completionPending) return
     submitRunRef.current += 1
     const entry = pendingUpload || readCollectionUploadResume(token)
     setSubmitting(true)
@@ -332,7 +335,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   }
 
   const removeSelectedFile = (fileId) => {
-    if (submitting) return
+    if (submitting || completionPending) return
     setFiles((current) => current.filter((item) => item.id !== fileId))
     setMessage('')
     if (!pendingUpload) setProgress(0)
@@ -353,6 +356,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     const submitRun = submitRunRef.current + 1
     submitRunRef.current = submitRun
     setSubmitting(true)
+    setCompletionPending(false)
     setUploadPhase('uploading')
     setMessage('')
     // Query the server on every continuation: it is authoritative even if an aborted
@@ -364,10 +368,10 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
         previousSession.sessionId === pendingUpload.sessionId ? previousSession.displayedBytes || 0 : 0)
     }
     uploadRef.current = nextSession
-    uploadShareInChunks(orderedFiles, {}, uploadRef, ({ progress, status }) => {
+    uploadShareInChunks(orderedFiles, {}, uploadRef, ({ progress, status, ...check }) => {
       if (submitRunRef.current === submitRun) {
         setProgress(progress)
-        if (status === 'finalizing') setUploadPhase('finalizing')
+        if (status === 'finalizing') { setUploadPhase('finalizing'); setCheckState(check) }
       }
     }, {
       ...resumeConfig,
@@ -393,7 +397,8 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       if (submitRunRef.current !== submitRun) return
       const entry = readCollectionUploadResume(token)
       setPendingUpload(entry)
-      setUploadPhase(entry ? 'paused' : 'idle')
+      setCompletionPending(Boolean(err.completionPending))
+      setUploadPhase(err.code === 'scan_threat_detected' ? 'blocked' : err.completionPending ? 'query' : String(err.code || '').startsWith('scan_') ? 'scan-failed' : entry ? 'paused' : 'idle')
       setMessage(err.name === 'UploadPausedError' ? '上传已暂停，已上传分片已保存，可继续上传' : err.message)
       if (entry) {
         try {
@@ -447,30 +452,31 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
             {pendingUpload && <div className="collection-resume-notice" role="status">
               <strong>发现未完成的上传 · {pendingUpload.files.length} 个文件</strong>
               <span>{pendingUpload.files.map((file) => file.relativePath || file.name).join('、')}</span>
-              <span>{files.length ? '将从已保存的分片继续上传' : '刷新后请重新选择原文件或文件夹，已上传分片会自动跳过'}</span>
+              <span>{uploadPhase === 'blocked' ? '安全检查发现风险，请放弃本次上传并更换文件' : completionPending ? '文件已上传，查询处理结果即可，无需重复传输' : uploadPhase === 'scan-failed' ? '文件已上传，可重试安全检查' : files.length ? '将从已保存的分片继续上传' : '刷新后请重新选择原文件或文件夹，已上传分片会自动跳过'}</span>
             </div>}
-            <input ref={inputRef} type="file" multiple hidden disabled={submitting} accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
-            <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden disabled={submitting} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
+            <input ref={inputRef} type="file" multiple hidden disabled={submitting || completionPending} accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
+            <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden disabled={submitting || completionPending} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
             <div className="public-drop collection-file-picker">
               <UploadCloud size={24} />
               <strong>{files.length ? '继续添加文件或文件夹' : '选择要提交的文件或文件夹'}</strong>
               <span>支持追加选择，保留文件夹目录 · 单次最多 {MAX_FILES} 个文件</span>
               <div className="collection-picker-buttons">
-                <button type="button" className="primary-button" disabled={submitting} onClick={() => inputRef.current?.click()}><FileText size={16} /> 选择文件</button>
-                <button type="button" className="secondary-button" disabled={submitting} onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> 选择文件夹</button>
+                <button type="button" className="primary-button" disabled={submitting || completionPending} onClick={() => inputRef.current?.click()}><FileText size={16} /> 选择文件</button>
+                <button type="button" className="secondary-button" disabled={submitting || completionPending} onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> 选择文件夹</button>
               </div>
             </div>
-            {files.length > 0 && <div className="public-files collection-selected-files" role="region" aria-label="已选文件列表" tabIndex={0}>{files.map((file) => <FileRow key={file.id} file={file} showPath onRemove={submitting ? undefined : () => removeSelectedFile(file.id)} />)}</div>}
+            {files.length > 0 && <div className="public-files collection-selected-files" role="region" aria-label="已选文件列表" tabIndex={0}>{files.map((file) => <FileRow key={file.id} file={file} showPath onRemove={submitting || completionPending ? undefined : () => removeSelectedFile(file.id)} />)}</div>}
             <div className="collection-submit-actions">
               <div className="collection-selection-summary">
                 <span aria-live="polite"><strong>{files.length}</strong> / {MAX_FILES} 个文件 · 共 {formatBytes(selectedBytes)}</span>
                 {files.length > 0 && !pendingUpload && <button type="button" className="collection-clear-files" disabled={submitting} onClick={() => { setFiles([]); setMessage(''); setProgress(0) }}><Trash2 size={13} /> 清空</button>}
               </div>
-              {(submitting || pendingUpload) && <div className="progress-wrap"><div className="progress-label"><span>{uploadPhase === 'finalizing' ? '正在校验文件并完成提交...' : uploadPhase === 'pausing' ? '正在暂停...' : submitting ? '正在分片上传...' : '已暂停 · 可继续上传'}</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
+              {(submitting || pendingUpload) && <div className="progress-wrap"><div className="progress-label"><span>{uploadPhase === 'finalizing' ? '正在校验文件并完成提交...' : uploadPhase === 'blocked' ? '安全检查发现风险，已阻止提交' : uploadPhase === 'scan-failed' ? '文件已上传，安全检查未完成' : uploadPhase === 'query' ? '文件已上传，处理结果待查询' : uploadPhase === 'pausing' ? '正在暂停...' : submitting ? '正在分片上传...' : '已暂停 · 可继续上传'}</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
+              {uploadPhase === 'finalizing' && <SecurityCheckStatus startedAt={checkState.checkStartedAt} stage={checkState.checkStage} currentFile={checkState.currentFile} fileIndex={checkState.checkFileIndex} fileCount={checkState.checkFileCount} completedCount={checkState.checkCompletedCount} activeCount={checkState.checkActiveCount} connectionMessage={checkState.connectionMessage} />}
               {(selectionError || message) && <FeedbackMessage message={selectionError || message} tone={selectionError ? 'error' : feedbackTone(message)} />}
               {submitting && ['uploading', 'pausing'].includes(uploadPhase) && <button className="secondary-button wide" disabled={uploadPhase === 'pausing'} onClick={pauseSubmit}><Pause size={16} /> {uploadPhase === 'pausing' ? '正在暂停...' : '暂停上传'}</button>}
-              {pendingUpload && !submitting && <button className="secondary-button wide" onClick={abandonUpload}><X size={16} /> 放弃本次上传</button>}
-              <button className="primary-button wide" onClick={submit} disabled={submitting || !files.length || Boolean(selectionError) || !resumeMatches}>{pendingUpload ? <Play size={17} /> : <UploadCloud size={17} />} {submitting ? uploadPhase === 'finalizing' ? '正在完成提交...' : '提交中...' : pendingUpload ? '继续上传' : '提交文件'}</button>
+              {pendingUpload && !submitting && !completionPending && <button className="secondary-button wide" onClick={abandonUpload}><X size={16} /> 放弃本次上传</button>}
+              <button className="primary-button wide" onClick={submit} disabled={submitting || uploadPhase === 'blocked' || !files.length || Boolean(selectionError) || !resumeMatches}>{pendingUpload ? <Play size={17} /> : <UploadCloud size={17} />} {submitting ? uploadPhase === 'finalizing' ? '正在完成提交...' : '提交中...' : uploadPhase === 'blocked' ? '风险文件已阻止' : completionPending ? '查询处理结果' : uploadPhase === 'scan-failed' ? '重试安全检查' : pendingUpload ? '继续上传' : '提交文件'}</button>
             </div>
           </>
         ) : (
