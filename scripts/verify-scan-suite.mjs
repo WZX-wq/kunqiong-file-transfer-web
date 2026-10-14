@@ -110,8 +110,9 @@ console.log('\n=== SCAN-002 威胁文件被拒绝（真实 ClamAV 用 EICAR 等�
 console.log('\n=== SCAN-005 clamd.conf 配置与健康检查 ===')
 {
   const conf = fs.readFileSync(path.join(root, 'deployment', 'clamd.conf'), 'utf8')
-  check('MaxFileSize 5G', /MaxFileSize\s+5G/.test(conf))
-  check('MaxScanSize 5G', /MaxScanSize\s+5G/.test(conf))
+  check('MaxFileSize matches the real libclamav hard cap', /MaxFileSize\s+2147483645/.test(conf))
+  check('MaxScanSize retains the archive scan budget', /MaxScanSize\s+5G/.test(conf))
+  check('MaxScanTime explicitly permits ten minutes', /MaxScanTime\s+600000/.test(conf))
   check('StreamMaxLength 5G', /StreamMaxLength\s+5G/.test(conf))
   check('TCP 3310', /TCPSocket\s+3310/.test(conf))
   check('AlertExceedsMax yes', /AlertExceedsMax\s+yes/.test(conf))

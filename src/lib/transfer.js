@@ -7,7 +7,7 @@ import {
   fileExtension, safeDownloadName, totalFileSize
 } from './format.js'
 import {
-  UploadPausedError, apiRequest, buildShareOptions, canUseImageClipboard, copyImageWithSelection,
+  UploadCancelledError, UploadPausedError, apiRequest, buildShareOptions, canUseImageClipboard, copyImageWithSelection,
   createShareFileDownloadConfig, createSubmissionFileDownloadConfig, currentSpeed,
   pickUploadChunkSize, sha256Hex, uploadResumeSignature, wait, xhrUploadChunk
 } from './api.js'
@@ -169,6 +169,22 @@ export function clearUploadResume(config = {}, sessionId = '') {
   } catch { /* 忽略 */ }
 }
 
+// Cancellation is terminal for this object; pause keeps its chunks for resumption.
+// The ID can arrive after cancellation when session creation was still pending.
+export function cancelUploadSession(session, config = {}) {
+  session.cancelled = true
+  session.paused = true
+  session.abortCurrent?.()
+  if (!session.sessionId) return Promise.resolve()
+  clearUploadResume(config, session.sessionId)
+  if (session.cleanupSessionId !== session.sessionId) {
+    session.cleanupSessionId = session.sessionId
+    session.cleanupPromise = apiRequest(`/api/upload-sessions/${encodeURIComponent(session.sessionId)}`, { method: 'DELETE' })
+      .catch(error => { if (![404, 410].includes(error.status)) throw error })
+  }
+  return session.cleanupPromise
+}
+
 export function readCollectionUploadResume(token) {
   const config = { resumeScope: `collection:${token}` }
   let entry = readUploadResume(config)
@@ -231,10 +247,11 @@ export async function tryResumeUploadSession(files, chunkSize, uploadConfig, sha
   } catch (error) {
     // A temporary query failure must not erase the only route back to the session.
     if (!error.resumeAbandoned && ![404, 410].includes(error.status)) throw error
-    clearUploadResume(uploadConfig, entry.sessionId)
     if (error?.resumeAbandoned) {
-      apiRequest(`/api/upload-sessions/${encodeURIComponent(entry.sessionId)}`, { method: 'DELETE' }).catch(() => {})
+      await apiRequest(`/api/upload-sessions/${encodeURIComponent(entry.sessionId)}`, { method: 'DELETE' })
+        .catch(cleanupError => { if (![404, 410].includes(cleanupError.status)) throw cleanupError })
     }
+    clearUploadResume(uploadConfig, entry.sessionId)
     if (uploadConfig.resumeScope) throw error
     return false
   }
@@ -244,15 +261,29 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
   let chunkSize = uploadConfig.resumeScope ? Number(readUploadResume(uploadConfig)?.chunkSize) || pickUploadChunkSize(files) : pickUploadChunkSize(files)
   const concurrency = Math.min(4, Math.max(2, Number(navigator.hardwareConcurrency || 4) >= 8 ? 4 : 2))
   const session = uploadRef.current
+  // Each run owns one immutable session reference, including its concurrent XHRs.
+  const sessionRef = { current: session }
+  const assertActive = () => {
+    if (session.cancelled || uploadRef.current !== session) throw new UploadCancelledError()
+    if (session.paused) throw new UploadPausedError()
+  }
+  const report = state => { assertActive(); onState(state) }
+  assertActive()
   session.totalBytes = files.reduce((sum, item) => sum + item.size, 0)
   session.startedAt = session.startedAt || Date.now()
   const shareOptions = buildShareOptions(settings)
 
   if (!session.sessionId) {
-    onState({ status: 'uploading', phase: '创建上传会话', progress: 0, totalBytes: session.totalBytes, uploadedBytes: 0, speedBps: 0, etaSeconds: null, currentFile: '', retryCount: 0, error: '' })
+    report({ status: 'uploading', phase: '创建上传会话', progress: 0, totalBytes: session.totalBytes, uploadedBytes: 0, speedBps: 0, etaSeconds: null, currentFile: '', retryCount: 0, error: '' })
     const resumed = await tryResumeUploadSession(files, chunkSize, uploadConfig, shareOptions, session)
+    if (session.cancelled || uploadRef.current !== session) {
+      await cancelUploadSession(session, uploadConfig)
+      throw new UploadCancelledError()
+    }
     if (resumed) {
-      onState(uploadStateFromProgress(session, session.uploadedBytes, '已恢复上次上传进度', '', 0))
+      // Pausing while querying progress still preserves the restored session.
+      assertActive()
+      report(uploadStateFromProgress(session, session.uploadedBytes, '已恢复上次上传进度', '', 0))
     } else {
       const response = await apiRequest('/api/upload-sessions', {
         method: 'POST',
@@ -264,12 +295,16 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
         }),
       })
       session.sessionId = response.sessionId
+      if (session.cancelled || uploadRef.current !== session) {
+        await cancelUploadSession(session, uploadConfig)
+        throw new UploadCancelledError()
+      }
       if (Number.isSafeInteger(response.chunkSize) && response.chunkSize >= 1024*1024 && response.chunkSize <= 16*1024*1024) chunkSize = response.chunkSize
       saveUploadResume(files, chunkSize, uploadConfig, shareOptions, session.sessionId)
     }
   }
 
-  if (session.paused) throw new UploadPausedError()
+  assertActive()
 
   for (let fileIndex = session.fileIndex; fileIndex < files.length; fileIndex += 1) {
     const item = files[fileIndex]
@@ -284,7 +319,7 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
     let firstError = null
     const worker = async () => {
       while (!firstError) {
-        if (session.paused) throw new UploadPausedError()
+        assertActive()
         while (completedChunks.has(nextChunk)) nextChunk += 1
         const chunkIndex = nextChunk
         if (chunkIndex >= totalChunks) return
@@ -295,9 +330,10 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
         const chunkHash = await sha256Hex(chunkData)
         let attempt = 0
         while (attempt < 3) {
-          if (session.paused) throw new UploadPausedError()
+          assertActive()
+          if (firstError) return
           try {
-            onState(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, attempt))
+            report(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, attempt))
             await xhrUploadChunk(`/api/upload-sessions/${session.sessionId}/chunks`, {
               fileIndex,
               chunkIndex,
@@ -306,12 +342,14 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
               chunkHash,
               filename: item.name,
             }, {
-              uploadRef,
+              uploadRef: sessionRef,
               onProgress: (loaded) => {
+                if (session.cancelled || session.paused || uploadRef.current !== session || firstError) return
                 inFlightProgress.set(chunkIndex, loaded)
-                onState(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, attempt))
+                report(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, attempt))
               },
             })
+            assertActive()
             inFlightProgress.delete(chunkIndex)
             completedChunks.add(chunkIndex)
             if (!(session.resumedChunks instanceof Map)) session.resumedChunks = new Map()
@@ -319,13 +357,24 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
             while (completedChunks.has(lowestIncomplete)) lowestIncomplete += 1
             session.chunkIndex = lowestIncomplete
             session.uploadedBytes += end - start
-            onState(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, 0))
+            report(uploadStateFromProgress(session, session.uploadedBytes + [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0), `上传 ${item.name}`, item.name, 0))
             break
           } catch (error) {
             inFlightProgress.delete(chunkIndex)
-            if (error.name === 'UploadPausedError') throw error
+            assertActive()
+            if (firstError) throw firstError
+            // Invalid/expired sessions cannot recover through repeated chunk requests.
+            if (error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)) {
+              firstError = error
+              if ([404, 410].includes(error.status)) {
+                clearUploadResume(uploadConfig, session.sessionId)
+                error.restartUpload = true
+              }
+              session.abortCurrent?.()
+              throw error
+            }
             attempt += 1
-            onState(uploadStateFromProgress(session, session.uploadedBytes, `分片失败，正在重试`, item.name, attempt, error.message))
+            report(uploadStateFromProgress(session, session.uploadedBytes, `分片失败，正在重试`, item.name, attempt, error.message))
             if (attempt >= 3) {
               firstError = error
               throw error
@@ -339,21 +388,29 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
     const workers = Array.from({ length: Math.max(0, Math.min(concurrency, totalChunks - nextChunk)) }, () => worker())
     const outcomes = await Promise.allSettled(workers)
     const error = outcomes.find((outcome) => outcome.status === 'rejected')?.reason
-    if (error || session.paused) {
-      if (error?.name === 'UploadPausedError' || session.paused) throw new UploadPausedError()
-      throw firstError || error
-    }
+    assertActive()
+    if (error) throw firstError || error
     session.fileIndex = fileIndex + 1
     session.chunkIndex = 0
-    onState(uploadStateFromProgress(session, session.uploadedBytes, `上传 ${item.name}`, item.name, 0))
+    report(uploadStateFromProgress(session, session.uploadedBytes, `上传 ${item.name}`, item.name, 0))
   }
 
-  if (session.paused) throw new UploadPausedError()
-  onState({ status: 'finalizing', phase: uploadConfig.sessionBody?.mode === 'collection' ? '正在校验文件并完成提交' : '正在生成分享信息', progress: 100, uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: currentSpeed(session, session.totalBytes), etaSeconds: 0, currentFile: '', retryCount: 0, error: '' })
-  const result = await apiRequest(`/api/upload-sessions/${session.sessionId}/complete`, {
-    method: 'POST',
-    body: JSON.stringify({ chunkSize, ...(uploadConfig.completeBody || {}) }),
-  })
+  assertActive()
+  report({ status: 'finalizing', phase: '文件已上传，正在进行安全检查', progress: 100, uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: currentSpeed(session, session.totalBytes), etaSeconds: 0, currentFile: '', retryCount: 0, error: '' })
+  let result
+  try {
+    result = await apiRequest(`/api/upload-sessions/${session.sessionId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ chunkSize, ...(uploadConfig.completeBody || {}) }),
+    })
+  } catch (error) {
+    if ([404, 410].includes(error.status)) {
+      clearUploadResume(uploadConfig, session.sessionId)
+      error.restartUpload = true
+    }
+    throw error
+  }
+  assertActive()
   clearUploadResume(uploadConfig, session.sessionId)
   return result
 }

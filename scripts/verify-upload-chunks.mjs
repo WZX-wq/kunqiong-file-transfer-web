@@ -35,6 +35,7 @@ fs.writeFileSync(path.join(fixture, 'storage', 'metadata.json'), JSON.stringify(
   users: { owner: user }, sessions: [{ id: 'upload-fixture-session', user, expiresAt: new Date(Date.now() + 3600000).toISOString() }],
 }))
 const scanned = []
+let scannerResult = 'stream: OK'
 const scanner = net.createServer((socket) => {
   let input = Buffer.alloc(0), command = false, ended = false
   const chunks = []
@@ -55,7 +56,7 @@ const scanner = net.createServer((socket) => {
       if (!length) {
         ended = true
         scanned.push(Buffer.concat(chunks))
-        socket.end('stream: OK\0')
+        socket.end(scannerResult + '\0')
       }
     }
   })
@@ -125,9 +126,24 @@ try {
   check('Correct SHA-256 full chunk uploads after restart', (await api(url + '/chunks', chunk(0))).status === 200)
   check('Retrying the same hashed chunk succeeds', (await api(url + '/chunks', chunk(0))).status === 200)
   assert.deepEqual((await api(url)).data.files[0].uploadedChunks, [0, 1], 'Retry must not double-count a chunk')
+  for (const scenario of [
+    { result: 'stream: Heuristics.Limits.Exceeded.MaxFileSize FOUND', status: 415, code: 'scan_size_limit', limit: 'MaxFileSize', message: '约 2 GB' },
+    { result: 'stream: Heuristics.Limits.Exceeded.MaxScanSize FOUND', status: 415, code: 'scan_size_limit', limit: 'MaxScanSize', message: '解压后的总量' },
+    { result: 'stream: Heuristics.Limits.Exceeded.MaxScanTime FOUND', status: 503, code: 'scan_timeout', limit: 'MaxScanTime', message: '处理时间' },
+    { result: 'stream: Heuristics.Limits.Exceeded.MaxRecursion FOUND', status: 415, code: 'scan_size_limit', limit: 'MaxRecursion', message: '嵌套层数' },
+    { result: 'stream: Heuristics.Limits.Exceeded.MaxFiles FOUND', status: 415, code: 'scan_size_limit', limit: 'MaxFiles', message: '文件数量' },
+    { result: 'INSTREAM size limit exceeded. ERROR', status: 415, code: 'scan_size_limit', limit: 'StreamMaxLength', message: '接收上限' },
+    { result: 'stream: fixture scan error ERROR', status: 503, code: 'scan_incomplete', message: '未完成' },
+  ]) {
+    scannerResult = scenario.result
+    const rejected = await api(url + '/complete', {})
+    check('Specific scan diagnostic: ' + scenario.limit + '/' + scenario.code, rejected.status === scenario.status && rejected.data.code === scenario.code && rejected.data.scanLimit === scenario.limit && rejected.data.message.includes(scenario.message))
+    check('Scan failure preserves complete chunks and publishes nothing', JSON.parse(fs.readFileSync(path.join(fixture, 'storage/metadata.json'), 'utf8')).shares.length === 0 && (await api(url)).data.files[0].uploadedChunks.length === 2)
+  }
+  scannerResult = 'stream: OK'
   const completed = await api(url + '/complete', {})
   check('Hashed upload publishes after scanning', completed.status === 201 && completed.data.share.files[0].scanEngine === 'clamav')
-  check('Scanner receives all original bytes', scanned.length === 1 && scanned[0].equals(original))
+  check('Each scan retry receives the complete original bytes', scanned.length === 8 && scanned.every(bytes => bytes.equals(original)))
   const download = await fetch(base + `/api/shares/${completed.data.share.id}/files/0/download`, { headers: { cookie: 'kunqiong_session=upload-fixture-session' } })
   check('Downloaded file matches all original bytes', download.status === 200 && Buffer.from(await download.arrayBuffer()).equals(original))
   check('Completed upload session removed', (await api(url)).status === 404)

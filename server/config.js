@@ -193,7 +193,8 @@ export const scanMode = String(process.env.KUNQIONG_SCAN_MODE || 'required').toL
 if (!['required', 'optional'].includes(scanMode)) throw new Error('KUNQIONG_SCAN_MODE 必须是 required 或 optional')
 export const clamavHost = String(process.env.KUNQIONG_CLAMAV_HOST || '').trim()
 export const clamavPort = Number(process.env.KUNQIONG_CLAMAV_PORT || 3310)
-export const scanTimeoutMs = Math.max(1000, Number(process.env.KUNQIONG_SCAN_TIMEOUT_MS) || 600000)
+// Allow stream transfer in addition to clamd's 10-minute processing budget.
+export const scanTimeoutMs = Math.max(1000, Number(process.env.KUNQIONG_SCAN_TIMEOUT_MS) || 900000)
 
 // ── 后台会话与限流 ──
 export const ADMIN_COOKIE_NAME = 'kunqiong_admin_session'

@@ -333,6 +333,7 @@ h1, h2, p { margin-top: 0; }
 .notification-list { display: flex; align-items: center; gap: 7px; margin-top: 10px; padding: 11px 13px; color: #54776d; background: #f1f8f5; border: 1px solid #dcece7; border-radius: 8px; font-size: 12px; line-height: 1.5; }
 .notification-list svg { flex: none; color: var(--accent); }
 .notification-list span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-notification-status span { white-space: normal; overflow-wrap: anywhere; }
 .share-icon { display: inline-flex; }
 .consent-line { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 15px; color: #6d7875; font-size: 11px; }
 .consent-line button { padding: 0; color: #5d7c75; background: transparent; }

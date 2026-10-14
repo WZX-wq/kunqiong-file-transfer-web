@@ -331,9 +331,33 @@ export function assertFilesDownloadable(files = []) {
   return true
 }
 
+function scanError(status, message, code) {
+  return Object.assign(httpError(status, message), { code })
+}
+
+function scanResultError(result) {
+  const limit = result.match(/Heuristics\.Limits\.Exceeded\.([A-Za-z0-9]+)/)?.[1]
+  if (limit || /INSTREAM size limit exceeded/i.test(result)) {
+    const messages = {
+      MaxFileSize: '文件或压缩包内的文件超过安全扫描上限（约 2 GB），请拆分文件后再上传',
+      MaxScanSize: '压缩包解压后的总量超过安全扫描上限，请分成多个较小的压缩包再上传',
+      MaxScanTime: '文件安全扫描超过处理时间，请联系管理员调整扫描时间后重试安全检查',
+      MaxRecursion: '压缩包嵌套层数超过安全扫描上限，请减少嵌套后再上传',
+      MaxFiles: '压缩包内的文件数量超过安全扫描上限，请分成多个压缩包再上传',
+      StreamMaxLength: '文件超过扫描服务的接收上限，请联系管理员调整配置后重试安全检查',
+    }
+    const kind = limit || 'StreamMaxLength'
+    const error = scanError(kind === 'MaxScanTime' ? 503 : 415, messages[kind] || '文件超过安全扫描处理限制，请联系管理员检查扫描配置', kind === 'MaxScanTime' ? 'scan_timeout' : 'scan_size_limit')
+    if (Object.hasOwn(messages, kind)) error.scanLimit = kind
+    return error
+  }
+  if (/ FOUND$/.test(result)) return scanError(415, '文件扫描发现威胁，已阻止发布', 'scan_threat_detected')
+  return scanError(503, '文件安全扫描未完成，请稍后重试安全检查', 'scan_incomplete')
+}
+
 export async function scanFileBytes(filePath) {
   if (!clamavHost) {
-    if (scanMode === 'required') throw httpError(503, '文件扫描服务未配置，暂时无法发布或读取未扫描文件')
+    if (scanMode === 'required') throw scanError(503, '文件扫描服务未配置，暂时无法发布或读取未扫描文件', 'scan_unavailable')
     return { reviewStatus: 'unscanned', scanEngine: null, scannedAt: null }
   }
   const socket = net.createConnection({ host: clamavHost, port: clamavPort })
@@ -342,21 +366,17 @@ export async function scanFileBytes(filePath) {
   let timer
   const verdict = new Promise((resolve, reject) => {
     const fail = (error) => { source?.destroy(); socket.destroy(); reject(error) }
-    timer = setTimeout(() => fail(httpError(503, '文件扫描超时，请稍后重试')), scanTimeoutMs)
-    socket.on('error', () => fail(httpError(503, '文件扫描服务连接失败，请稍后重试')))
-    socket.on('end', () => { if (!response.includes('\0')) fail(httpError(503, '文件扫描服务未返回完整结果')) })
+    timer = setTimeout(() => fail(scanError(503, '文件安全扫描超时，请稍后重试安全检查', 'scan_timeout')), scanTimeoutMs)
+    socket.on('error', () => fail(scanError(503, '文件扫描服务连接失败，请稍后重试安全检查', 'scan_unavailable')))
+    socket.on('end', () => { if (!response.includes('\0')) fail(scanError(503, '文件扫描服务未返回完整结果，请重试安全检查', 'scan_incomplete')) })
+    socket.on('close', () => { if (!response.includes('\0')) fail(scanError(503, '文件扫描连接已关闭，请重试安全检查', 'scan_incomplete')) })
     socket.on('data', (data) => {
       response += data.toString('utf8')
-      if (response.length > 4096) return fail(httpError(503, '文件扫描结果无效'))
+      if (response.length > 4096) return fail(scanError(503, '文件扫描结果无效', 'scan_incomplete'))
       if (!response.includes('\0')) return
       const result = response.split('\0')[0].trim()
       if (/^stream: OK$/.test(result)) resolve({ reviewStatus: 'approved', scanEngine: 'clamav', scannedAt: new Date().toISOString() })
-      else if (/Heuristics\.Limits\.Exceeded\./.test(result)) {
-        const error = httpError(415, '当前扫描服务无法完整扫描此文件，请联系管理员检查扫描大小限制')
-        error.code = 'scan_size_limit'
-        reject(error)
-      } else if (/ FOUND$/.test(result)) reject(httpError(415, '文件扫描发现威胁，已阻止发布'))
-      else reject(httpError(503, '文件扫描未完成，请检查扫描服务和大小限制'))
+      else reject(scanResultError(result))
       socket.destroy()
     })
   })
@@ -392,7 +412,7 @@ export async function assertSafeUploadFiles(files = []) {
     try {
       Object.assign(file, await scanFileBytes(file.tempPath || file.path))
     } catch (error) {
-      if (error.status === 415) {
+      if (error.code === 'scan_threat_detected') {
         file.reviewStatus = 'blocked'
         recordAuditLog({ type: 'security', action: '文件扫描拦截', targetId: file.originalname || file.name })
       }
@@ -408,7 +428,7 @@ export async function ensureStoredFilesScanned(files, directory) {
     const targetPath = path.join(directory, file.storedName)
     if (!fs.existsSync(targetPath)) throw httpError(410, '文件已清理，无法读取')
     try { Object.assign(file, await scanFileBytes(targetPath)) }
-    catch (error) { if (error.status === 415) file.reviewStatus = 'blocked'; persistMetadata(); throw error }
+    catch (error) { if (error.code === 'scan_threat_detected') file.reviewStatus = 'blocked'; persistMetadata(); throw error }
   }
   persistMetadata()
 }

@@ -258,6 +258,7 @@ app.use((error, req, res, _next) => {
     // guestQuota 仅在游客配额超限时存在，前端据此渲染引导弹窗；code 供前端区分业务错误。
     const payload = { message: error.message || '请求处理失败' }
     if (error.code) payload.code = error.code
+    if (error.scanLimit) payload.scanLimit = error.scanLimit
     if (error.guestQuota) payload.guestQuota = error.guestQuota
     return res.status(error.status).json(payload)
   }

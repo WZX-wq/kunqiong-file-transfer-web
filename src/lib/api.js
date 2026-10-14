@@ -25,6 +25,7 @@ export function createUploadSessionState() {
     totalBytes: 0,
     startedAt: 0,
     paused: false,
+    cancelled: false,
     abortCurrent: null,
     activeXhrs: new Set(),
   }
@@ -69,6 +70,13 @@ export class UploadPausedError extends Error {
   }
 }
 
+export class UploadCancelledError extends Error {
+  constructor() {
+    super('上传已取消')
+    this.name = 'UploadCancelledError'
+  }
+}
+
 export function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkData, chunkHash, filename }, { uploadRef, onProgress }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -88,7 +96,7 @@ export function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkD
       if (!activeXhrs.size) uploadState.abortCurrent = null
     }
     xhr.open('POST', url)
-    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded) }
+    xhr.upload.onprogress = (event) => { if (!uploadState.paused && !uploadState.cancelled && event.lengthComputable) onProgress(event.loaded) }
     xhr.onload = () => {
       cleanup()
       let data = {}
@@ -108,7 +116,7 @@ export function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkD
     }
     xhr.onabort = () => {
       cleanup()
-      reject(uploadState.paused ? new UploadPausedError() : new Error('上传已中断'))
+      reject(uploadState.cancelled ? new UploadCancelledError() : uploadState.paused ? new UploadPausedError() : new Error('上传已中断'))
     }
     xhr.send(body)
   })
@@ -178,6 +186,7 @@ export async function apiRequest(url, options = {}) {
     error.status = response.status
     error.code = data.code || ''
     error.guestQuota = data.guestQuota || null
+    error.scanLimit = data.scanLimit || ''
     throw error
   }
   return data

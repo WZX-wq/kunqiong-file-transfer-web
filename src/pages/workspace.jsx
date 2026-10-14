@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState } from '../lib/api.js'
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
-import { canPreviewFile, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, uploadShareInChunks } from '../lib/transfer.js'
+import { cancelUploadSession, canPreviewFile, clearUploadResume, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, readUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, Clock3, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, LogOut, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
 import { SettingsPage } from './settings.jsx'
 import { RecordsView } from './records.jsx'
@@ -38,6 +38,8 @@ export function WorkspaceApp() {
   const inputRef = useRef(null)
   const folderInputRef = useRef(null)
   const uploadRef = useRef(createUploadSessionState())
+  const uploadRunRef = useRef(0)
+  const uploadCleanupRef = useRef(Promise.resolve())
   const recordSyncUserRef = useRef('')
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
   const [activeView, setActiveView] = useState(() => normalizeMainView(new URLSearchParams(window.location.search).get('view')))
@@ -249,7 +251,23 @@ export function WorkspaceApp() {
     syncAccountRecords({ silent: true }).catch((error) => setToast(`账号记录同步失败：${error.message}`))
   }, [authUser?.id])
 
+  const cancelSendUpload = ({ discardSaved = false } = {}) => {
+    uploadRunRef.current += 1
+    const previous = uploadRef.current
+    // Explicit remove/clear also abandons a saved session restored after refresh.
+    if (discardSaved && !previous.sessionId) previous.sessionId = readUploadResume()?.sessionId || ''
+    const cleanup = cancelUploadSession(previous)
+    if (discardSaved) clearUploadResume()
+    // A late create response must be discarded before the next batch reserves quota.
+    uploadCleanupRef.current = Promise.allSettled([uploadCleanupRef.current, previous.task, cleanup])
+    uploadRef.current = createUploadSessionState()
+    setIsUploading(false)
+    setUploadProgress(0)
+    setUploadState(createUploadState())
+  }
+
   const addFiles = (incoming) => {
+    if (uploadState.status === 'finalizing') return
     const nextFiles = Array.from(incoming || []).map((file, index) => ({
       id: `${file.name}-${file.lastModified}-${index}-${Math.random()}`,
       file,
@@ -257,24 +275,30 @@ export function WorkspaceApp() {
       size: file.size,
       relativePath: file.webkitRelativePath || file.name,
     }))
+    if (!nextFiles.length) return
     const invalid = nextFiles.find((item) => item.size > MAX_FILE_SIZE)
     if (invalid) {
       setToast(`${invalid.name} 超过 5 GB 限制`)
       return
     }
+    cancelSendUpload()
     setFiles((current) => {
       const merged = [...current, ...nextFiles]
       if (merged.length > MAX_FILES) setToast(`单次最多选择 ${MAX_FILES} 个文件，已保留前 ${MAX_FILES} 个`)
       return merged.slice(0, MAX_FILES)
     })
     setShareResult(null)
-    setUploadProgress(0)
-    setUploadState(createUploadState())
-    abortUploadSession(uploadRef.current.sessionId)
-    uploadRef.current = createUploadSessionState()
+  }
+
+  const removeFile = (id) => {
+    if (uploadState.status === 'finalizing') return
+    cancelSendUpload({ discardSaved: true })
+    setFiles(current => current.filter(file => file.id !== id))
+    setShareResult(null)
   }
 
   const uploadFiles = async ({ resume = false } = {}) => {
+    if (uploadRef.current.running) return
     if (!files.length) {
       inputRef.current?.click()
       return
@@ -284,32 +308,38 @@ export function WorkspaceApp() {
       setToast(recipientError)
       return
     }
-    // 未登录预检：额度不够就直接引导注册，不浪费一次上传。
-    if (!authUser?.id && guestQuota?.enabled) {
-      const pendingBytes = files.reduce((sum, item) => sum + item.size, 0)
-      if (guestQuota.remainingBytes < pendingBytes) {
-        setGuestQuotaDialog({
-          usedBytes: guestQuota.usedBytes,
-          limitBytes: guestQuota.limitBytes,
-          remainingBytes: guestQuota.remainingBytes,
-          incomingBytes: pendingBytes,
-        })
-        return
-      }
-    }
+    if (!resume) cancelSendUpload()
+    const run = ++uploadRunRef.current
+    const session = uploadRef.current
+    const isCurrent = () => uploadRunRef.current === run && uploadRef.current === session
+    session.running = true
+    session.paused = false
     setIsUploading(true)
     setShareResult(null)
-    if (!resume) {
-      abortUploadSession(uploadRef.current.sessionId)
-      setUploadProgress(0)
-      uploadRef.current = createUploadSessionState()
-    }
-    uploadRef.current.paused = false
+    setUploadState(current => ({ ...current, status: 'uploading', phase: '准备上传', error: '' }))
     try {
-      const data = await uploadShareInChunks(files, settings, uploadRef, ({ progress, ...nextState }) => {
+      await uploadCleanupRef.current
+      if (!isCurrent()) return
+      // Query quota after cancellation releases the previous reservation; an existing
+      // resumable session already owns its reservation and must not count it twice.
+      if (!authUser?.id && !session.sessionId && !readUploadResume()) {
+        const quota = await apiRequest('/api/guest/quota').catch(() => guestQuota)
+        if (!isCurrent()) return
+        setGuestQuota(quota?.enabled ? quota : null)
+        const pendingBytes = files.reduce((sum, item) => sum + item.size, 0)
+        if (quota?.enabled && quota.remainingBytes < pendingBytes) {
+          setGuestQuotaDialog({ ...quota, incomingBytes: pendingBytes })
+          setUploadState(createUploadState())
+          return
+        }
+      }
+      session.task = uploadShareInChunks(files, settings, uploadRef, ({ progress, ...nextState }) => {
+        if (!isCurrent()) return
         setUploadProgress(progress)
         setUploadState((current) => ({ ...current, ...nextState, progress }))
       })
+      const data = await session.task
+      if (!isCurrent()) return
       setShareResult(data.share)
       setFiles([])
       uploadRef.current = createUploadSessionState()
@@ -322,6 +352,7 @@ export function WorkspaceApp() {
       setToast(data.share.deliveryRecipients?.length ? '文件已上传，通知状态已更新' : '文件已上传，分享信息已生成')
       if (!authUser?.id) refreshGuestQuota()
     } catch (error) {
+      if (!isCurrent() || error.name === 'UploadCancelledError') return
       if (error.name === 'UploadPausedError') {
         setUploadState((current) => ({ ...current, status: 'paused', phase: '已暂停，可继续上传', error: '' }))
         return
@@ -330,10 +361,21 @@ export function WorkspaceApp() {
         setGuestQuotaDialog(error.guestQuota || { incomingBytes: 0 })
         refreshGuestQuota()
       }
-      setUploadState((current) => ({ ...current, status: 'failed', phase: '上传失败', error: error.message }))
+      if (error.restartUpload) {
+        uploadRef.current = createUploadSessionState()
+        setUploadProgress(0)
+        setUploadState({ ...createUploadState(), status: 'failed', phase: '需要重新开始上传', error: error.message })
+        setIsUploading(false)
+        setToast(error.message)
+        return
+      }
+      const scanFailure = String(error.code || '').startsWith('scan_')
+      const threatDetected = error.code === 'scan_threat_detected'
+      setUploadState((current) => ({ ...current, status: 'failed', phase: threatDetected ? '安全检查发现威胁，已阻止发布' : scanFailure ? '上传完成，安全检查未通过' : '上传失败', failurePhase: threatDetected ? 'threat' : scanFailure ? 'scan' : '', error: error.message }))
       setToast(error.message)
     } finally {
-      setIsUploading(false)
+      session.running = false
+      if (uploadRunRef.current === run) setIsUploading(false)
     }
   }
 
@@ -343,15 +385,10 @@ export function WorkspaceApp() {
   }
 
   const resetSend = () => {
-    uploadRef.current.paused = true
-    uploadRef.current.abortCurrent?.()
-    abortUploadSession(uploadRef.current.sessionId)
-    uploadRef.current = createUploadSessionState()
+    if (uploadState.status === 'finalizing') return
+    cancelSendUpload({ discardSaved: true })
     setFiles([])
     setShareResult(null)
-    setUploadProgress(0)
-    setUploadState(createUploadState())
-    setIsUploading(false)
   }
 
   const startLogin = () => {
@@ -974,7 +1011,7 @@ export function WorkspaceApp() {
             isDragging={isDragging}
             setIsDragging={setIsDragging}
             addFiles={addFiles}
-            removeFile={(id) => setFiles((current) => current.filter((file) => file.id !== id))}
+            removeFile={removeFile}
             uploadFiles={uploadFiles}
             isUploading={isUploading}
             uploadProgress={uploadProgress}
@@ -1113,14 +1150,14 @@ export function SendView({ user, files, inputRef, folderInputRef, isDragging, se
               <div className="file-queue">
                 <div className="queue-heading">
                   <div><span className="eyebrow">待发送文件</span><h2>{files.length} 个文件，准备就绪</h2></div>
-                  <button className="ghost-icon" aria-label="清空文件" onClick={onReset}><X size={17} /></button>
+                  <button className="ghost-icon" aria-label="清空文件" disabled={uploadState.status === 'finalizing'} onClick={onReset}><X size={17} /></button>
                 </div>
                 <label className="delivery-field">
                   <span><Mail size={14} /> 定向发送</span>
                   <input maxLength={RECIPIENT_TEXT_MAX} value={settings.recipients} disabled={isUploading} onChange={(event) => onUpdateSettings({ recipients: limitInputText(event.target.value, RECIPIENT_TEXT_MAX) })} aria-invalid={Boolean(recipientError)} aria-describedby="delivery-recipient-hint" placeholder="输入手机号或邮箱，多个用逗号分隔（可选）" />
                   <small id="delivery-recipient-hint" className={`contact-input-hint ${recipientError ? 'invalid' : ''}`} aria-live="polite">{recipientError || '可留空；最多 50 个收件人，不能填写自己的手机号或邮箱。'}</small>
                 </label>
-                <div className="file-list">{files.map((file) => <FileRow key={file.id} file={file} onRemove={() => removeFile(file.id)} />)}</div>
+                <div className="file-list">{files.map((file) => <FileRow key={file.id} file={file} onRemove={uploadState.status === 'finalizing' ? undefined : () => removeFile(file.id)} />)}</div>
                 {guestQuota?.enabled && (
                   <div className="guest-quota-hint">
                     <Gauge size={15} />
@@ -1141,23 +1178,24 @@ export function SendView({ user, files, inputRef, folderInputRef, isDragging, se
 }
 
 export function UploadProgressPanel({ progress, uploadState, isUploading, onPause, onResume, onRetry }) {
-  const statusText = uploadState.status === 'paused' ? '已暂停' : uploadState.status === 'failed' ? '上传失败' : uploadState.phase || '正在上传'
+  const statusText = uploadState.status === 'paused' ? '已暂停' : uploadState.phase || (uploadState.status === 'failed' ? '上传失败' : '正在上传')
+  const checking = uploadState.status === 'finalizing' || Boolean(uploadState.failurePhase)
   return (
     <div className={`progress-wrap enhanced-progress ${uploadState.status}`}>
       <div className="progress-label"><span>{statusText}</span><strong>{progress}%</strong></div>
       <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
       <div className="upload-metrics">
         <span>已传 {formatBytes(uploadState.uploadedBytes)} / {formatBytes(uploadState.totalBytes)}</span>
-        <span>速度 {uploadState.speedBps ? `${formatBytes(uploadState.speedBps)}/s` : '计算中'}</span>
-        <span>剩余 {formatDuration(uploadState.etaSeconds)}</span>
+        <span>{checking ? '文件传输已完成' : <>速度 {uploadState.speedBps ? `${formatBytes(uploadState.speedBps)}/s` : '计算中'}</>}</span>
+        <span>{checking ? uploadState.status === 'finalizing' ? '等待安全检查结果' : '请查看安全检查结果' : <>剩余 {formatDuration(uploadState.etaSeconds)}</>}</span>
       </div>
       {uploadState.currentFile && <small>当前文件：{uploadState.currentFile}</small>}
       {uploadState.retryCount > 0 && <small>已自动重试 {uploadState.retryCount} 次</small>}
-      {uploadState.error && <p className="upload-error">{uploadState.error}</p>}
+      {uploadState.error && <p className="upload-error">{uploadState.error}{uploadState.failurePhase === 'threat' && '；请移除风险文件并确认安全后再上传'}</p>}
       <div className="upload-control-row">
         {uploadState.status === 'uploading' && <button className="secondary-button" onClick={onPause} disabled={!isUploading}><Pause size={15} /> 暂停</button>}
         {uploadState.status === 'paused' && <button className="primary-button" onClick={onResume}><Play size={15} /> 继续上传</button>}
-        {uploadState.status === 'failed' && <button className="primary-button" onClick={onRetry}><RotateCcw size={15} /> 重试上传</button>}
+        {uploadState.status === 'failed' && uploadState.failurePhase !== 'threat' && <button className="primary-button" onClick={onRetry}><RotateCcw size={15} /> {uploadState.failurePhase === 'scan' ? '重试安全检查' : '重试上传'}</button>}
       </div>
     </div>
   )
@@ -1215,15 +1253,26 @@ export function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }
 
 export function ShareNotificationStatus({ result }) {
   const logs = Array.isArray(result.notificationLog) ? result.notificationLog : []
-  const delivered = logs.filter((item) => /已发送/.test(item.status || '')).length
-  const externalPending = logs.filter((item) => /通道未配置/.test(item.status || '')).length
-  const failed = logs.filter((item) => /发送失败/.test(item.status || '')).length
-  const skipped = Math.max(logs.length - delivered - externalPending - failed, 0)
-  const summary = logs.length
-    ? `${delivered ? `${delivered} 个通知已发送` : '暂无通知送达'}${externalPending ? `，${externalPending} 个等待邮件通道配置` : ''}${failed ? `，${failed} 个邮件投递失败` : ''}${skipped ? `，${skipped} 个未投递` : ''}`
-    : `已记录 ${result.deliveryRecipients.length} 个通知对象`
+  // A recipient may receive both channels, or only one when the other fails.
+  // SMTP acceptance means the email was sent; it does not confirm inbox delivery.
+  const categories = [
+    { pattern: /邮件已提交投递|邮件已发送/, text: count => `已发送 ${count} 封邮件通知` },
+    { pattern: /站内已发送/, text: count => `已发送 ${count} 条站内通知` },
+    { pattern: /^已发送$/, text: count => `已发送 ${count} 个通知` },
+    { pattern: /邮件发送失败|邮件未被服务器接受/, text: count => `${count} 个邮箱发送失败` },
+    { pattern: /邮件通道未配置/, text: count => `${count} 个邮箱未发送（邮件服务未配置）` },
+    { pattern: /邮件提醒已关闭/, text: count => `${count} 个邮箱未发送（收件人已关闭邮件提醒）` },
+    { pattern: /该手机号未匹配到平台账号/, text: count => `${count} 个手机号未发送通知（未匹配平台账号）` },
+    { pattern: /^未匹配账号$/, text: count => `${count} 个收件人未匹配平台账号` },
+  ]
+  const counts = categories.map(category => ({ ...category, count: logs.filter(item => category.pattern.test(item?.status || '')).length }))
+  const summaries = counts.filter(category => category.count).map(category => category.text(category.count))
+  const unknown = logs.filter(item => !categories.some(category => category.pattern.test(item?.status || ''))).length
+  if (unknown) summaries.push(`${unknown} 个收件人的通知状态待确认`)
+  if (counts[0].count) summaries.push('请收件人查看收件箱或垃圾邮件')
+  const summary = summaries.join('；') || `已记录 ${result.deliveryRecipients?.length || 0} 个收件人，通知状态待确认`
   return (
-    <div className="notification-list share-notification-status">
+    <div className="notification-list share-notification-status" role="status">
       <Mail size={14} />
       <span>{summary}</span>
     </div>
