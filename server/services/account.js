@@ -1263,6 +1263,44 @@ export async function reconcileUserUpgradeOrders(session, force = false) {
   } finally { state.running = false; complete() }
 }
 
+// 旧白名单也会把后台手动授予的套餐写回 free；只恢复最近的明确授权。
+// 缺少审计证据、已撤销、禁用或过期的账号不补发。
+export function repairLegacyTestAdminPlans() {
+  if (!testEnforceEnterpriseAllowlist) return 0
+  const latestEdits = new Map()
+  for (const log of metadata.auditLogs || []) {
+    const time = new Date(log.createdAt).getTime()
+    if (log.type !== 'admin' || log.action !== '更新用户状态或权益'
+      || !Object.hasOwn(ACCOUNT_PLANS, log.details?.planId) || !Number.isFinite(time)
+      || time <= 0 || time > Date.now()) continue
+    const previous = latestEdits.get(log.targetId)
+    if (!previous || time > new Date(previous.createdAt).getTime()) latestEdits.set(log.targetId, log)
+  }
+  let repaired = 0
+  for (const account of Object.values(metadata.users || {})) {
+    if (account.planId !== 'free' || account.status === 'disabled') continue
+    const edit = latestEdits.get(account.id)
+    if (!edit || edit.details.planId === 'free' || edit.details.status === 'disabled') continue
+    const editedAt = new Date(edit.createdAt).getTime()
+    // 后续真实支付由订单恢复流程处理，不能回放更早的管理员套餐。
+    if (upgradeOrdersForUser(account.id).some(order => order.status === 'paid'
+      && order.remoteOrderNo && order.amount > 0 && new Date(order.paidAt).getTime() >= editedAt)) continue
+    const plan = configuredAccountPlan(edit.details.planId)
+    const expiry = plan.permanent ? null : Object.hasOwn(edit.details, 'planExpiresAt')
+      ? edit.details.planExpiresAt : account.planExpiresAt
+    const expiresAt = expiry ? new Date(expiry).getTime() : null
+    if (expiry && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) continue
+    account.planId = plan.id
+    account.planStartedAt = account.planStartedAt || edit.createdAt
+    account.planExpiresAt = expiresAt ? new Date(expiresAt).toISOString() : null
+    account.updatedAt = new Date().toISOString()
+    syncAccountUserSessions(account)
+    repaired++
+  }
+  if (repaired) runtime.metadataNeedsPersist = true
+  return repaired
+}
+
 // 旧测试白名单曾保留到期日却把已支付用户的套餐改成 free。
 // 启动时仅修复与已确认订单吻合的记录，不重新付款、续期或发送开通通知。
 export function repairLegacyTestPaidPlans() {

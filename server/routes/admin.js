@@ -13,7 +13,7 @@ import {
   firstValue, removeDirectory
 } from '../lib/http.js'
 import {
-  normalizePlanId, normalizeRecordDate, normalizeSystemConfig, publicUser, trimRecordString
+  configuredAccountPlan, normalizePlanId, normalizeRecordDate, normalizeSystemConfig, publicUser, trimRecordString
 } from '../lib/metadata-normalizers.js'
 import {
   metadata, persistMetadata
@@ -136,8 +136,14 @@ export function registerAdminRoutes(app) {
     }
     user.planId = planId
     user.status = status
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'planExpiresAt')) {
+    if (configuredAccountPlan(planId).permanent) {
+      user.planExpiresAt = null
+    } else if (Object.prototype.hasOwnProperty.call(req.body || {}, 'planExpiresAt')) {
       user.planExpiresAt = normalizeRecordDate(req.body.planExpiresAt)
+    } else if (req.body.planId && planId !== 'free' && user.planExpiresAt
+      && new Date(user.planExpiresAt).getTime() <= Date.now()) {
+      // 后台套餐下拉框没有日期输入；重新授予时不能继承旧套餐的失效日期。
+      user.planExpiresAt = null
     }
     user.updatedAt = new Date().toISOString()
     if (status === 'disabled') {
@@ -145,7 +151,7 @@ export function registerAdminRoutes(app) {
     }
     syncAccountUserSessions(user)
     persistMetadata()
-    recordAuditLog({ type: 'admin', action: '更新用户状态或权益', userId: auth.user.id, targetId: user.id, details: { status, planId } })
+    recordAuditLog({ type: 'admin', action: '更新用户状态或权益', userId: auth.user.id, targetId: user.id, details: { status, planId, planExpiresAt: user.planExpiresAt || null } })
     res.json({ user: adminUserSummary(user) })
   })
   app.delete('/api/admin/resources/:kind/:id', (req, res) => {
