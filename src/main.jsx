@@ -79,4 +79,8 @@ function App() {
   return <RoutePage key={sessionVersion} />
 }
 
+// Keep previously shared order links inside the account centre.
+if (window.location.pathname === '/orders' || window.location.pathname === '/orders/') {
+  window.history.replaceState(null, '', `/settings/orders${window.location.search}${window.location.hash}`)
+}
 createRoot(document.getElementById('root')).render(<App />)

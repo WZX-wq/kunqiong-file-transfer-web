@@ -322,15 +322,11 @@ export function normalizeAccountUser(user = {}) {
     .filter(Boolean)
   const testEnterpriseOverride = testEnterpriseForAllUsers
     || (testEnforceEnterpriseAllowlist && testEnterpriseKeys.some((value) => TEST_ENTERPRISE_USER_KEYS.has(value)))
-  // 测试服按白名单强制收敛权益：不在 KUNQIONG_TEST_ENTERPRISE_USER_KEYS 内的账号一律回落基础版，
-  // 避免历史数据或手工改库残留的高等级权益（升级需走充值流程）。
-  const testEnforceFree = testEnforceEnterpriseAllowlist
-    && !testEnterpriseOverride
-    && normalizePlanId(user.planId || base.planId || 'free') !== 'free'
-  const planId = testEnterpriseOverride ? 'enterprise' : testEnforceFree ? 'free' : normalizePlanId(user.planId || base.planId || 'free')
+  // 白名单仅补充演示企业权益；普通账号的真实购买和后台配置不能被测试开关降级。
+  const planId = testEnterpriseOverride ? 'enterprise' : normalizePlanId(user.planId || base.planId || 'free')
   const plan = configuredAccountPlan(planId)
   const planExpiresAt = plan.permanent ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
-  if (testEnterpriseOverride || testEnforceFree || (plan.permanent && (user.planExpiresAt || base.planExpiresAt))) runtime.metadataNeedsPersist = true
+  if (testEnterpriseOverride || (plan.permanent && (user.planExpiresAt || base.planExpiresAt))) runtime.metadataNeedsPersist = true
   const now = new Date().toISOString()
   return {
     ...base,

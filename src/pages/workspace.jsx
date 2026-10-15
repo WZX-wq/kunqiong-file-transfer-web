@@ -1,5 +1,6 @@
 import React from 'react'
 import heroFolder from '../assets/hero-folder.webp'
+import brandLogo from '../assets/brand-logo-header.webp'
 import { SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { defaultDeadline, displayUserName, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, MAX_FILE_SIZE, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
@@ -966,7 +967,7 @@ export function WorkspaceApp() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand" onClick={() => navigateMainView('send')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigateMainView('send') } }} role="button" tabIndex={0} aria-label="返回发文件首页">
-          <img className="brand-logo" src="/brand-logo.png" alt="鲲穹文件传输" />
+          <img className="brand-logo" src={brandLogo} width="480" height="228" alt="鲲穹文件传输" />
         </div>
         <nav className="main-nav" aria-label="主导航">
           <NavItem icon={Send} label="发文件" active={!isSettingsRoute && activeView === 'send'} onClick={() => navigateMainView('send')} />
@@ -997,7 +998,7 @@ export function WorkspaceApp() {
           {/* 后台入口不再按账号身份显示（白名单通道已移除，后台只认账号口令）。
               需要直接进后台时访问 /admin，未登录会弹出管理员账号密码弹窗。 */}
           <button className="merchant-button" onClick={() => { window.location.href = '/workspace' }}><Sparkles size={15} /> 会员与企业版</button>
-          <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setMessageOpen(false); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onLogout={logout} />
+          <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setMessageOpen(false); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onOrders={() => navigateSettingsSection('/settings/orders')} onLogout={logout} />
         </div>
       </header>
 
@@ -1710,7 +1711,7 @@ export function MessageIcon({ category }) {
   return <ShieldCheck size={15} />
 }
 
-export function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onSettings, onLogout }) {
+export function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onSettings, onOrders, onLogout }) {
   if (!user) {
     return <button className="login-button" aria-label={loading ? '检查登录状态' : '登录'} onClick={onLogin} disabled={loading}><UserRound size={18} /><span>{loading ? '检查登录' : '登录'}</span><ChevronDown size={14} /></button>
   }
@@ -1728,6 +1729,7 @@ export function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onS
             <div><strong>{displayUserName(user)}</strong><span>{displayUserSubtitle(user)}</span></div>
           </div>
           <button role="menuitem" onClick={onSettings}><Settings2 size={14} /> 账户设置</button>
+          <button role="menuitem" onClick={onOrders}><FileText size={14} /> 我的订单</button>
           <button className="mobile-workspace-link" role="menuitem" onClick={() => { window.location.href = '/workspace' }}><Building2 size={14} /> 会员与团队空间</button>
           <button role="menuitem" onClick={onLogout}><LogOut size={14} /> 退出登录</button>
         </div>

@@ -8,6 +8,7 @@ import { displayUserName, formatBytes, formatDate, formatPlanPrice, maskPhone, p
 import { useRemotePlanPricing } from '../hooks.js'
 import { mergePlanPricing } from '../lib/api.js'
 import { contactInputError, EMAIL_MAX_LENGTH, normalizePhoneContact, PHONE_LENGTH } from '../../server/lib/contact-input.js'
+import { OrdersPanel } from './orders.jsx'
 
 export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile, onUpdateUser, onNavigateSection, onOpenWorkspace }) {
   const [nickname, setNickname] = useState('')
@@ -159,6 +160,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
         </aside>
 
         <div className="settings-panel">
+          {section === 'orders' && <><SettingsPanelHeader eyebrow="账户设置" title="我的订单" detail="查询会员套餐订单和支付状态。" onBack={onBack} /><OrdersPanel user={user} onLogin={onLogin} /></>}
           {section === 'profile' && (
             <>
               <SettingsPanelHeader eyebrow="账户设置" title="个人资料" detail="管理在鲲穹文件传输中展示的账户信息。" onBack={onBack} />

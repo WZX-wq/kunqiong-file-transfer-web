@@ -78,6 +78,15 @@ await scenario('TEAM-BACK-NAVIGATION', async () => {
   check('导航入口无页面错误', team.errors.length === 0)
  } finally { team.dom.window.close() }
 })
+await scenario('TEAM-CAPACITY-LABELS', async () => {
+ const f=await mount('/team')
+ try {
+  const capacity=f.document.querySelector('.team-capacity-number')
+  check('团队容量明确区分已用和总容量',capacity?.textContent.includes('已用')&&capacity.textContent.includes('总容量'))
+  check('总容量展示团队1TB而非个人2TB',capacity?.textContent.includes('1024.00 GB')&&!capacity.textContent.includes('2048.00 GB'))
+  check('成员用量说明与团队总容量一致',f.document.querySelector('.team-usage-description').textContent.includes('总容量 1024.00 GB'))
+ } finally { f.dom.window.close() }
+})
 await scenario('TEAM-RESOURCE-DELETE', async () => {
  for (const role of ['owner', 'member', 'peer']) {
   const f = await mount('/team?tab=resources', role)

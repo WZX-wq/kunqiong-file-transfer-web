@@ -49,7 +49,7 @@ import {
 // 账号域业务逻辑（路由仍在本文件注册，按域逐步迁移）
 import {
   authSessionFromRequest, cleanupExpired, getRequestOrigin, isSmtpConfigured,
-  isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog
+  isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog, repairLegacyTestPaidPlans
 } from './server/services/account.js'
 
 import { registerAdminRoutes } from './server/routes/admin.js'
@@ -104,6 +104,7 @@ for (const share of metadata.shares) {
   }
 }
 runtime.metadataReady = metadata
+repairLegacyTestPaidPlans()
 if (runtime.metadataNeedsPersist) persistMetadata()
 const app = express()
 

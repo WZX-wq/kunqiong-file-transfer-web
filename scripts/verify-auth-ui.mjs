@@ -100,6 +100,8 @@ await scenario('SHARE-self-contact-live',async()=>{
 })
 await scenario('AUTH-008',async()=>{
  const f=await mount();try{
+  const orderEntry=[...f.document.querySelectorAll('.settings-nav button')].find(button=>button.textContent.trim()==='我的订单')
+  check('my orders follows file cleanup in the account sidebar',orderEntry?.previousElementSibling?.textContent.trim()==='文件清理'&&orderEntry.textContent.trim()==='我的订单')
   for(const [label,suffix]of [['账号与安全','security'],['消息通知','notice'],['文件清理','cleanup'],['个人资料','profile']]){
    await f.click(label);check('route follows '+label,f.window.location.pathname.endsWith('/'+suffix));check('correct settings heading',f.document.querySelector('h1')?.textContent===label)
   }
