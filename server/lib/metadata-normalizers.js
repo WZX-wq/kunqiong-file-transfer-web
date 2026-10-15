@@ -383,12 +383,11 @@ export function mergeAccountUser(existing = null, incoming = {}) {
     providerAvatar: nextProviderAvatar,
     provider: normalized.provider || base.provider,
     loginMethods: mergeLoginMethods(base.loginMethods, normalized.loginMethods),
-    // Do not let a stale upstream free record downgrade a locally confirmed paid plan.
-    planId: base.planId && base.planId !== 'free' && normalized.planId === 'free'
-      ? base.planId
-      : normalized.planId || base.planId || 'free',
-    planStartedAt: normalized.planStartedAt || base.planStartedAt || null,
-    planExpiresAt: normalized.planExpiresAt || base.planExpiresAt || null,
+    // 套餐由后台和支付流程直接更新账号记录；登录资料、旧会话只能补充身份信息。
+    // 有效期与套餐一起保留，包括明确的 null（后台授予的长期/永久权益）。
+    planId: base.planId || normalized.planId || 'free',
+    planStartedAt: base.planStartedAt || null,
+    planExpiresAt: base.planExpiresAt || null,
     organizationId: normalized.organizationId || base.organizationId,
     organizationRole: normalized.organizationRole || base.organizationRole,
     status: base.status === 'disabled' ? 'disabled' : normalized.status || base.status || 'active',
