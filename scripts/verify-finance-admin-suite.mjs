@@ -22,13 +22,14 @@ app.post('/__fixture', async (req,res)=>{
  const state=await import('./server/state.js'); state.remotePricingCache.data=null; state.paymentReconcileAttempts.clear(); state.adminLoginAttempts.clear();
  if(req.body.user) Object.assign(metadata.users[req.body.user],req.body.patch);
  if(req.body.shares) metadata.shares.push(...req.body.shares);
+ if(req.body.orders) metadata.upgradeOrders.push(...req.body.orders);
  if(req.body.config) metadata.systemConfig=req.body.config;
  persistMetadata(); res.json({ok:true});
 });
 `
 fs.writeFileSync(path.join(fixture,'server.mjs'),fs.readFileSync(path.join(root,'server.mjs'),'utf8').replace('registerWorkspaceRoutes(app)',control+'\nregisterWorkspaceRoutes(app)'))
 const now=new Date().toISOString(),future=new Date(Date.now()+20*86400000).toISOString()
-const ids=['pricing','wechat','alipay','renew','concurrent','status','restart','cancel','expire','invalid','free','member','team','enterprise','managed','stranger','date-sql','date-iso','date-offset','date-retry']
+const ids=['pricing','wechat','alipay','renew','concurrent','status','restart','cancel','expire','invalid','free','member','team','enterprise','managed','stranger','date-sql','date-iso','date-offset','date-retry','history','repair-one','repair-two','repair-expired','repair-unpaid','repair-admin','repair-disabled','repair-enterprise','repair-retained','repair-live']
 const users=Object.fromEntries(ids.map(id=>[id,{id,username:id,nickname:id,planId:['member','team','enterprise'].includes(id)?id:'free',status:'active',planExpiresAt:id==='enterprise'?null:future}]))
 users.renew.planId='member'; users.expire.planId='team'
 fs.mkdirSync(path.join(fixture,'storage'),{recursive:true})
@@ -118,6 +119,35 @@ try{
   await stop();await start()
   check('团队权益和到期时间重启后持久化',stored().users['date-retry'].planId==='team'&&stored().users['date-retry'].planExpiresAt===expectedExpiry&&(await api('/api/account/workspace',{user:'date-retry'})).data.planExpiresAt===expectedExpiry)
  })
+ await group('PAY-012',async()=>{
+  const fixtureOrders=Array.from({length:25},(_,i)=>({id:'history-'+i,orderNo:'HISTORY-'+String(i).padStart(2,'0'),userId:'history',planId:'team',amount:4900,status:i===0?'pending_payment':i===1?'paid':i===2?'expired':'canceled',createdAt:new Date(Date.now()-i*60000).toISOString(),updatedAt:now,remoteOrderNo:i===1?'PAYMENT-HISTORY-01':'',paidAt:i===1?now:null,remoteExpireAt:i===1?future:null,payment:{alipaysubmit_html:'<form>PRIVATE-CHECKOUT</form>'}}))
+  await ctl({orders:fixtureOrders})
+  const listing=await api('/api/account/upgrade-orders?page=1&limit=10&status=all',{user:'history'})
+  check('订单中心服务端分页',listing.status===200&&listing.data.orders.length===10&&listing.data.pagination?.total===25&&listing.data.pagination?.totalPages===3)
+  const compact=await api('/api/account/upgrade-orders?page=2&limit=5',{user:'history'})
+  check('个人中心每页五条且翻页无重复遗漏',compact.status===200&&compact.data.orders.length===5&&compact.data.pagination?.totalPages===5&&compact.data.orders.map(o=>o.id).join(',')===fixtureOrders.slice(5,10).map(o=>o.id).join(','))
+  check('订单按创建时间倒序',listing.data.orders.map(o=>o.id).join(',')===fixtureOrders.slice(0,10).map(o=>o.id).join(','))
+  check('统计仅包含本人订单',listing.data.counts?.all===25&&listing.data.counts?.paid===1&&listing.data.counts?.canceled===22)
+  check('列表不返回收银台和支付凭证',!JSON.stringify(listing.data).includes('PRIVATE-CHECKOUT')&&!JSON.stringify(listing.data).includes('payment-fixture-')&&listing.data.orders.every(o=>!Object.hasOwn(o,'payment')))
+  check('第三页可查询历史订单',(await api('/api/account/upgrade-orders?page=3&limit=10',{user:'history'})).data.orders.length===5)
+  const filtered=await api('/api/account/upgrade-orders?page=1&status=paid&q=payment-history-01',{user:'history'})
+  check('状态和支付平台订单号组合搜索',filtered.status===200&&filtered.data.pagination?.total===1&&filtered.data.orders[0]?.id==='history-1')
+  check('本站订单号搜索',(await api('/api/account/upgrade-orders?page=1&q=HISTORY-24',{user:'history'})).data.orders[0]?.id==='history-24')
+  check('空结果有完整分页',(await api('/api/account/upgrade-orders?page=1&q=NOT-FOUND',{user:'history'})).data.pagination?.total===0)
+  check('越界页自动收敛',(await api('/api/account/upgrade-orders?page=99',{user:'history'})).data.pagination?.page===3)
+  const own=await api('/api/account/upgrade-orders/history-1',{user:'history'})
+  check('本人订单详情可查询',own.status===200&&own.data.order.remoteOrderNo==='PAYMENT-HISTORY-01'&&own.data.order.remoteExpireAt===future)
+  check('他人订单详情不可查询',(await api('/api/account/upgrade-orders/history-1',{user:'stranger'})).status===404)
+  check('游客不能查看订单列表',(await api('/api/account/upgrade-orders?page=1')).status===401)
+  check('游客不能查看订单详情',(await api('/api/account/upgrade-orders/history-1')).status===401)
+  check('其他账号搜索不泄漏订单',(await api('/api/account/upgrade-orders?page=1&q=HISTORY',{user:'stranger'})).data.pagination?.total===0)
+  check('不能核对他人订单',(await status('stranger',fixtureOrders[1])).status===404)
+  check('不能取消他人订单',(await cancel('stranger',fixtureOrders[0])).status===404)
+  for(const query of ['page=0','page=1.5','page=-1','limit=0','limit=51','status=unknown','status[]=paid','q[]=HISTORY','q='+ 'a'.repeat(81),'q=%00','q=%3Cscript%3E']){
+   check('订单搜索边界拒绝 '+query,(await api('/api/account/upgrade-orders?'+query,{user:'history'})).status===400)
+  }
+  check('查询不改变订单与权益',stored().upgradeOrders.find(o=>o.id==='history-1').status==='paid'&&stored().users.history.planId==='free')
+ })
  await group('ADMIN-001',async()=>{const r=await login();const c=r.headers.get('set-cookie');check('管理员登录身份',r.data.admin.username==='fixture-admin');check('Cookie安全属性',c.includes('HttpOnly')&&c.includes('SameSite=Lax')&&c.includes('Path=/'));const secure=await api('/api/admin/login',{method:'POST',headers:{'x-forwarded-proto':'https'},body:{username:'fixture-admin',password:'secret_fixture_password'}});check('HTTPS Cookie Secure',secure.headers.get('set-cookie').includes('Secure'))})
  await group('ADMIN-002',async()=>{await stop();await start({KUNQIONG_ADMIN_USERNAME:'',KUNQIONG_ADMIN_PASSWORD:''});const r=await api('/api/admin/login',{method:'POST',body:{username:'admin',password:'admin'}});check('未配置503明确提示',r.status===503&&r.data.message.includes('未配置'));await stop();await start();await login()})
  await group('ADMIN-003',async()=>{for(let i=0;i<8;i++)check('错误登录 '+i,(await api('/api/admin/login',{method:'POST',headers:{'x-forwarded-for':'10.0.0.'+i},body:{username:'fixture-admin',password:'wrong-fixture'}})).status===401);check('伪造IP无法绕过限流',(await api('/api/admin/login',{method:'POST',body:{username:'fixture-admin',password:'secret_fixture_password'}})).status===429);check('密码不写日志',!log.includes('secret_fixture_password')&&!JSON.stringify(stored().auditLogs).includes('wrong-fixture'));await ctl();await login()})
@@ -149,6 +179,47 @@ try{
  await group('ADMIN-010',async()=>{check('无管理员拒绝',(await api('/api/admin/impersonate',{user:'free',method:'POST',body:{userId:'member'}})).status===401);const r=await api('/api/admin/impersonate',{admin:true,method:'POST',body:{userId:'member'}});check('test已有用户验收会话',r.status===200&&!!r.data.sessionId);check('不存在不能签发',(await api('/api/admin/impersonate',{admin:true,method:'POST',body:{userId:'missing'}})).status===404);check('签发审计',stored().auditLogs.some(x=>x.action==='签发验收会话'));await stop();await start({NODE_ENV:'production'});await login();check('生产404',(await api('/api/admin/impersonate',{admin:true,method:'POST',body:{userId:'member'}})).status===404)})
  await group('ADMIN-011',async()=>{await api('/api/admin/logout',{admin:true,method:'POST'});check('旧会话不能恢复',(await api('/api/admin/overview',{admin:true})).status===401&&(await api('/api/admin/session',{admin:true})).data.authenticated===false)})
  await group('ADMIN-012',async()=>{for(const user of['','free'])for(const[url,method,body]of[['/api/admin/overview','GET'],['/api/admin/cleanup','POST'],['/api/admin/config','PATCH',{}],['/api/admin/users/member','PATCH',{planId:'team'}],['/api/admin/resources/share/x','DELETE']])check('权限拒绝 '+(user||'游客')+' '+url,(await api(url,{user,method,body})).status===401);check('错误Cookie拒绝',(await api('/api/admin/overview',{headers:{cookie:'kunqiong_admin_session=forged'}})).status===401)})
+ await group('PAY-013',async()=>{
+  const expiry = new Date(Date.now()+90*86400000).toISOString()
+  const past = new Date(Date.now()-86400000).toISOString()
+  const paidAt = new Date(Date.now()-60000).toISOString()
+  const repairedIds = ['repair-one','repair-two','repair-expired','repair-unpaid','repair-admin','repair-disabled','repair-enterprise']
+  for (const id of repairedIds) await ctl({user:id,patch:{planId:'free',planStartedAt:paidAt,planExpiresAt:id==='repair-expired'?past:id==='repair-enterprise'?null:expiry,status:id==='repair-disabled'?'disabled':'active'}})
+  await ctl({user:'repair-retained',patch:{planId:'team',planExpiresAt:expiry}})
+  await ctl({orders:repairedIds.map(id=>({id:'paid-'+id,orderNo:'PAID-'+id,userId:id,planId:id==='repair-enterprise'?'enterprise':'team',status:id==='repair-unpaid'?'pending_payment':'paid',amount:4900,remoteOrderNo:id==='repair-unpaid'?'':'provider-'+id,createdAt:paidAt,updatedAt:paidAt,paidAt:id==='repair-unpaid'?null:paidAt,remoteExpireAt:id==='repair-expired'?past:id==='repair-enterprise'?null:expiry}))})
+  await login()
+  check('管理员可显式撤销历史会员', (await api('/api/admin/users/repair-admin',{admin:true,method:'PATCH',body:{planId:'free'}})).status===200)
+  await stop()
+  const snapshot = stored()
+  for (const session of snapshot.sessions) if ([...repairedIds,'repair-retained'].includes(session.user.id)) session.user={...snapshot.users[session.user.id]}
+  for (const id of ['repair-one','repair-two']) {
+   snapshot.organizations[id]={id,slug:id,name:id,ownerUserId:id,members:[{id:'owner-'+id,userId:id,role:'owner',status:'active'}],createdAt:paidAt}
+  }
+  fs.writeFileSync(metadataFile,JSON.stringify(snapshot))
+  await start({KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST:'true',KUNQIONG_TEST_ENTERPRISE_USER_KEYS:'pricing'})
+  for (const id of ['repair-one','repair-two']) {
+   const me=(await api('/api/auth/me',{user:id})).data.user
+   const team=(await api('/api/account/team/overview',{user:id})).data
+   const workspace=(await api('/api/account/workspace',{user:id})).data
+   check('独立已支付账号恢复团队权益 '+id,me?.planId==='team'&&workspace.plan?.id==='team'&&workspace.planExpiresAt===expiry)
+   check('团队容量恢复为250GB且不混用500GB个人空间 '+id,team.capacity?.totalBytes===250*1024**3&&workspace.capacity?.totalBytes===500*1024**3)
+  }
+  check('正常非白名单付费套餐不被降级', (await api('/api/account/workspace',{user:'repair-retained'})).data.plan?.id==='team')
+  check('白名单测试账号仍可获得演示企业权益', (await api('/api/account/workspace',{user:'pricing'})).data.plan?.id==='enterprise')
+  check('历史已支付企业永久权益可恢复', (await api('/api/account/workspace',{user:'repair-enterprise'})).data.plan?.id==='enterprise'&&stored().users['repair-enterprise'].planExpiresAt===null)
+  for (const id of ['repair-expired','repair-unpaid','repair-admin']) check('过期未支付或管理员撤销不恢复 '+id,(await api('/api/account/workspace',{user:id})).data.plan?.id==='free')
+  check('禁用账号不恢复套餐或访问权限',stored().users['repair-disabled'].planId==='free'&&(await api('/api/account/workspace',{user:'repair-disabled'})).status===401)
+  const live=await create('repair-live','team'),checkout=await confirm('repair-live',live)
+  Object.assign(orders.get(checkout.data.order.remoteOrderNo),{paid:true,expireAt:expiry})
+  check('白名单模式新购买立即生效',(await status('repair-live',live)).data.workspace?.plan.id==='team')
+  const before=stored(), liveExpiry=before.users['repair-live'].planExpiresAt
+  await stop();await start({KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST:'true',KUNQIONG_TEST_ENTERPRISE_USER_KEYS:'pricing'})
+  check('恢复和新购买重启后不丢失或重复续期',stored().users['repair-one'].planId==='team'&&stored().users['repair-one'].planExpiresAt===expiry&&stored().users['repair-live'].planId==='team'&&stored().users['repair-live'].planExpiresAt===liveExpiry)
+  check('恢复不重复创建订单或开通通知',stored().upgradeOrders.length===before.upgradeOrders.length&&JSON.stringify(stored().messages)===JSON.stringify(before.messages))
+  await login();await api('/api/admin/users/repair-one',{admin:true,method:'PATCH',body:{planId:'free'}})
+  await stop();await start({KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST:'true'})
+  check('修复后仍尊重管理员主动撤销',stored().users['repair-one'].planId==='free')
+ })
 }finally{await stop();await new Promise(r=>remote.close(r))}
 const result={executedAt:new Date().toISOString(),passed,failures,cases,fixture,requests,logChecks:{passwordAbsent:!log.includes('secret_fixture_password'),paymentTokenAbsent:!log.includes('payment-fixture-')}}
 if(process.env.ACCEPTANCE_EVIDENCE_DIR){fs.mkdirSync(process.env.ACCEPTANCE_EVIDENCE_DIR,{recursive:true});fs.writeFileSync(path.join(process.env.ACCEPTANCE_EVIDENCE_DIR,'finance-admin-results.json'),JSON.stringify(result,null,2))}

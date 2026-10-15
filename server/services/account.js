@@ -23,7 +23,7 @@ import {
   PAYMENT_QUERY_RETENTION_MS, VERIFICATION_CODE_TTL_MS, WEB_MEMBER_PACKAGE_ENV_KEYS,
   collectionsRoot, configuredAppUrl, configuredCallbackUrls, filesRoot, oauthClientId,
   oauthClientSecret, serverPort, smtpFrom, smtpHost, smtpPassword, smtpPort, smtpSecure,
-  smtpUser, tencentSmsBindTemplateId, tencentSmsRegion, tencentSmsSdkAppId,
+  smtpUser, testEnforceEnterpriseAllowlist, tencentSmsBindTemplateId, tencentSmsRegion, tencentSmsSdkAppId,
   tencentSmsSecretId, tencentSmsSecretKey, tencentSmsSignName, webMemberApiBase,
   webMemberSubsiteName,
 } from '../config.js'
@@ -1261,6 +1261,40 @@ export async function reconcileUserUpgradeOrders(session, force = false) {
       catch { /* Retry on the next interval or a fresh login token. */ }
     }
   } finally { state.running = false; complete() }
+}
+
+// 旧测试白名单曾保留到期日却把已支付用户的套餐改成 free。
+// 启动时仅修复与已确认订单吻合的记录，不重新付款、续期或发送开通通知。
+export function repairLegacyTestPaidPlans() {
+  if (!testEnforceEnterpriseAllowlist) return 0
+  let repaired = 0
+  for (const account of Object.values(metadata.users || {})) {
+    if (account.planId !== 'free' || account.status === 'disabled') continue
+    const candidates = upgradeOrdersForUser(account.id).filter(order => {
+      const plan = configuredAccountPlan(order.planId)
+      const paidAt = new Date(order.paidAt).getTime()
+      if (order.status !== 'paid' || !order.remoteOrderNo || !(order.amount > 0)
+        || plan.id === 'free' || !Number.isFinite(paidAt) || paidAt <= 0 || paidAt > Date.now()) return false
+      const expiry = new Date(order.remoteExpireAt).getTime()
+      if (!plan.permanent && (!Number.isFinite(expiry) || expiry <= Date.now()
+        || expiry !== new Date(account.planExpiresAt).getTime())) return false
+      if (plan.permanent && account.planExpiresAt) return false
+      // 后台主动撤销的权益不属于本次自动修复范围。
+      return !metadata.auditLogs.some(log => log.type === 'admin' && log.action === '更新用户状态或权益'
+        && log.targetId === account.id && log.details?.planId && new Date(log.createdAt).getTime() >= paidAt)
+    }).sort((a, b) => accountPlanRank(b.planId) - accountPlanRank(a.planId)
+      || new Date(b.remoteExpireAt || 0).getTime() - new Date(a.remoteExpireAt || 0).getTime())
+    const order = candidates[0]
+    if (!order) continue
+    account.planId = order.planId
+    account.planStartedAt = account.planStartedAt || order.paidAt
+    account.planExpiresAt = configuredAccountPlan(order.planId).permanent ? null : order.remoteExpireAt
+    account.updatedAt = new Date().toISOString()
+    syncAccountUserSessions(account)
+    repaired++
+  }
+  if (repaired) runtime.metadataNeedsPersist = true
+  return repaired
 }
 
 export function activatePaidUpgradeOrder(order, expireAt = null) {

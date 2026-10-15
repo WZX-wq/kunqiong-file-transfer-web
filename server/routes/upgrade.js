@@ -9,7 +9,7 @@ import {
 import {
   createToken
 } from '../lib/http.js'
-import { integerInput } from '../lib/input-validation.js'
+import { integerInput, objectInput, textInput } from '../lib/input-validation.js'
 
 import {
   normalizeNullablePositiveInteger, normalizePaymentPayload,
@@ -31,9 +31,42 @@ export function registerUpgradeRoutes(app) {
   app.get('/api/account/upgrade-orders', async (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
-    await reconcileUserUpgradeOrders(session)
-    res.json({ orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
-  })
+    try {
+      // Preserve the checkout's legacy response. The order centre uses explicit
+      // pagination and read-only queries; payment verification remains a POST.
+      if (!Object.keys(req.query).length) {
+        await reconcileUserUpgradeOrders(session)
+        return res.json({ orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
+      }
+      objectInput(req.query, ['page', 'limit', 'status', 'q'])
+      const requestedPage = integerInput(req.query.page ?? '1', '页码', 1, 1000000)
+      const limit = integerInput(req.query.limit ?? '10', '每页条数', 1, 50)
+      const status = textInput(req.query.status ?? 'all', '订单状态', 20)
+      if (!['all', 'pending_payment', 'paid', 'canceled', 'expired'].includes(status)) return res.status(400).json({ message: '订单状态不支持' })
+      const query = textInput(req.query.q ?? '', '订单号', 80, { optional: true })
+      if (!/^[a-z0-9_-]*$/i.test(query)) return res.status(400).json({ message: '订单号仅支持字母、数字、短横线和下划线' })
+      const all = upgradeOrdersForUser(session.user.id).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt) || String(a.id).localeCompare(String(b.id)))
+      const counts = { all: all.length, pending_payment: 0, paid: 0, canceled: 0, expired: 0 }
+      for (const order of all) if (Object.hasOwn(counts, order.status)) counts[order.status]++
+      const filtered = all.filter(order => (status === 'all' || order.status === status)
+        && (!query || [order.orderNo, order.remoteOrderNo].some(value => String(value || '').toLowerCase().includes(query.toLowerCase()))))
+      const totalPages = Math.max(1, Math.ceil(filtered.length / limit))
+      const page = Math.min(requestedPage, totalPages)
+      res.json({ orders: filtered.slice((page - 1) * limit, page * limit).map(orderQuerySummary), counts,
+        pagination: { page, limit, total: filtered.length, totalPages } })
+    } catch (error) {
+      res.status(error.status || 500).json({ message: error.status === 400 ? error.message : '订单列表加载失败，请稍后重试' })
+    }
+  })
+
+  app.get('/api/account/upgrade-orders/:orderId', (req, res) => {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    const order = findUpgradeOrder(req.params.orderId, session.user.id)
+    if (!order) return res.status(404).json({ message: '升级订单不存在' })
+    res.json({ order: orderQuerySummary(order) })
+  })
+
   app.get('/api/account/upgrade-pricing', async (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -177,4 +210,9 @@ export function registerUpgradeRoutes(app) {
       res.status(error.status || 502).json({ message: error.message || '支付状态查询失败' })
     }
   })
+}
+
+function orderQuerySummary(order) {
+  const { payment: _payment, ...summary } = upgradeOrderSummary(order)
+  return { ...summary, paymentRequiresLogin: Boolean(order.paymentRequiresLogin) }
 }

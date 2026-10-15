@@ -2,7 +2,7 @@ import React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useRemotePlanPricing } from '../hooks.js'
 import { apiRequest, copyTextToClipboard, mergePlanPricing, upgradeApiRequest } from '../lib/api.js'
-import { FeedbackMessage, PublicShell } from '../components/common.jsx'
+import { ConfirmModal, FeedbackMessage, PublicShell } from '../components/common.jsx'
 import { ArrowLeft, BadgeCheck, BarChart3, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, Link2, ListChecks, PencilLine, RefreshCw, RotateCcw, ScanLine, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
 import { feedbackTone, formatBytes, formatDate, formatPlanPrice } from '../lib/format.js'
 import { PlanSpaceSummary } from '../components/ui.jsx'
@@ -190,7 +190,7 @@ export function WorkspacePage() {
       <div className="workspace-grid">
             <div className="public-card workspace-hero">
               <div><p className="eyebrow">会员与企业版</p><h1>{currentPlanLabel}空间</h1><p>存储空间、保存策略、团队协作能力均由账号权益统一管控，升级后立即生效。</p></div>
-              <a className="secondary-button workspace-back-button" href="/"><ArrowLeft size={15} /> 返回首页</a>
+              <div className="orders-workspace-links"><a className="secondary-button" href="/settings/orders"><Wallet size={15} /> 我的订单</a><a className="secondary-button workspace-back-button" href="/"><ArrowLeft size={15} /> 返回首页</a></div>
             </div>
             <div className="public-card workspace-section workspace-benefits-card">
               <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
@@ -272,7 +272,7 @@ export const accountPlanRank = (planId) => ACCOUNT_PLAN_RANK[planId] ?? 0
 
 export const accountPlanIcon = (planId) => ACCOUNT_PLAN_ICON[planId] || HardDrive
 
-export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
+export function UpgradeModal({ workspace, onClose, onRefresh, onNotify, requireCancelConfirmation = false }) {
   const plan = workspace?.plan || {}
   const localPlans = (workspace?.plans || []).filter((item) => item.id !== 'free')
   const pendingOrder = (workspace?.orders || []).find((order) => order.status === 'pending_payment') || null
@@ -283,6 +283,7 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [cancelConfirmation, setCancelConfirmation] = useState(false)
   const [payType, setPayType] = useState(pendingOrder?.payType || 1)
   const [payment, setPayment] = useState(pendingOrder?.payment || null)
   const attemptedPaymentOrder = useRef(null)
@@ -476,7 +477,7 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
                 <div className="upgrade-order-actions">
                   {!payment && error && <button className="primary-button" onClick={loadPayment} disabled={busy}><RefreshCw size={15} /> {busy ? '正在加载…' : '重新加载支付码'}</button>}
                   {payment && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</button>}
-                  <button className="secondary-button" onClick={cancelOrder} disabled={busy}><X size={15} /> 取消订单</button>
+                  <button className="secondary-button" onClick={() => requireCancelConfirmation ? setCancelConfirmation(true) : cancelOrder()} disabled={busy}><X size={15} /> 取消订单</button>
                 </div>
               ) : (
                 <div className="upgrade-order-actions">
@@ -518,6 +519,7 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
           )}
         </div>
       </div>
+      {cancelConfirmation && <div onMouseDown={event => event.stopPropagation()}><ConfirmModal state={{ title: '确认取消订单？', detail: '取消后此订单将无法继续支付。', cancelText: '暂不取消', confirmText: '确认取消', tone: 'danger' }} onCancel={() => setCancelConfirmation(false)} onConfirm={() => { setCancelConfirmation(false); cancelOrder() }} /></div>}
     </div>
   )
 }

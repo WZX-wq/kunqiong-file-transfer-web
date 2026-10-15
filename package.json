@@ -13,6 +13,7 @@
     "test:audit": "node --test scripts/audit-store.test.mjs && node scripts/verify-audit-persistence.mjs",
     "test:auth": "node scripts/verify-auth-suite.mjs && node scripts/verify-auth-ui.mjs",
     "test:acceptance": "node scripts/verify-finance-admin-suite.mjs && node scripts/verify-finance-admin-ui.mjs && node scripts/verify-nfr-smoke.mjs",
+    "test:orders": "node scripts/verify-orders-ui.mjs",
     "test:team": "node scripts/verify-team-suite.mjs && node scripts/verify-team-permissions.mjs && node scripts/verify-team-ui.mjs",
     "test:messages": "node scripts/verify-message-center.mjs && node scripts/verify-message-delete.mjs",
     "test:collections": "node scripts/verify-collection-suite.mjs && node scripts/verify-collection-deadline-ui.mjs && node scripts/verify-collection-picker-ui.mjs && node scripts/verify-collection-resume-ui.mjs",

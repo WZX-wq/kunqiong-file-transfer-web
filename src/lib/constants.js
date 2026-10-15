@@ -191,6 +191,7 @@ export const SETTINGS_NAV_ITEMS = [
   { key: 'security', label: '账号与安全', icon: ShieldCheck, path: '/settings/security' },
   { key: 'notice', label: '消息通知', icon: Bell, path: '/settings/notice' },
   { key: 'cleanup', label: '文件清理', icon: Trash2, path: '/settings/cleanup' },
+  { key: 'orders', label: '我的订单', icon: FileText, path: '/settings/orders' },
 ]
 
 export const DEFAULT_NOTICE_SETTINGS = {

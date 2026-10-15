@@ -215,7 +215,7 @@ export const JOIN_REQUEST_REJECT_COOLDOWN_MS = 24 * 60 * 60 * 1000
 export const TEST_ENTERPRISE_USER_KEYS = new Set(splitConfigValues(process.env.KUNQIONG_TEST_ENTERPRISE_USER_KEYS || process.env.KUNQIONG_TEST_ENTERPRISE_USER_IDS).map((value) => value.toLowerCase()))
 export const testEnterpriseForAllUsers = process.env.NODE_ENV === 'test'
   && parseBooleanEnv(process.env.KUNQIONG_TEST_ENTERPRISE_ALL, false)
-// 测试服权益白名单模式：仅 KUNQIONG_TEST_ENTERPRISE_USER_KEYS 内的账号为高等级权益，其余强制基础版。
+// 测试服演示权益白名单：仅额外授予指定账号企业权益，其他账号保留真实套餐。
 export const testEnforceEnterpriseAllowlist = process.env.NODE_ENV === 'test'
   && parseBooleanEnv(process.env.KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST, true)
 export const testVerificationDebugMode = process.env.NODE_ENV === 'test'
