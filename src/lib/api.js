@@ -21,10 +21,16 @@ export function createUploadSessionState() {
     sessionId: '',
     fileIndex: 0,
     chunkIndex: 0,
+    chunkSize: 0,
     uploadedBytes: 0,
+    // The transport can retry a chunk after the browser has already displayed
+    // part of it. Keep the visual position monotonic for this upload session;
+    // uploadedBytes remains the server-acknowledged byte count.
+    displayedBytes: 0,
     totalBytes: 0,
     startedAt: 0,
     paused: false,
+    cancelled: false,
     abortCurrent: null,
     activeXhrs: new Set(),
   }
@@ -57,8 +63,8 @@ export function uploadResumeSignature(files, chunkSize, uploadConfig, shareOptio
 }
 
 export function currentSpeed(session, loadedBytes) {
-  const elapsedSeconds = Math.max((Date.now() - session.startedAt) / 1000, 0.3)
-  return loadedBytes / elapsedSeconds
+  const elapsedSeconds = Math.max((Date.now() - (session.speedStartedAt || session.startedAt)) / 1000, 0.3)
+  return Math.max(0, loadedBytes - (session.speedStartBytes || 0)) / elapsedSeconds
 }
 
 // 上传暂停/取消时的专用错误类型：xhrUploadChunk 与 transfer.js 的上传循环共用。
@@ -66,6 +72,13 @@ export class UploadPausedError extends Error {
   constructor() {
     super('上传已暂停')
     this.name = 'UploadPausedError'
+  }
+}
+
+export class UploadCancelledError extends Error {
+  constructor() {
+    super('上传已取消')
+    this.name = 'UploadCancelledError'
   }
 }
 
@@ -83,12 +96,20 @@ export function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkD
     uploadState.activeXhrs = activeXhrs
     activeXhrs.add(xhr)
     uploadState.abortCurrent = () => activeXhrs.forEach((request) => request.abort())
+    let settled = false
     const cleanup = () => {
+      settled = true
       activeXhrs.delete(xhr)
       if (!activeXhrs.size) uploadState.abortCurrent = null
     }
     xhr.open('POST', url)
-    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded) }
+    xhr.upload.onprogress = (event) => {
+      if (settled || uploadState.paused || uploadState.cancelled || !event.lengthComputable) return
+      // XHR measures the multipart request, including its fields and boundaries.
+      // Convert its ratio to file bytes so tiny chunks never exceed their size.
+      const ratio = event.total > 0 ? event.loaded / event.total : event.loaded / Math.max(chunkData.byteLength, 1)
+      onProgress(Math.round(chunkData.byteLength * Math.max(0, Math.min(1, ratio))))
+    }
     xhr.onload = () => {
       cleanup()
       let data = {}
@@ -108,7 +129,7 @@ export function xhrUploadChunk(url, { fileIndex, chunkIndex, totalChunks, chunkD
     }
     xhr.onabort = () => {
       cleanup()
-      reject(uploadState.paused ? new UploadPausedError() : new Error('上传已中断'))
+      reject(uploadState.cancelled ? new UploadCancelledError() : uploadState.paused ? new UploadPausedError() : new Error('上传已中断'))
     }
     xhr.send(body)
   })
@@ -174,10 +195,11 @@ export async function apiRequest(url, options = {}) {
   if (url === '/api/auth/logout' && response.ok) invalidateAccountSession()
   if (!response.ok) {
     if (response.status === 401 && !String(url).startsWith('/api/admin/')) invalidateAccountSession()
-    const error = new Error(data.message || '请求失败')
+    const error = new Error(data.message || ([502, 504].includes(response.status) ? '服务连接暂时中断，请稍后重试' : '请求失败'))
     error.status = response.status
     error.code = data.code || ''
     error.guestQuota = data.guestQuota || null
+    error.scanLimit = data.scanLimit || ''
     throw error
   }
   return data

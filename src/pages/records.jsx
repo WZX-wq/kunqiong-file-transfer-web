@@ -408,7 +408,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
               const statusGroup = recordStatusGroup(record)
               const selected = selectedIds.has(record.id)
               return (
-                <div className={`record-row record-row-enhanced ${selected ? 'selected' : ''}`} key={record.id}>
+                <div className={`record-row record-row-enhanced ${record.scope === 'collect_from_me' ? 'record-submission-row' : ''} ${selected ? 'selected' : ''}`} key={record.id}>
                   <label className="record-check" aria-label={`选择 ${recordDisplayName(record)}`}>
                     <input type="checkbox" checked={selected} onChange={() => toggleRecord(record.id)} />
                   </label>
@@ -423,7 +423,9 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                   </div>
                   <span className="record-expiry">{recordExpiryLabel(record)}</span>
                   <span className={`record-type ${statusGroup}`}>{recordDisplayStatus(record)}</span>
-                  <span className="record-code">{record.code || '-'}</span>
+                  {record.scope === 'collect_from_me' ? (
+                    <button type="button" className="record-code record-submit-button" disabled={!recordLink(record) || !onOpen} aria-label={`${recordOpenLabel(record)}：${recordDisplayName(record)}`} onClick={() => onOpen(record)}><ExternalLink size={14} />{recordOpenLabel(record)}</button>
+                  ) : <span className="record-code">{record.code || '-'}</span>}
                   <div className="menu-wrap row-menu-wrap">
                     {recordPreviewConfigs(record).length > 0 && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
                     <button className="ghost-icon" aria-label={`更多操作：${recordDisplayName(record)}`} onClick={(event) => toggleMenu(record.id, event)}><MoreHorizontal size={17} /></button>

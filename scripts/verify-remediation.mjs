@@ -248,7 +248,7 @@ try {
   const retrievalUi = fs.readFileSync(path.join(root, 'src', 'pages', 'workspace.jsx'), 'utf8')
   check('取件码查找错误可触发收件账号登录并保留取件码', retrievalUi.includes('try { await onFind() } catch (err)') && retrievalUi.includes("setRequiresLogin(err.code === 'directed_login_required')") && retrievalUi.includes("searchParams.set('retrieve', code.trim().toUpperCase())"))
   const scannerConfig = fs.readFileSync(path.join(root, 'deployment', 'clamd.conf'), 'utf8')
-  check('ClamAV scan limit covers maximum supported file size', /MaxFileSize\s+5G/.test(scannerConfig) && /MaxScanSize\s+5G/.test(scannerConfig))
+  check('ClamAV uses the real engine cap and explicit scan time budget', /MaxFileSize\s+2147483645/.test(scannerConfig) && /MaxScanSize\s+5G/.test(scannerConfig) && /MaxScanTime\s+600000/.test(scannerConfig))
   const renew = await api('/api/account/upgrade-orders', { user: 'member', method: 'POST', body: { planId: 'member' } })
   check('Active same-plan renewal creates order', renew.status === 201)
   const [pay1, pay2] = await Promise.all([1, 2].map(() => api(`/api/account/upgrade-orders/${renew.data.order.id}/confirm`, { user: 'member', method: 'POST', body: {} })))

@@ -22,7 +22,7 @@ export function systemConfigError(body, current) {
         for (const [field,v] of Object.entries(plan)) {
           if (field==='totalGb' || field==='totalGB') { if (!numeric(v,0.001,20480,false)) return '套餐容量无效' }
           else if (field==='totalBytes') { if (!numeric(v,1,20480*1024**3)) return '套餐容量无效' }
-          else if (field==='monthlyPrice') { if (!numeric(v,0,Number.MAX_SAFE_INTEGER)) return '套餐价格无效' }
+          else if (field==='monthlyPrice') return '购买价格由会员主站统一管理，请在主站修改'
           else if (field==='validityDays') { if (v!==null && !numeric(v,1,3650)) return '套餐有效期无效' }
           else return '未知套餐配置项'
         }

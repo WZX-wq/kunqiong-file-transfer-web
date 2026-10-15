@@ -308,6 +308,14 @@ h1, h2, p { margin-top: 0; }
 .upload-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; color: #637a74; font-size: 11px; }
 .upload-metrics span { min-width: 0; overflow: hidden; padding: 8px 9px; background: #fff; border: 1px solid #e6f0ed; border-radius: 7px; text-overflow: ellipsis; white-space: nowrap; }
 .upload-error { margin: 10px 0 0; color: #a76458; font-size: 11px; line-height: 1.6; }
+.security-check-status { margin-top: 13px; color: #526b89; font-size: 12px; line-height: 1.65; }
+.security-check-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.security-check-heading span { margin-left: auto; font-variant-numeric: tabular-nums; }
+.security-check-status p { margin: 7px 0 0; }
+.security-check-file { overflow-wrap: anywhere; }
+.security-check-pulse { animation: security-check-pulse 1.8s ease-in-out infinite; }
+@keyframes security-check-pulse { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .security-check-pulse { animation: none; } }
 .upload-control-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 13px; }
 .secondary-button:disabled { cursor: wait; opacity: .58; transform: none; }
 .share-result { padding: 2px 12px; }
@@ -333,6 +341,7 @@ h1, h2, p { margin-top: 0; }
 .notification-list { display: flex; align-items: center; gap: 7px; margin-top: 10px; padding: 11px 13px; color: #54776d; background: #f1f8f5; border: 1px solid #dcece7; border-radius: 8px; font-size: 12px; line-height: 1.5; }
 .notification-list svg { flex: none; color: var(--accent); }
 .notification-list span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-notification-status span { white-space: normal; overflow-wrap: anywhere; }
 .share-icon { display: inline-flex; }
 .consent-line { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 15px; color: #6d7875; font-size: 11px; }
 .consent-line button { padding: 0; color: #5d7c75; background: transparent; }

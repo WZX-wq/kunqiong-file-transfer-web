@@ -110,13 +110,14 @@ const confirmFocus=await mount('/admin');try{
 const configUI=await mount('/admin');try{
  await configUI.click('系统配置');await configUI.click('保存配置');
  let body=configUI.calls.filter(x=>x.url==='/api/admin/config').at(-1)?.body;
+ check('ADMIN-007 不再提供无效价格输入且说明改价入口',!configUI.document.querySelector('input[name$="-price"]')&&configUI.document.querySelector('.admin-plan-config-heading').textContent.includes('如需调整请在主站修改'));
  check('ADMIN-007 默认表单通过实际服务端校验',!!body&&!systemConfigError(body,defaultConfig()));
  check('ADMIN-007 空白套餐覆盖恢复默认且不变为永久',body&&Object.values(body.planOverrides).every(plan=>Object.keys(plan).length===0));
  const input=(name,value)=>{configUI.document.querySelector(`[name="${name}"]`).value=value};
- input('plan-member-gb','150');input('plan-member-price','0');input('plan-member-days','45');await configUI.click('保存配置');
+ input('plan-member-gb','150');input('plan-member-days','45');await configUI.click('保存配置');
  body=configUI.calls.filter(x=>x.url==='/api/admin/config').at(-1)?.body;
- check('ADMIN-007 指定覆盖含零价格保存有效',body&&!systemConfigError(body,defaultConfig())&&body.planOverrides.member.totalGb==='150'&&body.planOverrides.member.monthlyPrice==='0'&&body.planOverrides.member.validityDays==='45');
- input('plan-member-gb','');input('plan-member-price','');input('plan-member-days','');await configUI.click('保存配置');
+ check('ADMIN-007 仅提交有效权益配置',body&&!systemConfigError(body,defaultConfig())&&body.planOverrides.member.totalGb==='150'&&!Object.hasOwn(body.planOverrides.member,'monthlyPrice')&&body.planOverrides.member.validityDays==='45');
+ input('plan-member-gb','');input('plan-member-days','');await configUI.click('保存配置');
  body=configUI.calls.filter(x=>x.url==='/api/admin/config').at(-1)?.body;
  check('ADMIN-007 清空覆盖后可恢复默认',body&&!systemConfigError(body,defaultConfig())&&Object.keys(body.planOverrides.member).length===0);
  check('ADMIN 配置 UI 无运行错误',configUI.errors.length===0);

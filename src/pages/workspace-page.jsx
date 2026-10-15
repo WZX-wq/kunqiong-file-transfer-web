@@ -316,6 +316,7 @@ export function UpgradeModal({ workspace, onClose, onRefresh, onNotify }) {
           onRefresh?.({ silent: true })
         }
         if (result.order?.status === 'paid') {
+          setError('')
           setPayment(null)
           setNotice('支付成功，会员权益已开通')
           onNotify?.('会员权益已开通', 'success')

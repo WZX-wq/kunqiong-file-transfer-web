@@ -49,12 +49,23 @@ async function mount(s, storage = {}, token = 'resume-test') {
       if (!session) { status = 404; data = { message: '上传会话不存在' } }
       else if (options.method === 'DELETE') { s.sessions.delete(session.sessionId); status = 204 }
       else if (match[2]) {
+        if (s.background) {
+          if (!session.completion) {
+            s.scanStarts = (s.scanStarts || 0) + 1
+            session.completion = { status: 'scanning', startedAt: new Date(Date.now() - 62000).toISOString(), currentFile: session.files[0].name, fileIndex: 1, fileCount: session.files.length }
+          }
+          return new Response(JSON.stringify({ completion: session.completion }), { status: 202 })
+        }
+        if (s.holdComplete) { s.holdComplete = false; await new Promise(resolve => { s.releaseComplete = resolve }) }
         const chunks = [...session.chunks].sort(([a], [b]) => a - b).map(([, value]) => value)
         s.completed.push(Buffer.concat(chunks))
         data = { submission: { submittedAt: new Date().toISOString(), files: session.files } }
         status = 201
-      } else if (s.queryError) { status = 503; data = { message: '暂时无法查询进度' } }
-      else data = { sessionId: session.sessionId, chunkSize: session.chunkSize, files: session.files.map((f) => ({ ...f, uploadedChunks: [...session.chunks.keys()] })) }
+      } else {
+        if (s.deferQuery) { s.deferQuery = false; await new Promise(resolve => { s.releaseQuery = resolve }) }
+        if (s.queryError) { status = 503; data = { message: '暂时无法查询进度' } }
+        else data = { sessionId: session.sessionId, completion: session.completion, chunkSize: session.chunkSize, files: session.files.map((f) => ({ ...f, uploadedChunks: [...session.chunks.keys()] })) }
+      }
     }
     return new Response(status === 204 ? null : JSON.stringify(data), { status })
   }
@@ -99,6 +110,42 @@ async function finish(s, f) {
   check('Completed upload has exactly the original bytes', s.completed[0]?.equals(bytes))
   check('Successful submission clears its resume record', !Object.keys(f.storage()).some((key) => key.startsWith('kunqiong_upload_resume')))
 }
+
+const partial = server()
+partial.holdComplete = true
+const partialUI = await mount(partial)
+try {
+  await partialUI.choose([file()]); await partialUI.click('提交文件')
+  await waitFor(() => partial.pending.length >= 2, 'Partial progress chunks start')
+  await partial.pending.find(xhr => xhr.index === 1).accept()
+  const values = []
+  const observer = new partialUI.window.MutationObserver(() => {
+    const label = partialUI.document.querySelector('.progress-label strong')
+    if (label) values.push(Number.parseInt(label.textContent, 10))
+  })
+  observer.observe(partialUI.document.getElementById('root'), { childList: true, subtree: true, characterData: true, attributes: true })
+  partial.pending.find(xhr => xhr.index === 0).upload.onprogress({ lengthComputable: true, loaded: chunkSize * 0.6, total: chunkSize })
+  await delay(30)
+  const before = values.at(-1)
+  check('Partial collection upload counts confirmed and in-flight bytes', before > 50)
+  await partialUI.click('暂停上传')
+  await waitFor(() => partialUI.button('继续上传')?.disabled === false, 'Partial pause settles')
+  check('Collection pause retains the displayed position', values.at(-1) === before)
+  partial.deferQuery = true
+  await partialUI.click('继续上传')
+  await waitFor(() => partial.releaseQuery, 'Resume query is delayed')
+  check('Resume query does not flash zero while waiting for the server', values.at(-1) === before)
+  partial.releaseQuery()
+  await waitFor(() => partial.pending.some(xhr => xhr.index === 0 && !xhr.done), 'Missing collection chunk restarts')
+  partial.pending.find(xhr => xhr.index === 0 && !xhr.done).upload.onprogress({ lengthComputable: true, loaded: chunkSize * 0.1, total: chunkSize })
+  await delay(30)
+  check('Restarting a partial collection chunk does not rewind progress', values.at(-1) >= before)
+  const finished = finish(partial, partialUI)
+  await waitFor(() => partial.releaseComplete && partialUI.document.querySelector('.progress-label strong')?.textContent === '100%', 'Collection reaches finalization after confirmed chunks')
+  partial.releaseComplete(); await finished
+  observer.disconnect()
+  check('Collection progress is monotonic through pause and completion', values.every((value, index) => !index || value >= values[index - 1]) && values.at(-1) === 100)
+} finally { partial.releaseQuery?.(); partial.releaseComplete?.(); partialUI.close() }
 
 const s = server()
 let f = await mount(s)
@@ -160,5 +207,60 @@ try {
   await f.click('放弃本次上传')
   await waitFor(() => early.sessions.size === 0, 'Abandon releases server reservation')
   check('Explicit abandon clears the resume record and selected files', !f.document.querySelector('.file-row') && !Object.keys(f.storage()).some((key) => key.startsWith('kunqiong_upload_resume')))
+} finally { f.close() }
+
+const background = server(); background.background = true
+f = await mount(background)
+try {
+  await f.choose([file()]); await f.click('提交文件')
+  for (let i = 0; i < 100 && !background.sessions.get('session-1')?.completion; i++) {
+    await Promise.all(background.pending.filter(xhr => !xhr.done).map(xhr => xhr.accept())); await delay(20)
+  }
+  await waitFor(() => f.document.querySelector('.security-check-status'), 'Collection displays background checking')
+  check('Collection safety check has elapsed time and no upload ETA', f.document.querySelector('.security-check-status').textContent.includes('已等待 1 分') && f.document.querySelector('.progress-label strong').textContent === '100%')
+  const saved = f.storage(); f.close(); f = await mount(background, saved)
+  await f.choose([file()]); await f.click('继续上传')
+  await waitFor(() => f.document.querySelector('.security-check-status'), 'Refresh reconnects to original check')
+  check('Refresh reconnects to one collection scan without resending bytes', background.scanStarts === 1 && background.uploads.length === 4 && background.sessions.size === 1)
+  const session = background.sessions.get('session-1')
+  session.completion = { ...session.completion, status: 'complete', result: { submission: { submittedAt: new Date().toISOString(), files: session.files } } }
+  await waitFor(() => f.document.body.textContent.includes('提交成功'), 'Collection background result arrives')
+  check('Background collection result clears timer and resume storage', !f.document.querySelector('.security-check-status') && !Object.keys(f.storage()).some(key => key.startsWith('kunqiong_upload_resume')) && !f.errors.length)
+} finally { f.close() }
+const rejected = server(); rejected.background = true
+f = await mount(rejected)
+try {
+  await f.choose([file()]); await f.click('提交文件')
+  for (let i = 0; i < 100 && !rejected.sessions.get('session-1')?.completion; i++) {
+    await Promise.all(rejected.pending.filter(xhr => !xhr.done).map(xhr => xhr.accept())); await delay(20)
+  }
+  const session = rejected.sessions.get('session-1')
+  session.completion = { ...session.completion, status: 'failed', error: { code: 'scan_threat_detected', status: 415, message: '文件扫描发现威胁，已阻止发布' } }
+  await waitFor(() => f.button('风险文件已阻止'), 'Collection blocks detected risk')
+  check('Collection threat cannot be retried and does not claim an upload pause', f.button('风险文件已阻止').disabled && !f.button('继续上传') && f.document.querySelector('.progress-label').textContent.includes('已阻止提交'))
+  check('Collection threat allows abandoning retained files', Boolean(f.button('放弃本次上传')) && !f.document.querySelector('.security-check-status'))
+  await f.click('放弃本次上传')
+  await waitFor(() => !rejected.sessions.size, 'Blocked collection upload discarded')
+  check('Abandoning a blocked collection resets to a fresh upload', Boolean(f.button('提交文件')) && !f.button('风险文件已阻止'))
+} finally { f.close() }
+const exceeded = server(); exceeded.background = true
+f = await mount(exceeded)
+try {
+  const installer = new File([bytes], 'setup.exe', { type: 'application/octet-stream', lastModified: 123 })
+  await f.choose([installer]); await f.click('提交文件')
+  for (let i = 0; i < 100 && !exceeded.sessions.get('session-1')?.completion; i++) {
+    await Promise.all(exceeded.pending.filter(xhr => !xhr.done).map(xhr => xhr.accept())); await delay(20)
+  }
+  const session = exceeded.sessions.get('session-1')
+  const message = '压缩包内的文件数量超过安全扫描上限，请分成多个压缩包再上传'
+  session.completion = { ...session.completion, status: 'failed', error: { code: 'scan_size_limit', scanLimit: 'MaxFiles', status: 415, message } }
+  await waitFor(() => f.document.body.textContent.includes(message), 'Installer limit is visible')
+  check('EXE scan limit is an alert rather than successful submission', f.document.querySelector('.feedback-message.error[role=alert]')?.textContent.includes(message) && !f.document.body.textContent.includes('提交成功'))
+  check('Scan limit preserves 100% transferred bytes and offers a safety-check retry', f.button('重试安全检查') && !f.button('继续上传') && f.document.querySelector('.progress-label strong').textContent === '100%')
+  const saved = f.storage(); f.close(); f = await mount(exceeded, saved)
+  await f.choose([installer])
+  await waitFor(() => f.button('重试安全检查'), 'Refresh restores failed safety check rather than upload pause')
+  check('Refresh preserves scanner reason as an error', f.document.querySelector('.feedback-message.error[role=alert]')?.textContent.includes(message) && !f.button('继续上传'))
+  check('Restoring scan failure does not resend the installer or restart checking', exceeded.uploads.length === 4 && exceeded.scanStarts === 1 && f.errors.length === 0)
 } finally { f.close() }
 console.log(`Collection resume UI: ${passed} passed`)

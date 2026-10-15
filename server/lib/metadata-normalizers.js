@@ -156,11 +156,11 @@ export function normalizePlanOverrides(value = {}) {
   for (const planId of Object.keys(ACCOUNT_PLANS)) {
     const plan = source[planId] && typeof source[planId] === 'object' ? source[planId] : {}
     const totalGb = Number(plan.totalGb ?? plan.totalGB ?? (Number(plan.totalBytes) / 1024 ** 3))
-    const monthlyPrice = Number(plan.monthlyPrice)
     const validityDays = plan.validityDays === null || plan.validityDays === '' ? null : Number(plan.validityDays)
     const normalized = {}
+    // Old local price overrides never changed the provider's payable amount.
+    // Ignore them so saved metadata cannot present a conflicting fallback price.
     if (Number.isFinite(totalGb) && totalGb > 0) normalized.totalBytes = Math.round(Math.min(20480, totalGb) * 1024 ** 3)
-    if (Number.isFinite(monthlyPrice) && monthlyPrice >= 0) normalized.monthlyPrice = Math.round(monthlyPrice)
     if (validityDays === null || (Number.isFinite(validityDays) && validityDays > 0)) normalized.validityDays = validityDays === null ? null : Math.min(3650, Math.floor(validityDays))
     if (Object.keys(normalized).length) overrides[planId] = normalized
   }

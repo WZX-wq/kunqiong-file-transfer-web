@@ -30,7 +30,8 @@ import {
   assertTeamCapacity, assertUniqueTeamResourceNames, assertUploadCapacity,
   cleanupUploadedFiles, createShareFromTempFiles, discardUploadSession, isAllowedType, normalizeUploadChunkSize,
   issueGuestCookie, persistUploadSession, publicShare, publicSubmission, readShareOptions,
-  requireUploadSessionOwner, resolveCollectionSubmitter, uploadSessionSignature, validateCollection
+  requireUploadSessionOwner, assertUploadSessionOwner, publicUploadCompletion, uploadCompletionResult,
+  resolveCollectionSubmitter, uploadSessionSignature, validateCollection
 } from '../services/shares.js'
 import {
   uploadSessions
@@ -88,7 +89,6 @@ export function registerUploadRoutes(app) {
   if (req.body.chunkSize !== undefined) integerInput(req.body.chunkSize, '分片大小', 1, Number.MAX_SAFE_INTEGER, {string:false})
   const sessionId = createToken(18)
   const sessionDirectory = path.join(tempRoot, 'upload-sessions', sessionId)
-  fs.mkdirSync(sessionDirectory, { recursive: true })
   let ownerGuestId = ''
   if (collectionTask && !ownerSession?.user?.id) {
     const existing = readCookie(req, GUEST_ID_COOKIE)
@@ -123,18 +123,28 @@ export function registerUploadRoutes(app) {
     const signature = uploadSessionSignature(session.files)
     for (const [otherId, other] of [...uploadSessions]) {
       if (otherId !== sessionId && other.guestKey === session.guestKey && other.mode === session.mode && other.collectionToken === session.collectionToken && uploadSessionSignature(other.files) === signature) {
-        discardUploadSession(other)
+        if (other.completing) throw httpError(409, '相同文件正在进行安全检查，请等待原上传的结果')
+        if (other.completion?.status !== 'complete') discardUploadSession(other)
       }
     }
   }
   assertUploadCapacity(session)
+  fs.mkdirSync(sessionDirectory, { recursive: true })
   uploadSessions.set(sessionId, session)
   persistUploadSession(session)
   res.status(201).json({ sessionId, chunkSize:session.chunkSize, uploaded: session.files.map((file) => ({ name: file.name, chunks: [] })) })
 })
   app.post('/api/upload-sessions/:sessionId/chunks', requireUploadSessionOwner, chunkUpload.single('chunk'), async (req, res, next) => {
+  let writing = false
   try {
     const session = req.uploadSession
+    if (uploadSessions.get(session.id) !== session) throw httpError(410, '上传会话已取消，请重新开始上传')
+    if (session.completing || session.completion) {
+      cleanupUploadedFiles(req.file ? [req.file] : [])
+      throw httpError(409, '文件已进入安全检查，不能再修改分片')
+    }
+    session.activeWrites = (session.activeWrites || 0) + 1
+    writing = true
     const fileIndex = integerInput(req.body.fileIndex,'文件索引',0,session.files.length-1)
     const chunkIndex = integerInput(req.body.chunkIndex,'分片索引',0,Number.MAX_SAFE_INTEGER)
     const totalChunks = integerInput(req.body.totalChunks,'分片总数',1,Number.MAX_SAFE_INTEGER)
@@ -191,6 +201,9 @@ export function registerUploadRoutes(app) {
   } catch (error) {
     cleanupUploadedFiles(req.file ? [req.file] : [])
     next(error)
+  } finally {
+    if (writing) req.uploadSession.activeWrites = Math.max(0, (req.uploadSession.activeWrites || 0) - 1)
+    if (req.uploadSession.cancelled && !req.uploadSession.activeWrites) discardUploadSession(req.uploadSession)
   }
 })
   app.get('/api/upload-sessions/:sessionId', requireUploadSessionOwner, (req, res) => {
@@ -199,6 +212,7 @@ export function registerUploadRoutes(app) {
     sessionId: session.id,
     chunkSize: session.chunkSize,
     createdAt: session.createdAt,
+    completion: publicUploadCompletion(session, req),
     files: session.files.map((file, fileIndex) => ({
       name: file.name,
       relativePath: file.relativePath,
@@ -212,103 +226,148 @@ export function registerUploadRoutes(app) {
   // 主动中止上传会话：客户端放弃/重开上传时调用，立即释放其预留额度，
   // 避免僵尸会话（中途失败后不再续传的会话）把游客配额占满到 TTL 过期。
   app.delete('/api/upload-sessions/:sessionId', requireUploadSessionOwner, (req, res) => {
+  if (req.uploadSession.completing) throw httpError(409, '文件正在处理，请等待处理结束后再操作')
   discardUploadSession(req.uploadSession)
   res.status(204).end()
 })
   app.post('/api/upload-sessions/:sessionId/complete', requireUploadSessionOwner, async (req, res, next) => {
-  let activeSession
+  const session = req.uploadSession
+  const background = req.body.background === true
   try {
-    const session = req.uploadSession
-    if (session.completing) return res.status(409).json({ message: '此上传正在发布，请稍后重试' })
-    activeSession = session
-    session.completing = true
-    // 恢复的会话也必须经过当前写入校验，不能把旧清单直接当成可信文件元数据。
-    if (!['share','collection','team_resource'].includes(session.mode) || !Array.isArray(session.files) || !session.files.length) throw httpError(400, '上传会话格式不正确，请重新上传')
-    integerInput(session.chunkSize, '分片大小', 1048576, 16777216, {string:false})
-    const checkedFiles = session.files.map(fileMetadataInput)
-    const checkedPaths = relativePathsInput(session.relativePaths, checkedFiles)
-    checkedFiles.forEach((file,index) => { file.relativePath = checkedPaths[index] })
-    uniqueFilePaths(checkedFiles)
-    assertConfiguredUploadLimits(req, checkedFiles)
-    assertUploadCapacity(session, session.id)
-    // 分片直写模式：这里只做完整性校验（逐 index 齐片 + 目标文件大小），
-    // 不再合并 —— 旧版同步合并 5GB 文件会阻塞事件循环 10~35 秒。
-    for (let fileIndex = 0; fileIndex < session.files.length; fileIndex += 1) {
-      const file = session.files[fileIndex]
-      const expectedChunks = Math.max(1, Math.ceil(file.size / session.chunkSize))
-      const hasAllChunks = file.chunks.size === expectedChunks && Array.from({ length: expectedChunks }, (_, index) => index).every((index) => file.chunks.has(index))
-      if (!hasAllChunks) {
-        return res.status(409).json({ message: `${file.name} 还有分片未上传完成` })
-      }
+    if (session.completion) {
+      const retryable = session.completion.status === 'failed' && (['scan_timeout', 'scan_unavailable', 'scan_incomplete', 'scan_size_limit', 'scan_interrupted'].includes(session.completion.error?.code) || [503, 502, 504].includes(session.completion.error?.status))
+      if (!(req.body.retry === true && retryable)) return res.json({ completion: publicUploadCompletion(session, req) })
     }
-
-    const mergedFiles = session.files.map((file, fileIndex) => {
-      const targetPath = path.join(session.directory, `${fileIndex}.target`)
-      if (!fs.existsSync(targetPath)) throw httpError(400, `${file.name} 分片缺失，请重试上传`)
-      if (fs.statSync(targetPath).size !== file.size) {
-        throw httpError(400, `${file.name} 文件大小校验失败，请重新上传`)
-      }
-      return {
-        ...checkedFiles[fileIndex],
-        tempPath: targetPath,
-      }
-    })
-    await assertSafeUploadFiles(mergedFiles)
-    if (session.mode === 'collection') {
-      const task = metadata.collections.find((item) => item.token === session.collectionToken)
-      if (!task) return res.status(404).json({ message: '收集任务不存在' })
-      const access = validateCollection(task)
-      if (!access.ok) return res.status(access.status).json({ message: access.message })
-      assertCollectionFiles(task, mergedFiles)
-      assertUploadCapacity(session, session.id)
-      const participantName = textInput(session.participantName, '提交人名称', 40)
-      const files = mergedFiles.map((file, index) => {
-        const relativePath = file.relativePath
-        const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
-        return { ...file, relativePath, storedName }
+    if (session.completing) return res.status(409).json({ message: '此上传正在发布，请稍后重试' })
+    if (session.activeWrites) throw httpError(409, '分片仍在写入，请稍后重试')
+    const mergedFiles = prepareUpload(req, session)
+    session.completing = true
+    if (background) {
+      session.completion = { status: 'scanning', startedAt: new Date().toISOString(), currentFile: '', fileIndex: 0, fileCount: session.files.length }
+      persistUploadSession(session)
+      // Detach the lengthy scanner request from the browser's HTTP connection.
+      // Repeated starts attach to the same job; GET only reports its state.
+      void completeUpload(req, session, mergedFiles).then(() => {
+        session.completion = { ...session.completion, status: 'complete', finishedAt: new Date().toISOString() }
+      }).catch(error => {
+        // Metadata may already have committed before notification delivery failed.
+        if (uploadCompletionResult(session, req)) {
+          session.completion = { ...session.completion, status: 'complete', finishedAt: new Date().toISOString() }
+        } else {
+          const status = error.status || 500
+          session.completion = { ...session.completion, status: 'failed', finishedAt: new Date().toISOString(), error: {
+            status, message: error.status ? error.message : '文件处理失败，请稍后重试', code: error.code || 'upload_completion_failed',
+            ...(error.scanLimit ? { scanLimit: error.scanLimit } : {}), ...(error.guestQuota ? { guestQuota: error.guestQuota } : {}),
+          } }
+          console.error(JSON.stringify({ event: 'upload_completion_failed', code: session.completion.error.code }))
+        }
+      }).finally(() => {
+        session.completing = false
+        persistUploadSession(session)
       })
-      const submissionId = createToken(12)
-      const submissionDirectory = path.join(collectionsRoot, task.id, submissionId)
-      fs.mkdirSync(submissionDirectory, { recursive: true })
-      const submissionFiles = files.map((file) => {
-        fs.renameSync(file.tempPath, path.join(submissionDirectory, file.storedName))
-        return { name: file.name, relativePath: file.relativePath, storedName: file.storedName, size: file.size, mimeType: file.mimeType, reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt }
-      })
-      const submission = {
-        id: submissionId,
-        participantName,
-        submitterUserId: session.submitterUserId || '',
-        submitterName: session.submitterName || participantName,
-        submittedAt: new Date().toISOString(),
-        files: submissionFiles,
-      }
-      task.submissions.push(submission)
-      addCollectionSubmissionMessage(task, submission, req)
-      addGuestUsage(session.guestKey, submissionFiles)
-      persistMetadata()
+      return res.status(202).json({ completion: publicUploadCompletion(session, req) })
+    }
+    try {
+      const result = await completeUpload(req, session, mergedFiles)
       uploadSessions.delete(session.id)
       removeDirectory(session.directory)
-      return res.status(201).json({ submission: publicSubmission(submission) })
-    }
-    if (session.mode === 'team_resource') {
-      const organization = Object.values(metadata.organizations || {}).find((item) => item.id === session.organizationId)
-      if (!organization) return res.status(404).json({ message: '团队空间不存在' })
-      assertUniqueTeamResourceNames(organization, mergedFiles)
-      assertTeamCapacity(organization, mergedFiles.reduce((sum, file) => sum + file.size, 0))
-    }
-    const share = await createShareFromTempFiles(mergedFiles, {
-      ...session.options,
-      teamResource: session.mode === 'team_resource',
-      teamOrganizationId: session.organizationId,
-    }, req)
-    addGuestUsage(session.guestKey, mergedFiles)
-    uploadSessions.delete(session.id)
-    removeDirectory(session.directory)
-    res.status(201).json({ share: publicShare(share, req, true, true) })
-  } catch (error) {
-    next(error)
-  } finally {
-    if (activeSession) activeSession.completing = false
-  }
+      res.status(201).json(result)
+    } finally { session.completing = false }
+  } catch (error) { next(error) }
 })
+}
+
+function prepareUpload(req, session) {
+  // 恢复的会话也必须经过当前写入校验，不能把旧清单直接当成可信文件元数据。
+  if (!['share','collection','team_resource'].includes(session.mode) || !Array.isArray(session.files) || !session.files.length) throw httpError(400, '上传会话格式不正确，请重新上传')
+  integerInput(session.chunkSize, '分片大小', 1048576, 16777216, {string:false})
+  const checkedFiles = session.files.map(fileMetadataInput)
+  const checkedPaths = relativePathsInput(session.relativePaths, checkedFiles)
+  checkedFiles.forEach((file,index) => { file.relativePath = checkedPaths[index] })
+  uniqueFilePaths(checkedFiles)
+  assertConfiguredUploadLimits(req, checkedFiles)
+  assertUploadCapacity(session, session.id)
+  // 分片直写模式：这里只做完整性校验（逐 index 齐片 + 目标文件大小），
+  // 不再合并 —— 旧版同步合并 5GB 文件会阻塞事件循环 10~35 秒。
+  for (let fileIndex = 0; fileIndex < session.files.length; fileIndex += 1) {
+    const file = session.files[fileIndex]
+    const expectedChunks = Math.max(1, Math.ceil(file.size / session.chunkSize))
+    const hasAllChunks = file.chunks.size === expectedChunks && Array.from({ length: expectedChunks }, (_, index) => index).every((index) => file.chunks.has(index))
+    if (!hasAllChunks) {
+      throw httpError(409, `${file.name} 还有分片未上传完成`)
+    }
+  }
+
+  return session.files.map((file, fileIndex) => {
+    const targetPath = path.join(session.directory, `${fileIndex}.target`)
+    if (!fs.existsSync(targetPath)) throw httpError(400, `${file.name} 分片缺失，请重试上传`)
+    if (fs.statSync(targetPath).size !== file.size) {
+      throw httpError(400, `${file.name} 文件大小校验失败，请重新上传`)
+    }
+    return {
+      ...checkedFiles[fileIndex],
+      tempPath: targetPath,
+    }
+  })
+}
+
+async function completeUpload(req, session, mergedFiles) {
+  await assertSafeUploadFiles(mergedFiles, (file, index, progress) => {
+    if (session.completion) session.completion = { ...session.completion, ...progress, currentFile: file?.name || '', fileIndex: file ? index + 1 : 0 }
+  })
+  assertUploadSessionOwner(session, req)
+  assertServiceWritable(req)
+  if (session.completion) {
+    session.completion = { ...session.completion, status: 'publishing', currentFile: '' }
+    persistUploadSession(session)
+  }
+  if (session.mode === 'collection') {
+    const task = metadata.collections.find((item) => item.token === session.collectionToken)
+    if (!task) throw httpError(404, '收集任务不存在')
+    const access = validateCollection(task)
+    if (!access.ok) throw httpError(access.status, access.message)
+    assertCollectionFiles(task, mergedFiles)
+    assertUploadCapacity(session, session.id)
+    const participantName = textInput(session.participantName, '提交人名称', 40)
+    const files = mergedFiles.map((file, index) => {
+      const relativePath = file.relativePath
+      const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
+      return { ...file, relativePath, storedName }
+    })
+    const submissionId = createToken(12)
+    const submissionDirectory = path.join(collectionsRoot, task.id, submissionId)
+    fs.mkdirSync(submissionDirectory, { recursive: true })
+    const submissionFiles = files.map((file) => {
+      fs.renameSync(file.tempPath, path.join(submissionDirectory, file.storedName))
+      return { name: file.name, relativePath: file.relativePath, storedName: file.storedName, size: file.size, mimeType: file.mimeType, reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt }
+    })
+    const submission = {
+      id: submissionId,
+      uploadSessionId: session.id,
+      participantName,
+      submitterUserId: session.submitterUserId || '',
+      submitterName: session.submitterName || participantName,
+      submittedAt: new Date().toISOString(),
+      files: submissionFiles,
+    }
+    task.submissions.push(submission)
+    addCollectionSubmissionMessage(task, submission, req)
+    addGuestUsage(session.guestKey, submissionFiles)
+    persistMetadata()
+    return { submission: publicSubmission(submission) }
+  }
+  if (session.mode === 'team_resource') {
+    const organization = Object.values(metadata.organizations || {}).find((item) => item.id === session.organizationId)
+    if (!organization) throw httpError(404, '团队空间不存在')
+    assertUniqueTeamResourceNames(organization, mergedFiles)
+    assertTeamCapacity(organization, mergedFiles.reduce((sum, file) => sum + file.size, 0))
+  }
+  const share = await createShareFromTempFiles(mergedFiles, {
+    ...session.options,
+    teamResource: session.mode === 'team_resource',
+    teamOrganizationId: session.organizationId,
+    uploadSessionId: session.id,
+  }, req)
+  addGuestUsage(session.guestKey, mergedFiles)
+  return { share: publicShare(share, req, true, true) }
 }

@@ -26,7 +26,7 @@ async function waitFor(condition, name) {
   for (let i = 0; i < 150; i++) { if (condition()) return; await delay(10) }
   assert.fail(name)
 }
-async function mount({ pending = false, paymentReady = true, confirmationFailures = 0, conflict = false } = {}) {
+async function mount({ pending = false, paymentReady = true, confirmationFailures = 0, statusFailures = 0, conflict = false } = {}) {
   const jsErrors = []
   const console = new VirtualConsole()
   console.on('jsdomError', (error) => jsErrors.push(error))
@@ -77,7 +77,9 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
       if (holdStatus) await new Promise((resolve, reject) => {
         options.signal?.addEventListener('abort', () => { statusAborts++; reject(new window.DOMException('Aborted', 'AbortError')) }, { once: true })
       })
-      payload = { order: workspace.orders[0], ...(workspace.plan.id === 'member' ? { workspace } : {}) }
+      if (statusFailures > 0) {
+        statusFailures--; status = 502; payload = { message: '支付服务返回的套餐有效期无效，请稍后重新查询' }
+      } else payload = { order: workspace.orders[0], ...(workspace.plan.id === 'member' ? { workspace } : {}) }
     } else { status = 404; payload = { message: 'Unexpected fixture request: ' + url } }
     return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } })
   }
@@ -97,7 +99,7 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
     statusCalls: () => statusCalls,
     createCalls: () => createCalls, confirmCalls: () => confirmCalls,
     holdStatus: () => { holdStatus = true }, statusAborts: () => statusAborts,
-    paid: () => { workspace = { ...workspace, plan: plans[1], orders: [{ ...order, status: 'paid' }], paymentReconciliation: { pending: false, requiresLogin: false } } },
+    paid: () => { workspace = { ...workspace, plan: plans[1], orders: [{ ...order, status: 'paid', remoteExpireAt: new Date(Date.now() + 30 * 86400000).toISOString() }], paymentReconciliation: { pending: false, requiresLogin: false } } },
     requiresLogin: () => { workspace.paymentReconciliation = { pending: false, requiresLogin: true } },
     logout: () => { loggedIn = false },
     tick: async (ms) => { for (const timer of [...timers.values()]) if (timer.ms === ms) timer.callback(); await delay(20) },
@@ -196,4 +198,19 @@ try {
   await waitFor(() => pendingFixture.calls() > calls, 'Returning to the workspace refreshes payment state')
   check('Visible workspace resumes payment refresh', true)
 } finally { pendingFixture.close() }
+for (const refresh of ['manual', 'automatic']) {
+  const recovered = await mount({ pending: true, statusFailures: 1 })
+  try {
+    await recovered.click('升级权益', '.workspace-benefits-cta button')
+    await recovered.click('刷新支付状态')
+    check('Payment query failure keeps the original checkout ' + refresh, recovered.text().includes('支付服务返回的套餐有效期无效') && !!recovered.document.querySelector('.upgrade-payment-qr'))
+    recovered.paid()
+    if (refresh === 'manual') await recovered.click('刷新支付状态')
+    else await recovered.tick(2000)
+    await waitFor(() => recovered.document.querySelector('.upgrade-success-view'), 'Paid status restores the success view ' + refresh)
+    check('Successful payment clears the previous error ' + refresh, !recovered.text().includes('支付服务返回的套餐有效期无效') && !recovered.document.querySelector('.upgrade-payment-qr'))
+    check('Successful payment shows a valid expiry ' + refresh, recovered.document.querySelector('.upgrade-success-view').textContent.includes('有效期至') && !/Invalid Date|以主站权益为准/.test(recovered.document.querySelector('.upgrade-success-view').textContent))
+    await waitFor(() => recovered.document.querySelector('.workspace-hero h1')?.textContent === '会员版空间', 'Recovered payment refreshes account entitlements ' + refresh)
+  } finally { recovered.close() }
+}
 console.log(`Payment UI checks: ${passed}/${passed}`)
