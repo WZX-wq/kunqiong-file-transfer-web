@@ -1267,7 +1267,12 @@ export function activatePaidUpgradeOrder(order, expireAt = null) {
   if (order.status === 'paid') return
   let checkedExpiry = null
   if (expireAt !== null && expireAt !== undefined && expireAt !== '') {
-    try { checkedExpiry = dateInput(expireAt,'支付套餐有效期') } catch { throw httpError(502,'支付服务返回的套餐有效期无效，请稍后重新查询') }
+    // The member API returns China local time as Y-m-d H:i:s. Specify the
+    // offset so UTC deployments agree with local ones; keep strict validation.
+    const expiry = typeof expireAt === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(expireAt)
+      ? `${expireAt.replace(' ', 'T')}+08:00`
+      : expireAt
+    try { checkedExpiry = dateInput(expiry,'支付套餐有效期') } catch { throw httpError(502,'支付服务返回的套餐有效期无效，请稍后重新查询') }
   }
   const account = accountUserById(order.userId)
   if (!account) throw httpError(404, '支付用户不存在')
