@@ -410,7 +410,25 @@ function scanResultError(result) {
     if (Object.hasOwn(messages, kind)) error.scanLimit = kind
     return error
   }
-  if (/ FOUND$/.test(result)) return scanError(415, '文件扫描发现威胁，已阻止发布', 'scan_threat_detected')
+  if (/ FOUND$/.test(result)) {
+    // Expose only the detection name, never the scanner's raw output or a server path.
+    const signature = result.match(/^stream: ([A-Za-z0-9][A-Za-z0-9._:+-]{0,199}) FOUND$/)?.[1] || ''
+    const reasons = [
+      [/Eicar/i, '安全检测测试文件', '请移除安全检测测试文件后重新上传。'],
+      [/Encrypted/i, '加密内容无法完成安全检查', '请先解密压缩包或文档，确认内容安全后重新上传。'],
+      [/(?:PUA|PUP|Adware)/i, '疑似捆绑软件或潜在不受欢迎程序', '请从官方来源获取无捆绑版本，并使用杀毒软件检查后重新上传。'],
+      [/Phish/i, '疑似钓鱼内容', '请移除可疑链接或文件，核实来源并完成安全检查后重新上传。'],
+      [/Ransom/i, '疑似勒索软件', '请勿运行该文件；使用杀毒软件隔离处理，并从可信来源重新获取文件。'],
+      [/Trojan/i, '疑似木马程序', '请勿运行该文件；使用杀毒软件隔离处理，并从可信来源重新获取文件。'],
+      [/(?:Virus|Worm)/i, '疑似病毒或蠕虫', '请使用杀毒软件隔离处理，并从可信来源重新获取文件。'],
+      [/(?:Exploit|CVE[-_.])/i, '疑似漏洞利用代码', '请勿打开或运行该文件，核实来源并使用杀毒软件检查。'],
+      [/(?:Macro|VBA)/i, '疑似恶意宏', '请勿启用文档宏；请移除宏或从可信来源获取安全版本。'],
+      [/(?:Broken|Malformed)/i, '文件结构异常', '请重新导出或从可信来源重新获取完整文件，确认安全后再上传。'],
+    ]
+    const [, label, advice] = reasons.find(([pattern]) => pattern.test(signature)) || [null, '命中安全威胁特征', '请移除该文件并使用杀毒软件检查；如有误报，请联系管理员核实检测名称。']
+    const scanFinding = { label, signature, advice }
+    return Object.assign(scanError(415, `${label}${signature ? `（${signature}）` : ''}，已阻止发布`, 'scan_threat_detected'), { scanFinding })
+  }
   return scanError(503, '文件安全扫描未完成，请稍后重试安全检查', 'scan_incomplete')
 }
 
@@ -473,11 +491,15 @@ export async function assertSafeUploadFiles(files = [], onFile) {
     try {
       Object.assign(file, await scanFileBytes(file.tempPath || file.path))
     } catch (error) {
+      // Concurrent identical uploads can share a scanner job. Keep each upload's
+      // filename on its own error rather than mutating that shared verdict.
+      const failure = Object.assign(new Error(error.message), error)
+      if (String(error.code || '').startsWith('scan_')) failure.scanFile = file.relativePath || file.originalname || file.name
       if (error.code === 'scan_threat_detected') {
         file.reviewStatus = 'blocked'
         recordAuditLog({ type: 'security', action: '文件扫描拦截', targetId: file.originalname || file.name })
       }
-      throw error
+      throw failure
     }
   }, { concurrency: scanConcurrency, onProgress: onFile })
 }

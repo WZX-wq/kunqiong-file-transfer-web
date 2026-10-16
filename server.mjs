@@ -282,6 +282,8 @@ app.use((error, req, res, _next) => {
     const payload = { message: error.message || '请求处理失败' }
     if (error.code) payload.code = error.code
     if (error.scanLimit) payload.scanLimit = error.scanLimit
+    if (error.scanFile) payload.scanFile = error.scanFile
+    if (error.scanFinding) payload.scanFinding = error.scanFinding
     if (error.guestQuota) payload.guestQuota = error.guestQuota
     return res.status(error.status).json(payload)
   }

@@ -308,6 +308,10 @@ h1, h2, p { margin-top: 0; }
 .upload-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; color: #637a74; font-size: 11px; }
 .upload-metrics span { min-width: 0; overflow: hidden; padding: 8px 9px; background: #fff; border: 1px solid #e6f0ed; border-radius: 7px; text-overflow: ellipsis; white-space: nowrap; }
 .upload-error { margin: 10px 0 0; color: #a76458; font-size: 11px; line-height: 1.6; }
+.upload-security-failure { min-width: 0; margin-top: 12px; padding: 12px 14px; color: #854c3b; background: #fff7f2; border: 1px solid #ebcfc3; border-radius: 8px; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.upload-security-failure > strong { display: block; color: #9d4736; font-size: 13px; }
+.upload-security-failure p { margin: 6px 0 0; }
+.upload-security-failure code { font-size: inherit; }
 .security-check-status { margin-top: 13px; color: #526b89; font-size: 12px; line-height: 1.65; }
 .security-check-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .security-check-heading span { margin-left: auto; font-variant-numeric: tabular-nums; }

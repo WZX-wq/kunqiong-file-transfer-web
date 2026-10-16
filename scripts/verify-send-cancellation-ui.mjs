@@ -299,9 +299,10 @@ await test('Polled threat verdict is shown without a retry loop', async f => {
   await f.choose([file('blocked.rar')]); await f.start(); await f.s.pending[0].accept()
   await waitFor(() => f.s.sessions.get('session-1')?.completion, 'Scan started')
   const session = f.s.sessions.get('session-1')
-  session.completion = { ...session.completion, status: 'failed', error: { status: 415, code: 'scan_threat_detected', message: '文件扫描发现威胁，已阻止发布' } }
-  await waitFor(() => f.document.querySelector('.upload-error'), 'Polled verdict shown')
-  check('Background threat keeps the specific verdict and no retry action', f.document.querySelector('.upload-error').textContent.includes('文件扫描发现威胁') && !f.button('重试安全检查') && !f.button('重试上传') && f.s.scanStarts === 1)
+  session.completion = { ...session.completion, status: 'failed', error: { status: 415, code: 'scan_threat_detected', message: '疑似木马程序，已阻止发布', scanFile:'blocked.rar', scanFinding:{label:'疑似木马程序',signature:'Win.Trojan.Fixture-1',advice:'请勿运行该文件；使用杀毒软件隔离处理。'} } }
+  await waitFor(() => f.document.querySelector('.upload-security-failure'), 'Polled verdict shown')
+  const details=f.document.querySelector('.upload-security-failure').textContent
+  check('Background threat keeps the specific verdict and no retry action', details.includes('疑似木马程序') && details.includes('blocked.rar') && details.includes('Win.Trojan.Fixture-1') && details.includes('请勿运行') && !f.button('重试安全检查') && !f.button('重试上传') && f.s.scanStarts === 1)
   check('A blocked verdict no longer claims to be waiting', !f.document.querySelector('.upload-metrics').textContent.includes('等待安全检查结果') && f.document.querySelector('.upload-metrics').textContent.includes('已阻止发布'))
 })
 
@@ -326,13 +327,14 @@ await test('Network failure still retries successfully', async f => {
 })
 
 await test('Scan failure retries the saved file without retransmission', async f => {
-  f.s.completeError = { status: 415, data: { code: 'scan_size_limit', scanLimit: 'MaxScanSize', message: '压缩包解压后的总量超过安全扫描上限，请分成多个较小的压缩包再上传' } }
+  f.s.completeError = { status: 415, data: { code: 'scan_size_limit', scanLimit: 'MaxScanSize', scanFile:'large.zip', message: '压缩包解压后的总量超过安全扫描上限，请分成多个较小的压缩包再上传' } }
   await f.choose([file('large.zip', 8 * 1024 * 1024 + 19)]); await f.start()
   await waitFor(() => f.s.pending.length === 2, 'Both large file chunks start')
   await Promise.all(f.s.pending.map(xhr => xhr.accept()))
   await waitFor(() => f.button('重试安全检查'), 'Scan failure is identified separately')
   check('Completed upload shows safety failure rather than upload failure', f.document.querySelector('.progress-label').textContent.includes('上传完成，安全检查未通过') && !f.document.querySelector('.progress-label').textContent.includes('上传失败'))
   check('Scan limit keeps the full progress and original resume session', f.document.querySelector('.progress-label').textContent.includes('100%') && f.window.localStorage.getItem('kunqiong_upload_resume').includes('session-1'))
+  check('Scan limits identify the file and incomplete check without a malware claim',f.document.querySelector('.upload-security-failure').textContent.includes('large.zip') && f.document.querySelector('.upload-security-failure').textContent.includes('解压后的总量') && !f.document.querySelector('.upload-security-failure').textContent.includes('风险类型'))
   f.s.completeError = null; await f.click('重试安全检查')
   await waitFor(() => f.document.querySelector('.share-result'), 'Rescan publishes after configuration recovery')
   check('Scan retry reuses complete bytes without new chunk uploads', f.s.next === 1 && f.s.pending.length === 2 && f.s.completed[0].files[0].bytes.length === 8 * 1024 * 1024 + 19)
@@ -343,8 +345,9 @@ await test('Detected threat is blocked without a retry loop', async f => {
   await f.choose([file('threat.rar')]); await f.start()
   await waitFor(() => f.s.pending.length, 'Threat file uploads')
   await f.s.pending[0].accept()
-  await waitFor(() => f.document.querySelector('.upload-error'), 'Threat result is shown')
-  check('Threat result explains the safety block and next action', f.document.querySelector('.progress-label').textContent.includes('安全检查发现威胁，已阻止发布') && f.document.querySelector('.upload-error').textContent.includes('请移除风险文件'))
+  await waitFor(() => f.document.querySelector('.upload-security-failure'), 'Threat result is shown')
+  check('Threat result explains the safety block and next action', f.document.querySelector('.progress-label').textContent.includes('安全检查发现威胁，已阻止发布') && f.document.querySelector('.upload-security-failure').textContent.includes('请移除风险文件'))
+  check('Legacy verdicts explicitly acknowledge an unavailable detection name',f.document.querySelector('.upload-security-failure').textContent.includes('未提供具体威胁名称'))
   check('Threat is not published or offered repetitive scan retries', f.s.completed.length === 0 && !f.button('重试安全检查') && !f.button('重试上传'))
   await f.click('移除 threat.rar'); f.s.completeError = null
   await f.choose([file('replacement.txt')]); await f.start(); await f.finish()

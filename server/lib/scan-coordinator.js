@@ -53,7 +53,7 @@ export function createScanCoordinator({ scan, concurrency = 3, largeConcurrency 
     const file = await identity(filePath)
     for (const [key, entry] of blocked) if (entry.expires <= now()) blocked.delete(key)
     const cached = blocked.get(file.key)
-    if (cached) throw Object.assign(new Error(cached.message), { status: 415, code: 'scan_threat_detected' })
+    if (cached) throw Object.assign(new Error(cached.message), { status: 415, code: 'scan_threat_detected', ...(cached.scanFinding ? { scanFinding: { ...cached.scanFinding } } : {}) })
     let job = active.get(file.key)
     if (!job) {
       job = limited(async () => {
@@ -64,7 +64,7 @@ export function createScanCoordinator({ scan, concurrency = 3, largeConcurrency 
           return result
         } catch (error) {
           if (error.code === 'scan_threat_detected' && file.stamp === stamp(await fs.promises.stat(filePath))) {
-            blocked.set(file.key, { message: error.message, expires: now() + blockedTtlMs })
+            blocked.set(file.key, { message: error.message, ...(error.scanFinding ? { scanFinding: { ...error.scanFinding } } : {}), expires: now() + blockedTtlMs })
             while (blocked.size > maxBlockedEntries) blocked.delete(blocked.keys().next().value)
           }
           throw error

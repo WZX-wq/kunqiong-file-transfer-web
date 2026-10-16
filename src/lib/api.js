@@ -206,6 +206,8 @@ export async function apiRequest(url, options = {}) {
     error.code = data.code || ''
     error.guestQuota = data.guestQuota || null
     error.scanLimit = data.scanLimit || ''
+    error.scanFile = data.scanFile || ''
+    error.scanFinding = data.scanFinding || null
     throw error
   }
   return data

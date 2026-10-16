@@ -261,6 +261,7 @@ export function registerUploadRoutes(app) {
           session.completion = { ...session.completion, status: 'failed', finishedAt: new Date().toISOString(), error: {
             status, message: error.status ? error.message : '文件处理失败，请稍后重试', code: error.code || 'upload_completion_failed',
             ...(error.scanLimit ? { scanLimit: error.scanLimit } : {}), ...(error.guestQuota ? { guestQuota: error.guestQuota } : {}),
+            ...(error.scanFile ? { scanFile: error.scanFile } : {}), ...(error.scanFinding ? { scanFinding: error.scanFinding } : {}),
           } }
           console.error(JSON.stringify({ event: 'upload_completion_failed', code: session.completion.error.code }))
         }

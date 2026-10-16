@@ -2,7 +2,7 @@ import { AuthButton } from '../components/account.jsx'
 import React from 'react'
 import heroFolder from '../assets/hero-folder.webp'
 import brandLogo from '../assets/brand-logo-header.webp'
-import { SecurityCheckStatus } from '../components/security-check-status.jsx'
+import { SecurityCheckFailure, SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { defaultDeadline, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, MAX_FILE_SIZE, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
 import { useEffect, useRef, useState } from 'react'
@@ -374,7 +374,7 @@ export function WorkspaceApp() {
       }
       const scanFailure = String(error.code || '').startsWith('scan_')
       const threatDetected = error.code === 'scan_threat_detected'
-      setUploadState((current) => ({ ...current, status: 'failed', phase: threatDetected ? '安全检查发现威胁，已阻止发布' : error.completionPending ? '上传完成，暂时无法查询处理结果' : scanFailure ? '上传完成，安全检查未通过' : '上传失败', failurePhase: threatDetected ? 'threat' : error.completionPending ? 'query' : scanFailure ? 'scan' : '', error: error.message }))
+      setUploadState((current) => ({ ...current, status: 'failed', phase: threatDetected ? '安全检查发现威胁，已阻止发布' : error.completionPending ? '上传完成，暂时无法查询处理结果' : scanFailure ? '上传完成，安全检查未通过' : '上传失败', failurePhase: threatDetected ? 'threat' : error.completionPending ? 'query' : scanFailure ? 'scan' : '', error: error.message, errorCode: error.code, scanFile: error.scanFile, scanFinding: error.scanFinding }))
       setToast(error.message)
     } finally {
       session.running = false
@@ -1197,7 +1197,9 @@ export function UploadProgressPanel({ progress, uploadState, isUploading, onPaus
       {uploadState.status === 'finalizing' && <SecurityCheckStatus startedAt={uploadState.checkStartedAt} stage={uploadState.checkStage} currentFile={uploadState.currentFile} fileIndex={uploadState.checkFileIndex} fileCount={uploadState.checkFileCount} completedCount={uploadState.checkCompletedCount} activeCount={uploadState.checkActiveCount} connectionMessage={uploadState.connectionMessage} />}
       {uploadState.currentFile && !checking && <small>当前文件：{uploadState.currentFile}</small>}
       {uploadState.retryCount > 0 && <small>已自动重试 {uploadState.retryCount} 次</small>}
-      {uploadState.error && <p className="upload-error">{uploadState.error}{uploadState.failurePhase === 'threat' && '；请移除风险文件并确认安全后再上传'}</p>}
+      {uploadState.error && (['threat', 'scan'].includes(uploadState.failurePhase)
+        ? <SecurityCheckFailure message={uploadState.error} code={uploadState.errorCode} fileName={uploadState.scanFile} finding={uploadState.scanFinding} />
+        : <p className="upload-error">{uploadState.error}</p>)}
       <div className="upload-control-row">
         {uploadState.status === 'uploading' && <button className="secondary-button" onClick={onPause} disabled={!isUploading}><Pause size={15} /> 暂停</button>}
         {uploadState.status === 'paused' && <button className="primary-button" onClick={onResume}><Play size={15} /> 继续上传</button>}
