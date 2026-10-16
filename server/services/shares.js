@@ -441,6 +441,7 @@ async function scanFileBytesUncached(filePath) {
   let source
   let response = ''
   let timer
+  let scannerFailure
   const verdict = new Promise((resolve, reject) => {
     const fail = (error) => { source?.destroy(); socket.destroy(); reject(error) }
     timer = setTimeout(() => fail(scanError(503, '文件安全扫描超时，请稍后重试安全检查', 'scan_timeout')), scanTimeoutMs)
@@ -453,7 +454,13 @@ async function scanFileBytesUncached(filePath) {
       if (!response.includes('\0')) return
       const result = response.split('\0')[0].trim()
       if (/^stream: OK$/.test(result)) resolve({ reviewStatus: 'approved', scanEngine: 'clamav', scannedAt: new Date().toISOString() })
-      else reject(scanResultError(result))
+      else {
+        // Closing the socket after a verdict can make the producer observe a
+        // secondary write error. Preserve the scanner's security verdict so a
+        // detected threat is returned as 415 instead of becoming a generic 500.
+        scannerFailure = scanResultError(result)
+        reject(scannerFailure)
+      }
       socket.destroy()
     })
   })
@@ -465,7 +472,9 @@ async function scanFileBytesUncached(filePath) {
       if (!socket.write(buffer)) await once(socket, 'drain')
     }
     await write(Buffer.from('zINSTREAM\0'))
-    source = fs.createReadStream(filePath, { highWaterMark: 64 * 1024 })
+    // One MiB chunks reduce framing and loopback writes for large archives
+    // while socket backpressure keeps memory bounded.
+    source = fs.createReadStream(filePath, { highWaterMark: 1024 * 1024 })
     for await (const chunk of source) {
       const length = Buffer.alloc(4)
       length.writeUInt32BE(chunk.length)
@@ -477,6 +486,9 @@ async function scanFileBytesUncached(filePath) {
   try {
     const [result] = await Promise.all([verdict, producer])
     return result
+  } catch (error) {
+    if (scannerFailure) throw scannerFailure
+    throw error
   } finally {
     clearTimeout(timer)
     source?.destroy()

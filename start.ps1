@@ -91,6 +91,19 @@ try {
     }
   }
 
+  # The local Docker scanner is not managed by the test-server deployment script.
+  # Keep its settings aligned before starting the app, so large archives do not
+  # hit clamd's default two-minute limit. External/native scanners remain manual.
+  $scannerHost = if ($env:KUNQIONG_CLAMAV_HOST) { $env:KUNQIONG_CLAMAV_HOST } else { Get-DotEnvValue 'KUNQIONG_CLAMAV_HOST' }
+  $scannerPortText = if ($env:KUNQIONG_CLAMAV_PORT) { $env:KUNQIONG_CLAMAV_PORT } else { Get-DotEnvValue 'KUNQIONG_CLAMAV_PORT' }
+  if ($scannerHost -in @('127.0.0.1', 'localhost', '::1') -and (Get-Command docker -ErrorAction SilentlyContinue)) {
+    $scannerPort = if ($scannerPortText -match '^\d+$') { [int]$scannerPortText } else { 3310 }
+    $scannerContainer = & docker ps --filter 'name=^/kunqiong-clamav$' --format '{{.Names}}' 2>$null
+    if ($LASTEXITCODE -eq 0 -and $scannerContainer -eq 'kunqiong-clamav' -and $scannerPort -eq 3310) {
+      & (Join-Path $root 'scripts/configure-local-scanner.ps1') -Port $scannerPort
+    }
+  }
+
   Stop-PortProcess $frontendPort
   Stop-PortProcess $backendPort
   Stop-ProjectNodeProcesses

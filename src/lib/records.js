@@ -17,6 +17,8 @@ import {
   Download, FileArchive, FileCheck2, FileText, Image as ImageIcon, Inbox, Send, UploadCloud
 } from 'lucide-react'
 
+const SHARE_PERMISSION_RETRY_MS = 5 * 60 * 1000
+
 export function normalizeNoticeSettings(settings = {}) {
   const next = { ...DEFAULT_NOTICE_SETTINGS }
   if (settings && typeof settings === 'object') {
@@ -95,6 +97,12 @@ export async function syncRecord(record) {
 }
 
 export async function syncShareRecord(record) {
+  // Historical shares cannot become available through polling. Keep their
+  // stored metadata and avoid issuing requests that are expected to return 410.
+  if (record.status === '无管理权限') {
+    const lastCheck = new Date(record.updatedAt || 0).getTime()
+    if (Number.isFinite(lastCheck) && Date.now() - lastCheck < SHARE_PERMISSION_RETRY_MS) return record
+  } else if (isExpiredStatus(record.status) || isPastDeadline(record.expiresAt)) return record
   const lookupUrl = record.scope === 'my_sent' && record.manageToken
     ? `/api/shares/manage/${encodeURIComponent(record.manageToken)}`
     : record.shareId
@@ -118,6 +126,12 @@ export async function syncShareRecord(record) {
   } catch (error) {
     // 404 = 资源已被物理删除（过期不会 404）：条目是死链，直接移除而非标记状态
     if (error.status === 404) return null
+    if (record.scope === 'my_sent' && error.status === 403) {
+      return { ...record, status: '无管理权限', updatedAt: new Date().toISOString() }
+    }
+    if (error.status === 410) {
+      return { ...record, status: '已失效', updatedAt: new Date().toISOString() }
+    }
     return markRecordUnavailable(record, error.message)
   }
 }
@@ -624,7 +638,7 @@ export function recordDisplayStatus(record) {
     if (record.status === 'closed') return '已关闭'
     if (record.status === 'expired') return record.kind === 'collection' ? '已截止' : '已关闭'
     if (record.kind === 'share' && ['已失效', '已关闭', '已过期'].includes(record.status)) return '已关闭'
-    if (['已失效', '已关闭', '已过期', '已截止'].includes(record.status)) return record.status
+    if (['已失效', '已关闭', '已过期', '已截止', '无管理权限'].includes(record.status)) return record.status
     return record.kind === 'collection' ? '已截止' : '已过期'
   }
   if (group === 'expiring') return '即将过期'
