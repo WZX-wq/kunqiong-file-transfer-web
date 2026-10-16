@@ -5,6 +5,7 @@ import React, { useEffect } from 'react'
 import brandLogo from '../assets/brand-logo-header.webp'
 import { CheckCircle2, ShieldCheck, Trash2, XCircle } from 'lucide-react'
 import { feedbackTone } from '../lib/format.js'
+import { PublicAccountActions } from './account.jsx'
 export function Toast({ message }) {
   const tone = feedbackTone(message)
   const Icon = tone === 'error' ? XCircle : CheckCircle2
@@ -57,7 +58,7 @@ export function ConfirmModal({ state, onCancel, onConfirm }) {
 }
 
 export function PublicShell({ children, className = '' }) {
-  return <div className={`app-shell public-shell ${className}`}><header className="topbar"><div className="brand"><img className="brand-logo" src={brandLogo} width="480" height="228" alt="鲲穹文件传输" /></div><span className="public-safe"><ShieldCheck size={15} /> 安全临时空间</span></header><main className="public-page">{children}</main><footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span><div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a></div></footer></div>
+  return <div className={`app-shell public-shell ${className}`}><header className="topbar"><div className="brand"><img className="brand-logo" src={brandLogo} width="480" height="228" alt="鲲穹文件传输" /></div><div className="topbar-actions public-topbar-actions"><span className="public-safe"><ShieldCheck size={15} /> 安全临时空间</span><PublicAccountActions /></div></header><main className="public-page">{children}</main><footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span><div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a></div></footer></div>
 }
 
 export function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }

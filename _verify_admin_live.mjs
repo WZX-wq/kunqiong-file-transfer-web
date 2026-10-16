@@ -77,7 +77,7 @@ line('-- 正确口令 --')
 await evalJs(`(() => {
   const set=(el,v)=>{Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value').set.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}))}
   set(document.querySelector('.admin-login-field input[autocomplete=username]'),'ljxkjadmin')
-  set(document.querySelector('.admin-login-password input'),'jxljxkj009900')
+  set(document.querySelector('.admin-login-password input'),process.env.KUNQIONG_ADMIN_PASSWORD)
   document.querySelector('.admin-login-modal').requestSubmit()
 })()`)
 check('★ 正确口令进入线上后台', await waitFor('.admin-page'))

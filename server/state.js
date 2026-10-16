@@ -56,6 +56,10 @@ export const reservedShareCodes = new Set()
 // sessionId → 会话状态；容量预留表用于在传输期间就占住配额
 export const uploadSessions = new Map()
 export const uploadReservations = new Map()
+// 分片会话会把完整目标文件逐步写入临时盘。按会话预留其尚未发布的
+// 总字节数，避免多个「各自合法」的会话累计耗尽物理存储。
+export const uploadDiskReservations = new Map()
+export const uploadIntakeReservations = new Map()
 
 // ── 支付与升级 ───────────────────────────────────────────────
 // 同一订单的互斥锁，防止并发重复处理

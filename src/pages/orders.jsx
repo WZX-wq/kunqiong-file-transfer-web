@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ArrowLeft, ArrowRight, Copy, CreditCard, FileSearch, RefreshCw, Search, X } from 'lucide-react'
 import { UpgradeModal } from './workspace-page.jsx'
 import { apiRequest, copyTextToClipboard } from '../lib/api.js'
@@ -71,7 +72,8 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, onClo
   const hasProviderOrder = Boolean(order.remoteOrderNo)
   const canCheck = hasProviderOrder && ['pending_payment', 'canceled', 'expired'].includes(order.status)
   const actionsDisabled = busy || loading || Boolean(onRetry)
-  return (
+  // Settings panels contain paint/layout; dialogs must escape that clipping boundary.
+  return createPortal(
     <div className="orders-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
       <section className="orders-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="order-detail-title">
         <header className="orders-dialog-header">
@@ -87,10 +89,12 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, onClo
             <div><dt>支付方式</dt><dd>{order.payType === 2 ? '支付宝' : order.payType === 1 ? '微信支付' : '—'}</dd></div>
             <div><dt>支付平台订单号</dt><dd>{order.remoteOrderNo ? <><code>{order.remoteOrderNo}</code><button type="button" className="orders-copy" aria-label="复制支付平台订单号" onClick={() => onCopy(order.remoteOrderNo)}><Copy size={14} /></button></> : '尚未创建支付单'}</dd></div>
             <div><dt>创建时间</dt><dd>{dateLabel(order.createdAt)}</dd></div>
+            {order.paymentExpiresAt && <div><dt>支付截止时间</dt><dd>{dateLabel(order.paymentExpiresAt)}</dd></div>}
             <div><dt>支付确认时间</dt><dd>{order.paidAt ? dateLabel(order.paidAt) : '—'}</dd></div>
             <div><dt>本单有效期</dt><dd>{order.planId === 'enterprise' && order.status === 'paid' ? '永久有效' : dateLabel(order.remoteExpireAt)}</dd></div>
           </dl>
           {order.status === 'paid' && <p className="orders-validity-note">本单有效期为历史支付记录，<a href="/workspace">查看当前会员权益</a>。</p>}
+          {order.status === 'expired' && <p className="orders-inline-note">支付已超时，请重新创建订单支付。如已付款，可核对原单支付状态。</p>}
           {order.paymentRequiresLogin && <div className="orders-inline-note" role="status">此支付单需要重新登录后核对。<button type="button" className="orders-text-action" onClick={onLogin}>重新登录</button></div>}
           {notice && <p className="orders-inline-note success" role="status">{notice}</p>}
           {error && <div className="orders-inline-note error" role="alert">{error}{onRetry && <button className="orders-text-action" onClick={onRetry}>重试详情</button>}</div>}
@@ -102,13 +106,14 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, onClo
           ) : (
             <div className="orders-dialog-actions">
               {order.status === 'pending_payment' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 继续支付</button>}
+              {order.status === 'expired' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 重新下单</button>}
               {canCheck && <button type="button" className="secondary-button" onClick={onCheck} disabled={actionsDisabled}><RefreshCw size={15} className={busy ? 'is-spinning' : ''} /> {busy ? '正在核对…' : '核对支付状态'}</button>}
               {order.status === 'pending_payment' && <button type="button" className="orders-text-action" onClick={onAskCancel} disabled={actionsDisabled}>取消订单</button>}
             </div>
           )}
         </div>
       </section>
-    </div>
+    </div>, document.body
   )
 }
 
@@ -292,7 +297,7 @@ export function OrdersPanel({ user, onLogin }) {
       )}
       {copyNotice && <div className="orders-toast" role="status">{copyNotice}</div>}
       {detail && <OrderDetail order={detail} busy={detailBusy} loading={detailLoading} notice={detailNotice} error={detailError} confirmCancel={confirmCancel} onClose={closeDetail} onCopy={copyOrder} onCheck={checkPayment} onContinue={() => { setUpgradeOrder(detail); closeDetail() }} onAskCancel={() => setConfirmCancel(true)} onDismissCancel={() => setConfirmCancel(false)} onCancel={cancelOrder} onRetry={detailLoadFailed ? () => openDetail(detail) : null} onLogin={startLogin} />}
-      {upgradeOrder && paymentWorkspace && <UpgradeModal workspace={paymentWorkspace} onClose={() => { setUpgradeOrder(null); fetchOrders(undefined, { quiet: true }) }} onRefresh={() => fetchOrders(undefined, { quiet: true })} onNotify={message => setCopyNotice(message)} requireCancelConfirmation />}
+      {upgradeOrder && paymentWorkspace && <UpgradeModal workspace={paymentWorkspace} initialOrder={upgradeOrder} onClose={() => { setUpgradeOrder(null); fetchOrders(undefined, { quiet: true }) }} onRefresh={() => fetchOrders(undefined, { quiet: true })} onNotify={message => setCopyNotice(message)} requireCancelConfirmation />}
     </section>
   )
 }

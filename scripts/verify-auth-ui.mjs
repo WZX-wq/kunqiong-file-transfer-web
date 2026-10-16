@@ -52,6 +52,26 @@ async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,d
 }
 async function scenario(id,fn){try{await fn();cases.push({id,status:'PASS'});console.log('CASE '+id+' PASS')}catch(e){failures.push({id,message:e.message});cases.push({id,status:'FAIL',message:e.message});console.log('CASE '+id+' FAIL: '+e.message)}}
 async function input(f,element,value){assert.ok(element,'input found');Object.getOwnPropertyDescriptor(f.window.HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new f.window.Event('input',{bubbles:true}));await delay(30)}
+await scenario('AUTH-public-header',async()=>{
+ for(const route of ['/team','/workspace','/share/private']) {
+  const f=await mount(route);try{
+   const entry=()=>f.document.querySelector('.topbar [aria-label="个人中心"]');
+   check(route+' keeps the signed-in account entry in the header',entry()?.textContent.includes('alice'));
+   entry().click();await delay(20);
+   const menu=()=>f.document.querySelector('.topbar [role="menu"]');
+   check(route+' account menu includes settings, orders and logout',['账户设置','我的订单','退出登录'].every(label=>menu()?.textContent.includes(label)));
+   f.window.dispatchEvent(new f.window.KeyboardEvent('keydown',{key:'Escape'}));await delay(20);
+   check(route+' Escape closes the account menu',!menu());
+   entry().click();await delay(20);f.document.body.click();await delay(20);
+   check(route+' outside click closes the account menu',!menu());
+   entry().click();await delay(20);await f.click('退出登录');
+   await waitFor(()=>!entry(),'logout clears public account entry');
+   check(route+' logout uses the account API',f.calls.some(call=>call.url==='/api/auth/logout'&&call.method==='POST'));
+   check(route+' anonymous header keeps the login entry',!!f.document.querySelector('.topbar [aria-label="登录"]'));
+   check(route+' account menu has no runtime errors',f.errors.length===0);
+  }finally{f.dom.window.close()}
+ }
+})
 await scenario('AUTH-live-phone-format',async()=>{
  const f=await mount('/settings/security');try{
   await f.click('绑定手机号');const target=f.document.querySelector('.account-bind-modal .settings-input-field input');const send=()=>f.document.querySelector('.account-bind-code-row button'),submit=()=>f.document.querySelector('.account-bind-modal button[type="submit"]')

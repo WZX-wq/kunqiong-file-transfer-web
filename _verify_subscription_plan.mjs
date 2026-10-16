@@ -66,7 +66,8 @@ process.env.KUNQIONG_DB_ENABLED = 'false'
 process.env.PORT = String(PORT)
 process.env.KUNQIONG_STORAGE_DIR = join(SANDBOX, 'storage')
 process.env.KUNQIONG_ADMIN_USERNAME = 'ljxkjadmin'
-process.env.KUNQIONG_ADMIN_PASSWORD = 'jxljxkj009900'
+const fixtureAdminPassword = 'fixture-admin-password-for-tests'
+process.env.KUNQIONG_ADMIN_PASSWORD = fixtureAdminPassword
 
 const serverPath = pathToFileURL(join(SANDBOX, 'server.mjs')).href
 const mod = await import(serverPath)
@@ -143,10 +144,10 @@ line('===== D. canReopen 与特权同口径（owner 登录视图） =====')
 
 line('===== E. 开通授予（admin 设订阅有效期 → payload 保真） =====')
 {
-  const login = await api('POST', '/api/admin/login', null, { username: 'ljxkjadmin', password: 'jxljxkj009900' })
+  const login = await api('POST', '/api/admin/login', null, { username: 'ljxkjadmin', password: process.env.KUNQIONG_ADMIN_PASSWORD })
   const setCookie = login.body ? null : null
   // admin 会话 cookie 从响应头取
-  const res = await fetch(BASE + '/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'ljxkjadmin', password: 'jxljxkj009900' }) })
+  const res = await fetch(BASE + '/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'ljxkjadmin', password: process.env.KUNQIONG_ADMIN_PASSWORD }) })
   const cookie = (res.headers.get('set-cookie') || '').split(';')[0]
   check('管理员登录', res.status === 200, `${res.status}`)
   const in30d = new Date(Date.now() + 30 * 86400000).toISOString()

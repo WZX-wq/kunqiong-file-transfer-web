@@ -1,3 +1,4 @@
+import { localRequest } from '../lib/request-security.js'
 // account 域路由（原 server.mjs 内联处理器，逐行搬迁，未改逻辑）
 //
 // 依赖方向：routes → services → lib → state → config（单向）
@@ -8,12 +9,13 @@ import {
 } from '../config.js'
 
 import {
-  createToken, hashSecret, httpError
+  createToken, httpError
 } from '../lib/http.js'
+import { keyedDigest } from '../lib/private-key.js'
 
 import {
   accountRecordOwnerKey, mergeLoginMethods, normalizeAccountRecords,
-  normalizeFileCleanupSettings, normalizeNotificationSettings
+  normalizeFileCleanupSettings
 } from '../lib/metadata-normalizers.js'
 import { normalizeBindingTarget } from '../lib/contact-input.js'
 import { booleanSettings, objectInput, recordInputs, textInput } from '../lib/input-validation.js'
@@ -61,7 +63,7 @@ export function registerAccountRoutes(app) {
       }
       const state = createToken(32)
       const browserNonce = createToken(48)
-      oauthStates.set(state, { redirectUri, returnTo, browserHash: hashSecret(browserNonce), createdAt: Date.now() })
+      oauthStates.set(state, { redirectUri, returnTo, browserHash: keyedDigest(browserNonce), createdAt: Date.now() })
       setOAuthStateCookie(res, req, state, browserNonce)
 
       const loginUrl = new URL(oauthAuthorizeUrl)
@@ -74,11 +76,13 @@ export function registerAccountRoutes(app) {
       console.error('OAuth login redirect failed:', error)
       return res.redirect(appendAuthResult(returnTo, 'failed', '登录服务暂时不可用，请稍后重试'))
     }
-  })
+  })
+
   app.get('/api/auth/me', (req, res) => {
     const session = authSessionFromRequest(req)
     res.json({ user: session ? publicAccountUser(session.user) : null, sessionExpiresAt: session?.expiresAt || null })
-  })
+  })
+
   app.patch('/api/auth/profile', async (req, res, next) => {
     try {
       const session = authSessionFromRequest(req)
@@ -119,15 +123,20 @@ export function registerAccountRoutes(app) {
       persistMetadata()
       res.json({ user: publicAccountUser(user) })
     } catch(error) { next(error) }
-  })
+  })
+
   app.get('/api/account/file-cleanup-settings', (req, res) => {
     const session = authSessionFromRequest(req)
     if (!session) return res.status(401).json({ message: '请先登录' })
     res.json({ settings: normalizeFileCleanupSettings(accountUserById(session.user.id)?.fileCleanup || session.user.fileCleanup) })
-  })
-  app.put('/api/account/file-cleanup-settings', updateFileCleanupSettings)
-  app.patch('/api/account/file-cleanup-settings', updateFileCleanupSettings)
-  app.post('/api/account/file-cleanup-settings', updateFileCleanupSettings)
+  })
+
+  app.put('/api/account/file-cleanup-settings', updateFileCleanupSettings)
+
+  app.patch('/api/account/file-cleanup-settings', updateFileCleanupSettings)
+
+  app.post('/api/account/file-cleanup-settings', updateFileCleanupSettings)
+
   app.post('/api/auth/code', async (req, res) => {
     try {
       const session = requireAuthSession(req, res)
@@ -141,7 +150,7 @@ export function registerAccountRoutes(app) {
       if (target.type === 'email') {
         const transporter = getEmailTransporter()
         if (!transporter) {
-          if (testVerificationDebugMode) {
+          if (testVerificationDebugMode && localRequest(req) && !req.get('x-forwarded-for')) {
             return res.status(201).json({
               ok: true,
               channel: 'email',
@@ -162,7 +171,7 @@ export function registerAccountRoutes(app) {
             html: `<div style="font-family:Arial,'Microsoft YaHei',sans-serif;color:#243b35;line-height:1.7;"><h2 style="margin:0 0 16px;">绑定邮箱验证码</h2><p>你的鲲穹文件传输邮箱绑定验证码是：</p><p style="font-size:28px;font-weight:700;letter-spacing:6px;color:#128c73;">${debugCode}</p><p style="color:#74877f;">验证码 10 分钟内有效，请勿泄露给他人。</p></div>`,
           })
         } catch (error) {
-          if (testVerificationDebugMode) {
+          if (testVerificationDebugMode && localRequest(req) && !req.get('x-forwarded-for')) {
             return res.status(201).json({
               ok: true,
               channel: 'email',
@@ -182,7 +191,7 @@ export function registerAccountRoutes(app) {
         })
       }
       if (!isTencentSmsConfigured()) {
-        if (testVerificationDebugMode) {
+        if (testVerificationDebugMode && localRequest(req) && !req.get('x-forwarded-for')) {
           return res.status(201).json({
             ok: true,
             channel: 'sms',
@@ -210,7 +219,8 @@ export function registerAccountRoutes(app) {
     } catch (error) {
       res.status(error.status || 500).json({ message: error.message || '验证码生成失败' })
     }
-  })
+  })
+
   app.post('/api/account/bind', (req, res) => {
     try {
       const session = requireAuthSession(req, res)
@@ -234,18 +244,21 @@ export function registerAccountRoutes(app) {
     } catch (error) {
       res.status(error.status || 500).json({ message: error.message || '账号绑定失败' })
     }
-  })
+  })
+
   app.post('/api/auth/logout', (req, res) => {
     const sessionId = readCookie(req, AUTH_COOKIE_NAME)
     if (sessionId) removeAuthSession(sessionId)
     clearAuthCookie(res, req)
     res.json({ ok: true })
-  })
+  })
+
   app.get('/api/account/records', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
     res.json({ records: accountRecordsForUser(session.user.id) })
-  })
+  })
+
   app.put('/api/account/records', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -253,7 +266,8 @@ export function registerAccountRoutes(app) {
     metadata.records[key] = pruneOrphanRecordEntries(normalizeAccountRecords(recordInputs(req.body?.records)))
     persistMetadata()
     res.json({ records: metadata.records[key] })
-  })
+  })
+
   app.post('/api/account/records', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -265,7 +279,8 @@ export function registerAccountRoutes(app) {
     metadata.records[key] = mergeAccountRecords(accountRecordsForUser(session.user.id), incoming)
     persistMetadata()
     res.status(201).json({ records: metadata.records[key] })
-  })
+  })
+
   app.delete('/api/account/records', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -294,12 +309,14 @@ export function registerAccountRoutes(app) {
     }
     persistMetadata()
     res.json({ records: metadata.records[key], purged })
-  })
+  })
+
   app.get('/api/account/messages', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
     res.json({ messages: accountMessagesForUser(session.user.id), settings: accountNotificationSettingsForUser(session.user.id) })
-  })
+  })
+
   app.patch('/api/account/messages', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -307,7 +324,8 @@ export function registerAccountRoutes(app) {
     metadata.messages[key] = accountMessagesForUser(session.user.id).map((message) => ({ ...message, unread: false }))
     persistMetadata()
     res.json({ messages: metadata.messages[key] })
-  })
+  })
+
   app.delete('/api/account/messages', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -315,7 +333,8 @@ export function registerAccountRoutes(app) {
     metadata.messages[key] = []
     persistMetadata()
     res.json({ messages: metadata.messages[key] })
-  })
+  })
+
   app.patch('/api/account/messages/:messageId', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -326,7 +345,8 @@ export function registerAccountRoutes(app) {
     message.readAt = new Date().toISOString()
     persistMetadata()
     res.json({ message, messages })
-  })
+  })
+
   app.delete('/api/account/messages/:messageId', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -334,12 +354,14 @@ export function registerAccountRoutes(app) {
     metadata.messages[key] = accountMessagesForUser(session.user.id).filter((message) => message.id !== req.params.messageId)
     persistMetadata()
     res.json({ messages: metadata.messages[key] })
-  })
+  })
+
   app.get('/api/account/notification-settings', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
     res.json({ settings: accountNotificationSettingsForUser(session.user.id) })
-  })
+  })
+
   app.put('/api/account/notification-settings', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -348,5 +370,6 @@ export function registerAccountRoutes(app) {
     metadata.notificationSettings[key] = booleanSettings(req.body?.settings, Object.keys(current), current)
     persistMetadata()
     res.json({ settings: metadata.notificationSettings[key] })
-  })
+  })
+
 }

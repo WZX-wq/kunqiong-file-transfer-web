@@ -15,7 +15,7 @@ async function waitFor(condition, name) { for (let i = 0; i < 200; i++) { if (co
 const initialOrders = () => Array.from({ length: 24 }, (_, i) => ({ id: 'order-' + i, orderNo: 'WM1-ORDER-' + i,
   remoteOrderNo: 'PROVIDER-' + i, planId: 'team', planLabel: '团队版', amount: 4900, payType: i % 2 ? 2 : 1,
   status: i === 0 ? 'pending_payment' : i === 1 ? 'paid' : i === 2 ? 'expired' : 'canceled',
-  createdAt: '2026-10-15T07:16:07Z', paidAt: i === 1 ? '2026-10-15T08:18:52Z' : null,
+  createdAt: i === 0 ? new Date().toISOString() : '2026-10-15T07:16:07Z', paidAt: i === 1 ? '2026-10-15T08:18:52Z' : null,
   remoteExpireAt: i === 1 ? '2027-01-13T08:18:52Z' : null }))
 async function mount({ url = '/settings/orders', loggedIn = true, failList = false } = {}) {
   const errors = [], requests = [], timers = new Map(), copies = []
@@ -39,7 +39,12 @@ async function mount({ url = '/settings/orders', loggedIn = true, failList = fal
     else if (url === '/api/account/file-cleanup-settings') data = { settings: { enabled: false, days: 3 } }
     else if (url === '/api/guest/quota') data = { enabled: false }
     else if (parsed.pathname === '/api/account/upgrade-orders') {
-      if (failList) { status = 502; data = { message: '订单服务暂不可用' } }
+      if (options.method === 'POST') {
+        const planId = JSON.parse(options.body).planId
+        const order = { ...orders.find(o => o.planId === planId), id: 'replacement-order', orderNo: 'WM1-REPLACEMENT', status: 'pending_payment', createdAt: new Date().toISOString(), remoteOrderNo: '' }
+        orders.unshift(order); data = { order: structuredClone(order) }
+      }
+      else if (failList) { status = 502; data = { message: '订单服务暂不可用' } }
       else {
         const q = parsed.searchParams.get('q') || '', s = parsed.searchParams.get('status') || 'all'
         const filtered = orders.filter(o => (s === 'all' || o.status === s) && (!q || (o.orderNo + o.remoteOrderNo).toLowerCase().includes(q.toLowerCase())))
@@ -167,4 +172,15 @@ try {
 const guest = await mount({ loggedIn: false })
 try { await waitFor(() => guest.text().includes('登录后管理账户设置'), 'Guest state'); check('游客不请求任何订单数据', !guest.requests.some(r => r.url.startsWith('/api/account/upgrade-orders'))) }
 finally { guest.close() }
+const replacement = await mount({ url: '/settings/orders?status=expired' })
+try {
+  await waitFor(() => replacement.document.querySelector('[data-order-id="order-2"]'), 'Expired order is listed')
+  await replacement.click('查看订单 WM1-ORDER-2')
+  await replacement.click('重新下单')
+  check('订单中心的过期单显示超时提示并提供重新创建入口', replacement.text().includes('支付已超时') && !replacement.document.querySelector('iframe, .upgrade-payment-qr'))
+  await replacement.click('重新创建订单')
+  await waitFor(() => replacement.document.querySelector('img[alt="微信支付二维码"]'), 'Order centre replacement checkout is ready')
+  check('订单中心无需套餐列表也能创建新单并显示倒计时', replacement.requests.filter(r => r.url === '/api/account/upgrade-orders' && r.method === 'POST').length === 1 && replacement.requests.some(r => r.url.endsWith('/replacement-order/confirm')) && replacement.text().includes('15:00'))
+  check('重新下单不复用过期支付单', !replacement.requests.some(r => r.url.endsWith('/order-2/confirm')))
+} finally { replacement.close() }
 console.log(JSON.stringify({ passed }))

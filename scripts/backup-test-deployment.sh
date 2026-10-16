@@ -44,7 +44,7 @@ docker run --rm --network none --entrypoint node \
   --mount "type=bind,src=$backup_dir,dst=/backup" \
   "$previous_image" -e '
 const fs = require("fs"), path = require("path");
-for (const name of ["metadata.json", "metadata.json.bak", "metadata.json.revision", "audit"]) {
+for (const name of ["metadata.json", "metadata.json.bak", "metadata.json.revision", ".private-key", "audit"]) {
   const source = path.join("/data", name);
   if (fs.existsSync(source)) fs.cpSync(source, path.join("/backup", name), { recursive: true });
 }

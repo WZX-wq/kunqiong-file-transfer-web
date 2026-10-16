@@ -34,6 +34,7 @@ export function createShareDownloadConfig(share, { password = '', managed = fals
     label: files.length === 1 ? `下载 ${files[0]?.name || '文件'}` : `打包下载 ${files.length} 个文件`,
     totalBytes: totalFileSize(files),
     headers: password ? { 'x-share-password': password } : {},
+    unlockUrl: managed && share.manageToken ? `/api/shares/manage/${encodeURIComponent(share.manageToken)}/unlock` : share.code ? `/api/shares/lookup/${encodeURIComponent(share.code)}` : '',
   }
 }
 
@@ -41,13 +42,16 @@ export function createShareFilePreviewConfig(share, file, fileIndex, options = {
   const base = options.managed && share.manageToken
     ? `${window.location.origin}/api/shares/manage/${encodeURIComponent(share.manageToken)}/files/${fileIndex}`
     : `${window.location.origin}/api/shares/${encodeURIComponent(share.id)}/files/${fileIndex}`
+  const unlockUrl = options.managed && share.manageToken
+    ? `/api/shares/manage/${encodeURIComponent(share.manageToken)}/unlock`
+    : share.code ? `/api/shares/lookup/${encodeURIComponent(share.code)}` : ''
   return {
     file,
     kind: previewKind(file),
     url: `${base}/preview`,
     headers: options.password ? { 'x-share-password': options.password } : undefined,
-    unlockUrl: share.code && !options.managed ? `/api/shares/lookup/${encodeURIComponent(share.code)}` : '',
-    downloadConfig: { ...createShareFileDownloadConfig(share, file, fileIndex, options), url: `${base}/download` },
+    unlockUrl,
+    downloadConfig: { ...createShareFileDownloadConfig(share, file, fileIndex, options), url: `${base}/download`, unlockUrl },
   }
 }
 
@@ -154,7 +158,11 @@ function uploadResumeKey(config = {}) {
 }
 
 export function readUploadResume(config = {}) {
-  try { return JSON.parse(localStorage.getItem(uploadResumeKey(config)) || 'null') } catch { return null }
+  try {
+    const entry = JSON.parse(localStorage.getItem(uploadResumeKey(config)) || 'null')
+    if (entry && JSON.parse(entry.signature)?.version !== 2) { localStorage.removeItem(uploadResumeKey(config)); return null }
+    return entry
+  } catch { localStorage.removeItem(uploadResumeKey(config)); return null }
 }
 
 export function saveUploadResume(files, chunkSize, uploadConfig, shareOptions, sessionId) {

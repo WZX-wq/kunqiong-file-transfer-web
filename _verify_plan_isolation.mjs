@@ -59,7 +59,8 @@ process.env.KUNQIONG_DB_ENABLED = 'false'
 process.env.PORT = String(PORT)
 process.env.KUNQIONG_STORAGE_DIR = join(SANDBOX, 'storage')
 process.env.KUNQIONG_ADMIN_USERNAME = 'ljxkjadmin'
-process.env.KUNQIONG_ADMIN_PASSWORD = 'jxljxkj009900'
+const fixtureAdminPassword = 'fixture-admin-password-for-tests'
+process.env.KUNQIONG_ADMIN_PASSWORD = fixtureAdminPassword
 
 line('===== 个人套餐 vs 团队权益 =====')
 
@@ -141,7 +142,7 @@ line('-- 5. 后台用户列表：成员显示基础版 --')
 {
   const login = await fetch(`${BASE}/api/admin/login`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: 'ljxkjadmin', password: 'jxljxkj009900' }),
+    body: JSON.stringify({ username: 'ljxkjadmin', password: process.env.KUNQIONG_ADMIN_PASSWORD }),
   })
   const cookie = (login.headers.getSetCookie?.() || []).find((c) => c.startsWith('kunqiong_admin_session'))?.split(';')[0] || ''
   check('管理员登录成功', login.status === 200, `status=${login.status}`)

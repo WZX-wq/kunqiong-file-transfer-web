@@ -23,6 +23,7 @@ process.chdir(root)
 
 const require = createRequire(`${root.replace(/\\/g, '/')}/package.json`)
 const parser = require('@babel/parser')
+const traverse = require('@babel/traverse').default
 
 const fails = []
 const fail = (msg) => { fails.push(msg); console.log(`  [FAIL] ${msg}`) }
@@ -73,31 +74,13 @@ function parseModule(mod) {
   const referenced = new Set()   // 被引用的标识符（用于未使用导入检测）
   let hasDefault = false
 
-  // 收集引用：跳过导入声明本身（它不构成“使用”）、非计算属性名、对象字面量的键
-  const collectRefs = (node, parent, key) => {
-    if (!node || typeof node.type !== 'string') return
-    if (node.type === 'ImportDeclaration') return
-    if (node.type === 'Identifier') {
-      const isPropKey = parent && (
-        (parent.type === 'MemberExpression' && key === 'property' && !parent.computed) ||
-        (parent.type === 'ObjectProperty' && key === 'key' && !parent.computed) ||
-        (parent.type === 'ObjectMethod' && key === 'key' && !parent.computed) ||
-        (parent.type === 'ClassMethod' && key === 'key' && !parent.computed)
-      )
-      const isDeclId = parent && key === 'id' &&
-        ['FunctionDeclaration', 'ClassDeclaration', 'VariableDeclarator'].includes(parent.type)
-      const isFnParam = parent && parent.type === 'FunctionDeclaration' && key === 'params'
-      if (!isPropKey && !isDeclId && !isFnParam) referenced.add(node.name)
-      return
-    }
-    if (node.type === 'JSXIdentifier') { referenced.add(node.name); return }
-    for (const k in node) {
-      if (k === 'loc' || k.includes('omment')) continue
-      const v = node[k]
-      if (Array.isArray(v)) { for (const c of v) if (c && typeof c.type === 'string') collectRefs(c, node, k) }
-      else if (v && typeof v.type === 'string') collectRefs(v, node, k)
-    }
-  }
+  const unresolved = new Set()
+  traverse(ast, { ReferencedIdentifier(nodePath) {
+    const name = nodePath.node.name
+    const binding = nodePath.scope.getBinding(name)
+    if (!binding) unresolved.add(name)
+    if (!binding || binding.kind === 'module') referenced.add(name)
+  } })
 
   for (const node of ast.program.body) {
     if (node.type === 'ImportDeclaration') {
@@ -136,7 +119,7 @@ function parseModule(mod) {
   }
 
   // 收集全文件的标识符引用（collectRefs 已跳过 import 声明，故导入绑定不会被误记为“已使用”）
-  collectRefs(ast.program, null, 'program')
+
 
   // 顶层声明（导入绑定除外），用于「缺失导入」检测
   const declared = new Set()
@@ -159,7 +142,7 @@ function parseModule(mod) {
     }
   }
 
-  return { imports, exports, reExports, hasDefault, referenced, declared, lines: code.split(/\r?\n/).length - 1 }
+  return { imports, exports, reExports, hasDefault, referenced, declared, unresolved, lines: code.split(/\r?\n/).length - 1 }
 }
 
 // 相对路径解析：./x → ./x.js | ./x.mjs | ./x/index.js
@@ -247,7 +230,7 @@ for (const [rel, node] of graph) for (const name of node.exports) if (!exportInd
 
 let missingImports = 0
 for (const [rel, node] of graph) {
-  for (const name of node.referenced) {
+  for (const name of node.unresolved) {
     if (node.declared.has(name)) continue
     const owner = exportIndex.get(name)
     if (!owner) continue                 // 非本项目导出（内建/全局/被 import 的第三方），不判
@@ -277,7 +260,7 @@ const stack = []
 function dfs(rel) {
   color.set(rel, GRAY)
   stack.push(rel)
-  for (const dep of graph.get(rel).deps) {
+  for (const dep of (graph.get(rel)?.deps || [])) {
     const c = color.get(dep)
     if (c === GRAY) cycles.push([...stack.slice(stack.indexOf(dep)), dep])
     else if (c === WHITE) dfs(dep)
@@ -380,7 +363,7 @@ const computeDepth = (rel, seen = new Set()) => {
   if (seen.has(rel)) return 0
   seen.add(rel)
   let d = 0
-  for (const dep of graph.get(rel).deps) d = Math.max(d, computeDepth(dep, seen) + 1)
+  for (const dep of (graph.get(rel)?.deps || [])) d = Math.max(d, computeDepth(dep, seen) + 1)
   depth.set(rel, d)
   return d
 }

@@ -1,3 +1,4 @@
+import { allowedOrigins } from './server/lib/request-security.js'
 // 鲲穹文件传输服务端入口
 //
 // 分层说明（重构后）：
@@ -15,7 +16,7 @@ import { limitResourceCreation } from './server/lib/resource-rate-limit.js'
 
 import {
   MAX_FILES, collectionsRoot, distRoot, filesRoot, releaseSha,
-  serverPort, storageRoot, tempRoot, testEnterpriseForAllUsers, testVerificationDebugMode
+  serverHost, serverPort, storageRoot, tempRoot, testEnterpriseForAllUsers, testVerificationDebugMode
 } from './server/config.js'
 
 import {
@@ -27,7 +28,7 @@ import {
 } from './server/state.js'
 
 import {
-  initMetadata, initializeAuditPersistence, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata
+  flushAuditPersistence, initMetadata, initializeAuditPersistence, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata
 } from './server/lib/metadata-store.js'
 
 // normalizeMetadata 的传递依赖闭包已移至 metadata-normalizers.js；
@@ -48,7 +49,7 @@ import {
 } from './server/routes/account.js'
 // 账号域业务逻辑（路由仍在本文件注册，按域逐步迁移）
 import {
-  authSessionFromRequest, cleanupExpired, getRequestOrigin, isSmtpConfigured,
+  authSessionFromRequest, cleanupExpired, isSmtpConfigured,
   isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog, repairLegacyTestAdminPlans, repairLegacyTestPaidPlans
 } from './server/services/account.js'
 
@@ -74,7 +75,6 @@ import {
 } from './server/lib/audit.js'
 
 // 业务常量（套餐、默认通知/清理设置、默认站内消息）已移至 server/config.js。
-const serverHost = process.env.HOST || process.env.KUNQIONG_HOST || '0.0.0.0'
 // 元数据并发写保护：revision 是快照的单调版本号，落盘走 CAS（MySQL 用 WHERE revision = ?）。
 // 冲突时重读远端 + 合并 + 重试，避免多实例各自拿启动时的旧快照互相覆盖。
 // MySQL 模式以数据库为准（metadata.json 只作镜像，不参与 CAS）；
@@ -92,7 +92,7 @@ for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
 installNormalizer(normalizeMetadata)
 // ② 再载入并就地填充 metadata 快照
 initMetadata(normalizeMetadata(await loadMetadata()))
-initializeAuditPersistence(normalizeAuditLog)
+await initializeAuditPersistence(normalizeAuditLog)
 runtime.metadataBaseIds = metadataIdSets(metadata)
 runtime.metadataLocalBaseIds = runtime.metadataBaseIds
 for (const share of metadata.shares) {
@@ -109,7 +109,7 @@ repairLegacyTestPaidPlans()
 if (runtime.metadataNeedsPersist) persistMetadata()
 const app = express()
 
-app.set('trust proxy', true)
+app.set('trust proxy', 'loopback')
 app.use(express.json({ limit: '1mb' }))
 // 4xx/5xx 的 JSON 错误响应统一附带 x-error-message 头：下载预检走 HEAD（无响应体），
 // 前端从该头读取人类可读的错误文案，避免界面出现「下载失败（410）」这类裸状态码。
@@ -117,6 +117,31 @@ app.use(express.json({ limit: '1mb' }))
 app.use((_req, res, next) => {
   const originalJson = res.json.bind(res)
   res.json = (payload) => {
+    if (databasePool && res.statusCode < 400) {
+      Promise.all([runtime.metadataWriteQueue, flushAuditPersistence()]).then(() => {
+        if (res.destroyed) return
+        if (runtime.persistenceError) return originalJsonAfterError()
+        originalJson(payload)
+      }).catch(originalJsonAfterError)
+      return res
+    }
+    return sendJson(payload)
+  }
+  const originalJsonAfterError = () => {
+    res.status(503)
+    return sendJson({ message:'数据保存失败，服务暂不可写，请联系管理员', code:'METADATA_WRITE_FAILED' })
+  }
+  const originalRedirect = res.redirect.bind(res)
+  res.redirect = (...args) => {
+    if (!databasePool || res.headersSent) return originalRedirect(...args)
+    Promise.all([runtime.metadataWriteQueue, flushAuditPersistence()]).then(() => {
+      if (res.headersSent) return
+      if (runtime.persistenceError) return originalJsonAfterError()
+      originalRedirect(...args)
+    }).catch(originalJsonAfterError)
+    return res
+  }
+  const sendJson = (payload) => {
     if (res.statusCode >= 400 && payload && typeof payload === 'object' && payload.message) {
       res.setHeader('x-error-message', encodeURIComponent(String(payload.message)))
     }
@@ -155,16 +180,12 @@ app.use((req, res, next) => {
 })
 
 app.use((req, res, next) => {
+  if (runtime.persistenceError && req.path.startsWith('/api/') && req.path !== '/api/health') return next(runtime.persistenceError)
   if (!req.path.startsWith('/api/') || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next()
   const origin = firstHeader(req.get('origin'))
   if (firstHeader(req.get('sec-fetch-site')) === 'cross-site') return res.status(403).json({ message: '请求来源不受信任' })
   if (!origin) return next()
-  if (origin !== getRequestOrigin(req)) {
-    // vite dev(4173) 经代理转发时会改写 Host，导致 Origin 与站点不一致；
-    // 与 enforceDownloadOrigin 的本机 dev 白名单同口径放行（仅限开发端口，浏览器无法伪造该 Origin）。
-    if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]):4173$/.test(origin)) return next()
-    return res.status(403).json({ message: '请求来源不受信任' })
-  }
+  if (!allowedOrigins(req).has(origin)) return res.status(403).json({ message: '请求来源不受信任' })
   next()
 })
 
@@ -172,7 +193,7 @@ app.use(limitResourceCreation)
 
 app.get('/api/health', (_req, res) => {
   res.json({
-    ok: true,
+    ok: !runtime.persistenceError,
     service: 'kunqiong-local-api',
     release: releaseSha,
     now: new Date().toISOString(),
@@ -304,10 +325,21 @@ async function shutdown(signal) {
   clearInterval(cleanupTimer)
   clearInterval(paymentTimer)
   clearTimeout(initialPaymentCheck)
+  clearInterval(auditLogTimer)
+  const deadline = setTimeout(() => {
+    console.error('服务关闭等待超时，已停止进程')
+    server.closeAllConnections?.()
+    process.exit(1)
+  }, 30000)
+  deadline.unref()
   try {
+    await new Promise((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeIdleConnections?.() })
     await runtime.metadataWriteQueue
+    await flushAuditPersistence()
     if (databasePool) await databasePool.end()
-    server.close(() => process.exit(0))
+    if (runtime.persistenceError) throw runtime.persistenceError
+    clearTimeout(deadline)
+    process.exit(0)
   } catch (error) {
     console.error(`服务关闭时保存数据失败（${signal}）：${error.message || error}`)
     process.exit(1)
@@ -327,4 +359,4 @@ function qrDataUrlAttachment(value) {
   if (!match) return null
   return { filename: 'kunqiong-share-qr.png', content: Buffer.from(match[1], 'base64'), cid: 'kunqiong-share-qr' }
 }
-
+

@@ -166,6 +166,10 @@ try {
 
   // 反向验证：free 用户不能改有效期（正确拒绝）
   const freeShare = await api('/api/shares', { user: 'owner', method: 'POST', body: form('free-no-expiry-change') })
+  const personalManageUnauthenticated = await api(`/api/shares/manage/${freeShare.data.share.manageToken}`)
+  check('账号分享管理链接无会话时拒绝', personalManageUnauthenticated.status === 401, `status=${personalManageUnauthenticated.status}`)
+  const personalManageStranger = await api(`/api/shares/manage/${freeShare.data.share.manageToken}`, { user: 'member' })
+  check('账号分享管理链接拒绝其他账号', personalManageStranger.status === 403, `status=${personalManageStranger.status}`)
   const freePatch = await api(`/api/shares/manage/${freeShare.data.share.manageToken}`, { user: 'owner', method: 'PATCH', body: { expiresAt: new Date(Date.now() + 86400000).toISOString() } })
   check('free 用户改有效期被 403 拒绝', freePatch.status === 403, `status=${freePatch.status}`)
   check('403 文案说明会员特权', /会员|权益/.test(freePatch.data.message || ''), JSON.stringify(freePatch.data))

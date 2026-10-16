@@ -290,21 +290,7 @@ export async function saveCloudNoticeSettings(settings) {
 
 export async function saveCloudFileCleanupSettings(settings) {
   const body = JSON.stringify({ settings: normalizeFileCleanupSettings(settings) })
-  const request = async (method) => {
-    const response = await fetch('/api/account/file-cleanup-settings', {
-      method,
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      const error = new Error(data.message || '请求失败')
-      error.status = response.status
-      throw error
-    }
-    return data
-  }
+  const request = method => apiRequest('/api/account/file-cleanup-settings', { method, body })
   try {
     return await request('PUT')
   } catch (error) {

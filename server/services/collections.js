@@ -17,7 +17,7 @@ import {
   currentCollectionStatus, fileListSize, getOrigin
 } from '../services/account.js'
 import {
-  collectionCapacityBytes, enterpriseOrganizationForUser, normalizeCollectionAllowedTypes, collectionTypesInput,
+  collectionCapacityBytes, enterpriseOrganizationForUser, collectionTypesInput,
   normalizeExpiryInput, publicSubmission, zipEntryPath
 } from '../services/shares.js'
 import { integerInput, objectInput, textInput } from '../lib/input-validation.js'

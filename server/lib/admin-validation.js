@@ -14,7 +14,7 @@ export function systemConfigError(body, current) {
   if (!object(body)) return '系统配置格式不正确'
   for (const [key,value] of Object.entries(body)) {
     if (key==='maintenanceMode') { if (typeof value!=='boolean') return '维护模式必须为布尔值' }
-    else if (bounds[key]) { if (!numeric(value,...bounds[key])) return `配置项 ${key} 超出允许范围` }
+    else if (Object.hasOwn(bounds,key)) { if (!numeric(value,...bounds[key])) return `配置项 ${key} 超出允许范围` }
     else if (key==='planOverrides') {
       if (!object(value)) return '套餐配置格式不正确'
       for (const [id,plan] of Object.entries(value)) {

@@ -20,8 +20,9 @@ import {
 } from '../config.js'
 
 import {
-  createToken, hashSecret,
+  createToken,
 } from './http.js'
+import { keyedDigest } from './private-key.js'
 
 import {
   runtime,
@@ -217,6 +218,11 @@ export function normalizeOrganizations(value = []) {
       slug: trimRecordString(item.slug, 80) || `team-${createToken(6)}`,
       name: trimRecordString(item.name, 80) || '未命名团队',
       ownerUserId: trimRecordString(item.ownerUserId, 120),
+      // 团队套餐属于组织，不随所有权转让而丢失。旧数据没有这些字段时，
+      // account 服务会按所有者/历史成员套餐兼容读取并在后续写入时补齐。
+      teamPlanId: item.teamPlanId ? normalizePlanId(item.teamPlanId) : '',
+      teamPlanStartedAt: normalizeRecordDate(item.teamPlanStartedAt),
+      teamPlanExpiresAt: normalizeRecordDate(item.teamPlanExpiresAt),
       createdAt: normalizeRecordDate(item.createdAt) || new Date().toISOString(),
       updatedAt: normalizeRecordDate(item.updatedAt) || new Date().toISOString(),
       members,
@@ -412,7 +418,10 @@ export function normalizePhoneValue(value) {
 }
 
 export function accountUserIdForTarget(target) {
-  return `contact_${target.type}_${hashSecret(target.value).slice(0, 18)}`
+  // Contact-derived ids can appear in exported metadata. A keyed digest
+  // prevents offline recovery of common email/phone values. Existing users
+  // keep their explicit ids, so this only changes newly materialized records.
+  return `contact_${target.type}_${keyedDigest(target.value).slice(0, 18)}`
 }
 
 export function mergeLoginMethods(...groups) {

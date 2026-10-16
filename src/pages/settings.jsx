@@ -1,6 +1,7 @@
+import { useSerializedPreference } from '../lib/serialized-preference.js'
 import React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_NOTICE_SETTINGS, SETTINGS_NAV_ITEMS } from '../lib/constants.js'
+import { SETTINGS_NAV_ITEMS } from '../lib/constants.js'
 import { bindAccountTarget, normalizeFileCleanupSettings, normalizeNoticeSettings, requestAccountBindCode, saveCloudFileCleanupSettings, saveCloudNoticeSettings } from '../lib/records.js'
 import { ArrowLeft, BadgeCheck, Building2, Check, CheckCircle2, ChevronRight, HardDrive, ImageIcon, KeyRound, RotateCcw, Save, Send, ShieldCheck, Trash2, UserRound, Users, X } from 'lucide-react'
 import { UserAvatar, displayUserSubtitle } from '../components/ui.jsx'
@@ -14,10 +15,15 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
   const [nickname, setNickname] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
-  const [noticeSettings, setNoticeSettings] = useState(DEFAULT_NOTICE_SETTINGS)
-  const [noticeError, setNoticeError] = useState('')
-  const [fileCleanupSettings, setFileCleanupSettings] = useState({ enabled: false, days: 3 })
-  const [fileCleanupError, setFileCleanupError] = useState('')
+  const userRef = useRef(user)
+  userRef.current = user
+  const updatePreferenceUser = (field, saved) => {
+    const next = { ...userRef.current, [field]:saved }
+    userRef.current = next
+    onUpdateUser?.(next)
+  }
+  const [noticeSettings, updateNotice, noticeError] = useSerializedPreference(user?.notificationSettings, user?.id, normalizeNoticeSettings, saveCloudNoticeSettings, saved => updatePreferenceUser('notificationSettings', saved))
+  const [fileCleanupSettings, updateFileCleanup, fileCleanupError] = useSerializedPreference(user?.fileCleanup, user?.id, normalizeFileCleanupSettings, saveCloudFileCleanupSettings, saved => updatePreferenceUser('fileCleanup', saved))
   const [bindingType, setBindingType] = useState('')
   const [avatarPreview, setAvatarPreview] = useState('')
   const [avatarError, setAvatarError] = useState('')
@@ -27,47 +33,11 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
   useEffect(() => {
     if (!user?.id) return
     setNickname(user.nickname || user.username || '')
-    setNoticeSettings(normalizeNoticeSettings(user.notificationSettings))
-    setNoticeError('')
-    setFileCleanupSettings(normalizeFileCleanupSettings(user.fileCleanup))
-    setFileCleanupError('')
     setAvatarPreview('')
     setAvatarError('')
-  }, [user?.id, user?.notificationSettings, user?.fileCleanup])
+  }, [user?.id])
 
-  const updateNoticeSetting = (key) => {
-    setNoticeError('')
-    setNoticeSettings((current) => {
-      const next = { ...current, [key]: !current[key] }
-      saveCloudNoticeSettings(next)
-        .then((data) => {
-          const saved = normalizeNoticeSettings(data.settings)
-          setNoticeSettings(saved)
-          onUpdateUser?.({ ...user, notificationSettings: saved })
-        })
-        .catch((error) => {
-          setNoticeError(error.message || '通知设置保存失败')
-          setNoticeSettings(current)
-        })
-      return next
-    })
-  }
-
-  const updateFileCleanup = async (patch) => {
-    const previous = fileCleanupSettings
-    const next = normalizeFileCleanupSettings({ ...previous, ...patch })
-    setFileCleanupSettings(next)
-    setFileCleanupError('')
-    try {
-      const data = await saveCloudFileCleanupSettings(next)
-      const saved = normalizeFileCleanupSettings(data.settings)
-      setFileCleanupSettings(saved)
-      onUpdateUser?.({ ...user, fileCleanup: saved })
-    } catch (error) {
-      setFileCleanupSettings(previous)
-      setFileCleanupError(error.message || '文件清理设置保存失败')
-    }
-  }
+  const updateNoticeSetting = key => updateNotice(current => ({ ...current, [key]:!current[key] }))
 
   const saveNickname = async (event) => {
     event.preventDefault()
@@ -300,8 +270,8 @@ export function AccountCapacityCard({ user }) {
         <p className="account-team-hint">
           <Users size={13} />
           {user.teamEntitlement.role === 'owner'
-            ? `你是「${user.teamEntitlement.organizationName}」的所有者，团队空间容量 ${formatBytes(user.teamEntitlement.teamSpaceBytes || 0)}`
-            : `已加入「${user.teamEntitlement.organizationName}」，共享团队空间 ${formatBytes(user.teamEntitlement.teamSpaceBytes || 0)}，个人套餐不受影响`}
+            ? `你是「${user.teamEntitlement.organizationName}」的所有者，团队使用${user.teamEntitlement.teamPlanLabel || '团队套餐'}，团队总容量 ${formatBytes(user.teamEntitlement.teamSpaceBytes || 0)}；上方是你的个人套餐容量`
+            : `已加入「${user.teamEntitlement.organizationName}」，共享${user.teamEntitlement.teamPlanLabel || '团队套餐'}团队空间 ${formatBytes(user.teamEntitlement.teamSpaceBytes || 0)}；上方是你的个人套餐容量`}
         </p>
       )}
     </div>

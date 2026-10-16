@@ -17,19 +17,24 @@ copy(path.join(root,'server'),path.join(fixture,'server'))
 fs.copyFileSync(path.join(root,'package.json'),path.join(fixture,'package.json'))
 fs.symlinkSync(path.join(root,'node_modules'),path.join(fixture,'node_modules'),process.platform==='win32'?'junction':'dir')
 const control=`
+const fixtureRealNow = Date.now;
+let fixtureClock = null;
+Date.now = () => fixtureClock ?? fixtureRealNow();
 app.post('/__fixture', async (req,res)=>{
  const {metadata,persistMetadata}=await import('./server/lib/metadata-store.js');
  const state=await import('./server/state.js'); state.remotePricingCache.data=null; state.paymentReconcileAttempts.clear(); state.adminLoginAttempts.clear();
  if(req.body.user) Object.assign(metadata.users[req.body.user],req.body.patch);
  if(req.body.shares) metadata.shares.push(...req.body.shares);
  if(req.body.orders) metadata.upgradeOrders.push(...req.body.orders);
+ if(req.body.orderPatch) Object.assign(metadata.upgradeOrders.find(o=>o.id===req.body.orderPatch.id),req.body.orderPatch.patch);
+ if(Object.hasOwn(req.body,'clock')) fixtureClock=req.body.clock;
  if(req.body.config) metadata.systemConfig=req.body.config;
  persistMetadata(); res.json({ok:true});
 });
 `
 fs.writeFileSync(path.join(fixture,'server.mjs'),fs.readFileSync(path.join(root,'server.mjs'),'utf8').replace('registerWorkspaceRoutes(app)',control+'\nregisterWorkspaceRoutes(app)'))
 const now=new Date().toISOString(),future=new Date(Date.now()+20*86400000).toISOString()
-const ids=['pricing','wechat','alipay','renew','concurrent','status','restart','cancel','expire','invalid','free','member','team','enterprise','managed','stranger','date-sql','date-iso','date-offset','date-retry','history','repair-one','repair-two','repair-expired','repair-unpaid','repair-admin','repair-disabled','repair-enterprise','repair-retained','repair-live']
+const ids=['ttl','ttl-slow','pricing','wechat','alipay','renew','concurrent','status','restart','cancel','expire','invalid','free','member','team','enterprise','managed','stranger','date-sql','date-iso','date-offset','date-retry','history','repair-one','repair-two','repair-expired','repair-unpaid','repair-admin','repair-disabled','repair-enterprise','repair-retained','repair-live']
 const users=Object.fromEntries(ids.map(id=>[id,{id,username:id,nickname:id,planId:['member','team','enterprise'].includes(id)?id:'free',status:'active',planExpiresAt:id==='enterprise'?null:future}]))
 users.renew.planId='member'; users.expire.planId='team'
 fs.mkdirSync(path.join(fixture,'storage'),{recursive:true})
@@ -147,6 +152,43 @@ try{
    check('订单搜索边界拒绝 '+query,(await api('/api/account/upgrade-orders?'+query,{user:'history'})).status===400)
   }
   check('查询不改变订单与权益',stored().upgradeOrders.find(o=>o.id==='history-1').status==='paid'&&stored().users.history.planId==='free')
+ })
+ await group('PAY-TTL',async()=>{
+  try {
+   const o=await create('ttl'),deadline=new Date(o.createdAt).getTime()+15*60000
+   check('订单返回创建后15分钟的支付截止时间',new Date(o.paymentExpiresAt).getTime()===deadline)
+   await ctl({clock:deadline-1})
+   const checkout=await confirm('ttl',o)
+   check('截止前仍可加载支付码',checkout.status===200&&!!checkout.data.payment.qrcode_img_url)
+   const before=seq
+   await ctl({clock:deadline})
+   const rejected=await confirm('ttl',o)
+   check('15分钟边界拒绝继续支付',rejected.status===409&&rejected.data.order?.status==='expired'&&!rejected.data.payment&&seq===before)
+   check('过期响应不再暴露支付码',!rejected.data.order?.payment)
+   const history=await api('/api/account/upgrade-orders?page=1&status=expired',{user:'ttl'})
+   check('订单中心过期状态与统计同步',history.data.counts.expired===1&&history.data.orders[0]?.id===o.id)
+   check('过期仍保留支付对账凭证',!!stored().upgradeOrders.find(x=>x.id===o.id).paymentQueryCredential)
+   await ctl({clock:null})
+   const replacement=await create('ttl')
+   check('过期不必等待30分钟即可重新下单',replacement.id!==o.id&&replacement.status==='pending_payment')
+   orders.get(checkout.data.order.remoteOrderNo).paid=true
+   const recovered=await status('ttl',o)
+   check('临界时刻已付款的过期单仍能开通权益',recovered.data.order?.status==='paid'&&stored().users.ttl.planId==='member')
+   await cancel('ttl',replacement)
+   const slow=await create('ttl-slow')
+   holdCreate=true;createRelease=null
+   const request=confirm('ttl-slow',slow,2)
+   for(let i=0;i<100&&!createRelease;i++)await delay(10)
+   assert.ok(createRelease,'Slow provider request started')
+   await ctl({clock:new Date(slow.createdAt).getTime()+15*60000})
+   holdCreate=false;createRelease()
+   const delayed=await request
+   check('跨过截止时间的慢支付响应不返回收银台',delayed.status===409&&delayed.data.order?.status==='expired'&&!delayed.data.payment&&!delayed.data.order?.payment)
+   const late=await create('ttl-slow')
+   await ctl({orderPatch:{id:late.id,patch:{createdAt:new Date(Date.now()-16*60000).toISOString()}},clock:null})
+   const list=await api('/api/account/upgrade-orders?page=1&status=expired',{user:'ttl-slow'})
+   check('未打开支付窗口的旧订单也会过期',list.data.orders.some(x=>x.id===late.id)&&list.data.counts.pending_payment===0)
+  } finally { holdCreate=false;await ctl({clock:null}) }
  })
  await group('ADMIN-001',async()=>{const r=await login();const c=r.headers.get('set-cookie');check('管理员登录身份',r.data.admin.username==='fixture-admin');check('Cookie安全属性',c.includes('HttpOnly')&&c.includes('SameSite=Lax')&&c.includes('Path=/'));const secure=await api('/api/admin/login',{method:'POST',headers:{'x-forwarded-proto':'https'},body:{username:'fixture-admin',password:'secret_fixture_password'}});check('HTTPS Cookie Secure',secure.headers.get('set-cookie').includes('Secure'))})
  await group('ADMIN-002',async()=>{await stop();await start({KUNQIONG_ADMIN_USERNAME:'',KUNQIONG_ADMIN_PASSWORD:''});const r=await api('/api/admin/login',{method:'POST',body:{username:'admin',password:'admin'}});check('未配置503明确提示',r.status===503&&r.data.message.includes('未配置'));await stop();await start();await login()})

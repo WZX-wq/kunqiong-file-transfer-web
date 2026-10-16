@@ -41,7 +41,7 @@ try {
   await waitHealth()
   const adminRes = await fetch(`${BASE}/api/admin/login`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: 'ljxkjadmin', password: 'jxljxkj009900' }),
+    body: JSON.stringify({ username: 'ljxkjadmin', password: process.env.KUNQIONG_ADMIN_PASSWORD }),
   })
   const adminCookie = cookieOf(adminRes)
   const imp = await fetch(`${BASE}/api/admin/impersonate`, {

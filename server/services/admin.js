@@ -1,3 +1,5 @@
+import { clientAddress } from '../lib/request-security.js'
+import { equalSecret, pruneAttempts } from '../lib/security-primitives.js'
 // 后台管理与身份（OAuth 回调 / 管理员会话 / 运维清理）域业务逻辑
 //
 // 依赖方向（单向）：本模块只依赖 config / state / lib / services/*，
@@ -7,7 +9,6 @@
 // 上一轮误归入 services/shares.js，且被 shares 的 assertServiceWritable 依赖，
 // 搬回会形成 shares→admin 环，故保留在 shares.js，本模块从其 import。
 
-import crypto from 'node:crypto'
 import { integerInput } from '../lib/input-validation.js'
 
 import {
@@ -16,8 +17,9 @@ import {
   oauthClientSecret, oauthTokenUrl
 } from '../config.js'
 import {
-  createToken, firstHeader, hashSecret, removeDirectory
+  createToken, removeDirectory
 } from '../lib/http.js'
+import { keyedDigest } from '../lib/private-key.js'
 import {
   mergeLoginMethods, normalizeSystemConfig, publicUser, trimRecordString
 } from '../lib/metadata-normalizers.js'
@@ -91,21 +93,16 @@ export function clearAdminCookie(res, req) {
 }
 
 export function clientIpFromRequest(req) {
-  return firstHeader(req.get('x-forwarded-for'))?.split(',')[0]?.trim() || req.ip || ''
+  return clientAddress(req)
 }
 
 // 限流用的客户端标识。
 //
-// ⚠️ app.set('trust proxy', true) 会让 x-forwarded-for 被无条件信任，
-// 攻击者只要每次请求换一个伪造的 XFF 值，就能把限流计数摊到无数个「IP」上 ——
-// 后台口令登录的 8 次/10 分钟形同虚设，等于给了无限次暴力破解机会。
-// 因此这里**不采用 XFF 作为限流键**，而是用真实 socket 地址；
-// 同时再挂一个全局桶兜底，防止伪造/代理场景下按 IP 完全绕开。
+// 默认以 socket 地址区分客户端；仅显式配置可信代理时才逐跳读取 XFF，
+// 遇到第一个不可信地址即停止，避免伪造头绕过限流或反代用户共用单桶。
+// 另保留更宽松的全局桶，约束分布式口令尝试。
 export function adminRateLimitKeys(req) {
-  const socketIp = String(req.socket?.remoteAddress || '').trim()
-  const proxyIp = clientIpFromRequest(req)
-  const keys = [`socket:${socketIp || 'unknown'}`]
-  if (proxyIp && proxyIp !== socketIp) keys.push(`proxy:${proxyIp}`)
+  const keys = [`client:${clientIpFromRequest(req)}`]
   // 全局兜底桶：无论怎么伪造上游头，总量都受限，避免完全敞开
   keys.push('global')
   return keys
@@ -113,6 +110,7 @@ export function adminRateLimitKeys(req) {
 
 export function adminLoginRateLimited(req) {
   const now = Date.now()
+  if (!pruneAttempts(adminLoginAttempts, ADMIN_LOGIN_WINDOW_MS, now)) return true
   return adminRateLimitKeys(req).some((key) => {
     const record = adminLoginAttempts.get(key)
     if (!record || now - record.startedAt > ADMIN_LOGIN_WINDOW_MS) return false
@@ -124,6 +122,7 @@ export function adminLoginRateLimited(req) {
 
 export function recordAdminLoginFailure(req) {
   const now = Date.now()
+  if (!pruneAttempts(adminLoginAttempts, ADMIN_LOGIN_WINDOW_MS, now)) return
   for (const key of adminRateLimitKeys(req)) {
     const record = adminLoginAttempts.get(key)
     if (!record || now - record.startedAt > ADMIN_LOGIN_WINDOW_MS) {
@@ -139,10 +138,7 @@ export function clearAdminLoginFailures(req) {
 }
 
 export function safeEqualString(a, b) {
-  const left = Buffer.from(String(a ?? ''), 'utf8')
-  const right = Buffer.from(String(b ?? ''), 'utf8')
-  if (left.length !== right.length) return false
-  return crypto.timingSafeEqual(left, right)
+  return equalSecret(a, b)
 }
 
 // 返回 { session } 表示通过管理员口令校验；返回 null 时已写出错误响应。
@@ -417,7 +413,7 @@ export function consumeOAuthState(state, req) {
   cleanupOAuthStates()
   if (!state || !oauthStates.has(state)) return null
   const value = oauthStates.get(state)
-  if (!req || !value.browserHash || hashSecret(readCookie(req, oauthStateCookieName(state))) !== value.browserHash) return null
+  if (!req || !value.browserHash || keyedDigest(readCookie(req, oauthStateCookieName(state))) !== value.browserHash) return null
   oauthStates.delete(state)
   return value
 }

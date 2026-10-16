@@ -1,3 +1,7 @@
+import { keyedDigest } from '../lib/private-key.js'
+import { upgradePaymentDeadline, upgradePaymentExpired } from '../lib/upgrade-payment.js'
+import { equalSecret, pruneAttempts } from '../lib/security-primitives.js'
+import { clientAddress, requestOrigin, allowedOrigins } from '../lib/request-security.js'
 // 账号域业务逻辑
 //
 // 覆盖：身份与会话（登录/OAuth/验证码/绑定）、账号数据（记录/站内消息/通知设置/清理），
@@ -21,7 +25,7 @@ import {
   JOIN_REQUEST_MAX_PER_WINDOW, JOIN_REQUEST_REJECT_COOLDOWN_MS, JOIN_REQUEST_WINDOW_MS,
   MAX_ACCOUNT_RECORDS, MAX_VERIFICATION_CODES, OAUTH_STATE_TTL_MS,
   PAYMENT_QUERY_RETENTION_MS, VERIFICATION_CODE_TTL_MS, WEB_MEMBER_PACKAGE_ENV_KEYS,
-  collectionsRoot, configuredAppUrl, configuredCallbackUrls, filesRoot, oauthClientId,
+  collectionsRoot, configuredCallbackUrls, filesRoot, oauthClientId,
   oauthClientSecret, serverPort, smtpFrom, smtpHost, smtpPassword, smtpPort, smtpSecure,
   smtpUser, testEnforceEnterpriseAllowlist, tencentSmsBindTemplateId, tencentSmsRegion, tencentSmsSdkAppId,
   tencentSmsSecretId, tencentSmsSecretKey, tencentSmsSignName, webMemberApiBase,
@@ -29,7 +33,7 @@ import {
 } from '../config.js'
 
 import {
-  createToken, firstHeader, firstValue, hashSecret, httpError, removeDirectory,
+  createToken, firstValue, httpError, removeDirectory,
 } from '../lib/http.js'
 
 import {
@@ -46,7 +50,7 @@ import { metadata, persistMetadata, persistAuditLog } from '../lib/metadata-stor
 import { contactMatchesUser } from '../lib/contact-input.js'
 import { booleanInput, dateInput, integerInput, objectInput } from '../lib/input-validation.js'
 
-import { normalizeUploadFileName } from '../lib/upload.js'
+import { normalizeUploadFileName } from '../lib/file-name.js'
 
 import {
   joinRequestAttempts, oauthStates, paymentReconcileAttempts, paymentSessionTokens, remotePricingCache, runtime,
@@ -73,7 +77,6 @@ export function updateFileCleanupSettings(req, res) {
   persistMetadata()
   res.json({ user: publicAccountUser(user), settings })
 }
-
 // 验证码发送限流：同一目标 60s 1 次、同一来源 IP 每小时 10 次，防止刷短信/邮件造成资损。
 const VERIFICATION_TARGET_COOLDOWN_MS = 60 * 1000
 const VERIFICATION_IP_WINDOW_MS = 60 * 60 * 1000
@@ -83,7 +86,7 @@ const VERIFICATION_IP_MAX = 10
 export function verificationSendBlocked(target, req) {
   const now = Date.now()
   const targetKey = `${target.type}:${target.value}`
-  const ipKey = `socket:${String(req.socket?.remoteAddress || '').trim() || 'unknown'}`
+  const ipKey = `client:${clientAddress(req)}:${authSessionFromRequest(req)?.user?.id || 'anonymous'}`
   if (verificationTargetLastSent.size + verificationIpAttempts.size > 5000) {
     for (const [key, at] of verificationTargetLastSent) {
       if (now - at > VERIFICATION_TARGET_COOLDOWN_MS) verificationTargetLastSent.delete(key)
@@ -112,24 +115,39 @@ export function verificationSendBlocked(target, req) {
 
 export function upgradeOrderSummary(order = {}) {
   const plan = configuredAccountPlan(order.planId)
+  const status = order.status === 'pending_payment' && upgradePaymentExpired(order) ? 'expired' : order.status
   return {
     id: order.id,
     orderNo: order.orderNo,
     planId: order.planId,
     planLabel: plan.label,
-    status: order.status,
+    status,
     amount: order.amount,
     payType: order.payType || 1,
     remoteOrderNo: order.remoteOrderNo || '',
     remotePackageId: order.remotePackageId || null,
     remotePackageName: order.remotePackageName || '',
     remotePackageDays: order.remotePackageDays || null,
-    payment: publicPaymentPayload(order.payment),
+    payment: status === 'pending_payment' ? publicPaymentPayload(order.payment) : null,
     createdAt: order.createdAt,
+    paymentExpiresAt: upgradePaymentDeadline(order) ? new Date(upgradePaymentDeadline(order)).toISOString() : null,
     updatedAt: order.updatedAt,
     paidAt: order.paidAt,
     remoteExpireAt: order.remoteExpireAt || null,
   }
+}
+
+export function expirePendingUpgradeOrders(orders = metadata.upgradeOrders) {
+  let changed = false
+  for (const order of orders) {
+    if (order.status !== 'pending_payment' || !upgradePaymentExpired(order)) continue
+    order.status = 'expired'
+    order.updatedAt = new Date().toISOString()
+    // Keep the provider order and credentials to recover payments at the deadline.
+    changed = true
+  }
+  if (changed) persistMetadata()
+  return changed
 }
 
 export function upgradeOrdersForUser(userId) {
@@ -178,7 +196,61 @@ export function accountPersonalPlanForUser(user = {}) {
   return accountPlanForUser(directUser)
 }
 
-// 团队权益 = 用户所在团队空间**所有者**的套餐所提供的协作能力（团队空间容量、
+// 团队套餐是组织资产。新数据直接读取 organization.teamPlan*；旧数据没有组织套餐
+// 字段时，先兼容读取当前所有者，再从活跃成员中寻找仍有效的团队套餐，覆盖历史上
+// 「转让给基础版成员后组织额度被错误读成 0」的存量数据。
+export function organizationTeamPlanForOrganization(organization) {
+  if (!organization) return configuredAccountPlan('free')
+  if (organization.teamPlanId) {
+    return accountPlanForUser({ planId: organization.teamPlanId, planExpiresAt: organization.teamPlanExpiresAt })
+  }
+  const ownerPlan = accountPersonalPlanForUser(accountUserById(organization.ownerUserId) || {})
+  if (ownerPlan.team) return ownerPlan
+  const memberPlans = (organization.members || [])
+    .filter((member) => member.status === 'active' && member.userId !== organization.ownerUserId)
+    .map((member) => accountPersonalPlanForUser(accountUserById(member.userId) || {}))
+    .filter((plan) => plan.team)
+    .sort((a, b) => accountPlanRank(b.id) - accountPlanRank(a.id))
+  return memberPlans[0] || configuredAccountPlan('free')
+}
+
+export function organizationTeamPlanExpiresAtForOrganization(organization) {
+  if (!organization) return null
+  if (organization.teamPlanId) return organization.teamPlanExpiresAt || null
+  const owner = accountUserById(organization.ownerUserId) || {}
+  if (accountPersonalPlanForUser(owner).team) return owner.planExpiresAt || null
+  const candidate = (organization.members || [])
+    .filter((member) => member.status === 'active' && member.userId !== organization.ownerUserId)
+    .map((member) => ({ user: accountUserById(member.userId) || {}, plan: accountPersonalPlanForUser(accountUserById(member.userId) || {}) }))
+    .filter((item) => item.plan.team)
+    .sort((a, b) => accountPlanRank(b.plan.id) - accountPlanRank(a.plan.id))[0]
+  return candidate?.user?.planExpiresAt || null
+}
+
+// 当所有者的个人套餐发生后台调整或支付开通时，同步组织当前套餐；所有权转让本身
+// 不调用此函数，因此转让给基础版成员不会清空原有团队额度。
+export function syncOrganizationTeamPlanFromOwner(userOrId) {
+  const userId = typeof userOrId === 'string' ? userOrId : userOrId?.id
+  if (!userId) return false
+  let changed = false
+  for (const organization of Object.values(metadata.organizations || {})) {
+    if (organization.ownerUserId !== userId) continue
+    const user = accountUserById(userId) || (typeof userOrId === 'object' ? userOrId : {})
+    const plan = accountPersonalPlanForUser(user)
+    const expiresAt = plan.permanent ? null : user.planExpiresAt || null
+    if (organization.teamPlanId !== plan.id || organization.teamPlanExpiresAt !== expiresAt) {
+      organization.teamPlanId = plan.id
+      organization.teamPlanStartedAt = organization.teamPlanStartedAt || user.planStartedAt || new Date().toISOString()
+      organization.teamPlanExpiresAt = expiresAt
+      organization.updatedAt = new Date().toISOString()
+      changed = true
+    }
+  }
+  if (changed) runtime.metadataNeedsPersist = true
+  return changed
+}
+
+// 团队权益 = 用户所在团队空间绑定的组织套餐所提供的协作能力（团队空间容量、
 // 成员管理、企业专属入口）。加入别人的团队只共享这些团队侧能力。
 //
 // ⚠️ 关键约束：**加入团队不得提升个人套餐**。
@@ -189,15 +261,19 @@ export function accountPersonalPlanForUser(user = {}) {
 export function accountTeamEntitlementForUser(user = {}) {
   const userId = typeof user === 'string' ? user : user?.id
   const personal = accountPersonalPlanForUser(user)
-  // 自己就是团队所有者：团队权益即自己套餐的团队能力
   const organization = accountOrganizationForUser(userId)
   if (!organization) return personal
-  if (organization.ownerUserId === userId) return personal
-  // 普通成员：借用所有者套餐里的**团队侧**能力，但仅限 teamSpaceBytes / team 开关，
-  // 绝不把 owner 的 totalBytes / permanent / label 套到成员头上。
-  const ownerPlan = accountPersonalPlanForUser(accountUserById(organization.ownerUserId) || {})
-  if (!ownerPlan.team) return personal
-  return { ...personal, team: true, teamSpaceBytes: Number(ownerPlan.teamSpaceBytes || 0) }
+  const teamPlan = organizationTeamPlanForOrganization(organization)
+  if (!teamPlan.team) return personal
+  // 不把团队套餐的个人 totalBytes / permanent / label 套到成员账号上。
+  return {
+    ...personal,
+    team: true,
+    teamSpaceBytes: Number(teamPlan.teamSpaceBytes || 0),
+    teamPlanId: teamPlan.id,
+    teamPlanLabel: teamPlan.label,
+    teamPlanExpiresAt: organizationTeamPlanExpiresAtForOrganization(organization),
+  }
 }
 
 // 对外语义的「当前权益」：个人套餐为主，叠加团队协作能力。
@@ -206,11 +282,10 @@ export function accountEffectivePlanForUser(user = {}) {
   return accountTeamEntitlementForUser(user)
 }
 
-// 团队空间容量：唯一来源是**所有者**的套餐（团队空间属于所有者）。
+// 团队空间容量：唯一来源是组织套餐，所有权转让不改变组织额度。
 export function organizationTeamSpaceBytes(organization) {
-  if (!organization) return 0
-  const ownerPlan = accountPersonalPlanForUser(accountUserById(organization.ownerUserId) || {})
-  return ownerPlan.team ? Number(ownerPlan.teamSpaceBytes || 0) : 0
+  const plan = organizationTeamPlanForOrganization(organization)
+  return plan.team ? Number(plan.teamSpaceBytes || 0) : 0
 }
 
 export function publicOrganization(organization, viewerId = '') {
@@ -276,6 +351,7 @@ export function organizationBySlug(slug) {
 export function isJoinRequestRateLimited(ip, userId) {
   const key = `${ip || 'unknown'}::${userId || 'anonymous'}`
   const now = Date.now()
+  if (!pruneAttempts(joinRequestAttempts, JOIN_REQUEST_WINDOW_MS, now)) return true
   const record = joinRequestAttempts.get(key)
   if (!record || now - record.startedAt > JOIN_REQUEST_WINDOW_MS) return false
   return record.count >= JOIN_REQUEST_MAX_PER_WINDOW
@@ -284,6 +360,7 @@ export function isJoinRequestRateLimited(ip, userId) {
 export function recordJoinRequestAttempt(ip, userId) {
   const key = `${ip || 'unknown'}::${userId || 'anonymous'}`
   const now = Date.now()
+  if (!pruneAttempts(joinRequestAttempts, JOIN_REQUEST_WINDOW_MS, now)) return
   const record = joinRequestAttempts.get(key)
   if (!record || now - record.startedAt > JOIN_REQUEST_WINDOW_MS) {
     joinRequestAttempts.set(key, { count: 1, startedAt: now })
@@ -321,12 +398,18 @@ export function publicJoinRequestsForOrganization(organization) {
 }
 
 export function createOrganization(user, name) {
-  const id = createToken(12)
+  const id = createToken(24)
+  let slug
+  do { slug = `team-${createToken(24)}` } while (Object.values(metadata.organizations || {}).some(item => item.slug === slug))
+  const ownerPlan = accountPersonalPlanForUser(user)
   const organization = {
     id,
-    slug: `team-${createToken(6)}`,
+    slug,
     name,
     ownerUserId: user.id,
+    teamPlanId: ownerPlan.id,
+    teamPlanStartedAt: user.planStartedAt || new Date().toISOString(),
+    teamPlanExpiresAt: ownerPlan.permanent ? null : user.planExpiresAt || null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     members: [{
@@ -381,10 +464,12 @@ export function syncOrganizationMemberProfile(user = {}) {
 }
 
 export function accountWorkspacePayload(user) {
+  expirePendingUpgradeOrders(upgradeOrdersForUser(user.id))
   const stored = accountUserById(user.id) || user
   const organization = accountOrganizationForUser(user.id)
   // plan 仍是「个人套餐」，加入团队不改变它；团队侧能力单独放在 teamEntitlement。
   const plan = accountPersonalPlanForUser(stored)
+  const teamPlan = organizationTeamPlanForOrganization(organization)
   return {
     plan,
     teamEntitlement: {
@@ -393,6 +478,9 @@ export function accountWorkspacePayload(user) {
       role: organizationRoleForUser(organization, stored.id),
       canManage: isOrganizationManager(organization, stored.id),
       teamSpaceBytes: organizationTeamSpaceBytes(organization),
+      teamPlanId: organization ? teamPlan.id : '',
+      teamPlanLabel: organization ? teamPlan.label : '',
+      teamPlanExpiresAt: organizationTeamPlanExpiresAtForOrganization(organization),
       canUseTeamSpace: Boolean(organization && accountEffectivePlanForUser(stored).team),
     },
     planStartedAt: stored.planStartedAt || null,
@@ -554,6 +642,7 @@ export function publicAccountUser(user = {}) {
   const stored = accountUserById(user.id) || normalizeAccountUser(user) || publicUser(user)
   const organization = accountOrganizationForUser(stored.id)
   const personalPlan = accountPersonalPlanForUser(stored)
+  const teamPlan = organizationTeamPlanForOrganization(organization)
   return {
     ...publicUser(stored),
     capacity: accountUsageForUser(stored.id),
@@ -567,6 +656,9 @@ export function publicAccountUser(user = {}) {
       role: organizationRoleForUser(organization, stored.id),
       canManage: isOrganizationManager(organization, stored.id),
       teamSpaceBytes: organizationTeamSpaceBytes(organization),
+      teamPlanId: organization ? teamPlan.id : '',
+      teamPlanLabel: organization ? teamPlan.label : '',
+      teamPlanExpiresAt: organizationTeamPlanExpiresAtForOrganization(organization),
       // 成员可用团队空间上传；这是共享能力，不代表个人升级
       canUseTeamSpace: Boolean(organization && accountTeamEntitlementForUser(stored).team),
     },
@@ -665,7 +757,7 @@ export function createVerificationCode(target, scene) {
     type: target.type,
     target: target.value,
     scene,
-    codeHash: hashSecret(code),
+    codeHash: `hmac:${keyedDigest(`${target.type}:${target.value}:${scene}:${code}`)}`,
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + VERIFICATION_CODE_TTL_MS).toISOString(),
   })
@@ -763,12 +855,12 @@ export function hmac(key, value) {
 export function verifyAuthCode(target, value, scene) {
   cleanupVerificationCodes()
   // 非标量、非六位码也记为一次失败；不能通过错误格式绕过错误次数限制。
-  const codeHash = typeof value === 'string' && /^\d{6}$/.test(value) ? hashSecret(value) : null
+  const codeHash = typeof value === 'string' && /^\d{6}$/.test(value) ? `hmac:${keyedDigest(`${target.type}:${target.value}:${scene}:${value}`)}` : null
   const list = metadata.verificationCodes
   const index = list.findIndex((item) => item.type === target.type && item.target === target.value && item.scene === scene)
   if (index < 0) throw httpError(400, '验证码不正确或已过期')
   // 校验失败计数：同一验证码连续错 5 次立即作废，防止 6 位码被暴力枚举。
-  if (list[index].codeHash !== codeHash) {
+  if (!codeHash || !equalSecret(list[index].codeHash, codeHash)) {
     const attempts = (list[index].attempts || 0) + 1
     if (attempts >= 5) {
       list.splice(index, 1)
@@ -810,10 +902,8 @@ export function accountUsageForUser(userId) {
 }
 
 export function accountTeamUsageForOrganization(organization) {
-  const owner = accountUserById(organization?.ownerUserId) || {}
-  // 团队空间容量取自所有者套餐（成员不贡献容量），用 personal 而非 effective，
-  // 避免所有者本身也是别的团队成员时被套上别人的 teamSpaceBytes。
-  const plan = accountPersonalPlanForUser(owner)
+  // 团队空间容量取自组织套餐，成员不贡献容量，所有权转让也不会重置额度。
+  const plan = organizationTeamPlanForOrganization(organization)
   const shares = metadata.shares.filter((share) => share.teamResource && share.teamOrganizationId === organization?.id && !share.cleanedAt)
   const usedBytes = shares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const totalBytes = Number(plan.teamSpaceBytes || 0)
@@ -1240,6 +1330,7 @@ export function cleanupPaymentQueryCredentials() {
 }
 
 export async function reconcileUserUpgradeOrders(session, force = false) {
+  expirePendingUpgradeOrders(upgradeOrdersForUser(session.user.id))
   if (!sessionApiWebToken(session)) return
   const key = session.user.id
   paymentSessionTokens.set(key, sessionApiWebToken(session))
@@ -1376,6 +1467,7 @@ export function activatePaidUpgradeOrder(order, expireAt = null) {
   order.updatedAt = new Date().toISOString()
   upsertAccountUser(account)
   syncAccountUserSessions(account)
+  syncOrganizationTeamPlanFromOwner(account)
   addAccountMessage(account.id, {
     category: 'other',
     eventType: 'membershipActivated',
@@ -1458,19 +1550,10 @@ export function cleanupOAuthStates() {
 
 export function safeReturnUrl(value, req) {
   const fallback = getRequestOrigin(req)
-  const requestOrigin = new URL(fallback).origin
-  const configuredOrigin = configuredAppUrl ? (() => {
-    try { return new URL(configuredAppUrl).origin } catch { return '' }
-  })() : ''
-  const allowedOrigins = new Set([
-    requestOrigin,
-    configuredOrigin === requestOrigin ? configuredOrigin : '',
-  ].filter(Boolean).map((item) => {
-    try { return new URL(item).origin } catch { return '' }
-  }).filter(Boolean))
+  const origins = allowedOrigins(req)
   try {
     const candidate = new URL(firstValue(value) || fallback, fallback)
-    return allowedOrigins.has(candidate.origin) ? candidate.toString() : fallback
+    return origins.has(candidate.origin) ? candidate.toString() : fallback
   } catch {
     return fallback
   }
@@ -1548,7 +1631,7 @@ export function readCookie(req, name) {
 }
 
 export function isSecureRequest(req) {
-  return req.secure || firstHeader(req.get('x-forwarded-proto')) === 'https'
+  return Boolean(req.secure)
 }
 
 export function publicFile(file = {}) {
@@ -1565,9 +1648,7 @@ export function getOrigin(req) {
 }
 
 export function getRequestOrigin(req) {
-  const proto = firstHeader(req.get('x-forwarded-proto')) || req.protocol
-  const host = firstHeader(req.get('x-forwarded-host')) || req.get('host') || `localhost:${serverPort}`
-  return `${proto}://${host}`
+  return requestOrigin(req)
 }
 
 export function safeRelativePath(value) {
@@ -1577,6 +1658,7 @@ export function safeRelativePath(value) {
 
 
 export async function reconcileActiveUpgradeOrders() {
+  expirePendingUpgradeOrders()
   if (cleanupPaymentQueryCredentials()) persistMetadata()
   const seen = new Set()
   for (const session of [...metadata.sessions].reverse()) {
@@ -1591,4 +1673,4 @@ export async function reconcileActiveUpgradeOrders() {
     try { await reconcileUpgradeOrder(credential, order) }
     catch { /* Keep transient failures retryable within the retention window. */ }
   }
-}
+}

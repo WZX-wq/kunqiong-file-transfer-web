@@ -16,7 +16,7 @@ const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const CDP_PORT = 9365
 const LIVE = `${process.env.KQ_LIVE_BASE || 'http://127.0.0.1:8045'}`
 const ADMIN_USER = process.env.KUNQIONG_ADMIN_USERNAME || 'ljxkjadmin'
-const ADMIN_PASS = process.env.KUNQIONG_ADMIN_PASSWORD || 'jxljxkj009900'
+const ADMIN_PASS = process.env.KUNQIONG_ADMIN_PASSWORD || process.env.KUNQIONG_ADMIN_PASSWORD
 
 const out = []
 let pass = 0, fail = 0

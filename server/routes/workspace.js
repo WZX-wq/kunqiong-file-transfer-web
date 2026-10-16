@@ -26,6 +26,7 @@ import {
   isOrganizationManager, joinRequestCooldownRemaining, organizationBySlug, parseAccountRecordResource, publicFile,
   publicJoinRequestsForOrganization, publicOrganization, publicOrganizationMember, reconcileUserUpgradeOrders,
   recordAuditLog, recordJoinRequestAttempt, requireAuthSession, syncAccountUserSessions,
+  organizationTeamPlanForOrganization, organizationTeamPlanExpiresAtForOrganization,
   upsertAccountUser, validateShareRecipient
 } from '../services/account.js'
 // 每分钟按真实来源与操作者限流，避免通过候选查询批量枚举账号。
@@ -44,7 +45,7 @@ export function registerWorkspaceRoutes(app) {
     if (!session) return
     await reconcileUserUpgradeOrders(session)
     res.json(accountWorkspacePayload(session.user))
-  })
+  })
   app.get('/api/account/team/overview', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -70,6 +71,7 @@ export function registerWorkspaceRoutes(app) {
       ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && (canManageTeam || validateShareRecipient(item, session.user).ok)).map((item) => ({
         id: item.id,
         kind: 'share',
+        code: item.code,
         name: item.files?.[0]?.name || '文件分享',
         files: item.files.map(publicFile),
         ownerUserId: item.ownerUserId,
@@ -92,13 +94,15 @@ export function registerWorkspaceRoutes(app) {
       organization: publicOrganization(organization, session.user.id),
       canManage: canManageTeam,
       isOwner: organization.ownerUserId === session.user.id,
-      plan: accountEffectivePlanForUser(organization.ownerUserId),
+      plan: organizationTeamPlanForOrganization(organization),
+      teamPlanId: organizationTeamPlanForOrganization(organization).id,
+      teamPlanExpiresAt: organizationTeamPlanExpiresAtForOrganization(organization),
       capacity: accountTeamUsageForOrganization(organization),
       memberUsage,
       joinRequests: isOrganizationManager(organization, session.user.id) ? publicJoinRequestsForOrganization(organization) : [],
       resources: resources.slice(0, 200),
     })
-  })
+  })
   app.delete('/api/account/team/resources/:resourceId', async (req, res, next) => {
     try {
       const session = requireAuthSession(req, res)
@@ -179,7 +183,7 @@ export function registerWorkspaceRoutes(app) {
         displayName: displayAccountName(user),
       }))
     res.json({ users: candidates, page, hasMore })
-  })
+  })
   app.post('/api/account/workspace', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -190,7 +194,7 @@ export function registerWorkspaceRoutes(app) {
     const organization = createOrganization(session.user, result.name)
     persistMetadata()
     res.status(201).json(accountWorkspacePayload(session.user))
-  })
+  })
   app.patch('/api/account/workspace', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -203,7 +207,7 @@ export function registerWorkspaceRoutes(app) {
     organization.updatedAt = new Date().toISOString()
     persistMetadata()
     res.json(accountWorkspacePayload(session.user))
-  })
+  })
   app.post('/api/account/workspace/members', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -256,7 +260,7 @@ export function registerWorkspaceRoutes(app) {
     organization.updatedAt = new Date().toISOString()
     persistMetadata()
     res.status(201).json(accountWorkspacePayload(session.user))
-  })
+  })
   app.post('/api/account/workspace/invitations/:invitationId', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -312,7 +316,7 @@ export function registerWorkspaceRoutes(app) {
     organization.updatedAt = new Date().toISOString()
     persistMetadata()
     res.json({ workspace: accountWorkspacePayload(session.user), messages: accountMessagesForUser(session.user.id) })
-  })
+  })
   app.delete('/api/account/workspace/members/:memberId', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -347,7 +351,7 @@ export function registerWorkspaceRoutes(app) {
     persistMetadata()
     recordAuditLog({ type: 'team', action: '移除团队成员', userId: session.user.id, targetId: removedMember.userId, details: { organizationId: organization.id, notifiedInApp } })
     res.json({ ...accountWorkspacePayload(session.user), removedMemberId: removedMember.id, notifiedInApp })
-  })
+  })
   app.patch('/api/account/workspace/members/:memberId/role', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -407,7 +411,7 @@ export function registerWorkspaceRoutes(app) {
     })
     // 退出后已不再是团队上下文，工作台按"无团队"返回即可。
     res.json({ ...accountWorkspacePayload(account), leftOrganizationId: organization.id, notifiedInApp })
-  })
+  })
   app.post('/api/account/workspace/transfer-ownership', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -426,6 +430,12 @@ export function registerWorkspaceRoutes(app) {
     const now = new Date().toISOString()
     const previousOwnerName = displayAccountName(previousOwner)
     const nextOwnerName = displayAccountName(nextOwner)
+    // 先固化组织当前套餐，再变更 owner。转让只改变管理者，不能把组织已购额度
+    // 重新按新 owner 的个人基础版计算为 0。
+    const teamPlan = organizationTeamPlanForOrganization(organization)
+    organization.teamPlanId = teamPlan.id
+    organization.teamPlanStartedAt = organization.teamPlanStartedAt || previousOwner.planStartedAt || now
+    organization.teamPlanExpiresAt = organizationTeamPlanExpiresAtForOrganization(organization)
 
     organization.ownerUserId = nextOwner.id
     targetMember.role = 'owner'
@@ -448,17 +458,17 @@ export function registerWorkspaceRoutes(app) {
       category: 'other',
       eventType: 'teamOwnership',
       title: '你已成为团队所有者',
-      body: `${previousOwnerName}已将团队“${organization.name}”的所有权转让给你。${nextOwnerCanUseTeamSpace ? '团队空间容量与成员管理由你的套餐权益提供。' : '注意：你当前套餐不含团队版权益，团队空间功能将停用；升级套餐或再次转让后即可恢复。'}`,
+      body: `${previousOwnerName}已将团队“${organization.name}”的所有权转让给你。团队空间继续沿用组织的${teamPlan.label}额度，你的个人套餐与团队套餐分别计算。`,
     })
     recordAuditLog({
       type: 'team',
       action: '转让团队所有权',
       userId: previousOwner.id,
       targetId: nextOwner.id,
-      details: { organizationId: organization.id, nextOwnerCanUseTeamSpace },
+      details: { organizationId: organization.id, previousOwnerId: previousOwner.id, nextOwnerCanUseTeamSpace, teamPlanId: teamPlan.id, teamPlanExpiresAt: organization.teamPlanExpiresAt },
     })
     res.json({ ...accountWorkspacePayload(previousOwner), transferred: true, nextOwnerName, nextOwnerCanUseTeamSpace })
-  })
+  })
   app.post('/api/account/workspace/dissolve', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -506,7 +516,7 @@ export function registerWorkspaceRoutes(app) {
     persistMetadata()
     const self = accountUserById(session.user.id) || session.user
     res.json({ ...accountWorkspacePayload(self), dissolvedOrganizationId: organization.id, notifiedCount })
-  })
+  })
   app.get('/api/organizations/:slug/join-request', (req, res) => {
     const organization = organizationBySlug(req.params.slug)
     // 团队不存在、或团队版权益已失效时，一律按“不可申请”返回，避免把内部状态暴露给外部访客。
@@ -533,7 +543,7 @@ export function registerWorkspaceRoutes(app) {
     }
     if (existing?.status === 'invited') return res.json({ ...payload, reason: 'invited' })
     res.json({ ...payload, available: true, reason: 'eligible' })
-  })
+  })
   app.post('/api/organizations/:slug/join-request', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -620,7 +630,7 @@ export function registerWorkspaceRoutes(app) {
     })
     recordAuditLog({ type: 'team', action: '提交入团申请', userId: viewer.id, targetId: organization.id, details: { organizationId: organization.id, slug: organization.slug, ip } })
     res.status(201).json({ requested: true, requestId, organizationName: organization.name, requestedAt: now })
-  })
+  })
   app.post('/api/account/workspace/join-requests/:requestId', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -697,5 +707,5 @@ export function registerWorkspaceRoutes(app) {
     }))
     recordAuditLog({ type: 'team', action: '同意入团申请', userId: session.user.id, targetId: member.userId, details: { organizationId: organization.id, notifiedInApp } })
     res.json({ ...accountWorkspacePayload(session.user), joinRequests: publicJoinRequestsForOrganization(organization), decided: 'approve', applicantName, notifiedInApp })
-  })
+  })
 }

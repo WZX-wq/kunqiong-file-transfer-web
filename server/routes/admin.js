@@ -13,13 +13,14 @@ import {
   firstValue, removeDirectory
 } from '../lib/http.js'
 import {
-  configuredAccountPlan, normalizePlanId, normalizeRecordDate, normalizeSystemConfig, publicUser, trimRecordString
+  configuredAccountPlan, normalizePlanId, normalizeRecordDate, normalizeSystemConfig, publicUser
 } from '../lib/metadata-normalizers.js'
 import {
-  metadata, persistMetadata
+  metadata, persistMetadata, refreshAuditPersistence
 } from '../lib/metadata-store.js'
 import {
   accountUserById, appendAuthResult, recordAuditLog, safeReturnUrl, syncAccountUserSessions,
+  syncOrganizationTeamPlanFromOwner,
   setOAuthStateCookie
 } from '../services/account.js'
 import {
@@ -57,14 +58,16 @@ export function registerAdminRoutes(app) {
     setAdminCookie(res, adminSession.token, req)
     recordAuditLog({ type: 'admin', action: '后台登录成功', userId: `admin:${adminSession.username}`, ip: requestIp(req) })
     res.json({ admin: adminSessionDescriptor(adminSession), overview: buildAdminOverview() })
-  })
+  })
+
   app.post('/api/admin/logout', (req, res) => {
     const adminSession = adminSessionFromRequest(req)
     removeAdminSession(req)
     clearAdminCookie(res, req)
     if (adminSession) recordAuditLog({ type: 'admin', action: '后台退出登录', userId: `admin:${adminSession.username}`, ip: requestIp(req) })
     res.json({ ok: true })
-  })
+  })
+
   app.get('/api/admin/session', (req, res) => {
     // 后台只认账号口令会话。此前这里允许 KUNQIONG_ADMIN_USER_IDS 白名单里的
     // 鲲穹账号直接通过（mode:'kunqiong'），后果是那个账号一登录就绕过密码弹窗，
@@ -72,12 +75,17 @@ export function registerAdminRoutes(app) {
     const adminSession = adminSessionFromRequest(req)
     if (adminSession) return res.json({ authenticated: true, admin: adminSessionDescriptor(adminSession), mode: 'credential' })
     res.json({ authenticated: false, admin: null })
-  })
-  app.get('/api/admin/overview', (req, res) => {
+  })
+
+  app.get('/api/admin/overview', async (req, res, next) => {
     const auth = requireAdminSession(req, res)
     if (!auth) return
-    res.json(buildAdminOverview())
-  })
+    try {
+      await refreshAuditPersistence()
+      res.json(buildAdminOverview())
+    } catch (error) { next(error) }
+  })
+
   // 测试服验收专用：用管理员口令会话为指定用户签发一个登录会话。
   // 安全约束（三条缺一不可）：
   //   1) 必须是已有的管理员口令会话（requireAdminSession）；
@@ -95,14 +103,16 @@ export function registerAdminRoutes(app) {
     const session = createAuthSession({ user: publicUser(user), expires_in: 3600 })
     recordAuditLog({ type: 'admin', action: '签发验收会话', userId: auth.user.id, targetId: user.id })
     res.json({ sessionId: session.id, user: adminUserSummary(user) })
-  })
+  })
+
   app.post('/api/admin/cleanup', (req, res) => {
     const auth = requireAdminSession(req, res)
     if (!auth) return
     const result = runMaintenanceCleanup()
     recordAuditLog({ type: 'admin', action: '手动执行存储清理', userId: auth.user.id, details: result })
     res.json({ ...result, overview: buildAdminOverview() })
-  })
+  })
+
   app.patch('/api/admin/config', (req, res) => {
     const auth = requireAdminSession(req, res)
     if (!auth) return
@@ -116,7 +126,8 @@ export function registerAdminRoutes(app) {
     persistMetadata()
     recordAuditLog({ type: 'admin', action: '更新系统配置', userId: auth.user.id, details: metadata.systemConfig })
     res.json({ config: metadata.systemConfig })
-  })
+  })
+
   app.patch('/api/admin/users/:userId', (req, res) => {
     const auth = requireAdminSession(req, res)
     if (!auth) return
@@ -150,10 +161,12 @@ export function registerAdminRoutes(app) {
       metadata.sessions = metadata.sessions.filter((item) => item.user?.id !== user.id)
     }
     syncAccountUserSessions(user)
+    syncOrganizationTeamPlanFromOwner(user)
     persistMetadata()
     recordAuditLog({ type: 'admin', action: '更新用户状态或权益', userId: auth.user.id, targetId: user.id, details: { status, planId, planExpiresAt: user.planExpiresAt || null } })
     res.json({ user: adminUserSummary(user) })
-  })
+  })
+
   app.delete('/api/admin/resources/:kind/:id', (req, res) => {
     const auth = requireAdminSession(req, res)
     if (!auth) return
@@ -184,7 +197,8 @@ export function registerAdminRoutes(app) {
     // 会在资源已经 splice 掉之后抛 ReferenceError → 接口 500、审计日志丢失。
     recordAuditLog({ type: 'admin', action: '删除文件资源', userId: auth.user.id, targetId: id, details: { kind } })
     res.json({ ok: true, overview: buildAdminOverview() })
-  })
+  })
+
   app.get('/auth/callback', async (req, res) => {
     const code = firstValue(req.query.code)
     const state = firstValue(req.query.state)
@@ -204,5 +218,6 @@ export function registerAdminRoutes(app) {
       setOAuthStateCookie(res, req, state, '')
       res.redirect(appendAuthResult(returnTo, 'failed', '登录服务暂时不可用，请重新登录'))
     }
-  })
+  })
+
 }

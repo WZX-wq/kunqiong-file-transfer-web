@@ -11,7 +11,7 @@ const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const APP_PORT = 8098
 const CDP_PORT = 9351
 const ADMIN_USER = 'ljxkjadmin'
-const ADMIN_PASS = 'jxljxkj009900'
+const ADMIN_PASS = process.env.KUNQIONG_ADMIN_PASSWORD
 const results = []
 const line = (s) => { results.push(s); console.log(s) }
 const check = (l, p, e = '') => line(`  ${p ? 'PASS' : 'FAIL'}  ${l}${e ? ` — ${e}` : ''}`)

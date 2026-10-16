@@ -22,24 +22,37 @@ import {
   publicCollection
 } from '../services/collections.js'
 import {
-  addCollectionSubmissionMessage, addGuestUsage, assertAccountCapacity, assertCollectionFiles,
+  assertAccountCapacity, assertCollectionFiles,
   assertConfiguredUploadLimits, assertFilesDownloadable, assertGuestQuota,
   assertSafeUploadFiles, assertServiceWritable, assertUploadCapacity, cleanupUploadedFiles,
   enforceDownloadOrigin, ensureStoredFilesScanned, guestQuotaLimitBytes, isAllowedType,
-  normalizeCollectionAllowedTypes, normalizeExpiryInput, publicSubmission,
+  normalizeExpiryInput, publicSubmission, publishCollectionSubmission,
   reserveUploadCapacity, resolveCollectionSubmitter, sendDownloadFile, sendPreviewFile,
-  streamZip, validateCollection, validateEnterpriseSlug
+  streamZip, validateCollection, validateEnterpriseSlug, prepareDirectUpload,
 } from '../services/shares.js'
 import {
   uploadReservations
 } from '../state.js'
-import crypto from 'node:crypto'
-import fs from 'node:fs'
 import path from 'node:path'
 import QRCode from 'qrcode'
 import { integerInput, textInput } from '../lib/input-validation.js'
 import { relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
 import { collectionTypesInput } from '../services/shares.js'
+
+function assertCollectionManager(task, req) {
+  // Anonymous collections intentionally remain bearer-link managed. Once a
+  // task belongs to an account, its management token is only an identifier;
+  // the owner session is the authorization boundary for data and mutations.
+  if (!task.ownerUserId) return
+  const viewer = authSessionFromRequest(req)?.user
+  if (!viewer) throw httpError(401, '请先登录任务所有者账号')
+  if (viewer.id !== task.ownerUserId) throw httpError(403, '仅任务所有者可以管理该收集任务')
+}
+
+function assertCollectionStillManaged(task, req) {
+  if (!metadata.collections.includes(task)) throw httpError(404, '管理链接不存在')
+  assertCollectionManager(task, req)
+}
 
 export function registerCollectionRoutes(app) {
   app.post('/api/collections', async (req, res, next) => {
@@ -98,7 +111,7 @@ export function registerCollectionRoutes(app) {
       next(error)
     }
   })
-  app.post('/api/collections/:token/submissions', upload.array('files', MAX_FILES), normalizeUploadedFileNames, async (req, res, next) => {
+  app.post('/api/collections/:token/submissions', prepareDirectUpload, upload.array('files', MAX_FILES), normalizeUploadedFileNames, async (req, res, next) => {
     let reservationId
     try {
       assertServiceWritable(req)
@@ -127,7 +140,7 @@ export function registerCollectionRoutes(app) {
       assertConfiguredUploadLimits(req, uploadedFiles)
       const guestKey = assertGuestQuota(req, res, uploadedFiles)
       assertCollectionFiles(task, uploadedFiles)
-      reservationId = reserveUploadCapacity({ files: uploadedFiles, guestKey, collectionToken: task.token, capacityOwnerUserId: task.ownerUserId })
+      reservationId = reserveUploadCapacity({ files: uploadedFiles, guestKey, collectionToken: task.token, capacityOwnerUserId: task.ownerUserId }, req.directUploadReservationId)
       await assertSafeUploadFiles(uploadedFiles)
       const invalidFile = uploadedFiles.find((file) => file.size > task.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.originalname, task.allowedTypes))
       if (invalidFile) {
@@ -139,27 +152,11 @@ export function registerCollectionRoutes(app) {
       const finalAccess = validateCollection(task)
       if (!finalAccess.ok) throw httpError(finalAccess.status, finalAccess.message)
       assertCollectionFiles(task, uploadedFiles)
-      const submissionId = createToken(12)
-      const submissionDirectory = path.join(collectionsRoot, task.id, submissionId)
-      fs.mkdirSync(submissionDirectory, { recursive: true })
       const files = uploadedFiles.map((file, index) => {
         const relativePath = safeRelativePath(relativePaths[index] || file.originalname)
-        const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
-        fs.renameSync(file.path, path.join(submissionDirectory, storedName))
-        return { name: file.originalname, relativePath, storedName, size: file.size, mimeType: file.mimetype || 'application/octet-stream', reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt }
+        return { name: file.originalname, relativePath, tempPath: file.path, size: file.size, mimeType: file.mimetype || 'application/octet-stream', reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt }
       })
-      const submission = {
-        id: submissionId,
-        participantName,
-        submitterUserId: submitter.submitterUserId,
-        submitterName: submitter.submitterName || participantName,
-        submittedAt: new Date().toISOString(),
-        files,
-      }
-      task.submissions.push(submission)
-      addCollectionSubmissionMessage(task, submission, req)
-      addGuestUsage(guestKey, files)
-      persistMetadata()
+      const submission = await publishCollectionSubmission(task, files, submitter, req, { guestKey })
       res.status(201).json({ submission: publicSubmission(submission) })
     } catch (error) {
       cleanupUploadedFiles(req.files)
@@ -172,6 +169,7 @@ export function registerCollectionRoutes(app) {
     try {
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
       if (!task) return res.status(404).json({ message: '管理链接不存在' })
+      assertCollectionManager(task, req)
       if (await ensureCollectionQrDataUrl(task, req)) persistMetadata()
       res.json({ collection: managerCollection(task, req) })
     } catch (error) {
@@ -182,6 +180,7 @@ export function registerCollectionRoutes(app) {
     try {
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
       if (!task) return res.status(404).json({ message: '管理链接不存在' })
+      assertCollectionManager(task, req)
       applyCollectionUpdate(task, req.body || {})
       await ensureCollectionQrDataUrl(task, req)
       task.updatedAt = new Date().toISOString()
@@ -195,6 +194,7 @@ export function registerCollectionRoutes(app) {
     try {
       const index = metadata.collections.findIndex((item) => item.manageToken === req.params.manageToken)
       if (index < 0) return res.status(404).json({ message: '管理链接不存在' })
+      assertCollectionManager(metadata.collections[index], req)
       const [task] = metadata.collections.splice(index, 1)
       removeDirectory(path.join(collectionsRoot, task.id))
       persistMetadata()
@@ -207,6 +207,7 @@ export function registerCollectionRoutes(app) {
     try {
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
       if (!task) return res.status(404).json({ message: '管理链接不存在' })
+      assertCollectionManager(task, req)
       const submissionIndex = task.submissions.findIndex((item) => item.id === req.params.submissionId)
       if (submissionIndex < 0) return res.status(404).json({ message: '提交记录不存在' })
       const [submission] = task.submissions.splice(submissionIndex, 1)
@@ -223,8 +224,10 @@ export function registerCollectionRoutes(app) {
       enforceDownloadOrigin(req)
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
       if (!task) return res.status(404).json({ message: '管理链接不存在' })
+      assertCollectionManager(task, req)
       assertFilesDownloadable(task.submissions.flatMap((submission) => submission.files || []))
       for (const submission of task.submissions) await ensureStoredFilesScanned(submission.files, path.join(collectionsRoot, task.id, submission.id))
+      assertCollectionStillManaged(task, req)
       const entries = collectionZipEntries(task)
       if (!entries.length) return res.status(404).json({ message: '暂无可下载的提交文件' })
       await streamZip(res, next, `${task.title || '收集文件'}.zip`, entries)
@@ -237,10 +240,13 @@ export function registerCollectionRoutes(app) {
       enforceDownloadOrigin(req)
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
       if (!task) return res.status(404).json({ message: '管理链接不存在' })
+      assertCollectionManager(task, req)
       const submission = task.submissions.find((item) => item.id === req.params.submissionId)
       if (!submission) return res.status(404).json({ message: '提交记录不存在' })
       assertFilesDownloadable(submission.files || [])
       await ensureStoredFilesScanned(submission.files, path.join(collectionsRoot, task.id, submission.id))
+      assertCollectionStillManaged(task, req)
+      if (!task.submissions.includes(submission)) return res.status(404).json({ message: '提交记录不存在' })
       const entries = collectionZipEntries(task, submission)
       if (!entries.length) return res.status(404).json({ message: '暂无可下载的提交文件' })
       await streamZip(res, next, `${submission.participantName || '提交文件'}.zip`, entries)
@@ -253,11 +259,14 @@ export function registerCollectionRoutes(app) {
       enforceDownloadOrigin(req)
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
       if (!task) return res.status(404).json({ message: '管理链接不存在' })
+      assertCollectionManager(task, req)
       const submission = task.submissions.find((item) => item.id === req.params.submissionId)
       const file = submission?.files[Number(req.params.fileIndex)]
       if (!file) return res.status(404).json({ message: '文件不存在' })
       assertFilesDownloadable([file])
       await ensureStoredFilesScanned([file], path.join(collectionsRoot, task.id, submission.id))
+      assertCollectionStillManaged(task, req)
+      if (!task.submissions.includes(submission) || submission.files?.[Number(req.params.fileIndex)] !== file) return res.status(404).json({ message: '文件不存在' })
       sendDownloadFile(req, res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
     } catch (error) {
       next(error)
@@ -268,11 +277,14 @@ export function registerCollectionRoutes(app) {
       enforceDownloadOrigin(req)
       const task = metadata.collections.find((item) => item.manageToken === req.params.manageToken)
       if (!task) return res.status(404).json({ message: '管理链接不存在' })
+      assertCollectionManager(task, req)
       const submission = task.submissions.find((item) => item.id === req.params.submissionId)
       const file = submission?.files[Number(req.params.fileIndex)]
       if (!file) return res.status(404).json({ message: '文件不存在' })
       assertFilesDownloadable([file])
       await ensureStoredFilesScanned([file], path.join(collectionsRoot, task.id, submission.id))
+      assertCollectionStillManaged(task, req)
+      if (!task.submissions.includes(submission) || submission.files?.[Number(req.params.fileIndex)] !== file) return res.status(404).json({ message: '文件不存在' })
       sendPreviewFile(req, res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
     } catch (error) {
       next(error)

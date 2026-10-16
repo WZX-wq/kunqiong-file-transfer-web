@@ -1,3 +1,5 @@
+import { withFileLock, durableWrite, removeFile } from './file-lock.js'
+import { requireSharedDataKey, transformCredentials } from './private-key.js'
 // 元数据存储层 —— 载入 / 合并 / CAS 落盘
 //
 // 分层位置：config ← state ← metadata-store ← 领域模块 ← metadata-normalizers ← 入口
@@ -12,7 +14,7 @@
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import path from 'node:path'
-import { LocalAuditStore } from './audit-store.js'
+import { DatabaseAuditStore, LocalAuditStore } from './audit-store.js'
 import {
   metadataPath, MAX_METADATA_WRITE_ATTEMPTS, DEFAULT_SYSTEM_CONFIG, MAX_AUDIT_LOGS,
   databaseHost, databaseName, databaseUser,
@@ -26,12 +28,54 @@ import { databasePool, runtime } from '../state.js'
 export const metadata = {}
 let auditStore
 
-export function initializeAuditPersistence(normalizeEntry) {
-  if (databasePool) return
+export async function initializeAuditPersistence(normalizeEntry) {
+  const directory = path.join(path.dirname(metadataPath), 'audit')
+  if (databasePool) {
+    // Import a previous host-local journal when available; INSERT IGNORE makes
+    // migration repeatable, including when the process died before its marker commit.
+    let legacy = metadata.auditLogs || []
+    // A DB-backed host may be completely new and therefore have no copy of the
+    // previous host's local audit journal. In that case the DB table is the
+    // authority and must be allowed to initialize from its own rows. If any
+    // journal artifact is present, however, import it (or fail closed when the
+    // migrated snapshot is incomplete) instead of silently discarding it.
+    const hasLocalAuditArtifacts = ['snapshot.json', 'snapshot.json.bak', 'events.jsonl']
+      .some(name => fs.existsSync(path.join(directory, name)))
+    if (metadata.auditStorage === 'journal-v1' && hasLocalAuditArtifacts) {
+      legacy = new LocalAuditStore(directory, normalizeEntry, MAX_AUDIT_LOGS).initialize(legacy, true)
+    }
+    auditStore = new DatabaseAuditStore(databasePool, normalizeEntry, MAX_AUDIT_LOGS)
+    metadata.auditLogs = await auditStore.initialize(legacy)
+    if (metadata.auditStorage !== 'mysql-v1') runtime.metadataNeedsPersist = true
+    metadata.auditStorage = 'mysql-v1'
+    return
+  }
   const migrated = metadata.auditStorage === 'journal-v1'
-  auditStore = new LocalAuditStore(path.join(path.dirname(metadataPath), 'audit'), normalizeEntry, MAX_AUDIT_LOGS)
+  auditStore = new LocalAuditStore(directory, normalizeEntry, MAX_AUDIT_LOGS)
   metadata.auditLogs = auditStore.initialize(metadata.auditLogs, migrated)
   if (!migrated) runtime.metadataNeedsPersist = true
+}
+
+export async function flushAuditPersistence() {
+  await auditStore?.flush?.()
+}
+
+export async function refreshAuditPersistence() {
+  if (auditStore instanceof DatabaseAuditStore) metadata.auditLogs = await auditStore.refresh()
+}
+
+export async function flushMetadataWrites() {
+  await runtime.metadataWriteQueue
+  if (runtime.persistenceError) throw runtime.persistenceError
+}
+
+// A failed filesystem/DB acknowledgement can occur after the commit itself.
+// File rollback must never delete bytes that a durable resource already references.
+export async function publicationExists(predicate) {
+  try {
+    const snapshot = databasePool ? (await readRemoteMetadataRow())?.metadata : loadLocalMetadata()
+    return Boolean(snapshot && predicate(snapshot))
+  } catch { return null }
 }
 
 export function readAuditLogs() {
@@ -63,8 +107,10 @@ export function purgeAuditLogsBefore(cutoff) {
 }
 
 function persistedSnapshot() {
+  if (databasePool) requireSharedDataKey()
   // Once migrated, audit has its own durable snapshot/journal and does not inflate CAS writes.
-  return auditStore ? { ...metadata, auditLogs: [], auditStorage: 'journal-v1' } : metadata
+  const value = auditStore ? { ...metadata, auditLogs: [], auditStorage: databasePool ? 'mysql-v1' : 'journal-v1' } : metadata
+  return transformCredentials(value, true)
 }
 
 // 由入口注入的领域规范化函数。注入前保持恒等，保证本模块可独立加载与测试。
@@ -119,7 +165,9 @@ export function emptyMetadata() {
 export function readMetadataFileFrom(targetPath) {
   const raw = fs.readFileSync(targetPath, 'utf8')
   if (!raw.trim()) throw new Error('元数据文件为空')
-  return JSON.parse(raw)
+  const value = JSON.parse(raw)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('元数据快照格式无效')
+  return transformCredentials(value)
 }
 
 export function loadLocalMetadata() {
@@ -130,17 +178,23 @@ export function loadLocalMetadata() {
   } catch (error) {
     try {
       const recovered = readMetadataFileFrom(`${metadataPath}.bak`)
-      console.warn(`元数据文件损坏（${error.message || error}），已从备份还原`)
+      console.warn('元数据主文件不可用，已从有效备份还原')
+      durableWrite(`${metadataPath}.recovery.tmp`, JSON.stringify(transformCredentials(recovered, true)))
+      fs.renameSync(`${metadataPath}.recovery.tmp`, metadataPath)
       return recovered
-    } catch {
-      return emptyMetadata()
+    } catch (backupError) {
+      if (error.code === 'ENOENT' && backupError.code === 'ENOENT' && !fs.existsSync(metadataRevisionPath)) return emptyMetadata()
+      throw new Error('元数据主文件及备份不可用，已停止启动以避免覆盖数据', { cause:error })
     }
   }
 }
 
 export function readLocalMetadataRevision() {
   try {
-    const value = Math.floor(Number(fs.readFileSync(metadataRevisionPath, 'utf8').trim()))
+    const embedded = Number(JSON.parse(fs.readFileSync(metadataPath, 'utf8'))._localRevision) || 0
+    let sidecar = 0
+    try { sidecar = Number(fs.readFileSync(metadataRevisionPath, 'utf8').trim()) || 0 } catch {}
+    const value = Math.floor(Math.max(embedded, sidecar))
     return Number.isFinite(value) && value > 0 ? value : 0
   } catch {
     return 0
@@ -148,14 +202,21 @@ export function readLocalMetadataRevision() {
 }
 
 export async function loadMetadata() {
-  const localMetadata = loadLocalMetadata()
+  if (databasePool) requireSharedDataKey()
+  let localMetadata
+  let localError
+  try {
+    localMetadata = loadLocalMetadata()
+  } catch (error) {
+    // MySQL 是启用时的权威来源；本地镜像损坏不能阻止读取一份有效的远端快照。
+    // 没有远端状态行时仍然抛出，避免把损坏数据当成空库迁移并覆盖它。
+    localError = error
+    localMetadata = emptyMetadata()
+  }
   runtime.metadataLocalRevision = readLocalMetadataRevision()
-  if (!databasePool) return localMetadata
-  if (localMetadata.auditStorage === 'journal-v1') {
-    // Enabling MySQL after a local deployment must migrate the independent audit too.
-    const localAudit = new LocalAuditStore(path.join(path.dirname(metadataPath), 'audit'), entry => entry, MAX_AUDIT_LOGS)
-    localMetadata.auditLogs = localAudit.initialize([], true)
-    delete localMetadata.auditStorage
+  if (!databasePool) {
+    if (localError) throw localError
+    return localMetadata
   }
   if (!databaseHost || !databaseName || !databaseUser) {
     throw new Error('数据库模式已开启，但数据库连接参数不完整')
@@ -166,11 +227,13 @@ export async function loadMetadata() {
     runtime.metadataRevision = remote.revision
     return remote.metadata
   }
+  if (localError) throw localError
   const normalized = normalizeSnapshot(localMetadata)
+  const initialPayload = transformCredentials(normalized, true)
   const [result] = await databasePool.execute(
     `INSERT INTO kunqiong_app_state (state_key, schema_version, revision, payload)
      VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE state_key = state_key`,
-    ['metadata', 1, 1, JSON.stringify(normalized)],
+    ['metadata', 1, 1, JSON.stringify(initialPayload)],
   )
   // affectedRows 为 1 表示本实例建了行；为 0 表示另一个实例抢先建了行，按正常路径重读。
   if (Number(result.affectedRows) === 1) {
@@ -188,7 +251,7 @@ export async function readRemoteMetadataRow() {
   const [rows] = await databasePool.query('SELECT revision, payload FROM kunqiong_app_state WHERE state_key = ? LIMIT 1', ['metadata'])
   if (!rows.length) return null
   try {
-    return { revision: Number(rows[0].revision) || 0, metadata: JSON.parse(rows[0].payload) }
+    return { revision: Number(rows[0].revision) || 0, metadata: transformCredentials(JSON.parse(rows[0].payload)) }
   } catch {
     throw new Error('数据库中的鲲穹元数据不是有效 JSON，已停止启动以避免覆盖数据')
   }
@@ -334,50 +397,20 @@ export function rememberMetadataBaseIds() {
 
 // ── 持久化 ───────────────────────────────────────────────────
 export function persistMetadata() {
+  if (runtime.persistenceError) throw runtime.persistenceError
   persistLocalMetadata()
   if (!databasePool) return
   runtime.metadataWriteQueue = runtime.metadataWriteQueue
     .catch(() => {})
     .then(() => writeMetadataToDatabase())
     .catch((error) => {
-      console.error(`MySQL 元数据保存失败：${error.message || error}`)
+      runtime.persistenceError = Object.assign(new Error('数据保存失败，服务暂不可写，请联系管理员'), { status:503, code:'METADATA_WRITE_FAILED' })
+      console.error(JSON.stringify({event:'metadata_write_failed',code:error.code || 'DATABASE_WRITE_FAILED'}))
     })
 }
 
 export function withLocalMetadataLock(task) {
-  // 本地模式没有数据库那样的原子 CAS，用锁文件把多进程写入串行化。
-  // 锁文件采用「常驻 + 内容标记」而非「创建/删除」：部分受限文件系统（企业沙箱、
-  // 归档挂载）对删除操作有审查，fs.rmSync 可能同步阻塞数百毫秒——此前每个写请求
-  // 释放锁时都要删除锁文件，导致增删改查全部被拖慢。写入不受影响（毫秒级）。
-  //   文件内容 { pid, at }：pid=0 表示空闲；pid 非 0 且未超时（10s）表示持有中。
-  // 获取失败（正在被其他进程持有）时短暂等待重试；超时后照旧执行，
-  // 退化成「读最新内容再合并写」，最坏情况仍是合并而非覆盖，不会把服务卡死。
-  const lockPath = `${metadataPath}.lock`
-  const deadline = Date.now() + 2000
-  let acquired = false
-  const writeMark = (pid) => {
-    try { fs.writeFileSync(lockPath, JSON.stringify({ pid, at: Date.now() }), 'utf8') } catch {}
-  }
-  while (Date.now() < deadline) {
-    let idle = true
-    try {
-      const info = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
-      idle = !info?.pid || info.pid === 0 || Date.now() - Number(info.at) > 10000
-    } catch {
-      idle = true // 文件不存在或为旧格式（空文件/不可解析）→ 视为空闲
-    }
-    if (idle) {
-      writeMark(process.pid)
-      acquired = true
-      break
-    }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
-  }
-  try {
-    task()
-  } finally {
-    if (acquired) writeMark(0)
-  }
+  return withFileLock(`${metadataPath}.lock.v2`, task)
 }
 
 export function persistLocalMetadata() {
@@ -389,10 +422,10 @@ export function persistLocalMetadata() {
       // 数据库模式：metadata.json 只是镜像，直接整体重写即可。
       if (fs.existsSync(metadataPath)) {
         const backupTempPath = `${metadataPath}.${instanceTag}.bak.tmp`
-        fs.copyFileSync(metadataPath, backupTempPath)
+        durableWrite(backupTempPath, JSON.stringify(transformCredentials(readMetadataFileFrom(metadataPath), true)))
         fs.renameSync(backupTempPath, `${metadataPath}.bak`)
       }
-      fs.writeFileSync(tempPath, JSON.stringify(persistedSnapshot(), null, 2), 'utf8')
+      durableWrite(tempPath, JSON.stringify({ ...persistedSnapshot(), _localRevision:runtime.metadataLocalRevision + 1 }, null, 2))
       fs.renameSync(tempPath, metadataPath)
       return
     }
@@ -411,22 +444,22 @@ export function persistLocalMetadata() {
       // 覆盖前留一份 .bak，走同样的 tmp + rename，保证备份本身也是完整快照。
       if (fs.existsSync(metadataPath)) {
         const backupTempPath = `${metadataPath}.${instanceTag}.bak.tmp`
-        fs.copyFileSync(metadataPath, backupTempPath)
+        durableWrite(backupTempPath, JSON.stringify(transformCredentials(readMetadataFileFrom(metadataPath), true)))
         fs.renameSync(backupTempPath, `${metadataPath}.bak`)
       }
-      fs.writeFileSync(tempPath, JSON.stringify(persistedSnapshot(), null, 2), 'utf8')
+      durableWrite(tempPath, JSON.stringify({ ...persistedSnapshot(), _localRevision:runtime.metadataLocalRevision + 1 }, null, 2))
       fs.renameSync(tempPath, metadataPath)
       const revisionTempPath = `${metadataRevisionPath}.${instanceTag}.tmp`
-      fs.writeFileSync(revisionTempPath, String(runtime.metadataLocalRevision + 1), 'utf8')
+      durableWrite(revisionTempPath, String(runtime.metadataLocalRevision + 1))
       fs.renameSync(revisionTempPath, metadataRevisionPath)
       runtime.metadataLocalRevision += 1
       runtime.metadataLocalBaseIds = metadataIdSets(metadata)
     })
   } catch (error) {
-    console.error(`本地元数据保存失败：${error.message || error}`)
-    try {
-      if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true })
-    } catch {}
+    console.error(JSON.stringify({event:'metadata_write_failed',code:error.code || 'LOCAL_WRITE_FAILED'}))
+    removeFile(tempPath)
+    runtime.persistenceError = Object.assign(new Error('数据保存失败，服务暂不可写，请联系管理员'), { status:503, code:'METADATA_WRITE_FAILED', cause:error })
+    throw runtime.persistenceError
   }
 }
 
@@ -435,7 +468,7 @@ export async function writeMetadataToDatabase() {
     const expected = runtime.metadataRevision
     const [result] = await databasePool.execute(
       'UPDATE kunqiong_app_state SET revision = revision + 1, payload = ? WHERE state_key = ? AND revision = ?',
-      [JSON.stringify(metadata), 'metadata', expected],
+      [JSON.stringify(persistedSnapshot()), 'metadata', expected],
     )
     if (Number(result.affectedRows) > 0) {
       runtime.metadataRevision = expected + 1
@@ -444,15 +477,24 @@ export async function writeMetadataToDatabase() {
     }
     const remote = await readRemoteMetadataRow()
     if (!remote) {
-      // 状态行被清掉了（手工删库/换库）：按迁移路径重新建行，不动远端数据。
-      await databasePool.execute(
+      // 状态行被清掉了（手工删库/换库）：尝试补建；若并发实例先建成功，
+      // 读取它并回到 CAS 循环，不能把“重复键但未插入”误当成本实例成功。
+      const [inserted] = await databasePool.execute(
         `INSERT INTO kunqiong_app_state (state_key, schema_version, revision, payload)
          VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE state_key = state_key`,
-        ['metadata', 1, expected + 1, JSON.stringify(metadata)],
+        ['metadata', 1, expected + 1, JSON.stringify(persistedSnapshot())],
       )
-      runtime.metadataRevision = expected + 1
-      runtime.metadataBaseIds = metadataIdSets(metadata)
-      return
+      if (Number(inserted.affectedRows) === 1) {
+        runtime.metadataRevision = expected + 1
+        runtime.metadataBaseIds = metadataIdSets(metadata)
+        return
+      }
+      const winner = await readRemoteMetadataRow()
+      if (!winner) throw new Error('元数据状态行创建失败，已停止启动以避免覆盖数据')
+      applyMergedMetadata(mergeMetadataSnapshots(winner.metadata, metadata, null))
+      runtime.metadataRevision = winner.revision
+      runtime.metadataConflictCount += 1
+      continue
     }
     if (remote.revision === expected) continue
     // CAS 失败：另一个实例先写了。重读远端，合并本进程的改动后重试。

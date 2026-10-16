@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import {
-  GUEST_ID_COOKIE, MAX_FILE_SIZE, collectionsRoot, tempRoot
+  GUEST_ID_COOKIE, MAX_FILE_SIZE, tempRoot
 } from '../config.js'
 import {
   createToken, httpError, removeDirectory
@@ -16,22 +16,22 @@ import {
   normalizeSystemConfig
 } from '../lib/metadata-normalizers.js'
 import {
-  metadata, persistMetadata
+  metadata
 } from '../lib/metadata-store.js'
 import {
-  chunkUpload
+  chunkUpload, prepareChunkUpload
 } from '../lib/upload.js'
 import {
   accountOrganizationForUser, accountUserById, authSessionFromRequest, readCookie
 } from '../services/account.js'
 import {
-  addCollectionSubmissionMessage, addGuestUsage, assertAccountCapacity, assertCollectionFiles,
+  addGuestUsage, assertAccountCapacity, assertCollectionFiles,
   assertConfiguredUploadLimits, assertGuestQuota, assertSafeUploadFiles, assertServiceWritable,
   assertTeamCapacity, assertUniqueTeamResourceNames, assertUploadCapacity,
   cleanupUploadedFiles, createShareFromTempFiles, discardUploadSession, isAllowedType, normalizeUploadChunkSize,
-  issueGuestCookie, persistUploadSession, publicShare, publicSubmission, readShareOptions,
+  issueGuestCookie, validGuestId, persistUploadSession, publicShare, publicSubmission, publishCollectionSubmission, readShareOptions,
   requireUploadSessionOwner, assertUploadSessionOwner, publicUploadCompletion, uploadCompletionResult,
-  resolveCollectionSubmitter, uploadSessionSignature, validateCollection
+  releaseUploadDiskReservation, reserveUploadDisk, resolveCollectionSubmitter, uploadSessionSignature, validateCollection
 } from '../services/shares.js'
 import {
   uploadSessions
@@ -94,7 +94,7 @@ export function registerUploadRoutes(app) {
     const existing = readCookie(req, GUEST_ID_COOKIE)
     // Quota validation may already have issued the cookie on this first request.
     const issued = [].concat(res.getHeader('Set-Cookie') || []).findLast((cookie) => cookie.startsWith(`${GUEST_ID_COOKIE}=`))?.split(';')[0].slice(GUEST_ID_COOKIE.length + 1)
-    ownerGuestId = existing && /^[A-Za-z0-9]{16,64}$/.test(existing) ? existing : issued || issueGuestCookie(req, res)
+    ownerGuestId = validGuestId(existing) ? existing : issued || issueGuestCookie(req, res)
   }
   const session = {
     id: sessionId,
@@ -119,22 +119,23 @@ export function registerUploadRoutes(app) {
   }
   // 同一游客重新上传相同文件清单 = 对旧会话的放弃重试：直接替换并释放旧预留。
   // 否则失败/放弃的旧会话会以「进行中占用」挡住重试，且对用户不可见。
-  if (session.guestKey) {
+  if (session.guestKey && session.ownerGuestId) {
     const signature = uploadSessionSignature(session.files)
     for (const [otherId, other] of [...uploadSessions]) {
-      if (otherId !== sessionId && other.guestKey === session.guestKey && other.mode === session.mode && other.collectionToken === session.collectionToken && uploadSessionSignature(other.files) === signature) {
+      if (otherId !== sessionId && other.ownerGuestId === session.ownerGuestId && other.guestKey === session.guestKey && other.mode === session.mode && other.collectionToken === session.collectionToken && uploadSessionSignature(other.files) === signature) {
         if (other.completing) throw httpError(409, '相同文件正在进行安全检查，请等待原上传的结果')
         if (other.completion?.status !== 'complete') discardUploadSession(other)
       }
     }
   }
   assertUploadCapacity(session)
+  reserveUploadDisk(session)
   fs.mkdirSync(sessionDirectory, { recursive: true })
   uploadSessions.set(sessionId, session)
   persistUploadSession(session)
   res.status(201).json({ sessionId, chunkSize:session.chunkSize, uploaded: session.files.map((file) => ({ name: file.name, chunks: [] })) })
 })
-  app.post('/api/upload-sessions/:sessionId/chunks', requireUploadSessionOwner, chunkUpload.single('chunk'), async (req, res, next) => {
+  app.post('/api/upload-sessions/:sessionId/chunks', requireUploadSessionOwner, prepareChunkUpload, chunkUpload.single('chunk'), async (req, res, next) => {
   let writing = false
   try {
     const session = req.uploadSession
@@ -248,10 +249,12 @@ export function registerUploadRoutes(app) {
       // Detach the lengthy scanner request from the browser's HTTP connection.
       // Repeated starts attach to the same job; GET only reports its state.
       void completeUpload(req, session, mergedFiles).then(() => {
+        releaseUploadDiskReservation(session)
         session.completion = { ...session.completion, status: 'complete', finishedAt: new Date().toISOString() }
       }).catch(error => {
         // Metadata may already have committed before notification delivery failed.
-        if (uploadCompletionResult(session, req)) {
+        if (!error.publicationUncertain && uploadCompletionResult(session, req)) {
+          releaseUploadDiskReservation(session)
           session.completion = { ...session.completion, status: 'complete', finishedAt: new Date().toISOString() }
         } else {
           const status = error.status || 500
@@ -269,6 +272,7 @@ export function registerUploadRoutes(app) {
     }
     try {
       const result = await completeUpload(req, session, mergedFiles)
+      releaseUploadDiskReservation(session)
       uploadSessions.delete(session.id)
       removeDirectory(session.directory)
       res.status(201).json(result)
@@ -329,31 +333,7 @@ async function completeUpload(req, session, mergedFiles) {
     assertCollectionFiles(task, mergedFiles)
     assertUploadCapacity(session, session.id)
     const participantName = textInput(session.participantName, '提交人名称', 40)
-    const files = mergedFiles.map((file, index) => {
-      const relativePath = file.relativePath
-      const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
-      return { ...file, relativePath, storedName }
-    })
-    const submissionId = createToken(12)
-    const submissionDirectory = path.join(collectionsRoot, task.id, submissionId)
-    fs.mkdirSync(submissionDirectory, { recursive: true })
-    const submissionFiles = files.map((file) => {
-      fs.renameSync(file.tempPath, path.join(submissionDirectory, file.storedName))
-      return { name: file.name, relativePath: file.relativePath, storedName: file.storedName, size: file.size, mimeType: file.mimeType, reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt }
-    })
-    const submission = {
-      id: submissionId,
-      uploadSessionId: session.id,
-      participantName,
-      submitterUserId: session.submitterUserId || '',
-      submitterName: session.submitterName || participantName,
-      submittedAt: new Date().toISOString(),
-      files: submissionFiles,
-    }
-    task.submissions.push(submission)
-    addCollectionSubmissionMessage(task, submission, req)
-    addGuestUsage(session.guestKey, submissionFiles)
-    persistMetadata()
+    const submission = await publishCollectionSubmission(task, mergedFiles, { participantName, submitterUserId: session.submitterUserId, submitterName: session.submitterName }, req, { uploadSessionId: session.id, guestKey: session.guestKey })
     return { submission: publicSubmission(submission) }
   }
   if (session.mode === 'team_resource') {

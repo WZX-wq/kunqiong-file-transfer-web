@@ -12,6 +12,13 @@ $viteLog = Join-Path $logRoot 'vite.log'
 $viteErrorLog = Join-Path $logRoot 'vite-error.log'
 $startupErrorLog = Join-Path $logRoot 'startup-error.log'
 
+# 用绝对路径启动脚本：进程命令行里才会带上项目根目录，Stop-ProjectNodeProcesses 才能
+# 按 CommandLine 认出本项目的进程（-WorkingDirectory 不会出现在命令行中，用相对路径
+# 启动时该函数永远匹配不到）。路径统一加引号，避免安装目录含空格时被拆成多个参数。
+$backendArguments = @("`"$(Join-Path $root 'server.mjs')`"")
+$viteScript = Join-Path $root 'node_modules\vite\bin\vite.js'
+$viteArguments = @("`"$viteScript`"", '--host', '0.0.0.0', '--port', $frontendPort)
+
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 Clear-Content -Path $startupErrorLog -ErrorAction SilentlyContinue
 try {
@@ -38,6 +45,8 @@ function Stop-PortProcess([int]$port) {
 }
 
 function Stop-ProjectNodeProcesses {
+  # 依赖「命令行含项目根目录 + 脚本名」两点同时成立，避免误杀其它项目的 node 进程。
+  # 前提是启动时传绝对脚本路径：见 $backendArguments / $viteArguments 的说明。
   $rootPattern = [regex]::Escape($root)
   $processes = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
     Where-Object { $_.CommandLine -and $_.CommandLine -match $rootPattern -and $_.CommandLine -match 'server\.mjs|vite\.js' }
@@ -75,7 +84,7 @@ try {
   $node = (Get-Command node.exe -ErrorAction Stop).Source
   $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
 
-  if (-not (Test-Path (Join-Path $root 'node_modules\vite\bin\vite.js'))) {
+  if (-not (Test-Path $viteScript)) {
     $install = Start-Process -FilePath $npm -ArgumentList @('install') -WorkingDirectory $root -WindowStyle Hidden -Wait -PassThru
     if ($install.ExitCode -ne 0) {
       throw 'Dependency installation failed.'
@@ -99,7 +108,7 @@ try {
     }
   }
 
-  $backendProcess = Start-Process -FilePath $node -ArgumentList @('server.mjs') -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $serverLog -RedirectStandardError $serverErrorLog -PassThru
+  $backendProcess = Start-Process -FilePath $node -ArgumentList $backendArguments -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $serverLog -RedirectStandardError $serverErrorLog -PassThru
   try {
     Wait-Ready $healthUrl 'Backend' 12
   } catch {
@@ -108,11 +117,11 @@ try {
     Stop-ProjectNodeProcesses
     $env:KUNQIONG_DB_ENABLED = 'false'
     Add-Content -Path $startupErrorLog -Value "$(Get-Date -Format s) Remote database initialization timed out; restarted with local storage for this launch."
-    Start-Process -FilePath $node -ArgumentList @('server.mjs') -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $serverLog -RedirectStandardError $serverErrorLog | Out-Null
+    Start-Process -FilePath $node -ArgumentList $backendArguments -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $serverLog -RedirectStandardError $serverErrorLog | Out-Null
     Wait-Ready $healthUrl 'Backend'
   }
 
-  Start-Process -FilePath $node -ArgumentList @('node_modules\vite\bin\vite.js', '--host', '0.0.0.0', '--port', $frontendPort) -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $viteLog -RedirectStandardError $viteErrorLog | Out-Null
+  Start-Process -FilePath $node -ArgumentList $viteArguments -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $viteLog -RedirectStandardError $viteErrorLog | Out-Null
 
   Wait-Ready $healthUrl 'Backend'
   Wait-Ready $url 'Frontend'

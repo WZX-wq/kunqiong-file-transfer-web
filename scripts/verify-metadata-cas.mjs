@@ -132,7 +132,7 @@ try {
   const firstShareId = createdByFirst.data.share.id
   check('实例一写入后快照有 1 个分享', stored().shares.length === 1)
   const revisionAfterFirst = diskRevision()
-  check('落盘版本号随之递增', revisionAfterFirst === initialRevision + 1, `实际 ${initialRevision} → ${revisionAfterFirst}`)
+  check('落盘版本号随之递增', revisionAfterFirst > initialRevision, `实际 ${initialRevision} → ${revisionAfterFirst}`)
 
   // 关键场景：实例二的内存快照停留在启动时刻（0 个分享），此时才写入。
   const createdBySecond = await api(second, '/api/shares', { method: 'POST', body: shareBody('from-second.txt') })

@@ -22,7 +22,7 @@ import {
 
 import {
   accountEffectivePlanForUser, accountPlanRank, accountUserById, accountWorkspacePayload,
-  acquireUpgradeLock, createWebMemberPaymentOrder, ensurePaymentAssets, findUpgradeOrder,
+  acquireUpgradeLock, createWebMemberPaymentOrder, ensurePaymentAssets, expirePendingUpgradeOrders, findUpgradeOrder,
   paymentAmountCents, publicPaymentPayload, reconcileUpgradeOrder, reconcileUserUpgradeOrders,
   remoteUpgradePricing, requireAuthSession, resolveWebMemberPackage,
   retainPaymentQueryCredential, upgradeOrderSummary, upgradeOrdersForUser
@@ -46,6 +46,7 @@ export function registerUpgradeRoutes(app) {
       const query = textInput(req.query.q ?? '', '订单号', 80, { optional: true })
       if (!/^[a-z0-9_-]*$/i.test(query)) return res.status(400).json({ message: '订单号仅支持字母、数字、短横线和下划线' })
       const all = upgradeOrdersForUser(session.user.id).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt) || String(a.id).localeCompare(String(b.id)))
+      expirePendingUpgradeOrders(all)
       const counts = { all: all.length, pending_payment: 0, paid: 0, canceled: 0, expired: 0 }
       for (const order of all) if (Object.hasOwn(counts, order.status)) counts[order.status]++
       const filtered = all.filter(order => (status === 'all' || order.status === status)
@@ -64,6 +65,7 @@ export function registerUpgradeRoutes(app) {
     if (!session) return
     const order = findUpgradeOrder(req.params.orderId, session.user.id)
     if (!order) return res.status(404).json({ message: '升级订单不存在' })
+    expirePendingUpgradeOrders([order])
     res.json({ order: orderQuerySummary(order) })
   })
 
@@ -76,7 +78,7 @@ export function registerUpgradeRoutes(app) {
     } catch {
       res.status(502).json({ message: '套餐价格加载失败，请稍后重试' })
     }
-  })
+  })
   app.post('/api/account/upgrade-orders', async (req, res) => {
     let release
     try {
@@ -93,18 +95,7 @@ export function registerUpgradeRoutes(app) {
         return res.status(409).json({ message: `当前已享有${effective.label}权益，无需订购低等级套餐` })
       }
 
-      const staleBefore = Date.now() - 30 * 60 * 1000
-      let expiredChanged = false
-      for (const item of upgradeOrdersForUser(stored.id)) {
-        if (item.status === 'pending_payment' && new Date(item.createdAt).getTime() < staleBefore) {
-          item.status = 'expired'
-          item.paymentQueryCredential = null
-          item.paymentRequiresLogin = false
-          item.updatedAt = new Date().toISOString()
-          expiredChanged = true
-        }
-      }
-      if (expiredChanged) persistMetadata()
+      expirePendingUpgradeOrders(upgradeOrdersForUser(stored.id))
       const existing = upgradeOrdersForUser(stored.id).find((order) => order.status === 'pending_payment')
       if (existing) {
         return res.status(409).json({ message: '已有一个待支付的升级订单', order: upgradeOrderSummary(existing) })
@@ -139,7 +130,7 @@ export function registerUpgradeRoutes(app) {
     } finally {
       release?.()
     }
-  })
+  })
   app.post('/api/account/upgrade-orders/:orderId/cancel', async (req, res) => {
     let release
     try {
@@ -148,7 +139,8 @@ export function registerUpgradeRoutes(app) {
       const order = findUpgradeOrder(req.params.orderId, session.user.id)
       if (!order) return res.status(404).json({ message: '升级订单不存在' })
       release = await acquireUpgradeLock(order.id)
-      if (!['pending_payment', 'canceled'].includes(order.status)) return res.status(409).json({ message: '当前订单状态不可取消' })
+      expirePendingUpgradeOrders([order])
+      if (!['pending_payment', 'canceled'].includes(order.status)) return res.status(409).json({ message: '当前订单状态不可取消', order: upgradeOrderSummary(order) })
       if (order.status !== 'canceled') {
         order.status = 'canceled'
         order.updatedAt = new Date().toISOString()
@@ -158,7 +150,7 @@ export function registerUpgradeRoutes(app) {
     } catch {
       res.status(500).json({ message: '取消订单失败，请稍后重试' })
     } finally { release?.() }
-  })
+  })
   app.post('/api/account/upgrade-orders/:orderId/confirm', async (req, res) => {
     let release
     try {
@@ -167,7 +159,8 @@ export function registerUpgradeRoutes(app) {
       const order = findUpgradeOrder(req.params.orderId, session.user.id)
       if (!order) return res.status(404).json({ message: '升级订单不存在' })
       release = await acquireUpgradeLock(order.id)
-      if (order.status !== 'pending_payment') return res.status(409).json({ message: '当前订单不支持支付确认' })
+      expirePendingUpgradeOrders([order])
+      if (order.status !== 'pending_payment') return res.status(409).json({ message: order.status === 'expired' ? '支付已超时，请重新创建订单支付' : '当前订单不支持支付确认', order: upgradeOrderSummary(order) })
       const payType = req.body?.payType === undefined ? normalizeWebMemberPayType(order.payType || 1) : integerInput(req.body.payType,'支付方式',1,2)
       const payment = order.remoteOrderNo
         ? { order_no: order.remoteOrderNo, pay_type: order.payType || payType, ...(order.payment || {}) }
@@ -177,7 +170,9 @@ export function registerUpgradeRoutes(app) {
       await ensurePaymentAssets(payment)
       order.payment = normalizePaymentPayload(payment)
       order.payType = normalizeWebMemberPayType(payment.pay_type || order.payType || payType)
+      expirePendingUpgradeOrders([order])
       persistMetadata()
+      if (order.status !== 'pending_payment') return res.status(409).json({ message: '支付已超时，请重新创建订单支付', order: upgradeOrderSummary(order) })
       res.json({
         message: payment.pay_type === 2 ? '支付宝收银台已创建，请在当前弹窗完成支付' : '微信支付二维码已创建，请扫码支付',
         order: upgradeOrderSummary(order),
@@ -188,13 +183,14 @@ export function registerUpgradeRoutes(app) {
     } finally {
       release?.()
     }
-  })
+  })
   app.post('/api/account/upgrade-orders/:orderId/pay-status', async (req, res) => {
     try {
       const session = requireAuthSession(req, res)
       if (!session) return
       const order = findUpgradeOrder(req.params.orderId, session.user.id)
       if (!order) return res.status(404).json({ message: '升级订单不存在' })
+      expirePendingUpgradeOrders([order])
       if (!order.remoteOrderNo) return res.status(409).json({ message: '请先创建支付二维码或支付宝订单' })
       if (order.status === 'paid') {
         return res.json({ message: '支付成功', order: upgradeOrderSummary(order), workspace: accountWorkspacePayload(session.user) })
@@ -205,11 +201,11 @@ export function registerUpgradeRoutes(app) {
       }
       order.updatedAt = new Date().toISOString()
       persistMetadata()
-      res.json({ message: '还未支付', order: upgradeOrderSummary(order), paid: false })
+      res.json({ message: order.status === 'expired' ? '支付已超时，请重新创建订单支付；如已付款，可继续核对支付状态' : '还未支付', order: upgradeOrderSummary(order), paid: false })
     } catch (error) {
       res.status(error.status || 502).json({ message: error.message || '支付状态查询失败' })
     }
-  })
+  })
 }
 
 function orderQuerySummary(order) {
