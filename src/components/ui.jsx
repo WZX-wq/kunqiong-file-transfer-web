@@ -1,9 +1,10 @@
+export { UserAvatar, userAvatarSource, displayUserInitial, displayUserSubtitle } from './account.jsx'
 import React from 'react'
 import { sanitizeOfficeHtml } from '../office-html.js'
 import { readTextPreview } from '../lib/text-preview.js'
 import { Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, Eye, FileText, Link2, PencilLine, RefreshCw, RotateCcw, UserPlus, UserRound, X } from 'lucide-react'
 import { apiRequest, downloadResponseError, downloadStatusText } from '../lib/api.js'
-import { addMonths, displayUserName, formatBytes, formatDateInput, formatDuration, formatLimitSize, isClosedStatus, maskPhone, parseLocalDate, splitFileNameForDisplay, startOfMonth } from '../lib/format.js'
+import { addMonths, formatBytes, formatDateInput, formatDuration, formatLimitSize, isClosedStatus, parseLocalDate, splitFileNameForDisplay, startOfMonth } from '../lib/format.js'
 import { useEffect, useRef, useState } from 'react'
 import { previewSupportLabel, previewTypeLabel } from '../lib/transfer.js'
 import { FeedbackMessage } from './common.jsx'
@@ -841,11 +842,6 @@ export function RenameRecordModal({ record, onClose, onSave }) {
   )
 }
 
-export function UserAvatar({ user, overrideSrc = '' }) {
-  const avatarSrc = overrideSrc || userAvatarSource(user)
-  return avatarSrc ? <img className="user-avatar" src={avatarSrc} alt={`${displayUserName(user)}头像`} /> : <span className="user-avatar">{displayUserInitial(user)}</span>
-}
-
 export function RecordNameText({ name }) {
   const text = String(name || '').trim() || '文件分享'
   const { base, extension } = splitFileNameForDisplay(text)
@@ -882,19 +878,5 @@ export function PlanSpaceSummary({ plan = {}, compact = false }) {
     {plan.teamSpaceBytes ? <span><b>{formatBytes(plan.teamSpaceBytes)}</b><small>团队空间</small></span> : null}
   </span>
 }
-
-export function userAvatarSource(user = {}) {
-  if (user.avatarSource === 'custom' && user.avatar) return user.avatar
-  if (user.providerAvatar || user.avatar) return user.providerAvatar || user.avatar
-  const provider = String(user.provider || '').toLowerCase()
-  const label = provider.includes('qq') ? 'QQ' : provider.includes('wechat') || provider.includes('weixin') || provider.includes('微信') ? '微' : ''
-  if (!label) return ''
-  const background = label === 'QQ' ? '#4c9fe8' : '#20ad68'
-  return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" rx="64" fill="${background}"/><text x="64" y="76" text-anchor="middle" fill="white" font-family="Arial,sans-serif" font-size="${label === 'QQ' ? 30 : 42}" font-weight="700">${label}</text></svg>`)}`
-}
-
-export function displayUserInitial(user = {}) { return displayUserName(user).trim().slice(0, 1).toUpperCase() || '鲲' }
-
-export function displayUserSubtitle(user = {}) { return user.email || maskPhone(user.phone) || user.username || '已登录' }
 
 export function toFileItems(incoming) { return Array.from(incoming || []).map((file, index) => ({ id: `${file.name}-${file.lastModified}-${index}`, file, name: file.name, size: file.size, mimeType: file.type || 'application/octet-stream', relativePath: file.webkitRelativePath || file.name })) }

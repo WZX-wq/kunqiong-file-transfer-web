@@ -1,18 +1,19 @@
+import { AuthButton } from '../components/account.jsx'
 import React from 'react'
 import heroFolder from '../assets/hero-folder.webp'
 import brandLogo from '../assets/brand-logo-header.webp'
 import { SecurityCheckStatus } from '../components/security-check-status.jsx'
-import { defaultDeadline, displayUserName, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
+import { defaultDeadline, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, MAX_FILE_SIZE, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState } from '../lib/api.js'
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
 import { cancelUploadSession, canPreviewFile, clearUploadResume, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, readUploadResume, uploadShareInChunks } from '../lib/transfer.js'
-import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, Clock3, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, LogOut, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronRight, Clock3, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
 import { SettingsPage } from './settings.jsx'
 import { RecordsView } from './records.jsx'
-import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, UserAvatar, ValueItem, displayUserSubtitle } from '../components/ui.jsx'
+import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, ValueItem } from '../components/ui.jsx'
 import { ConfirmModal, Toast } from '../components/common.jsx'
 import { getRecordOwner } from '../lib/records.js'
 import { RECIPIENT_TEXT_MAX, recipientInputError } from '../../server/lib/contact-input.js'
@@ -1715,31 +1716,4 @@ export function MessageIcon({ category }) {
   if (category === 'official') return <Megaphone size={15} />
   if (category === 'other') return <MessageCircle size={15} />
   return <ShieldCheck size={15} />
-}
-
-export function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onSettings, onOrders, onLogout }) {
-  if (!user) {
-    return <button className="login-button" aria-label={loading ? '检查登录状态' : '登录'} onClick={onLogin} disabled={loading}><UserRound size={18} /><span>{loading ? '检查登录' : '登录'}</span><ChevronDown size={14} /></button>
-  }
-  return (
-    <div className="auth-menu-wrap">
-      <button className="login-button signed-in" aria-label="个人中心" onClick={onToggleMenu} aria-haspopup="menu" aria-expanded={menuOpen}>
-        <UserAvatar user={user} />
-        <span>{displayUserName(user)}</span>
-        <ChevronDown size={14} />
-      </button>
-      {menuOpen && (
-        <div className="auth-menu" role="menu" onClick={(event) => event.stopPropagation()}>
-          <div className="auth-menu-profile">
-            <UserAvatar user={user} />
-            <div><strong>{displayUserName(user)}</strong><span>{displayUserSubtitle(user)}</span></div>
-          </div>
-          <button role="menuitem" onClick={onSettings}><Settings2 size={14} /> 账户设置</button>
-          <button role="menuitem" onClick={onOrders}><FileText size={14} /> 我的订单</button>
-          <button className="mobile-workspace-link" role="menuitem" onClick={() => { window.location.href = '/workspace' }}><Building2 size={14} /> 会员与团队空间</button>
-          <button role="menuitem" onClick={onLogout}><LogOut size={14} /> 退出登录</button>
-        </div>
-      )}
-    </div>
-  )
 }

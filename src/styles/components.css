@@ -408,6 +408,10 @@
 .collection-qr { width: 116px; height: 116px; margin: 18px 0 2px; }
 .public-shell { background: #f5f8f7; }
 .public-safe { display: flex; align-items: center; gap: 6px; margin-left: auto; color: #637a74; font-size: 12px; }
+.public-shell .public-topbar-actions { margin-left: auto; min-width: 0; }
+.public-account-actions { position: relative; flex: none; }
+.public-account-actions .login-button.signed-in > span:not(.user-avatar) { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.public-account-error { position: absolute; right: 0; top: 100%; width: 220px; padding: 10px; color: #a94436; background: white; border: 1px solid #ecd5d0; border-radius: 8px; font-size: 12px; }
 .public-page { flex: 1; display: grid; place-items: center; padding: 48px 20px 70px; }
 .public-card { width: min(570px, 100%); min-width: 0; padding: 34px; background: #fff; border: 1px solid #dfebe7; border-radius: 14px; box-shadow: var(--shadow); }
 .public-card h1 { margin: 0 0 10px; color: var(--ink); font-size: 28px; line-height: 1.25; letter-spacing: -0.03em; overflow-wrap: anywhere; }
@@ -745,6 +749,7 @@
   .retrieve-modal .file-actions { flex: none; }
   .public-shell .topbar { height: 62px; padding: 0 22px; }
   .public-shell .brand-logo { height: 50px; max-width: 128px; }
+  .public-topbar-actions .public-safe { display: none; }
   .public-safe { max-width: 46%; justify-content: flex-end; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .public-page { align-items: start; place-items: start center; padding: 22px 0 44px; }
   .share-public-card { width: 100%; margin: 0; padding: 24px 18px; border-right: 0; border-left: 0; border-radius: 0; box-shadow: 0 18px 46px rgba(40, 84, 74, .08); }
