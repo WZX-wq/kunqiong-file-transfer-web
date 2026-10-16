@@ -107,6 +107,13 @@ try {
   check('Pending collection offers file submission', buttons[1].textContent === '提交文件' && buttons[1].closest('.record-row').querySelector('.record-type').textContent === '待提交')
   check('Closed and past-deadline collections offer viewing instead of submission', buttons[2].textContent === '查看任务' && buttons[2].closest('.record-row').querySelector('.record-type').textContent === '已关闭' && buttons[3].textContent === '查看任务' && buttons[3].closest('.record-row').querySelector('.record-type').textContent === '已截止')
   check('Missing submission link is disabled while share pickup code remains visible', buttons[4].disabled && [...submissionActions.document.querySelectorAll('.record-code')].some(item => item.tagName === 'SPAN' && item.textContent === 'ABC123') && !submissionActions.document.querySelector('.records-list').textContent.includes('提交入口') && submissionActions.errors.length === 0)
+  const inaccessible = { ...record, id: 'my_sent:share:inaccessible', shareId: 'inaccessible', status: '无管理权限' }
+  submissionActions.api.renderRecords([inaccessible])
+  await waitFor(() => submissionActions.document.querySelector('.record-type')?.textContent === '无管理权限', 'Lost management permission is displayed')
+  check('Records without management permission hide protected preview action', !submissionActions.document.querySelector('.record-preview-button'))
+  submissionActions.document.querySelector('[aria-label^="更多操作"]').click()
+  await waitFor(() => submissionActions.document.querySelector('.record-menu'), 'Inaccessible share menu opens')
+  check('Lost management permission disables protected management actions', ['管理分享设置', '设置截至时间', '关闭分享链接'].every(label => [...submissionActions.document.querySelectorAll('.record-menu button')].find(button => button.textContent.includes(label))?.disabled))
 } finally { submissionActions.close() }
 
 const blocked = await fixture(() => failure(410, '分享已关闭'))
@@ -212,6 +219,29 @@ try {
   check('Owner sync restores closed share files', result.files.length === 1 && result.files[0].name === 'records.pdf')
   check('Owner sync reads management metadata', synced.requests[0].url === '/api/shares/manage/manage')
 } finally { synced.close() }
+const expiredSync = await fixture(() => failure(410, '分享已关闭'))
+try {
+  const expiredRecord = { ...record, scope: 'sent_to_me', status: '已关闭', expiresAt: '2000-01-01T00:00:00.000Z' }
+  const result = await expiredSync.api.syncShareRecord(expiredRecord)
+  check('Expired received share skips its known-gone public token', result.status === '已关闭' && expiredSync.requests.length === 0)
+} finally { expiredSync.close() }
+const forbiddenSync = await fixture(() => failure(403, '无权管理其他账号的文件'))
+try {
+  const activeRecord = { ...record, status: '有效', expiresAt: '2099-01-01T00:00:00.000Z' }
+  const first = await forbiddenSync.api.syncShareRecord(activeRecord)
+  const second = await forbiddenSync.api.syncShareRecord(first)
+  check('Lost share-management permission is shown explicitly', first.status === '无管理权限')
+  check('Lost share-management permission is not probed again', second.status === '无管理权限' && forbiddenSync.requests.length === 1)
+  const retry = await forbiddenSync.api.syncShareRecord({ ...first, updatedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString() })
+  check('Lost share-management permission can be retried after cooldown', retry.status === '无管理权限' && forbiddenSync.requests.length === 2)
+} finally { forbiddenSync.close() }
+const goneSync = await fixture(() => failure(410, '分享已关闭'))
+try {
+  const activeRecord = { ...record, status: '有效', expiresAt: '2099-01-01T00:00:00.000Z' }
+  const first = await goneSync.api.syncShareRecord(activeRecord)
+  const second = await goneSync.api.syncShareRecord(first)
+  check('Gone share is recorded as unavailable and not probed again', first.status === '已失效' && second.status === '已失效' && goneSync.requests.length === 1)
+} finally { goneSync.close() }
 const lockedSync = await fixture(() => ok(JSON.stringify({ requiresPassword: true, share: { id: 'share', code: 'ABC123', files: [] } })))
 try {
   const result = await lockedSync.api.syncShareRecord({ ...record, scope: 'sent_to_me' })

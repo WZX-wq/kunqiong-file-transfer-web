@@ -271,6 +271,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     const copyTarget = recordCopyTarget(record)
     const shareUrl = record.kind === 'share' ? (record.shareUrl || link) : ''
     const statusGroup = recordStatusGroup(record)
+    const noShareManagement = record.kind === 'share' && record.scope === 'my_sent' && record.status === '无管理权限'
     const closedShare = record.kind === 'share' && isClosedStatus(record.status)
     const reopenableCollection = canReopenCollection(record)
     return (
@@ -295,8 +296,8 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
         <button disabled={!onRename} onClick={runMenuAction(() => requestRename(record))}><PencilLine size={14} /> 重命名</button>
         {record.scope === 'my_sent' && (
           <>
-            <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
-            <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => {
+            <button disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
+            <button disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => {
               // 与服务端 applyShareUpdate 同口径：改有效期 = 会员特权（付费且在有效期内），
               // 永久保存才要求 permanent。此前误用 plan.permanent 预检，把月卡/季卡会员拦在门外。
               const hasMembership = Boolean(user?.plan?.permanent || (user?.plan?.id && user?.plan?.id !== 'free'))
@@ -307,9 +308,9 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
               setShareExpiryTarget(record)
             })}><CalendarDays size={14} /> 设置截至时间</button>
             {closedShare ? (
-              <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启分享</button>
+              <button disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启分享</button>
             ) : (
-              <button className="danger" disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
+              <button className="danger" disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
             )}
           </>
         )}
@@ -427,7 +428,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                     <button type="button" className="record-code record-submit-button" disabled={!recordLink(record) || !onOpen} aria-label={`${recordOpenLabel(record)}：${recordDisplayName(record)}`} onClick={() => onOpen(record)}><ExternalLink size={14} />{recordOpenLabel(record)}</button>
                   ) : <span className="record-code">{record.code || '-'}</span>}
                   <div className="menu-wrap row-menu-wrap">
-                    {recordPreviewConfigs(record).length > 0 && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
+                    {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
                     <button className="ghost-icon" aria-label={`更多操作：${recordDisplayName(record)}`} onClick={(event) => toggleMenu(record.id, event)}><MoreHorizontal size={17} /></button>
                     {openMenu === record.id && renderRecordMenu(record)}
                   </div>
@@ -516,7 +517,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                   <span className={`record-type ${item.statusGroup}`}>{recordDisplayStatus(record)}</span>
                   <span className="record-code">{item.size ? formatBytes(item.size) : `${item.fileCount || 1} 项`}</span>
                   <div className="menu-wrap row-menu-wrap">
-                    {recordPreviewConfigs(record).length > 0 && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${item.name}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
+                    {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${item.name}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
                     <button className="ghost-icon" aria-label={`更多操作：${item.name}`} onClick={(event) => toggleMenu(item.id, event)}><MoreHorizontal size={17} /></button>
                     {openMenu === item.id && renderRecordMenu(record)}
                   </div>

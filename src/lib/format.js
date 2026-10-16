@@ -45,7 +45,7 @@ export function isClosedStatus(status) {
 }
 
 export function isExpiredStatus(status) {
-  return ['expired', '已过期', '已失效', '已截止'].includes(status)
+  return ['expired', '已过期', '已失效', '已截止', '无管理权限'].includes(status)
 }
 
 export function isExpiringSoonStatus(status) {
