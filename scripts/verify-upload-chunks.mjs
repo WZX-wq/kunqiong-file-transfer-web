@@ -141,6 +141,7 @@ try {
     scannerResult = scenario.result
     const rejected = await api(url + '/complete', {})
     check('Specific scan diagnostic: ' + scenario.limit + '/' + scenario.code, rejected.status === scenario.status && rejected.data.code === scenario.code && rejected.data.scanLimit === scenario.limit && rejected.data.message.includes(scenario.message))
+    check('Scan diagnostic names the failed upload without a false malware verdict', rejected.data.scanFile === 'hashed-chunks.bin' && !rejected.data.scanFinding)
     check('Scan failure preserves complete chunks and publishes nothing', JSON.parse(fs.readFileSync(path.join(fixture, 'storage/metadata.json'), 'utf8')).shares.length === 0 && (await api(url)).data.files[0].uploadedChunks.length === 2)
   }
   scannerResult = 'stream: OK'
@@ -214,14 +215,17 @@ try {
   await api(blockedUrl + '/complete', { background: true })
   const blocked = await until(async () => { const state = (await api(blockedUrl)).data.completion; return state.status === 'failed' && state })
   check('Threat verdict persists as an explicit safe error', blocked.error.status === 415 && blocked.error.code === 'scan_threat_detected')
+  check('Threat verdict identifies the affected file and detection name', blocked.error.scanFile === 'background.bin' && blocked.error.scanFinding?.signature === 'Fixture.Threat' && blocked.error.scanFinding?.label && blocked.error.scanFinding?.advice)
   await api(blockedUrl + '/complete', { background: true, retry: true })
   check('Risk file is never published or repeatedly rescanned', scanned.length === blockedCount + 1 && shares().length === beforeShares + 1)
-  const duplicateRisk = await prepared()
+  const duplicateRisk = await prepared('renamed-risk.bin')
   await api(duplicateRisk + '/complete', { background: true })
   const repeatedRisk = await until(async () => { const completion = (await api(duplicateRisk)).data.completion; return completion.status === 'failed' && completion })
   check('Same risky content in a new upload is blocked without another scanner request', repeatedRisk.error.code === 'scan_threat_detected' && scanned.length === blockedCount + 1 && shares().length === beforeShares + 1)
+  check('Cached threat keeps detection details with the current upload filename', repeatedRisk.error.scanFinding?.signature === 'Fixture.Threat' && repeatedRisk.error.scanFile === 'renamed-risk.bin')
   await stop(); await start()
   check('Threat verdict survives restart with original chunks intact', (await api(blockedUrl)).data.completion.error.code === 'scan_threat_detected' && (await api(blockedUrl)).data.files[0].uploadedChunks.length === 2)
+  check('Threat explanation survives restart', (await api(blockedUrl)).data.completion.error.scanFinding.signature === 'Fixture.Threat')
 
   const installerUrl = await prepared('setup.exe'), beforeInstallerShares = shares().length
   scannerResult = 'stream: Heuristics.Limits.Exceeded.MaxFiles FOUND'
@@ -252,6 +256,27 @@ try {
   await api(timeoutUrl + '/complete', { background: true, retry: true })
   await until(async () => (await api(timeoutUrl)).data.completion.status === 'complete')
   check('Explicit scanner retry completes without retransferring chunks', scanned.length === timeoutCount + 1 && scanned.at(-1).equals(original))
+  for (const [signature, label, advice] of [
+    ['Win.Trojan.Fixture-1','疑似木马程序','请勿运行'],
+    ['PUA.Win.Adware.Fixture-1','潜在不受欢迎程序','官方来源'],
+    ['Heuristics.Phishing.Fixture','疑似钓鱼内容','可疑链接'],
+    ['Heuristics.Encrypted.Archive','加密内容无法完成安全检查','解密'],
+    ['Win.Test.EICAR_HDB-1','安全检测测试文件','测试文件'],
+    ['/internal/scanner/path/<img-onerror>','命中安全威胁特征','管理员'],
+  ]) {
+    const bytes=Buffer.from(signature),name='风险说明-'+scanned.length+'.rar'
+    const session=await api('/api/upload-sessions',{files:[{name,size:bytes.length,relativePath:'安装包/'+name}]})
+    assert.equal(session.status,201)
+    const url='/api/upload-sessions/'+session.data.sessionId,body=new FormData()
+    for(const [key,value] of Object.entries({fileIndex:0,chunkIndex:0,totalChunks:1}))body.append(key,String(value))
+    body.append('chunk',new Blob([bytes]),name)
+    assert.equal((await api(url+'/chunks',body)).status,200)
+    scannerResult='stream: '+signature+' FOUND'
+    const result=await api(url+'/complete',{})
+    check('Scanner finding explains risk and remediation: '+label,result.status===415&&result.data.scanFile==='安装包/'+name&&result.data.scanFinding.label.includes(label)&&result.data.scanFinding.advice.includes(advice))
+    check('Only a safe detection name is returned',result.data.scanFinding.signature===(signature.startsWith('/')?'':signature)&&!JSON.stringify(result.data).includes('/internal/scanner'))
+  }
+  scannerResult='stream: OK'
   const expiredUrl = await prepared(), beforeLogout = shares().length
   holdScan = true
   await api(expiredUrl + '/complete', { background: true })

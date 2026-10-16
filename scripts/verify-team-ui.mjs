@@ -60,7 +60,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
   else if(url.startsWith('/api/organizations/'))data=url.includes('wrong')?{available:false,reason:'unavailable'}:{available:!!currentRole,reason:currentRole?'eligible':'anonymous',organizationName:name}
   else if(url==='/api/account/upgrade-pricing')data={source:'local',pricing:{}}
   else if(url==='/api/account/messages')data={messages:[],settings:{}}
-  else if(url==='/api/upload-sessions'){status=400;data={message:'fixture: stop before uploading bytes'}}
+   else if(url==='/api/upload-sessions'){status=navigation.uploadFailure?415:400;data=navigation.uploadFailure||{message:'fixture: stop before uploading bytes'}}
   return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}})
  }
  window.eval(code);await waitFor(()=>document.querySelector('.public-shell'),'page mounts');await delay(100)
@@ -195,6 +195,28 @@ await scenario('TEAM-012-PICKERS',async()=>{
   await f.click('移除 边界100.txt');check('移除超限文件后可以上传',!f.find('开始上传').disabled&&f.document.querySelectorAll('.team-upload-files li').length===100)
   check('团队文件选择无运行错误',!f.errors.length)
  }finally{f.dom.window.close()}
+})
+await scenario('TEAM-UPLOAD-RISK-DETAILS', async () => {
+ for (const failure of [
+  {code:'scan_threat_detected',message:'疑似木马程序，已阻止发布',scanFile:'安装包/截图助手.rar',scanFinding:{label:'疑似木马程序',signature:'Win.Trojan.Fixture-1',advice:'请勿运行该文件；使用杀毒软件检查并从官方来源重新获取。'}},
+  {code:'scan_size_limit',message:'压缩包嵌套层数超过安全扫描上限，请减少嵌套后再上传',scanFile:'资料/多层压缩包.zip',scanLimit:'MaxRecursion'},
+ ]) {
+  const f=await mount('/team?tab=resources','member','隔离验证团队',true,1,{uploadFailure:failure})
+  try {
+   await f.choose([f.file('fixture.txt')]);await f.click('开始上传')
+   await waitFor(()=>f.document.querySelector('.upload-security-failure'),'persistent risk explanation shown')
+   const panel=f.document.querySelector('.upload-security-failure')
+   check('团队上传明确显示涉及文件 '+failure.code,panel.textContent.includes(failure.scanFile))
+   check('团队上传说明拦截原因 '+failure.code,panel.textContent.includes(failure.scanFinding?.label||failure.message))
+   if(failure.scanFinding){check('团队上传显示检测名称与处理建议',panel.textContent.includes(failure.scanFinding.signature)&&panel.textContent.includes(failure.scanFinding.advice));check('威胁拦截不允许继续发布',f.find('风险文件已阻止')?.disabled)}
+   else check('扫描限制可重试且不标为威胁',!!f.find('重试安全检查')&&!panel.textContent.includes('风险类型'))
+   await delay(3300)
+   check('临时通知消失后具体原因仍保留 '+failure.code,!!f.document.querySelector('.upload-security-failure'))
+   await f.click('清除待上传文件')
+   check('清除上传后移除旧风险说明 '+failure.code,!f.document.querySelector('.upload-security-failure'))
+   check('风险说明无运行错误 '+failure.code,!f.errors.length)
+  } finally {f.dom.window.close()}
+ }
 })
 await scenario('TEAM-001',async()=>{for(const [route,title] of [['/team','登录后查看团队'],['/workspace','登录后使用团队空间']]){const f=await mount(route,'');try{check('游客页面要求登录 '+route,f.document.body.textContent.includes(title));check('游客不读取团队管理数据 '+route,!f.calls.some(c=>c.url==='/api/account/team/overview'||c.url==='/api/account/workspace'));check('游客无团队名称/管理按钮 '+route,!f.document.body.textContent.includes('隔离验证团队')&&!f.find('解散团队'))}finally{f.dom.window.close()}}})
 await scenario('TEAM-NAME-BOUNDARIES', async () => {

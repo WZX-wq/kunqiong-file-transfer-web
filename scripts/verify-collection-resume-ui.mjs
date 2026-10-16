@@ -235,10 +235,14 @@ try {
     await Promise.all(rejected.pending.filter(xhr => !xhr.done).map(xhr => xhr.accept())); await delay(20)
   }
   const session = rejected.sessions.get('session-1')
-  session.completion = { ...session.completion, status: 'failed', error: { code: 'scan_threat_detected', status: 415, message: '文件扫描发现威胁，已阻止发布' } }
+  session.completion = { ...session.completion, status: 'failed', error: { code: 'scan_threat_detected', status: 415, message: '疑似木马程序，已阻止发布',scanFile:'资料/续传.bin',scanFinding:{label:'疑似木马程序',signature:'Win.Trojan.Fixture-1',advice:'请勿运行该文件，使用杀毒软件隔离处理。'} } }
   await waitFor(() => f.button('风险文件已阻止'), 'Collection blocks detected risk')
   check('Collection threat cannot be retried and does not claim an upload pause', f.button('风险文件已阻止').disabled && !f.button('继续上传') && f.document.querySelector('.progress-label').textContent.includes('已阻止提交'))
   check('Collection threat allows abandoning retained files', Boolean(f.button('放弃本次上传')) && !f.document.querySelector('.security-check-status'))
+  check('Collection shows the affected file, risk type, detection and next action', ['资料/续传.bin','疑似木马程序','Win.Trojan.Fixture-1','请勿运行'].every(text=>f.document.querySelector('.upload-security-failure')?.textContent.includes(text)))
+  const blockedStorage=f.storage();f.close();f=await mount(rejected,blockedStorage)
+  await waitFor(()=>f.button('风险文件已阻止'),'Restored threat blocks submission')
+  check('Refreshing collection keeps risk details without reselecting files',f.document.querySelector('.upload-security-failure')?.textContent.includes('Win.Trojan.Fixture-1')&&rejected.scanStarts===1)
   await f.click('放弃本次上传')
   await waitFor(() => !rejected.sessions.size, 'Blocked collection upload discarded')
   check('Abandoning a blocked collection resets to a fresh upload', Boolean(f.button('提交文件')) && !f.button('风险文件已阻止'))
@@ -252,15 +256,15 @@ try {
     await Promise.all(exceeded.pending.filter(xhr => !xhr.done).map(xhr => xhr.accept())); await delay(20)
   }
   const session = exceeded.sessions.get('session-1')
-  const message = '压缩包内的文件数量超过安全扫描上限，请分成多个压缩包再上传'
-  session.completion = { ...session.completion, status: 'failed', error: { code: 'scan_size_limit', scanLimit: 'MaxFiles', status: 415, message } }
+  const message = '文件内部展开的文件数量超过安全扫描上限（包括安装程序的内嵌文件），完整检查未完成，暂不能发布；请更换文件，或联系管理员核实扫描限制'
+  session.completion = { ...session.completion, status: 'failed', error: { code: 'scan_size_limit', scanLimit: 'MaxFiles', scanFile:'setup.exe',status: 415, message } }
   await waitFor(() => f.document.body.textContent.includes(message), 'Installer limit is visible')
-  check('EXE scan limit is an alert rather than successful submission', f.document.querySelector('.feedback-message.error[role=alert]')?.textContent.includes(message) && !f.document.body.textContent.includes('提交成功'))
+  check('EXE scan limit is an alert rather than successful submission', f.document.querySelector('.upload-security-failure[role=alert]')?.textContent.includes(message) && f.document.querySelector('.upload-security-failure').textContent.includes('setup.exe') && !f.document.body.textContent.includes('提交成功'))
   check('Scan limit preserves 100% transferred bytes and offers a safety-check retry', f.button('重试安全检查') && !f.button('继续上传') && f.document.querySelector('.progress-label strong').textContent === '100%')
   const saved = f.storage(); f.close(); f = await mount(exceeded, saved)
   await f.choose([installer])
   await waitFor(() => f.button('重试安全检查'), 'Refresh restores failed safety check rather than upload pause')
-  check('Refresh preserves scanner reason as an error', f.document.querySelector('.feedback-message.error[role=alert]')?.textContent.includes(message) && !f.button('继续上传'))
+  check('Refresh preserves scanner reason as an error', f.document.querySelector('.upload-security-failure[role=alert]')?.textContent.includes(message) && !f.button('继续上传'))
   check('Restoring scan failure does not resend the installer or restart checking', exceeded.uploads.length === 4 && exceeded.scanStarts === 1 && f.errors.length === 0)
 } finally { f.close() }
 console.log(`Collection resume UI: ${passed} passed`)
