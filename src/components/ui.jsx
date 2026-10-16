@@ -1,6 +1,6 @@
 import React from 'react'
 import { sanitizeOfficeHtml } from '../office-html.js'
-import { PPTXViewer } from 'pptxviewjs'
+import { readTextPreview } from '../lib/text-preview.js'
 import { Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, Eye, FileText, Link2, PencilLine, RefreshCw, RotateCcw, UserPlus, UserRound, X } from 'lucide-react'
 import { apiRequest, downloadResponseError, downloadStatusText } from '../lib/api.js'
 import { addMonths, displayUserName, formatBytes, formatDateInput, formatDuration, formatLimitSize, isClosedStatus, maskPhone, parseLocalDate, splitFileNameForDisplay, startOfMonth } from '../lib/format.js'
@@ -16,7 +16,7 @@ export function DownloadProgressPanel({ task, onRetry }) {
   if (!task || task.status === 'idle') return null
   if (task.status === 'handed_off') return <div className="progress-wrap download-progress"><div className="progress-label"><span>已交给浏览器下载</span><Download size={16} /></div>{task.filename && <small>{task.filename}</small>}</div>
   const busy = ['preparing', 'downloading', 'saving'].includes(task.status)
-  const statusText = downloadStatusText(task)
+  const statusText = task.needsPassword ? '需要提取密码' : downloadStatusText(task)
   const remainingText = task.status === 'complete' ? '已完成' : formatDuration(task.etaSeconds)
   const progress = task.totalBytes ? Math.min(100, Math.max(0, task.progress || 0)) : task.status === 'complete' ? 100 : task.progress || 0
   const trackWidth = task.totalBytes || task.status === 'complete' ? progress : busy ? 18 : 0
@@ -35,13 +35,22 @@ export function DownloadProgressPanel({ task, onRetry }) {
       {task.retryCount > 0 && <small>已重试 {task.retryCount} 次</small>}
       {task.status === 'complete' && <small>已调用浏览器保存，请在下载列表查看。</small>}
       {task.error && <p className="upload-error">{task.error}</p>}
-      {task.status === 'failed' && (
+      {task.status === 'failed' && task.needsPassword && <DownloadPasswordForm onUnlock={onRetry} />}
+      {task.status === 'failed' && !task.needsPassword && (
         <div className="upload-control-row">
-          <button className="primary-button" onClick={onRetry}><RotateCcw size={15} /> 重试下载</button>
+          <button className="primary-button" onClick={() => onRetry()}><RotateCcw size={15} /> 重试下载</button>
         </div>
       )}
     </div>
   )
+}
+
+function DownloadPasswordForm({ onUnlock }) {
+  const [password, setPassword] = useState('')
+  return <form className="public-password" onSubmit={(event) => { event.preventDefault(); if (password) onUnlock(password) }}>
+    <input type="password" aria-label="提取密码" value={password} maxLength={128} autoFocus autoComplete="off" onChange={(event) => setPassword(limitInputText(event.target.value, 128))} placeholder="请输入提取密码，最多 128 个字符" />
+    <button type="submit" className="primary-button" disabled={!password}>验证并下载</button>
+  </form>
 }
 
 export function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, onCopyImage, onCopyLink }) {
@@ -114,6 +123,9 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
   const [password, setPassword] = useState('')
   const [unlocking, setUnlocking] = useState(false)
   const [accessAttempt, setAccessAttempt] = useState(0)
+  const [unlockedUrl, setUnlockedUrl] = useState('')
+  const unlocked = unlockedUrl === preview?.url
+  const previewHeaders = unlocked ? undefined : preview?.headers
 
   useEffect(() => {
     if (!preview?.url) return
@@ -123,7 +135,13 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
     setAccess({ url: preview.url, status: 'loading', error: '' })
     const checkAccess = async () => {
       try {
-        const response = await fetch(preview.url, { method: 'HEAD', credentials: 'include', headers: preview.headers || {}, signal: controller.signal })
+        if (!unlocked && preview.unlockUrl && preview.headers?.['x-share-password']) {
+          const unlockResponse = await fetch(preview.unlockUrl, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: preview.headers['x-share-password'] }), signal: controller.signal })
+          if (!unlockResponse.ok) throw await downloadResponseError(unlockResponse)
+          if (!controller.signal.aborted) setUnlockedUrl(preview.url)
+          return
+        }
+        const response = await fetch(preview.url, { method: 'HEAD', credentials: 'include', headers: previewHeaders || {}, signal: controller.signal })
         if (!response.ok) throw await downloadResponseError(response)
         if (!controller.signal.aborted) setAccess({ url: preview.url, status: 'ready', error: '' })
       } catch (requestError) {
@@ -134,7 +152,7 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
     }
     checkAccess()
     return () => controller.abort()
-  }, [preview?.url, preview?.headers, accessAttempt])
+  }, [preview?.url, previewHeaders, unlocked, accessAttempt])
 
   useEffect(() => { setPassword('') }, [preview?.url])
 
@@ -150,6 +168,7 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
   const file = preview.file || {}
   const ready = access.url === preview.url && access.status === 'ready'
   const previewError = error || (access.url === preview.url && access.status === 'error' ? access.error : '')
+  const authorizedPreview = unlocked ? { ...preview, headers: undefined, downloadConfig: preview.downloadConfig ? { ...preview.downloadConfig, headers: {} } : undefined } : preview
   const unlockPreview = async (event) => {
     event.preventDefault()
     if (!password || unlocking) return
@@ -163,6 +182,7 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
       const response = await fetch(preview.unlockUrl, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password }) })
       if (!response.ok) throw await downloadResponseError(response)
       setPassword('')
+      setUnlockedUrl(preview.url)
       setAccessAttempt((attempt) => attempt + 1)
     } catch (requestError) {
       setAccess({ url: preview.url, status: 'password', error: requestError.message || '密码验证失败' })
@@ -174,7 +194,7 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
     if (!onDownload) return
     setDownloadError('')
     try {
-      const result = await onDownload()
+      const result = await onDownload(authorizedPreview.downloadConfig)
       if (result?.ok === false) setDownloadError(result.error || '下载失败')
     } catch (downloadException) {
       setDownloadError(downloadException.message || '下载失败')
@@ -199,7 +219,7 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
                 <div className="public-password"><input type="password" aria-label="提取密码" placeholder="请输入提取密码，最多 128 个字符" autoComplete="off" maxLength={128} value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} /><button type="submit" className="primary-button" disabled={unlocking || !password}>{unlocking ? '验证中' : '验证并预览'}</button></div>
                 <small>{password.length}/128 个字符</small>
               </form>
-            ) : ready ? renderPreviewContent(preview, () => setError('浏览器无法打开这个文件，可下载后查看。'))
+            ) : ready ? renderPreviewContent(authorizedPreview, () => setError('浏览器无法打开这个文件，可下载后查看。'))
               : <div className="office-preview-loading"><span className="loading-dot" /><strong>正在加载预览</strong></div>}
         </div>
         <div className="modal-footer preview-modal-footer">
@@ -262,25 +282,21 @@ export function TextPreview({ preview }) {
   const [state, setState] = useState({ status: 'loading', content: '', truncated: false, error: '' })
 
   useEffect(() => {
-    let cancelled = false
-    setState({ status: 'loading', content: '', truncated: false, error: '' })
+    const controller = new AbortController()
+    setState({ status:'loading', content:'', truncated:false, error:'' })
     const loadPreview = async () => {
       try {
-        const response = await fetch(preview.url, { credentials: 'include', headers: preview.headers || {} })
+        const response = await fetch(preview.url, { credentials:'include', signal:controller.signal, headers:{ ...preview.headers, Range:`bytes=0-${TEXT_PREVIEW_MAX_BYTES}` } })
         if (!response.ok) throw await downloadResponseError(response)
-        const buffer = await response.arrayBuffer()
-        if (cancelled) return
-        const truncated = buffer.byteLength > TEXT_PREVIEW_MAX_BYTES
-        const sliced = truncated ? buffer.slice(0, TEXT_PREVIEW_MAX_BYTES) : buffer
-        const content = new TextDecoder('utf-8', { fatal: false }).decode(sliced)
-        if (!cancelled) setState({ status: 'ready', content, truncated, error: '' })
+        const result = await readTextPreview(response, TEXT_PREVIEW_MAX_BYTES, controller.signal)
+        if (!controller.signal.aborted) setState({ status:'ready', ...result, error:'' })
       } catch (error) {
-        if (!cancelled) setState({ status: 'error', content: '', truncated: false, error: error.message || '文件解析失败' })
+        if (!controller.signal.aborted) setState({ status:'error', content:'', truncated:false, error:error.message || '文件解析失败' })
       }
     }
     loadPreview()
-    return () => { cancelled = true }
-  }, [preview.url])
+    return () => controller.abort()
+  }, [preview.url, preview.headers])
 
   if (state.status === 'loading') return <div className="office-preview-loading"><span className="loading-dot" /><strong>正在生成预览</strong><span>文件只在当前浏览器中解析，不会自动下载。</span></div>
   if (state.status === 'error') return <div className="preview-error"><FileText size={28} /><strong>预览加载失败</strong><span>{state.error}</span></div>
@@ -338,6 +354,8 @@ export function OfficePreview({ preview }) {
         if (preview.kind === 'presentation') {
           session.close()
           if (!canvasRef.current) throw new Error('演示文稿画布初始化失败')
+          const { PPTXViewer } = await import('pptxviewjs')
+          if (cancelled || controller.signal.aborted) return
           const viewer = new PPTXViewer({ canvas: canvasRef.current })
           viewerRef.current = viewer
           await viewer.loadFile(result.buffer)

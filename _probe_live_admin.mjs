@@ -40,7 +40,7 @@ const bad = await req('/api/admin/login', { method: 'POST', headers: { 'content-
 ok('错误口令 -> 401', bad.status === 401, `status=${bad.status}`)
 ok('错误口令不下发会话 cookie', !bad.setCookie.join(';').includes('kunqiong_admin_session'))
 
-const good = await req('/api/admin/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'ljxkjadmin', password: 'jxljxkj009900' }) })
+const good = await req('/api/admin/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'ljxkjadmin', password: process.env.KUNQIONG_ADMIN_PASSWORD }) })
 ok('正确口令 -> 200', good.status === 200, `status=${good.status}`)
 const hit = good.setCookie.find((c) => c.startsWith('kunqiong_admin_session')) || ''
 const ck = hit.split(';')[0]

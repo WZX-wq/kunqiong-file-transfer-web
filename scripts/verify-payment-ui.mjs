@@ -26,16 +26,18 @@ async function waitFor(condition, name) {
   for (let i = 0; i < 150; i++) { if (condition()) return; await delay(10) }
   assert.fail(name)
 }
-async function mount({ pending = false, paymentReady = true, confirmationFailures = 0, statusFailures = 0, conflict = false } = {}) {
+async function mount({ pending = false, paymentReady = true, confirmationFailures = 0, statusFailures = 0, conflict = false, ageMs = 0 } = {}) {
   const jsErrors = []
   const console = new VirtualConsole()
   console.on('jsdomError', (error) => jsErrors.push(error))
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://fixture.local/workspace', pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole: console })
   const { window } = dom
+  let clock = Date.now()
+  window.Date.now = () => clock
   const timers = new Map()
   let nextTimer = 0, workspace = initialWorkspace(), order = null, loggedIn = true
   if (pending) {
-    order = { ...initialOrder(), ...(paymentReady ? { remoteOrderNo: 'fixture-remote-order', payment: { qrcode_img_url: 'data:image/png;base64,YQ==' } } : {}) }
+    order = { ...initialOrder(), createdAt: new Date(clock - ageMs).toISOString(), ...(paymentReady ? { remoteOrderNo: 'fixture-remote-order', payment: { qrcode_img_url: 'data:image/png;base64,YQ==' } } : {}) }
     workspace.orders = [order]; workspace.paymentReconciliation.pending = true
   }
   let holdStatus = false, statusAborts = 0, createCalls = 0, confirmCalls = 0
@@ -58,7 +60,7 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
       } else active--
     } else if (url === '/api/account/upgrade-orders' && options.method === 'POST') {
       createCalls++
-      order = initialOrder(); workspace.orders = [order]; payload = { order, orders: [order] }
+      order = { ...initialOrder(), id: 'fixture-order-' + createCalls, createdAt: new Date(clock).toISOString() }; workspace.orders = [order]; payload = { order, orders: [order] }
       if (conflict) { status = 409; payload.message = '已有一个待支付的升级订单' }
     } else if (url.endsWith('/confirm')) {
       confirmCalls++
@@ -103,6 +105,8 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
     requiresLogin: () => { workspace.paymentReconciliation = { pending: false, requiresLogin: true } },
     logout: () => { loggedIn = false },
     tick: async (ms) => { for (const timer of [...timers.values()]) if (timer.ms === ms) timer.callback(); await delay(20) },
+    advance: async (ms) => { clock += ms; for (const timer of [...timers.values()]) if (timer.ms === 1000) timer.callback(); await delay(20) },
+    returnAfter: async (ms) => { clock += ms; window.dispatchEvent(new window.Event('focus')); document.dispatchEvent(new window.Event('visibilitychange')); await delay(20) },
     close: () => dom.window.close(),
   }
 }
@@ -213,4 +217,44 @@ for (const refresh of ['manual', 'automatic']) {
     await waitFor(() => recovered.document.querySelector('.workspace-hero h1')?.textContent === '会员版空间', 'Recovered payment refreshes account entitlements ' + refresh)
   } finally { recovered.close() }
 }
+const expiryFixture = await mount({ pending: true, ageMs: 14 * 60000 })
+try {
+  await expiryFixture.click('升级权益', '.workspace-benefits-cta button')
+  check('Reopened checkout keeps the original fifteen-minute deadline', expiryFixture.document.querySelector('.upgrade-payment-countdown')?.textContent.includes('01:00'))
+  await expiryFixture.advance(59000)
+  check('Payment stays visible one second before expiry', !!expiryFixture.document.querySelector('img[alt="微信支付二维码"]') && expiryFixture.text().includes('00:01'))
+  await expiryFixture.advance(1000)
+  check('At the exact deadline the old payment code disappears', !expiryFixture.document.querySelector('.upgrade-payment-qr') && expiryFixture.text().includes('支付已超时'))
+  check('Expired checkout cannot reload or cancel the old payment', !expiryFixture.text().includes('重新加载支付码') && ![...expiryFixture.document.querySelectorAll('button')].some(b => b.textContent.trim() === '取消订单'))
+  await expiryFixture.click('重新创建订单')
+  await waitFor(() => expiryFixture.document.querySelector('img[alt="微信支付二维码"]'), 'Replacement order loads a fresh code')
+  check('Recreating an expired order starts a new fifteen-minute checkout', expiryFixture.createCalls() === 1 && expiryFixture.confirmCalls() === 1 && expiryFixture.text().includes('15:00'))
+} finally { expiryFixture.close() }
+
+const expiredOnOpen = await mount({ pending: true, paymentReady: false, ageMs: 15 * 60000 })
+try {
+  await expiredOnOpen.click('升级权益', '.workspace-benefits-cta button')
+  check('Opening an expired order never requests a new code for it', expiredOnOpen.confirmCalls() === 0 && expiredOnOpen.text().includes('支付已超时'))
+} finally { expiredOnOpen.close() }
+
+const suspended = await mount({ pending: true })
+try {
+  await suspended.click('升级权益', '.workspace-benefits-cta button')
+  await suspended.returnAfter(16 * 60000)
+  check('Returning from a suspended tab catches up without restarting the timer', !suspended.document.querySelector('.upgrade-payment-qr') && suspended.text().includes('支付已超时') && suspended.confirmCalls() === 0)
+} finally { suspended.close() }
+
+const expiryAlipay = await mount()
+try {
+  await expiryAlipay.click('升级权益', '.workspace-benefits-cta button')
+  await expiryAlipay.click('支付宝')
+  await expiryAlipay.click('创建升级订单')
+  await waitFor(() => expiryAlipay.document.querySelector('iframe'), 'Alipay is ready')
+  await expiryAlipay.advance(15 * 60000)
+  check('Expiry removes the Alipay checkout iframe as well', !expiryAlipay.document.querySelector('iframe') && expiryAlipay.text().includes('支付已超时'))
+  expiryAlipay.paid()
+  await expiryAlipay.tick(2000)
+  await waitFor(() => expiryAlipay.document.querySelector('.upgrade-success-view'), 'Payment at the deadline is still reconciled')
+  check('A confirmed payment at expiry still activates entitlements', !expiryAlipay.text().includes('重新创建订单'))
+} finally { expiryAlipay.close() }
 console.log(`Payment UI checks: ${passed}/${passed}`)

@@ -40,9 +40,11 @@ app.post('/__auth_fixture', async (req, res) => {
  if (req.body.expireCode) metadata.verificationCodes.filter(c=>c.target===req.body.expireCode).forEach(c=>c.expiresAt=new Date(Date.now()-1).toISOString());
  if (req.body.resetLimits) { verificationTargetLastSent.clear(); verificationIpAttempts.clear(); }
  if (req.body.seedCode) {
-   const { hashSecret, createToken } = await import('./server/lib/http.js');
+   const { createToken } = await import('./server/lib/http.js');
+   const { keyedDigest } = await import('./server/lib/private-key.js');
    metadata.verificationCodes = metadata.verificationCodes.filter(c=>c.target!==req.body.seedCode);
-   metadata.verificationCodes.push({id:createToken(10),type:req.body.seedCode.includes('@')?'email':'phone',target:req.body.seedCode,scene:'bind',codeHash:hashSecret('123456'),createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+600000).toISOString()});
+   const type=req.body.seedCode.includes('@')?'email':'phone';
+   metadata.verificationCodes.push({id:createToken(10),type,target:req.body.seedCode,scene:'bind',codeHash:'hmac:'+keyedDigest(type+':'+req.body.seedCode+':bind:123456'),createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+600000).toISOString()});
  }
  persistMetadata(); res.json({ok:true});
 });

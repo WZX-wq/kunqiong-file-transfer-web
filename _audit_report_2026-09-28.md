@@ -4,15 +4,15 @@
 
 ## 回归基线（先说好消息）
 
-全量离线回归 34 套件：核心全部通过——plan_isolation 33/33、subscription_plan 23/23、admin_audit 24/24、admin_auth/admin_ui、atomic_store 12/12、avatar 14/14、fixes 50/50、team_upload 23/23、team_token_leak 7/7（复跑）、guest_quota 35/35（复跑）、visual_fixes 27/27。  
-4 个非零退出均为环境/断言过时，非产品 bug（见文末「回归异常定责」）。  
+全量离线回归 34 套件：核心全部通过——plan_isolation 33/33、subscription_plan 23/23、admin_audit 24/24、admin_auth/admin_ui、atomic_store 12/12、avatar 14/14、fixes 50/50、team_upload 23/23、team_token_leak 7/7（复跑）、guest_quota 35/35（复跑）、visual_fixes 27/27。
+4 个非零退出均为环境/断言过时，非产品 bug（见文末「回归异常定责」）。
 未发现 SQL 注入、命令执行、ReDoS、可利用的原型污染；主链路（分享/收集/记录/团队/admin）归属校验与路径穿越防护到位。
 
 ## P0 — 必须处理
 
 ### 1. 管理后台默认口令硬编码在公开仓库里（server.mjs:93-97）
 
-`KUNQIONG_ADMIN_PASSWORD` 未配置时静默回落 `jxljxkj009900`，且该口令随源码进入 git 历史——仓库匿名可访问，**等同于公开**。任何人可用 `ljxkjadmin/jxljxkj009900` 登录未配 secret 的部署，获得删任意资源/禁用用户/改配置/看全站 PII 的能力。  
+`KUNQIONG_ADMIN_PASSWORD` 未配置时静默回落 `[REDACTED_ADMIN_PASSWORD]`，且该口令随源码进入 git 历史——仓库匿名可访问，**等同于公开**。任何人可用 `ljxkjadmin/[REDACTED_ADMIN_PASSWORD]` 登录未配 secret 的部署，获得删任意资源/禁用用户/改配置/看全站 PII 的能力。
 **修复**：删除默认回落，未配置直接拒绝启动；立即轮换口令；清理 git 历史（或至少确认所有部署均已配 secret）。
 
 ## P1 — 高危（建议本周内处理）

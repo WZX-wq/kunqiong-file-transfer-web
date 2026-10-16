@@ -34,6 +34,8 @@ organizations.main.members.push({id:'m-missing',userId:'missing-account',display
 const safe = fs.readFileSync(path.join(root,'测试数据/鲲穹文件传输测试数据包/01-安全文件集/TC-03-01-安全文本-可预览.txt'))
 const makeShare = (id,ownerUserId,teamOrganizationId='') => ({id,code:id.toUpperCase(),manageToken:id+'-manage',ownerUserId,teamResource:!!teamOrganizationId,teamOrganizationId,status:'active',files:[{name:'safe.txt',storedName:'safe.txt',size:safe.length,reviewStatus:'clean',scanEngine:'clamav',scannedAt:now}],createdAt:now,expiresAt:future,downloadCount:0})
 const shares = [makeShare('main-file','member','main'),makeShare('victim-team','victim','remove'),makeShare('victim-personal','victim'),makeShare('dissolve-team','dissolveMember','dissolve'),makeShare('dissolve-personal','dissolveMember'),makeShare('enterprise-personal','owner2'),makeShare('delete-own','member','main'),makeShare('delete-peer','member2','main'),makeShare('delete-race','member2','main'),makeShare('delete-cross','member','second'),makeShare('delete-personal','member'),makeShare('delete-removed','victim','remove')]
+for (const id of ['controls-owner', 'controls-member', 'controls-admin', 'controls-peer', 'controls-closed', 'controls-limit', 'controls-file', 'controls-zip', 'controls-race', 'controls-attempts', 'controls-scan-password']) shares.push(makeShare(id, 'member', 'main'))
+shares.find(s => s.id === 'controls-zip').files.push({ name: 'second.txt', storedName: 'second.txt', size: safe.length, reviewStatus: 'clean', scanEngine: 'clamav', scannedAt: now })
 shares.find(s => s.id === 'delete-own').files.push({ name: 'second.txt', relativePath: 'folder/second.txt', storedName: 'second.txt', size: safe.length, reviewStatus: 'clean', scanEngine: 'clamav', scannedAt: now })
 shares.find(s => s.id === 'delete-personal').ownerUserId = 'member2'
 const records = { member: [{ id: 'my_sent:share:delete-own' }, { id: 'my_sent:share:main-file' }], owner: [{ id: 'sent_to_me:share:delete-own-manage' }, { id: 'sent_to_me:share:DELETE-OWN' }, { id: 'sent_to_me:share:main-file' }] }
@@ -68,6 +70,80 @@ async function invite(user){const r=await api('/api/account/workspace/members',{
 
 try {
  await start();
+ await group('TEAM-SHARE-CONTROLS', async () => {
+  await api('/api/account/workspace/members/m-transfer/role', { method: 'PATCH', body: { role: 'admin' } })
+  for (const [role, user] of [['owner', 'owner'], ['member', 'member'], ['admin', 'transfer']]) {
+   const id = 'controls-' + role, manage = '/api/shares/manage/' + id + '-manage', publicBase = '/api/shares/' + id
+   const patch = await api(manage, { user, method: 'PATCH', body: { password: 'team-secret', downloadLimit: '10' } })
+   check(role + '密码和次数保存', patch.status === 200 && patch.data.share.requiresPassword && patch.data.share.downloadLimit === 10)
+   check(role + '管理解锁未提供密码拒绝', (await api(manage + '/unlock', { user, method: 'POST', body: {} })).status === 403)
+   for (const route of [manage + '/download', manage + '/files/0/download', manage + '/files/0/preview', publicBase + '/download', publicBase + '/files/0/download', publicBase + '/files/0/preview']) {
+    check(role + '未解锁拒绝 ' + route, (await api(route, { user })).status === 403)
+    check(role + '错误密码拒绝 ' + route, (await api(route, { user, headers: { 'x-share-password': 'wrong' } })).status === 401)
+    check(role + '正确密码允许 ' + route, (await api(route, { user, method: 'HEAD', headers: { 'x-share-password': 'team-secret' } })).status === 200)
+   }
+   const head = await fetch(base + manage + '/download', { method: 'HEAD', headers: { cookie: `kunqiong_session=${user}-session`, 'x-share-password': 'team-secret' } })
+   const cookies = head.headers.getSetCookie()
+   check(role + '管理HEAD发放管理入口解锁凭证', cookies.some(c => c.includes('Path=/api/shares/manage/' + id + '-manage')))
+   const cookie = cookies.map(c => c.split(';')[0]).join('; ')
+   check(role + 'HEAD后原生GET可下载', (await api(manage + '/download', { user, headers: { cookie: `kunqiong_session=${user}-session; ${cookie}` } })).status === 200)
+   await api(manage, { user, method: 'PATCH', body: { password: 'changed-secret' } })
+   check(role + '修改密码使旧解锁失效', (await api(manage + '/files/0/preview', { user, headers: { cookie: `kunqiong_session=${user}-session; ${cookie}` } })).status === 403)
+   check(role + '旧密码失效', (await api(publicBase + '/files/0/preview', { user, headers: { 'x-share-password': 'team-secret' } })).status === 401)
+   await api(manage, { user, method: 'PATCH', body: { clearPassword: true } })
+   check(role + '清除密码立即生效', (await api(manage + '/files/0/preview', { user })).status === 200)
+   await api(manage, { user, method: 'PATCH', body: { password: '中文密码123' } })
+   const unlocked = await fetch(base + manage + '/unlock', { method: 'POST', headers: { cookie: `kunqiong_session=${user}-session`, 'content-type': 'application/json' }, body: JSON.stringify({ password: '中文密码123' }) })
+   const unlockedCookie = unlocked.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
+   check(role + '中文密码JSON解锁管理预览', unlocked.ok && (await api(manage + '/files/0/preview', { user, headers: { cookie: `kunqiong_session=${user}-session; ${unlockedCookie}` } })).status === 200)
+  }
+  await api('/api/account/workspace/members/m-transfer/role', { method: 'PATCH', body: { role: 'member' } })
+  const closed = '/api/shares/manage/controls-closed-manage'
+  await api(closed, { method: 'PATCH', body: { status: 'closed', password: 'closed-secret', downloadLimit: '1' } })
+  check('关闭公开分享后管理下载仍需密码', (await api(closed + '/download')).status === 403)
+  check('关闭公开分享后正确密码可管理下载', (await api(closed + '/download', { headers: { 'x-share-password': 'closed-secret' } })).status === 200)
+  check('关闭公开分享也不能绕过次数', (await api(closed + '/download', { headers: { 'x-share-password': 'closed-secret' } })).status === 410)
+  await api('/api/shares/manage/controls-peer-manage', { method: 'PATCH', body: { password: 'peer-secret' } })
+  const peerResource = (await api('/api/account/team/overview', { user: 'member2' })).data.resources.find(r => r.id === 'controls-peer')
+  check('普通成员有解锁入口且无管理凭证', peerResource?.code === 'CONTROLS-PEER' && !peerResource.manageToken)
+  check('普通成员无密码不能预览', (await api('/api/shares/controls-peer/files/0/preview', { user: 'member2' })).status === 403)
+  check('普通成员错误密码不能解锁', (await api('/api/shares/lookup/CONTROLS-PEER', { user: 'member2', method: 'POST', body: { password: 'wrong' } })).status === 401)
+  const unlockedPeer = await fetch(base + '/api/shares/lookup/CONTROLS-PEER', { method: 'POST', headers: { cookie: 'kunqiong_session=member2-session', 'content-type': 'application/json' }, body: JSON.stringify({ password: 'peer-secret' }) })
+  const peerCookie = unlockedPeer.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
+  check('普通成员解锁不泄漏管理令牌', unlockedPeer.headers.getSetCookie().every(c => !c.includes('controls-peer-manage')))
+  check('普通成员可通过密码解锁预览', unlockedPeer.ok && (await api('/api/shares/controls-peer/files/0/preview', { user: 'member2', headers: { cookie: 'kunqiong_session=member2-session; ' + peerCookie } })).status === 200)
+  check('解锁密码不提升管理权限', (await api('/api/shares/manage/controls-peer-manage/download', { user: 'member2', headers: { cookie: 'kunqiong_session=member2-session; ' + peerCookie } })).status === 403)
+  for (const [id, first] of [['controls-limit', '/download'], ['controls-file', '/files/0/download'], ['controls-zip', '/download']]) {
+   const manage = '/api/shares/manage/' + id + '-manage'
+   await api(manage, { user: 'member', method: 'PATCH', body: { downloadLimit: '1' } })
+   check(id + 'HEAD不占用次数', (await api(manage + first, { method: 'HEAD' })).status === 200 && stored().shares.find(s => s.id === id).downloadCount === 0)
+   check(id + '预览不占用次数', (await api(manage + '/files/0/preview')).status === 200 && stored().shares.find(s => s.id === id).downloadCount === 0)
+   if (id !== 'controls-zip') check(id + '无效Range不占用次数', (await api(manage + first, { headers: { range: 'bytes=999999999-' } })).status === 416)
+   check(id + '首次下载成功', (await api(manage + first)).status === 200)
+   for (let attempt = 0; attempt < 100 && stored().shares.find(s => s.id === id).downloadCount !== 1; attempt++) await delay(10)
+   check(id + '下载计数持久化', stored().shares.find(s => s.id === id).downloadCount === 1)
+   for (const route of [manage + '/download', manage + '/files/0/download', '/api/shares/' + id + '/download', '/api/shares/' + id + '/files/0/download']) check(id + '所有入口共享最后一次额度 ' + route, (await api(route, { user: 'member' })).status === 410)
+  }
+  const race = '/api/shares/manage/controls-race-manage'
+  await api(race, { method: 'PATCH', body: { downloadLimit: '1' } })
+  const downloads = await Promise.all([race + '/download', race + '/files/0/download', '/api/shares/controls-race/download', '/api/shares/controls-race/files/0/download'].map(route => api(route)))
+  check('管理和公开入口并发仅一次成功', downloads.filter(r => r.status === 200).length === 1 && downloads.filter(r => r.status === 410).length === 3)
+  const attempts = '/api/shares/manage/controls-attempts-manage'
+  await api(attempts, { method: 'PATCH', body: { password: 'secret' } })
+  for (let i=0; i<8; i++) check('第'+(i+1)+'次错误密码被拒绝', (await api(attempts + '/unlock', { method: 'POST', body: { password: 'wrong' } })).status === 401)
+  check('管理密码校验有错误次数限制', (await api(attempts + '/unlock', { method: 'POST', body: { password: 'secret' } })).status === 429)
+  holdScan=true
+  const scanning=api('/api/shares/manage/controls-scan-password-manage/download')
+  for(let i=0;i<100&&!pendingScan;i++)await delay(20)
+  assert.ok(pendingScan,'下载扫描进入等待')
+  await api('/api/shares/manage/controls-scan-password-manage', { method: 'PATCH', body: { password: 'new-secret' } })
+  pendingScan.end('stream: OK\0');pendingScan=null
+  check('扫描期间新增密码在发送前生效', (await scanning).status===403)
+  await stop(); await start()
+  check('重启仍保留次数限制', (await api('/api/shares/manage/controls-limit-manage/download')).status === 410)
+  check('重启仍需密码', (await api('/api/shares/manage/controls-peer-manage/download')).status === 403)
+  check('重启后正确密码有效', (await api('/api/shares/manage/controls-peer-manage/download', { headers: { 'x-share-password': 'peer-secret' } })).status === 200)
+ })
  await group('TEAM-PRIVACY',async()=>{
   await invite('accept');
   for(const route of ['/api/account/workspace','/api/account/team/overview']){

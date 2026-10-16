@@ -611,9 +611,11 @@ export function WorkspaceApp() {
 
   const refreshCollectionManager = async () => {
     if (!collectionManageData?.manageToken) return
-    const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(collectionManageData.manageToken)}`)
-    setCollectionManageData(data.collection)
-    replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
+    try {
+      const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(collectionManageData.manageToken)}`)
+      setCollectionManageData(data.collection)
+      replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
+    } catch (error) { setToast(error.message || '刷新收集任务失败，请重试') }
   }
 
   const destroyCollection = async (target) => {
@@ -1473,7 +1475,7 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
       ) : (
         <div className="empty-manage collection-empty"><Inbox size={25} /><span>暂时还没有人提交文件</span></div>
       )}
-      {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+      {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       {qrOpen && (
         <QrPreviewModal
           title="收集二维码"
@@ -1548,7 +1550,7 @@ export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
               {!result.requiresPassword && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy || !(share?.files || []).length}><Download size={16} /> {(share?.files || []).length > 1 ? '下载全部文件' : '下载文件'}</button>}
               <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
               {error && <p className="public-message">{error}</p>}
-              {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+              {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
             </>
           )}
         </div>
@@ -1644,7 +1646,11 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
   const openMessageAction = (message) => {
     if (!message.actionUrl) return
     onMarkRead?.(message)
-    window.location.href = message.actionUrl
+    try {
+      const target = new URL(message.actionUrl, window.location.origin)
+      if (target.origin !== window.location.origin || !/^https?:$/.test(target.protocol) || !/^\/(?:share|collect|e|settings|workspace|team)(?:\/|$)/.test(target.pathname)) return
+      window.location.href = `${target.pathname}${target.search}${target.hash}`
+    } catch { /* Invalid historical message links are not navigable. */ }
   }
 
   useEffect(() => {

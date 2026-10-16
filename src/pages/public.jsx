@@ -16,14 +16,16 @@ export function TeamInvitePage({ slug }) {
   // 落地页自己探一次团队是否存在：无效 slug 时上方导语必须换成「链接已失效」，
   // 否则页面会一边说「你收到一个团队空间邀请」、一边渲染不出任何可操作入口，自相矛盾。
   const [probe, setProbe] = useState(null)
+  const [probeVersion, setProbeVersion] = useState(0)
   useEffect(() => {
     if (!slug) return undefined
     let active = true
+    setProbe(null)
     apiRequest(`/api/organizations/${encodeURIComponent(slug)}/join-request`)
       .then((result) => { if (active) setProbe(result) })
-      .catch(() => { if (active) setProbe({ available: false, reason: 'unavailable' }) })
+      .catch(error => { if (active) setProbe({ available:false, reason:[404,410].includes(error.status) ? 'unavailable' : 'error', message:error.message || '团队信息加载失败，请重试' }) })
     return () => { active = false }
-  }, [slug])
+  }, [slug, probeVersion])
   const invalid = probe && probe.reason === 'unavailable'
   return (
     <PublicShell>
@@ -34,7 +36,8 @@ export function TeamInvitePage({ slug }) {
           <h1>{invalid ? '这个邀请链接已失效' : '你收到一个团队空间邀请'}</h1>
           <p>{invalid ? '该团队不存在或已解散，请联系邀请你的人重新获取链接。' : '登录鲲穹账号后即可申请加入，申请会提交给团队所有者审批。'}</p>
         </div>
-        {!invalid && <TeamJoinRequestCard enterpriseSlug={slug} />}
+        {probe?.reason === 'error' && <><FeedbackMessage message={probe.message} tone="error" /><button className="secondary-button" onClick={() => setProbeVersion(value => value + 1)}>重新加载</button></>}
+        {!invalid && probe?.reason !== 'error' && <TeamJoinRequestCard enterpriseSlug={slug} />}
       </section>
     </PublicShell>
   )
@@ -95,7 +98,7 @@ export function SharePage({ token, enterpriseSlug = '' }) {
           </>
         )}
         {actionError && <FeedbackMessage message={actionError} tone="error" />}
-        {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+        {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       </div>
       <TeamJoinRequestCard enterpriseSlug={enterpriseSlug} />
     </PublicShell>
@@ -197,7 +200,7 @@ export function ShareManagePage({ token }) {
         </div>
       </div>
       <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
-      {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+      {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveShareSettings} onCloseTask={async () => { const closed = await closeShare(); if (closed) setEditing(false); return closed }} onReopenTask={async (payload) => { const reopened = await reopenShare(payload); if (reopened) setEditing(false); return reopened }} />}
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
@@ -655,7 +658,7 @@ export function CollectionManagePage({ token }) {
             <div className="empty-manage"><Inbox size={25} /><span>暂时还没有人提交文件</span></div>
           )}
         </div>
-        {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startDownload(previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+        {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       </div>
       {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveTaskSettings} onCloseTask={async () => { const closed = await closeTask(); if (closed) setEditing(false); return closed }} onReopenTask={async (payload) => { const reopened = await reopenTask(payload); if (reopened) setEditing(false); return reopened }} />}
       {qrOpen && (

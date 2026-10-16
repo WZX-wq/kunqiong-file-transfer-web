@@ -11,6 +11,7 @@
     "test:scan-performance": "node scripts/verify-scan-performance.mjs",
     "test:boundaries": "node scripts/verify-boundary-suite.mjs && node scripts/verify-avatar-boundaries.mjs && node scripts/verify-office-boundaries.mjs && node scripts/verify-boundary-ui.mjs",
     "test:audit": "node --test scripts/audit-store.test.mjs && node scripts/verify-audit-persistence.mjs",
+    "test:locks": "node --test scripts/file-lock.test.mjs",
     "test:auth": "node scripts/verify-auth-suite.mjs && node scripts/verify-auth-ui.mjs",
     "test:acceptance": "node scripts/verify-finance-admin-suite.mjs && node scripts/verify-finance-admin-ui.mjs && node scripts/verify-admin-plan-persistence.mjs && node scripts/verify-nfr-smoke.mjs",
     "test:orders": "node scripts/verify-orders-ui.mjs",
@@ -22,12 +23,12 @@
     "verify:refactor": "node scripts/refactor/verify-runtime.mjs",
     "verify:locate": "node scripts/refactor/locate.mjs",
     "start": "node server.mjs",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "test:security": "node scripts/verify-security-remediation.mjs && node --test scripts/request-security.test.mjs scripts/private-key.test.mjs scripts/persistence-boundaries.test.mjs scripts/upload-disk-reservation.test.mjs && node scripts/verify-upload-publication.mjs && node scripts/verify-security-ui.mjs"
   },
   "dependencies": {
     "archiver": "^7.0.1",
     "chart.js": "^4.5.1",
-    "concurrently": "^9.1.2",
     "dompurify": "^3.4.16",
     "express": "^4.21.2",
     "lucide-react": "^0.468.0",
@@ -36,6 +37,7 @@
     "mysql2": "^3.24.4",
     "nodemailer": "^10.0.0",
     "pptxviewjs": "^1.1.9",
+    "proxy-addr": "^2.0.7",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -45,6 +47,10 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^29.1.1",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

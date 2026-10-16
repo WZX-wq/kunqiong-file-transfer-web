@@ -39,6 +39,17 @@ test('retention is bounded and complete records recover after a torn final row',
   assert.ok(fs.statSync(path.join(directory, 'events.jsonl')).size < 8 * 1024 ** 2)
 })
 
+test('retention cap covers critical and access records together', () => {
+  const { store } = fixture(3)
+  store.initialize([])
+  store.append({ id: 'access-1', type: 'access', action: 'access-1', createdAt: '2026-10-15T00:00:03.000Z' })
+  store.append({ id: 'security-1', type: 'security', action: 'security-1', createdAt: '2026-10-15T00:00:02.000Z' })
+  store.append({ id: 'admin-1', type: 'admin', action: 'admin-1', createdAt: '2026-10-15T00:00:01.000Z' })
+  store.append({ id: 'access-2', type: 'access', action: 'access-2', createdAt: '2026-10-15T00:00:00.000Z' })
+  assert.equal(store.read().length, 3)
+  assert.deepEqual(new Set(store.read().map(row => row.id)), new Set(['access-1', 'security-1', 'admin-1']))
+})
+
 test('backup restores checkpoint and journal without dropping subsequent records', () => {
   const { directory, store, create } = fixture()
   store.initialize([log('legacy')])

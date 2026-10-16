@@ -15,12 +15,13 @@ const bundle = await build({
       if (id !== '\0record-preview-test') return
       return `import React from 'react';
         import { createRoot } from 'react-dom/client';
-        import { FilePreviewModal } from '/src/components/ui.jsx';
+        import { FilePreviewModal, ManageItemModal } from '/src/components/ui.jsx';
         import { RecordsView } from '/src/pages/records.jsx';
         import { recordPreviewConfigs, createShareFilePreviewConfig } from '/src/lib/transfer.js';
         import { syncShareRecord } from '/src/lib/records.js';
         const root = createRoot(document.getElementById('root'));
         window.previewFixture = { recordPreviewConfigs, createShareFilePreviewConfig, syncShareRecord,
+          renderManage(data) { root.render(React.createElement(ManageItemModal, {target:{kind:'share',record:{kind:'share'},data},onSave:async payload=>{window.savedSettings=payload;return true},onClose:()=>root.render(null)})) },
           render(preview) { root.render(React.createElement(FilePreviewModal, {preview, onClose:()=>root.render(null), onDownload:()=>{window.downloadClicked=true}})) },
           renderRecords(records) { root.render(React.createElement(RecordsView, {records, onRefresh:async()=>{}, onNotify:()=>{}, onOpen:record=>{window.openedRecord=record}})) },
           unmount() { root.unmount() }
@@ -167,6 +168,43 @@ try {
   check('Text fetch follows successful preflight', protectedText.requests.some(req => req.url === '/protected-text' && req.method === 'GET'))
   check('Preview has no UI runtime errors', protectedText.errors.length === 0)
 } finally { protectedText.close() }
+
+let managedUnlocked = false
+const managedText = await fixture((url, options) => {
+  if (url.endsWith('/unlock')) {
+    if (JSON.parse(options.body).password !== '中文密码123') return failure(401, '提取密码不正确')
+    managedUnlocked=true
+    return ok('{}')
+  }
+  if (!managedUnlocked) return failure(403, '请输入提取密码')
+  return options.method === 'HEAD' ? ok(null) : ok('解锁后的团队正文')
+})
+try {
+  const config=managedText.api.createShareFilePreviewConfig({id:'team',manageToken:'manager'}, {name:'team.txt'},0,{managed:true,password:'stale'})
+  managedText.api.render(config)
+  await waitFor(()=>managedText.document.querySelector('input[type=password]'),'Stale password prompts again')
+  const input=managedText.document.querySelector('input')
+  Object.getOwnPropertyDescriptor(managedText.window.HTMLInputElement.prototype,'value').set.call(input,'中文密码123')
+  input.dispatchEvent(new managedText.window.Event('input',{bubbles:true}));await delay(20)
+  managedText.document.querySelector('form').dispatchEvent(new managedText.window.Event('submit',{bubbles:true,cancelable:true}))
+  await waitFor(()=>managedText.document.querySelector('.text-preview'),'Managed preview unlocks')
+  check('Managed preview supports Chinese password and replaces stale password',managedText.document.querySelector('.text-preview').textContent==='解锁后的团队正文')
+  check('Managed preview never resends stale password after unlock',managedText.requests.filter(r=>!r.url.endsWith('/unlock')).every(r=>!r.headers['x-share-password']))
+} finally { managedText.close() }
+
+const manageSettings=await fixture(()=>ok('{}'))
+try {
+  manageSettings.api.renderManage({id:'team',downloadLimit:10,requiresPassword:true,status:'active',files:[]})
+  await waitFor(()=>manageSettings.document.querySelector('.manage-modal'),'Manage settings mount')
+  const buttons=()=>[...manageSettings.document.querySelectorAll('button')]
+  buttons().find(b=>b.textContent.trim()==='1 次').click()
+  const input=manageSettings.document.querySelector('input[type=password]')
+  Object.getOwnPropertyDescriptor(manageSettings.window.HTMLInputElement.prototype,'value').set.call(input,'中文密码123')
+  input.dispatchEvent(new manageSettings.window.Event('input',{bubbles:true}));await delay(20)
+  buttons().find(b=>b.textContent.includes('保存设置')).click()
+  await waitFor(()=>manageSettings.window.savedSettings,'Settings submitted')
+  check('Share settings submit selected one-download limit and new password together',manageSettings.window.savedSettings.downloadLimit==='1'&&manageSettings.window.savedSettings.password==='中文密码123'&&!manageSettings.window.savedSettings.clearPassword)
+} finally {manageSettings.close()}
 
 const synced = await fixture(() => ok(JSON.stringify({ share: { id: 'share', status: 'closed', manageToken: 'manage', files: record.files } })))
 try {

@@ -106,6 +106,7 @@ export const DEFAULT_SYSTEM_CONFIG = {
 }
 
 // ── OAuth 与应用地址 ──
+export const serverHost = process.env.HOST || process.env.KUNQIONG_HOST || '0.0.0.0'
 export const serverPort = Number(process.env.PORT || process.env.KUNQIONG_PORT || 8045)
 export const oauthAuthorizeUrl = process.env.KUNQIONG_OAUTH_AUTHORIZE_URL || 'https://login.kunqiongai.com/authorize.html'
 export const oauthTokenUrl = process.env.KUNQIONG_OAUTH_TOKEN_URL || 'https://login.kunqiongai.com/api/oauth/token'
@@ -113,6 +114,7 @@ export const oauthClientId = process.env.KUNQIONG_OAUTH_CLIENT_ID || ''
 export const oauthClientSecret = process.env.KUNQIONG_OAUTH_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || ''
 export const configuredCallbackUrls = splitConfigValues(process.env.KUNQIONG_AUTH_CALLBACK_URL)
 export const configuredAppUrl = process.env.KUNQIONG_APP_URL || ''
+export const trustedProxyAddresses = splitConfigValues(process.env.KUNQIONG_TRUSTED_PROXIES)
 export const releaseSha = String(process.env.KUNQIONG_RELEASE_SHA || '').trim()
 
 // ── SMTP ──
@@ -219,6 +221,8 @@ export const testEnterpriseForAllUsers = process.env.NODE_ENV === 'test'
 export const testEnforceEnterpriseAllowlist = process.env.NODE_ENV === 'test'
   && parseBooleanEnv(process.env.KUNQIONG_TEST_ENFORCE_ENTERPRISE_ALLOWLIST, true)
 export const testVerificationDebugMode = process.env.NODE_ENV === 'test'
+  && parseBooleanEnv(process.env.KUNQIONG_VERIFICATION_DEBUG, false)
+  && ['127.0.0.1', 'localhost', '::1'].includes(serverHost)
 
 // ── 收集任务文件类型（键为中文分类名，改动会影响收集白名单）──
 export const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视频', '音频', '压缩包', '代码文件', '其他']

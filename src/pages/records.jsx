@@ -532,7 +532,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
       {renameTarget && <RenameRecordModal record={renameTarget} onClose={() => setRenameTarget(null)} onSave={saveRename} />}
       {shareExpiryTarget && <ShareExpiryModal record={shareExpiryTarget} canUsePermanent={Boolean(user?.plan?.permanent)} onClose={() => setShareExpiryTarget(null)} onSave={async (payload) => { const saved = await onSaveShareExpiry?.(shareExpiryTarget, payload); if (saved) setShareExpiryTarget(null); return saved }} />}
       {previewChoices && <RecordPreviewChooser previews={previewChoices} onClose={() => setPreviewChoices(null)} onSelect={(preview) => setPreviewItem(preview)} />}
-      {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={() => startRecordPreviewDownload(previewItem.downloadConfig)} downloadDisabled={previewDownloadBusy} />}
+      {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startRecordPreviewDownload(config || previewItem.downloadConfig)} downloadDisabled={previewDownloadBusy} />}
       {qrPreview && <QrPreviewModal title={qrPreview.title} detail={qrPreview.detail || '扫码打开提交入口'} qrDataUrl={qrPreview.qrDataUrl} targetUrl={qrPreview.targetUrl} onClose={() => setQrPreview(null)} onCopyImage={() => onCopyQrImage?.(qrPreview.qrDataUrl, qrPreview.targetUrl)} onCopyLink={() => onCopy?.(qrPreview.targetUrl)} />}
       <div className="records-footnote"><HardDrive size={16} /> {syncing ? '账号记录同步中...' : user?.id ? '已登录，记录会同步到账号并可跨设备查看。' : '游客记录仅保留在当前设备，登录后可跨设备同步。'}</div>
     </section>

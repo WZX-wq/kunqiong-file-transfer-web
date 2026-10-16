@@ -217,7 +217,7 @@ try {
   const managedFileUrl = `/api/shares/manage/${previewShare.manageToken}/files/0`
   const csvPreview = await fetch(base + managedFileUrl + '/preview', { headers: { cookie: 'kunqiong_session=owner-session' } })
   check('Owner record previews password-protected CSV', csvPreview.status === 200 && await csvPreview.text() === 'name,role\nfixture,owner\n')
-  check('Preview does not consume download count', (await api(`/api/shares/manage/${previewShare.manageToken}`)).data.share.downloadCount === 0)
+  check('Preview does not consume download count', (await api(`/api/shares/manage/${previewShare.manageToken}`, { user: 'owner' })).data.share.downloadCount === 0)
   for (const action of ['preview', 'download']) {
     check(`Managed ${action} rejects anonymous account access`, (await api(managedFileUrl + '/' + action)).status === 401)
     check(`Managed ${action} rejects another account`, (await api(managedFileUrl + '/' + action, { user: 'recipient' })).status === 403)
@@ -226,7 +226,7 @@ try {
   check('Managed preview rejects untrusted Origin', (await api(managedFileUrl + '/preview', { user: 'owner', headers: { origin: 'https://foreign.example' } })).status === 403)
   const ownerDownload = await fetch(base + managedFileUrl + '/download', { headers: { cookie: 'kunqiong_session=owner-session' } })
   check('Owner preview download receives original bytes', ownerDownload.status === 200 && await ownerDownload.text() === 'name,role\nfixture,owner\n')
-  check('Owner file access does not consume public quota', (await api(`/api/shares/manage/${previewShare.manageToken}`)).data.share.downloadCount === 0)
+  check('Owner file access does not consume public quota', (await api(`/api/shares/manage/${previewShare.manageToken}`, { user: 'owner' })).data.share.downloadCount === 0)
   check('Managed preview rejects missing file index', (await api(`/api/shares/manage/${previewShare.manageToken}/files/9/preview`, { user: 'owner' })).status === 404)
   const pdfBytes = '%PDF-1.4\nfixture preview bytes\n%%EOF'
   const pdfShare = (await api('/api/shares', { user: 'owner', method: 'POST', body: form(pdfBytes, 'records.pdf') })).data.share
@@ -311,7 +311,11 @@ try {
   fs.writeFileSync(metadataFile, JSON.stringify(staleOrderMetadata))
   await start()
   assert.equal((await api('/api/account/upgrade-orders', { headers: { cookie: loginCookie }, method: 'POST', body: { planId: 'member' } })).status, 201)
-  check('Expired local payment order removes its query credential immediately', !stored().upgradeOrders.find((item) => item.id === staleCreated.data.order.id)?.paymentQueryCredential)
+  const expiredPaymentOrder = stored().upgradeOrders.find((item) => item.id === staleCreated.data.order.id)
+  // Payment timeout hides checkout; retain the bounded query credential to reconcile payments at the deadline.
+  check('Expired checkout retains its bounded credential for payment reconciliation', expiredPaymentOrder?.status === 'expired' && Boolean(expiredPaymentOrder.paymentQueryCredential) && new Date(expiredPaymentOrder.paymentQueryCredential.expiresAt).getTime() <= new Date(expiredPaymentOrder.createdAt).getTime() + 24 * 60 * 60 * 1000)
+  const expiredCheckout = (await api(`/api/account/upgrade-orders/${staleCreated.data.order.id}`, { headers: { cookie: loginCookie } })).data.order
+  check('Expired checkout hides payment assets and private reconciliation credentials', expiredCheckout?.status === 'expired' && !expiredCheckout.payment && !JSON.stringify(expiredCheckout).includes('fixture-fresh-auth'))
   const concurrentOrder = (await api('/api/account/upgrade-orders', { user: 'recipient', method: 'POST', body: { planId: 'member' } })).data.order
   const concurrentCheckout = (await api(`/api/account/upgrade-orders/${concurrentOrder.id}/confirm`, { user: 'recipient', method: 'POST', body: {} })).data.order
   remoteOrders.get(concurrentCheckout.remoteOrderNo).paid = true

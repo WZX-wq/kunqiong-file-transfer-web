@@ -4,6 +4,115 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 
+function mergeAuditEntries(logs, normalize, limit) {
+  const byId = new Map()
+  for (const entry of logs) {
+    const log = normalize(entry)
+    if (log.action) byId.set(log.id, log)
+  }
+  const sorted = [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  // Preserve critical evidence before access noise, while keeping one hard
+  // bound for the complete store. The previous two independent slices could
+  // retain 2 * limit rows and make the configured retention cap misleading.
+  const critical = sorted.filter(log => log.type !== 'access').slice(0, limit)
+  const access = sorted.filter(log => log.type === 'access').slice(0, Math.max(0, limit - critical.length))
+  return [...critical, ...access].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+// MySQL instances share a dedicated append table. No audit request rewrites the
+// business snapshot and no fresh host needs another host's storage/audit directory.
+export class DatabaseAuditStore {
+  constructor(pool, normalize, limit) {
+    this.pool = pool
+    this.normalize = normalize
+    this.limit = limit
+    this.logs = []
+    this.queue = Promise.resolve()
+    this.error = null
+    this.pending = new Map()
+  }
+
+  async initialize(legacy = []) {
+    await this.pool.query(`CREATE TABLE IF NOT EXISTS kunqiong_audit_log (
+      id VARCHAR(64) NOT NULL PRIMARY KEY,
+      critical TINYINT NOT NULL,
+      created_at VARCHAR(32) NOT NULL,
+      payload LONGTEXT NOT NULL,
+      INDEX audit_time (critical, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+    const logs = mergeAuditEntries(legacy, this.normalize, this.limit)
+    for (let offset = 0; offset < logs.length; offset += 100) await this.insert(logs.slice(offset, offset + 100))
+    return this.refresh()
+  }
+
+  async insert(logs) {
+    if (!logs.length) return
+    await this.pool.execute(`INSERT IGNORE INTO kunqiong_audit_log (id, critical, created_at, payload) VALUES ${logs.map(() => '(?, ?, ?, ?)').join(', ')}`,
+      logs.flatMap(log => [log.id, log.type === 'access' ? 0 : 1, log.createdAt, JSON.stringify(log)]))
+  }
+
+  async flushPendingRows() {
+    const rows = [...this.pending.values()]
+    if (!rows.length) return
+    await this.insert(rows)
+    for (const row of rows) this.pending.delete(row.id)
+  }
+
+  enqueue(task) {
+    // Always keep the chain alive after a transient database failure. Pending
+    // rows remain in `this.pending` and the next queued operation retries them
+    // after the database becomes available again.
+    this.queue = this.queue.then(async () => {
+      try {
+        await task()
+        this.error = null
+      } catch (error) {
+        this.error = error
+        console.error(JSON.stringify({ event: 'audit_write_failed', code: error.code || 'DATABASE_AUDIT_FAILED' }))
+      }
+    })
+  }
+
+  read() { return this.logs }
+
+  append(entry) {
+    const log = this.normalize(entry)
+    this.logs = mergeAuditEntries([log, ...this.logs], this.normalize, this.limit)
+    this.pending.set(log.id, log)
+    this.enqueue(() => this.flushPendingRows())
+    return this.logs
+  }
+
+  async flush() {
+    await this.queue
+    if (this.error) throw this.error
+  }
+
+  async refresh() {
+    // Serialize reads with appends/purges. Entries appended while SELECT is in
+    // flight remain pending, and are merged without reviving remotely purged rows.
+    this.enqueue(async () => {
+      await this.flushPendingRows()
+      const logs = []
+      for (const critical of [0, 1]) {
+        const [rows] = await this.pool.query(`SELECT payload FROM kunqiong_audit_log WHERE critical = ? ORDER BY created_at DESC, id DESC LIMIT ${Math.max(1, Math.floor(this.limit))}`, [critical])
+        logs.push(...rows.map(row => JSON.parse(row.payload)))
+      }
+      this.logs = mergeAuditEntries([...logs, ...this.pending.values()], this.normalize, this.limit)
+    })
+    await this.flush()
+    return this.logs
+  }
+
+  purgeBefore(cutoff) {
+    if (this.error) throw this.error
+    const before = this.logs.length
+    this.logs = this.logs.filter(log => new Date(log.createdAt).getTime() >= cutoff)
+    this.enqueue(() => this.pool.execute('DELETE FROM kunqiong_audit_log WHERE created_at < ?', [new Date(cutoff).toISOString()]))
+    return { logs: this.logs, removed: before - this.logs.length }
+  }
+}
+
 export class LocalAuditStore {
   constructor(directory, normalize, limit) {
     this.directory = directory
@@ -65,12 +174,7 @@ export class LocalAuditStore {
   }
 
   merge(logs) {
-    const byId = new Map()
-    for (const entry of logs) {
-      const log = this.normalize(entry)
-      if (log.action) byId.set(log.id, log)
-    }
-    return [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, this.limit)
+    return mergeAuditEntries(logs, this.normalize, this.limit)
   }
 
   initialize(legacy = [], migrated = false) {
@@ -202,7 +306,7 @@ export class LocalAuditStore {
       this.journalOffset += row.length
       this.journalLines++
       this.logs.unshift(log)
-      this.logs.length = Math.min(this.logs.length, this.limit)
+      this.logs = this.merge(this.logs)
       if (this.journalLines >= 1000 || this.journalOffset >= 8 * 1024 ** 2) this.checkpoint()
       return this.logs
     })

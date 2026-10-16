@@ -1,3 +1,6 @@
+import { keyedDigest } from '../lib/private-key.js'
+import { equalSecret, passwordDigest, passwordMatches, pruneAttempts } from '../lib/security-primitives.js'
+import { clientAddress, allowedOrigins } from '../lib/request-security.js'
 // 分享 / 上传会话域业务逻辑
 //
 // 覆盖：上传会话生命周期（创建/分片/查询/完成）、游客配额、文件落盘与扫描、
@@ -17,8 +20,8 @@ import {
   GUEST_ID_COOKIE, GUEST_ID_MAX_AGE_SECONDS, SHARE_ACCESS_COOKIE_PREFIX,
   SHARE_ACCESS_TTL_SECONDS, UPLOAD_CHUNK_DEFAULT_BYTES, UPLOAD_CHUNK_MAX_BYTES,
   UPLOAD_CHUNK_MIN_BYTES, UPLOAD_SESSION_TTL_MS, UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS,
-  clamavHost, clamavPort, configuredAppUrl, configuredCallbackUrls,
-  filesRoot, scanMode, scanTimeoutMs, scanConcurrency, scanLargeConcurrency, scanLargeFileBytes, shareEmailTemplatePath, smtpFrom, smtpFromName, tempRoot
+  clamavHost, clamavPort,
+  collectionsRoot, filesRoot, scanMode, scanTimeoutMs, scanConcurrency, scanLargeConcurrency, scanLargeFileBytes, shareEmailTemplatePath, smtpFrom, smtpFromName, tempRoot
 } from '../config.js'
 
 import {
@@ -30,7 +33,7 @@ import {
 } from '../lib/metadata-normalizers.js'
 
 import {
-  metadata, persistMetadata
+  flushMetadataWrites, metadata, persistMetadata, publicationExists
 } from '../lib/metadata-store.js'
 
 import {
@@ -38,16 +41,16 @@ import {
   accountPlanForUser, accountTeamUsageForOrganization, accountUsageForUser, accountUserById,
   addAccountMessage, authSessionFromRequest, currentCollectionStatus, currentShareStatus,
   displayAccountName, fileListSize, formatByteSize, getEmailTransporter, getOrigin,
-  getRequestOrigin, isOrganizationManager, isSecureRequest, isSmtpConfigured, mailErrorReason, normalizeContactTarget,
+  isOrganizationManager, isSecureRequest, isSmtpConfigured, mailErrorReason, normalizeContactTarget,
   publicFile, readCookie, recordAuditLog, safeRelativePath,
   serializeCookie, validateShareRecipient
 } from '../services/account.js'
 
-import { normalizeUploadFileName } from '../lib/upload.js'
+import { normalizeUploadFileName } from '../lib/file-name.js'
 import { createScanCoordinator, scanFileBatch } from '../lib/scan-coordinator.js'
 
 import {
-  adminSessions, reservedShareCodes, shareLookupAttempts, uploadReservations, uploadSessions
+  adminSessions, reservedShareCodes, shareLookupAttempts, uploadDiskReservations, uploadIntakeReservations, uploadReservations, uploadSessions
 } from '../state.js'
 
 import { booleanInput, dateInput, integerInput, objectInput, textInput } from '../lib/input-validation.js'
@@ -83,7 +86,7 @@ export function assertUploadSessionOwner(session, req) {
   if (!taskOwner && session.ownerUserId && userId !== session.ownerUserId) {
     throw httpError(403, '请使用创建上传的账号继续操作')
   }
-  if (!taskOwner && session.ownerGuestId && readCookie(req, GUEST_ID_COOKIE) !== session.ownerGuestId) {
+  if (!taskOwner && session.ownerGuestId && validGuestId(readCookie(req, GUEST_ID_COOKIE)) !== session.ownerGuestId) {
     throw httpError(403, '请使用创建上传的浏览器继续操作')
   }
   if (session.organizationId) {
@@ -122,6 +125,10 @@ export function normalizeUploadChunkSize(value) {
 // 会话清单落盘：重启后可从 session.json + {fileIndex}/{chunkIndex}.done 标记恢复
 // 续传状态（uploadSessions 是内存 Map，重启即失；清单让 12h TTL 真正跨重启生效）。
 export function persistUploadSession(session) {
+  if (session.options?.password) {
+    session.options.passwordHash = passwordDigest(session.options.password)
+    delete session.options.password
+  }
   try {
     const manifest = {
       id: session.id,
@@ -216,6 +223,10 @@ export function restoreUploadSessions() {
         removeDirectory(directory)
         continue
       }
+      // 目标文件已占用的空间在 statfs 中已经体现；恢复时仍保留完整会话
+      // 预留，阻止新会话把剩余未上传部分挤出物理盘容量。
+      reserveUploadDisk(session, { restore: true })
+      persistUploadSession(session)
       uploadSessions.set(session.id, session)
     } catch {
       removeDirectory(directory)
@@ -291,8 +302,15 @@ export function resourceEnterpriseOrganization(item) {
 }
 
 export function validateTeamShareManager(share, req) {
-  if (!share.teamResource) return { ok: true }
   const viewer = authSessionFromRequest(req)?.user
+  // Personal resources must be managed by their owner session. Anonymous
+  // resources keep bearer-link management because there is no account owner.
+  if (!share.teamResource) {
+    if (!share.ownerUserId) return { ok: true }
+    if (!viewer) return { ok: false, status: 401, message: '请先登录文件所属账号' }
+    if (viewer.id !== share.ownerUserId) return { ok: false, status: 403, message: '无权管理其他账号的文件' }
+    return { ok: true }
+  }
   const organization = metadata.organizations[share.teamOrganizationId]
   if (!organization) return { ok: false, status: 404, message: '团队资源所属团队已不存在' }
   if (!viewer) return { ok: false, status: 401, message: '请先登录团队成员账号' }
@@ -340,24 +358,31 @@ export function validateEnterpriseSlug(item, slug) {
   return Boolean(organization && organization.slug === String(slug))
 }
 
+const sharePasswordAttempts = new Map()
+
 export function validateShareRequest(share, req, options = {}) {
   const viewer = authSessionFromRequest(req)?.user
   const manager = share.teamResource && options.allowOwner && validateTeamShareManager(share, req).ok
   const recipientAccess = validateShareRecipient(share, viewer)
   if (!recipientAccess.ok && !manager) return recipientAccess
   assertFilesDownloadable(share.files)
-  const isOwner = manager || (options.allowOwner && viewer?.id && share.ownerUserId && viewer.id === share.ownerUserId)
-  // 团队资源：关闭分享只应切断公开提取链接，文件本体仍在团队空间。
-  // 所有者本人登录后始终可以打开自己的资源 —— 否则所有者关闭分享后连自己也打不开文件。
-  if (isOwner && share.teamResource && currentShareStatus(share) === 'closed') return { ok: true }
-  // 免密码跳过仅限团队资源：普通分享的所有者访问公开提取链接时与访客同权，
-  // 必须输入提取密码 —— 否则所有者自己测试密码分享时，输任何密码都会被放行，
-  // 既无法验证访客视角的密码防护，也构成「密码形同虚设」的安全观感问题。
-  return validateShare(share, options.password ?? req.get('x-share-password'), {
-    ...options,
-    skipPassword: Boolean(isOwner && share.teamResource),
-    hasAccessCookie: hasShareAccessCookie(req, share),
-  })
+  // 关闭公开链接后，团队管理者仍可访问保留的文件，但必须遵守密码和下载次数。
+  const password = options.password ?? req.get('x-share-password')
+  const limited = share.passwordHash && password !== undefined && password !== ''
+  const now = Date.now()
+  const key = `${share.id}:${clientAddress(req)}`
+  if (limited) {
+    if (!pruneAttempts(sharePasswordAttempts, 10 * 60 * 1000, now) || (sharePasswordAttempts.get(key)?.count || 0) >= 8) {
+      return { ok:false, status:429, message:'提取密码错误次数过多，请 10 分钟后重试' }
+    }
+  }
+  const result = validateShare(share, password, { ...options, allowClosed: Boolean(manager), hasAccessCookie: hasShareAccessCookie(req, share) })
+  if (limited && result.status === 401) {
+    const entry = sharePasswordAttempts.get(key) || { count:0, startedAt:now }
+    entry.count += 1
+    sharePasswordAttempts.set(key, entry)
+  }
+  return result
 }
 
 export function assertFilesDownloadable(files = []) {
@@ -469,6 +494,82 @@ export async function ensureStoredFilesScanned(files, directory) {
   persistMetadata()
 }
 
+// Reject invalid tasks and exhausted identities before multipart writes begin.
+export function prepareDirectUpload(req, res, next) {
+  try {
+    assertServiceWritable(req)
+    const user = authSessionFromRequest(req)?.user
+    const config = normalizeSystemConfig(metadata.systemConfig)
+    let max = 5 * 1024 ** 3
+    let fileMax = user ? max : config.anonymousMaxFileSizeMb * 1024 ** 2
+    const guestKey = resolveGuestKey(req, res)
+    if (guestKey && guestQuotaLimitBytes()) max = Math.min(max, guestQuotaLimitBytes() - guestUsageEntry(guestKey).bytes - pendingUploadBytes(other => other.guestKey === guestKey))
+    let ownerId = user?.id
+    if (req.params.token) {
+      const task = metadata.collections.find(item => item.token === req.params.token)
+      if (!task) throw httpError(404, '收集任务不存在')
+      const access = validateCollection(task)
+      if (!access.ok) throw httpError(access.status, access.message)
+      ownerId = task.ownerUserId
+      fileMax = Math.min(fileMax, task.maxFileSizeMb * 1024 ** 2)
+      if (!ownerId) max = Math.min(max, collectionCapacityBytes(task) - task.submissions.reduce((sum, item) => sum + fileListSize(item.files), 0) - pendingUploadBytes(other => other.collectionToken === task.token))
+    }
+    let organizationId = ''
+    // Multipart fields may arrive after the files. Bind the destination before
+    // receiving any bytes, using the explicit URL mode, and verify the body later.
+    const mode = req.params.token ? 'collection' : (req.query.mode ?? 'share')
+    if (!['share', 'collection', 'team_resource'].includes(mode) || (!req.params.token && mode === 'collection')) throw httpError(400, '上传模式不支持')
+    req.directUploadMode = mode
+    if (mode === 'team_resource') {
+      if (!user?.id) throw httpError(401, '请先登录后上传到团队空间')
+      const organization = accountOrganizationForUser(ownerId)
+      if (!organization) throw httpError(404, '你尚未加入团队空间')
+      if (!organization.members.some(member => member.userId === ownerId && member.status === 'active')) throw httpError(403, '当前成员状态不能上传到团队空间')
+      organizationId = organization.id
+      req.uploadOrganizationId = organizationId
+      const teamUsage = accountTeamUsageForOrganization(organization)
+      max = Math.min(max, teamUsage.remainingBytes - pendingUploadBytes(other => other.organizationId === organization.id))
+    } else if (ownerId) {
+      max = Math.min(max, accountUsageForUser(ownerId).remainingBytes - pendingUploadBytes(other => (other.capacityOwnerUserId || other.ownerUserId) === ownerId))
+    }
+    req.uploadMaxBytes = Math.max(0, Math.floor(max))
+    req.uploadFileMaxBytes = Math.min(fileMax, req.uploadMaxBytes)
+
+    // Multipart 请求还没有被解析，不能等到 multer 写完临时文件后才占用容量。
+    // 先按声明的请求体大小（无 Content-Length 时按当前剩余上限）建立一个短生命周期
+    // 预留，后续真实文件清单会用同一个 reservation 替换它。这样两个并发直传请求不会
+    // 同时看到同一份 remaining 并各自写满容量。
+    const declaredLength = Number(req.get('content-length'))
+    const reservedBytes = Number.isSafeInteger(declaredLength) && declaredLength >= 0
+      ? Math.max(0, declaredLength - 1024 ** 2)
+      : req.uploadMaxBytes
+    if (reservedBytes > 0) {
+      const reservationId = createToken(18)
+      const reservation = {
+        files: [{ size: reservedBytes }],
+        guestKey,
+        ownerUserId: ownerId || '',
+        capacityOwnerUserId: req.params.token ? ownerId || '' : '',
+        collectionToken: req.params.token || '',
+        organizationId,
+        intake: true,
+      }
+      assertUploadCapacity(reservation)
+      uploadReservations.set(reservationId, reservation)
+      req.directUploadReservationId = reservationId
+      const release = () => {
+        if (req.directUploadReservationId === reservationId) {
+          uploadReservations.delete(reservationId)
+          req.directUploadReservationId = ''
+        }
+      }
+      res.once('finish', release)
+      res.once('close', release)
+    }
+    next()
+  } catch (error) { next(error) }
+}
+
 export function assertConfiguredUploadLimits(req, files = []) {
   const config = normalizeSystemConfig(metadata.systemConfig)
   if (files.length > config.maxBatchFiles) {
@@ -486,26 +587,27 @@ export function assertConfiguredUploadLimits(req, files = []) {
 // 登录用户返回空串（不参与游客计费，走个人空间配额）。
 export function resolveGuestKey(req, res) {
   if (authSessionFromRequest(req)?.user?.id) return ''
-  const existing = readCookie(req, GUEST_ID_COOKIE)
-  if (existing && /^[A-Za-z0-9]{16,64}$/.test(existing)) return `cookie:${existing}`
-  // 无 cookie 头，或带了 cookie 头却没有有效 kq_guest_id（脚本换头绕过）：
-  // 本次一律按 socket IP 计账，防止每次签发新 key 绕过累计额度；
-  // 同时仍签发游客 cookie，真实浏览器从下一个请求起就切到独立的 cookie 键。
-  issueGuestCookie(req, res)
-  const ip = String(req.socket?.remoteAddress || '').trim() || 'unknown'
-  return `ip:${ip}`
+  const existing = validGuestId(readCookie(req, GUEST_ID_COOKIE))
+  if (!existing) issueGuestCookie(req, res)
+  // A signed cookie identifies a browser for session ownership; the network budget
+  // survives cookie removal and repeated issuance. Authenticated users use accounts.
+  return `ip:${clientAddress(req)}`
+}
+
+export function validGuestId(value) {
+  if (typeof value !== 'string' || !/^[a-f0-9]{32}\.[a-f0-9]{64}$/.test(value)) return ''
+  const [token, signature] = value.split('.')
+  return equalSecret(signature, keyedDigest(`guest:${token}`)) ? value : ''
 }
 
 export function issueGuestCookie(req, res) {
-  const token = createToken(24)
-  res.append('Set-Cookie', serializeCookie(GUEST_ID_COOKIE, token, {
-    httpOnly: true,
-    maxAge: GUEST_ID_MAX_AGE_SECONDS,
-    path: '/',
-    sameSite: 'Lax',
-    secure: isSecureRequest(req),
+  const token = createToken(32)
+  const signed = `${token}.${keyedDigest(`guest:${token}`)}`
+  res.append('Set-Cookie', serializeCookie(GUEST_ID_COOKIE, signed, {
+    httpOnly: true, maxAge: GUEST_ID_MAX_AGE_SECONDS, path: '/',
+    sameSite: 'Lax', secure: isSecureRequest(req),
   }))
-  return token
+  return signed
 }
 
 export function guestQuotaLimitBytes(config = metadata.systemConfig) {
@@ -531,7 +633,7 @@ export function guestQuotaExceededError({ usedBytes, limitBytes, incomingBytes, 
   // 否则「已用」把预留混进去，会和顶部横幅的已计账用量对不上。
   const remaining = Math.max(0, limitBytes - usedBytes - reservedBytes)
   const reservedLabel = reservedBytes > 0 ? `，另有进行中上传占用 ${formatBytesLabel(reservedBytes)}` : ''
-  const error = httpError(413, `未登录累计可传输 ${formatBytesLabel(limitBytes)}（本设备已用 ${formatBytesLabel(usedBytes)}${reservedLabel}，剩余 ${formatBytesLabel(remaining)}，本次还需 ${formatBytesLabel(incomingBytes)}）。免费注册后即可获得 20 GB 个人空间，继续传输不受此限制`)
+  const error = httpError(413, `未登录累计可传输 ${formatBytesLabel(limitBytes)}（当前网络已用 ${formatBytesLabel(usedBytes)}${reservedLabel}，剩余 ${formatBytesLabel(remaining)}，本次还需 ${formatBytesLabel(incomingBytes)}）。免费注册后即可获得 20 GB 个人空间，继续传输不受此限制`)
   error.code = 'guest_quota_exceeded'
   error.guestQuota = { usedBytes, limitBytes, incomingBytes, remainingBytes: remaining, reservedBytes }
   return error
@@ -564,15 +666,11 @@ export function addGuestUsage(key, files = []) {
 }
 
 export function enforceDownloadOrigin(req) {
-  const requestOrigin = getRequestOrigin(req)
-  const directOrigin = `${req.protocol}://${req.get('host')}`
-  const allowedOrigins = new Set([requestOrigin, directOrigin, configuredAppUrl, 'http://localhost:4173', 'http://127.0.0.1:4173', ...configuredCallbackUrls].filter(Boolean).map((value) => {
-    try { return new URL(value).origin } catch { return '' }
-  }).filter(Boolean))
+  const origins = allowedOrigins(req)
   for (const header of [req.get('origin'), req.get('referer')]) {
     if (!header) continue
     try {
-      if (!allowedOrigins.has(new URL(header).origin)) throw httpError(403, '下载来源不受信任，请从鲲穹页面发起下载')
+      if (!origins.has(new URL(header).origin)) throw httpError(403, '下载来源不受信任，请从鲲穹页面发起下载')
     } catch (error) {
       if (error.status) throw error
       throw httpError(403, '下载来源不受信任，请从鲲穹页面发起下载')
@@ -582,13 +680,15 @@ export function enforceDownloadOrigin(req) {
 
 export function setShareAccessCookie(res, req, share) {
   if (!share.passwordHash) return
-  res.setHeader('Set-Cookie', serializeCookie(shareAccessCookieName(share), shareAccessCookieValue(share), {
+  const paths = [`/api/shares/${share.id}`]
+  if (share.teamResource && validateTeamShareManager(share, req).ok) paths.push(`/api/shares/manage/${share.manageToken}`)
+  res.setHeader('Set-Cookie', paths.map(cookiePath => serializeCookie(shareAccessCookieName(share), shareAccessCookieValue(share), {
     httpOnly: true,
     maxAge: SHARE_ACCESS_TTL_SECONDS,
-    path: `/api/shares/${share.id}`,
+    path: cookiePath,
     sameSite: 'Lax',
     secure: isSecureRequest(req),
-  }))
+  })))
 }
 
 export function hasShareAccessCookie(req, share) {
@@ -631,6 +731,16 @@ export function sendPreviewFile(req, res, next, filePath, file) {
   const kind = previewKind(file)
   if (!kind) return res.status(415).json({ message: '当前文件类型暂不支持在线预览' })
   if (!fs.existsSync(filePath)) return res.status(410).json({ message: '文件已清理，无法预览' })
+  // Defense in depth for old metadata and misleading extensions. Never render active
+  // markup as PDF, media or Office. Source-code previews remain escaped plain text.
+  if (kind !== 'text') {
+    const fd = fs.openSync(filePath, 'r')
+    const prefix = Buffer.alloc(1024)
+    try { fs.readSync(fd, prefix, 0, prefix.length, 0) } finally { fs.closeSync(fd) }
+    if (/^\s*(?:<!doctype\s+html|<html\b|<script\b|<svg\b|<\?xml)/i.test(prefix.toString('utf8').replace(/^\uFEFF/,''))) return res.status(415).json({ message:'文件内容与预览类型不一致，请下载后查看' })
+  }
+  res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; frame-ancestors 'self'")
+  res.setHeader('X-Content-Type-Options', 'nosniff')
   const stat = fs.statSync(filePath)
   res.setHeader('Accept-Ranges', 'bytes')
   res.setHeader('Content-Disposition', contentDisposition('inline', normalizeUploadFileName(file.name || path.basename(filePath))))
@@ -752,8 +862,6 @@ export function previewKind(file = {}) {
 }
 
 export function fileContentType(file = {}) {
-  const mimeType = String(file.mimeType || '').trim().toLowerCase()
-  if (mimeType && mimeType !== 'application/octet-stream') return mimeType
   const extension = path.extname(file.name || file.relativePath || '').toLowerCase()
   const mimeTypes = {
     '.aac': 'audio/aac',
@@ -775,14 +883,14 @@ export function fileContentType(file = {}) {
     '.pdf': 'application/pdf',
     '.png': 'image/png',
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    '.svg': 'image/svg+xml',
+
     '.wav': 'audio/wav',
     '.webm': 'video/webm',
     '.webp': 'image/webp',
     '.xls': 'application/vnd.ms-excel',
     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   }
-  return mimeTypes[extension] || 'application/octet-stream'
+  return mimeTypes[extension] || (TEXT_PREVIEW_EXTENSIONS.has(extension) ? 'text/plain' : 'application/octet-stream')
 }
 
 export function contentDisposition(type, filename) {
@@ -841,12 +949,50 @@ export function pendingUploadBytes(predicate, excludeId) {
   return bytes
 }
 
+const UPLOAD_DISK_HEADROOM_BYTES = 64 * 1024 ** 2
+
+export function pendingPhysicalUploadBytes(excludeId = '') {
+  let bytes = [...uploadIntakeReservations.values()].reduce((sum, value) => sum + (Number(value) || 0), 0)
+  for (const [id, value] of uploadDiskReservations) {
+    if (id !== excludeId) bytes += Number(value) || 0
+  }
+  return bytes
+}
+
+export function assertPhysicalUploadCapacity(item, excludeId = '', availableBytes = null) {
+  const incomingBytes = fileListSize(item?.files)
+  const freeBytes = availableBytes === null
+    ? (() => {
+      const stats = fs.statfsSync(tempRoot)
+      return Number(stats.bavail) * Number(stats.bsize)
+    })()
+    : Number(availableBytes)
+  if (!Number.isFinite(freeBytes) || freeBytes < pendingPhysicalUploadBytes(excludeId) + incomingBytes + UPLOAD_DISK_HEADROOM_BYTES) {
+    throw httpError(507, '临时存储空间不足，请稍后重试')
+  }
+}
+
+export function reserveUploadDisk(item, { restore = false, availableBytes = null } = {}) {
+  const id = String(item?.id || '')
+  if (!id) throw httpError(400, '上传会话标识无效')
+  const bytes = fileListSize(item.files)
+  if (!restore) assertPhysicalUploadCapacity(item, id, availableBytes)
+  uploadDiskReservations.set(id, bytes)
+  return bytes
+}
+
+export function releaseUploadDiskReservation(sessionOrId) {
+  const id = typeof sessionOrId === 'string' ? sessionOrId : sessionOrId?.id
+  if (id) uploadDiskReservations.delete(id)
+}
+
 // 主动放弃上传会话：从内存移除并清理临时分片，立即释放其预留额度。
 // 客户端在「重置/重新选择文件/放弃续传开新会话」时调用，防止僵尸会话占满游客配额。
 export function discardUploadSession(session) {
   if (!session) return
   session.cancelled = true
   uploadSessions.delete(session.id)
+  releaseUploadDiskReservation(session)
   // Active writes close their handles first and finish cleanup in their finally.
   if (session.activeWrites) return
   removeDirectory(session.directory)
@@ -902,7 +1048,7 @@ export function assertUploadCapacity(item, excludeId) {
   if (item.collectionToken) {
     const task = metadata.collections.find((task) => task.token === item.collectionToken)
     if (!task) throw httpError(404, '收集任务不存在')
-    assertCollectionFiles(task, item.files)
+    if (!item.intake) assertCollectionFiles(task, item.files)
     if (!task.ownerUserId) {
       const usedBytes = task.submissions.reduce((sum, submission) => sum + fileListSize(submission.files), 0)
       const reservedBytes = pendingUploadBytes((other) => other.collectionToken === task.token, excludeId)
@@ -919,10 +1065,18 @@ export function assertUploadCapacity(item, excludeId) {
   }
 }
 
-export function reserveUploadCapacity(item) {
-  assertUploadCapacity(item)
+export function reserveUploadCapacity(item, excludeId = '') {
+  const existing = excludeId ? uploadReservations.get(excludeId) : null
+  const effective = existing
+    ? { ...existing, ...item, organizationId: item.organizationId || existing.organizationId || '', intake: false }
+    : item
+  assertUploadCapacity(effective, excludeId)
+  if (existing) {
+    uploadReservations.set(excludeId, effective)
+    return excludeId
+  }
   const id = createToken(18)
-  uploadReservations.set(id, item)
+  uploadReservations.set(id, effective)
   return id
 }
 
@@ -1079,7 +1233,7 @@ export function addCollectionSubmissionMessage(task, submission, req) {
     eventType: 'collectionSubmitted',
     title: '收集任务收到新提交',
     body: `${who} 向「${task.title}」提交了 ${submission.files.length} 个文件。`,
-    actionUrl: `${getOrigin(req)}/collect/manage/${task.manageToken}`,
+    actionUrl: `/collect/manage/${task.manageToken}`,
   })
 }
 
@@ -1130,6 +1284,60 @@ export function resolveCollectionSubmitter(req) {
   }
 }
 
+export async function publishUploadedFiles(tempFiles, directory, { attach, detach, persisted }) {
+  const moves = []
+  let attemptedCommit = false
+  try {
+    fs.mkdirSync(directory, { recursive: true })
+    const files = tempFiles.map((file, index) => {
+      const relativePath = safeRelativePath(file.relativePath || file.name)
+      const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
+      const destination = path.join(directory, storedName)
+      fs.renameSync(file.tempPath, destination)
+      moves.push({ source: file.tempPath, destination })
+      return { name: file.name, relativePath, storedName, size: Number(file.size || 0), mimeType: file.mimeType || 'application/octet-stream', reviewStatus: file.reviewStatus || 'unscanned', scanEngine: file.scanEngine || null, scannedAt: file.scannedAt || null }
+    })
+    const resource = attach(files)
+    attemptedCommit = true
+    persistMetadata()
+    await flushMetadataWrites()
+    return resource
+  } catch (error) {
+    const durable = attemptedCommit ? await publicationExists(persisted) : false
+    if (durable === false) {
+      detach()
+      for (const move of moves.reverse()) {
+        try { fs.renameSync(move.destination, move.source) }
+        catch (rollbackError) { console.error(JSON.stringify({ event: 'upload_rollback_failed', code: rollbackError.code || 'FILE_ROLLBACK_FAILED' })) }
+      }
+      await fs.promises.rm(directory, { recursive: true, force: true })
+    } else if (durable === null) {
+      // Keep potentially committed bytes for recovery instead of deleting live data.
+      error.publicationUncertain = true
+      console.error(JSON.stringify({ event: 'upload_commit_uncertain', code: error.code || 'METADATA_WRITE_FAILED' }))
+    }
+    throw error
+  }
+}
+
+export async function publishCollectionSubmission(task, tempFiles, submitter, req, { uploadSessionId = '', guestKey = '' } = {}) {
+  const id = createToken(12)
+  const submission = await publishUploadedFiles(tempFiles, path.join(collectionsRoot, task.id, id), {
+    attach(files) {
+      const item = { id, ...(uploadSessionId ? { uploadSessionId } : {}), participantName: submitter.participantName, submitterUserId: submitter.submitterUserId || '', submitterName: submitter.submitterName || submitter.participantName, submittedAt: new Date().toISOString(), files }
+      task.submissions.push(item)
+      return item
+    },
+    detach() { task.submissions = task.submissions.filter(item => item.id !== id) },
+    persisted: snapshot => snapshot.collections?.find(item => item.id === task.id)?.submissions?.some(item => item.id === id),
+  })
+  addCollectionSubmissionMessage(task, submission, req)
+  addGuestUsage(guestKey, submission.files)
+  persistMetadata()
+  await flushMetadataWrites()
+  return submission
+}
+
 export async function createShareFromTempFiles(tempFiles, options, req) {
   let reservedCode = ''
   try {
@@ -1153,26 +1361,11 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
       assertAccountCapacity(ownerSession?.user, totalSize)
     }
     const shareDirectory = path.join(filesRoot, shareToken)
-    fs.mkdirSync(shareDirectory, { recursive: true })
-    const files = tempFiles.map((file, index) => {
-      const relativePath = safeRelativePath(file.relativePath || file.name)
-      const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
-      fs.renameSync(file.tempPath, path.join(shareDirectory, storedName))
-      return {
-        name: file.name,
-        relativePath,
-        storedName,
-        size: Number(file.size || 0),
-        mimeType: file.mimeType || 'application/octet-stream',
-        reviewStatus: file.reviewStatus || 'unscanned',
-        scanEngine: file.scanEngine || null,
-        scannedAt: file.scannedAt || null,
-      }
-    })
     const expiryDays = String(options.expiryDays || '3')
     const downloadLimit = normalizeDownloadLimit(options.downloadLimit)
     reservedCode = createCode(options.codeLength)
-    const share = {
+    const share = await publishUploadedFiles(tempFiles, shareDirectory, { attach: files => {
+      const item = {
       id: shareToken,
       ...(options.uploadSessionId ? { uploadSessionId: options.uploadSessionId } : {}),
       manageToken: createToken(18),
@@ -1182,7 +1375,7 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
       expiresAt: expiryDays === '0' ? null : new Date(Date.now() + Number(expiryDays) * 86400000).toISOString(),
       downloadLimit,
       downloadCount: 0,
-      passwordHash: options.password ? hashSecret(options.password) : null,
+      passwordHash: options.passwordHash || passwordDigest(options.password),
       deliveryRecipients: options.recipients,
       recipientUserIds: options.recipientUserIds,
       recipientContacts: options.recipientContacts,
@@ -1192,10 +1385,12 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
       teamResource: Boolean(options.teamResource),
       teamOrganizationId: options.teamResource ? String(options.teamOrganizationId || '') : '',
     }
-    share.qrDataUrl = qrDataUrl
-    metadata.shares.push(share)
+      item.qrDataUrl = qrDataUrl
+      metadata.shares.push(item)
+      return item
+    }, detach: () => { metadata.shares = metadata.shares.filter(item => item.id !== shareToken) },
+    persisted: snapshot => snapshot.shares?.some(item => item.id === shareToken) })
     reservedShareCodes.delete(reservedCode)
-    persistMetadata()
     share.notificationLog = await notifyShareRecipients(share, req, ownerSession?.user)
     if (metadata.shares.includes(share)) persistMetadata()
     return share
@@ -1234,7 +1429,7 @@ export function readShareOptions(body = {}, user = null, isTeamResource = false)
   return {
     expiryDays: requestedExpiryDays === '0' ? '0' : String(Math.min(maxShareDays, Math.max(1, Number(requestedExpiryDays) || config.defaultShareDays))),
     downloadLimit: checkedDownloadLimit === null ? 'unlimited' : String(checkedDownloadLimit),
-    password,
+    passwordHash: passwordDigest(password),
     codeLength: Number(body.codeLength || 6),
     // 收件人上限：防止一次创建触发海量外发邮件（邮件放大/发信域名被封）。
     recipients,
@@ -1295,7 +1490,7 @@ function applyShareUpdateDraft(share, body = {}, ownerUser = null) {
   if (body.clearPassword) {
     share.passwordHash = null
   } else if (Object.prototype.hasOwnProperty.call(body, 'password') && String(body.password || '').trim()) {
-    share.passwordHash = hashSecret(sharePasswordInput(body.password))
+    share.passwordHash = passwordDigest(sharePasswordInput(body.password))
   }
   if (Object.prototype.hasOwnProperty.call(body, 'status')) {
     const status = textInput(body.status, '分享状态', 20)
@@ -1335,22 +1530,21 @@ export function findShareByCode(code) {
   return metadata.shares.find((share) => share.code.toLowerCase() === String(code).trim().toLowerCase())
 }
 
-export function validateShare(share, password, { allowMissingPassword = false, hasAccessCookie = false, skipPassword = false } = {}) {
+export function validateShare(share, password, { allowMissingPassword = false, hasAccessCookie = false, allowClosed = false } = {}) {
   const status = currentShareStatus(share)
-  if (status === 'closed') return { ok: false, status: 410, message: '分享已关闭' }
+  if (status === 'closed' && !allowClosed) return { ok: false, status: 410, message: '分享已关闭' }
   if (status === 'expired') {
     return { ok: false, status: 410, message: '分享已过期' }
   }
   if (share.downloadLimit && share.downloadCount >= share.downloadLimit) {
     return { ok: false, status: 410, message: '下载次数已用完' }
   }
-  if (skipPassword) return { ok: true }
   // access cookie 只应放行「未主动提供密码」的请求（记住已解锁的分享）；
   // 一旦请求带了密码，就必须校验密码本身，否则输错密码也能凭 cookie 蒙混过关。
   if (hasAccessCookie && share.passwordHash && !password) return { ok: true }
   if (allowMissingPassword && share.passwordHash && !password) return { ok: true }
-  if (share.passwordHash && hashSecret(password || '') !== share.passwordHash) {
-    return { ok: false, status: password ? 401 : 403, message: password ? '提取密码不正确' : '请输入提取密码' }
+  if (share.passwordHash && !passwordMatches(password || '', share.passwordHash)) {
+    return { ok: false, status: password ? 401 : 403, code: password ? 'share_password_invalid' : 'share_password_required', message: password ? '提取密码不正确' : '请输入提取密码' }
   }
   return { ok: true }
 }

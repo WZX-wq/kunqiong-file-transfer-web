@@ -15,7 +15,6 @@ export default defineConfig({
         manualChunks: {
           react: ['react', 'react-dom'],
           icons: ['lucide-react'],
-          docs: ['xlsx', 'mammoth'],
           viewer: ['pptxviewjs'],
           charts: ['chart.js'],
         },

@@ -10,10 +10,12 @@ export function useConfirmDialog() {
   const resolverRef = useRef(null)
 
   useEffect(() => () => {
-    if (resolverRef.current) resolverRef.current(false)
+    resolverRef.current?.(false)
+    resolverRef.current = null
   }, [])
 
   const requestConfirm = (options = {}) => new Promise((resolve) => {
+    resolverRef.current?.(false)
     resolverRef.current = resolve
     setConfirmState({
       eyebrow: '操作确认',
@@ -73,16 +75,17 @@ export function useDownloadTask() {
       return { ok: true }
     } catch (error) {
       const message = error.message || '下载失败'
-      setDownloadTask((current) => ({ ...current, status: 'failed', error: message, retryConfig: config, retryCount }))
+      const needsPassword = [401, 403].includes(error.status) && /提取密码/.test(message)
+      setDownloadTask((current) => ({ ...current, status: 'failed', needsPassword, error: message, retryConfig: config, retryCount }))
       return { ok: false, error: message }
     } finally {
       activeRef.current = false
     }
   }
 
-  const retryDownload = () => {
+  const retryDownload = (password) => {
     const config = retryConfigRef.current || downloadTask.retryConfig
-    if (config) startDownload(config, { retry: true })
+    if (config) return startDownload(typeof password === 'string' ? { ...config, headers: { ...config.headers, 'x-share-password': password } } : config, { retry: true })
   }
 
   return { downloadTask, startDownload, retryDownload, downloadBusy: isDownloadBusy(downloadTask) }

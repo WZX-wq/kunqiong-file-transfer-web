@@ -17,15 +17,35 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  const dom=new JSDOM('<div id="root"></div>',{url:'http://fixture.local'+route,...(navigation.referrer?{referrer:navigation.referrer}:{}),pretendToBeVisual:true,runScripts:'outside-only',virtualConsole})
  const {window}=dom,document=window.document
  if(navigation.previousRoutes?.length){window.history.replaceState(null,'',navigation.previousRoutes[0]);for(const previous of navigation.previousRoutes.slice(1))window.history.pushState(null,'',previous);window.history.pushState(null,'',route)}
- let roleChangeFailure=false; let currentRole=role,removed=!hasOrganization,name=teamName,hasTeam=hasOrganization,renameFailure=false,resourceDeleted=false,deleteFailure=false,holdDelete=false,releaseDelete=null
+ let roleChangeFailure=false; let currentRole=role,removed=!hasOrganization,name=teamName,hasTeam=hasOrganization,renameFailure=false,resourceDeleted=false,deleteFailure=false,holdDelete=false,releaseDelete=null,resourceUnlocked=false,quotaUsed=false
  const plan={id:'enterprise',label:'企业版',team:true,totalBytes:2048*1024**3,teamSpaceBytes:1024**4,permanent:true,features:[]}
  const members=[{id:'m-owner',userId:'owner',displayName:'所有者',role:'owner',status:'active',usedBytes:0,fileCount:0},{id:'m-member',userId:'member',displayName:'普通成员',role:'member',status:'active',usedBytes:4,fileCount:1}]
  const permittedMembers=()=>members.map(member=>({...member,canRemove:['owner','admin'].includes(currentRole)&&member.role!=='owner'&&(currentRole==='owner'||member.role==='member'),canChangeRole:currentRole==='owner'&&member.role!=='owner',canTransfer:currentRole==='owner'&&member.role!=='owner'}));
  const organization=()=>({id:'org',slug:'team-slug',name,ownerUserId:currentRole==='owner'?'owner':'new-owner',members:permittedMembers(),createdAt:new Date().toISOString()})
- const overview=()=>({organization:organization(),canManage:['owner','admin'].includes(currentRole),isOwner:currentRole==='owner',plan,capacity:{usedBytes:resourceDeleted?0:4,totalBytes:1024**4,shareCount:resourceDeleted?0:1,fileCount:resourceDeleted?0:1},memberUsage:permittedMembers().map(m=>m.userId==='member'&&resourceDeleted?{...m,usedBytes:0,fileCount:0}:m),joinRequests:[],resources:resourceDeleted?[]:[{id:'teamfile',kind:'share',name:'安全文件.txt',files:[{name:'安全文件.txt',size:4,mimeType:'text/plain'}],ownerUserId:'member',status:navigation.resourceStatus||'active',fileCount:resourceFileCount,totalSize:4*resourceFileCount,canManage:['owner','admin','member'].includes(currentRole),canDelete:['owner','admin','member'].includes(currentRole),...(['owner','admin','member'].includes(currentRole)?{manageToken:'test',manageUrl:'/share/manage/test'}:{})}]})
- window.fetch=async(url,options={})=>{const method=options.method||'GET';calls.push({url,method,body:options.body});let data={},status=200
+ const overview=()=>({organization:organization(),canManage:['owner','admin'].includes(currentRole),isOwner:currentRole==='owner',plan,capacity:{usedBytes:resourceDeleted?0:4,totalBytes:1024**4,shareCount:resourceDeleted?0:1,fileCount:resourceDeleted?0:1},memberUsage:permittedMembers().map(m=>m.userId==='member'&&resourceDeleted?{...m,usedBytes:0,fileCount:0}:m),joinRequests:[],resources:resourceDeleted?[]:[{id:'teamfile',code:'TEAM01',kind:'share',name:'安全文件.txt',files:[{name:'安全文件.txt',size:4,mimeType:'text/plain'}],ownerUserId:'member',status:navigation.resourceStatus||'active',fileCount:resourceFileCount,totalSize:4*resourceFileCount,canManage:['owner','admin','member'].includes(currentRole),canDelete:['owner','admin','member'].includes(currentRole),...(['owner','admin','member'].includes(currentRole)?{manageToken:'test',manageUrl:'/share/manage/test'}:{})}]})
+ window.fetch=async(url,options={})=>{const method=options.method||'GET';calls.push({url,method,body:options.body,headers:options.headers});let data={},status=200
+  const pathname = new URL(url, 'http://fixture.local').pathname
+  if (navigation.resourcePassword && pathname.startsWith('/api/shares/')) {
+   if (pathname.endsWith('/unlock') || pathname.includes('/lookup/')) {
+    if (JSON.parse(options.body).password !== '中文密码123') return new Response(JSON.stringify({message:'提取密码不正确',code:'share_password_invalid'}),{status:401})
+    resourceUnlocked=true
+    return new Response('{}')
+   }
+   if (quotaUsed) return new Response(null,{status:410,headers:{'x-error-message':encodeURIComponent('下载次数已用完')}})
+   if (!resourceUnlocked) return new Response(null,{status:403,headers:{'x-error-message':encodeURIComponent('请输入提取密码')}})
+   return new Response(method==='HEAD'?null:'团队正文',{headers:{'content-type':'text/plain'}})
+  }
   if(url==='/api/auth/me')data={user:currentRole?{id:currentRole==='owner'?'owner':currentRole==='peer'?'peer':currentRole==='admin'?'admin':'member',nickname:'UI测试',plan}:null}
-  else if(url==='/api/account/team/overview'){if(removed){status=404;data={message:'你尚未加入团队空间'}}else data=overview()}
+  else if(url==='/api/account/team/overview'){
+   if(removed){status=404;data={message:'你尚未加入团队空间'}}
+   else {
+    data=overview()
+    if(navigation.usageFixture){
+     data.capacity={...data.capacity,totalBytes:navigation.usageFixture.totalBytes,usedBytes:navigation.usageFixture.usedBytes}
+     data.memberUsage=data.memberUsage.map(member=>member.userId==='member'?{...member,usedBytes:navigation.usageFixture.memberBytes}:member)
+    }
+   }
+  }
   else if(url==='/api/account/team/resources/teamfile'&&method==='DELETE'){
    if(holdDelete)await new Promise(resolve=>releaseDelete=resolve)
    if(deleteFailure||currentRole==='peer'){deleteFailure=false;status=403;data={message:'你已失去删除权限'}}
@@ -50,7 +70,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  const input=async(element,value)=>{assert.ok(element,'input found');Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new window.Event('input',{bubbles:true}));await delay(30)}
  const file=(name,relativePath=name)=>{const item=new File(['test'],name,{type:'text/plain',lastModified:123});Object.defineProperty(item,'webkitRelativePath',{value:relativePath});return item}
  const choose=async(items,folder=false)=>{const picker=document.querySelector(folder?'input[webkitdirectory]':'input[type="file"]:not([webkitdirectory])');assert.ok(picker,'file picker');Object.defineProperty(picker,'files',{configurable:true,value:items});picker.dispatchEvent(new window.Event('change',{bubbles:true}));await delay(30)}
- return {failNextRoleChange:()=>roleChangeFailure=true,dom,window,document,calls,errors,click,find,input,file,choose,remove:()=>removed=true,failNextRename:()=>renameFailure=true,failNextResourceDelete:()=>deleteFailure=true,holdNextResourceDelete:()=>holdDelete=true,releaseResourceDelete:()=>{holdDelete=false;releaseDelete?.()}}
+ return {exhaustDownloads:()=>quotaUsed=true,failNextRoleChange:()=>roleChangeFailure=true,dom,window,document,calls,errors,click,find,input,file,choose,remove:()=>removed=true,failNextRename:()=>renameFailure=true,failNextResourceDelete:()=>deleteFailure=true,holdNextResourceDelete:()=>holdDelete=true,releaseResourceDelete:()=>{holdDelete=false;releaseDelete?.()}}
 }
 async function scenario(id,fn){try{await fn();cases.push({id,status:'PASS'})}catch(e){failures.push({id,message:e.message});cases.push({id,status:'FAIL'});console.log('FAIL '+id+' '+e.stack)}}
 await scenario('TEAM-BACK-NAVIGATION', async () => {
@@ -86,6 +106,30 @@ await scenario('TEAM-CAPACITY-LABELS', async () => {
   check('总容量展示团队1TB而非个人2TB',capacity?.textContent.includes('1024.00 GB')&&!capacity.textContent.includes('2048.00 GB'))
   check('成员用量说明与团队总容量一致',f.document.querySelector('.team-usage-description').textContent.includes('总容量 1024.00 GB'))
  } finally { f.dom.window.close() }
+})
+await scenario('TEAM-MEMBER-CAPACITY-PERCENTAGE', async () => {
+ const gb=1024**3, mb=1024**2
+ for(const item of [
+  {label:'仅上传一个小文件',totalBytes:250*gb,usedBytes:4.6*mb,memberBytes:4.6*mb,text:'<0.01%',width:4.6/2560},
+  {label:'团队仅此成员使用',totalBytes:250*gb,usedBytes:25*gb,memberBytes:25*gb,text:'10.0%',width:10},
+  {label:'其他成员已用空间增加',totalBytes:250*gb,usedBytes:125*gb,memberBytes:25*gb,text:'10.0%',width:10},
+  {label:'小于百分之一',totalBytes:250*gb,usedBytes:1.25*gb,memberBytes:1.25*gb,text:'0.50%',width:0.5},
+  {label:'总容量已用满',totalBytes:250*gb,usedBytes:250*gb,memberBytes:250*gb,text:'100.0%',width:100},
+  {label:'未上传文件',totalBytes:250*gb,usedBytes:0,memberBytes:0,text:'未使用',width:0},
+  {label:'团队暂无容量',totalBytes:0,usedBytes:4,memberBytes:4,text:'0.00%',width:0},
+ ]) {
+  const f=await mount('/team','owner','隔离验证团队',true,1,{usageFixture:item})
+  try {
+   const row=[...f.document.querySelectorAll('.team-member-usage-row')].find(row=>row.querySelector('strong')?.textContent==='普通成员')
+   const bar=row.querySelector('[role="progressbar"]')
+   check(item.label+'百分比以团队总容量为准',row.querySelector('.team-usage-value em').textContent===(item.memberBytes?'占总容量 '+item.text:item.text))
+   check(item.label+'进度条使用实际百分比',Math.abs(parseFloat(bar.querySelector('i').style.width)-item.width)<1e-9)
+   check(item.label+'无障碍值与实际比例一致',Math.abs(Number(bar.getAttribute('aria-valuenow'))-item.width)<1e-9)
+   check(item.label+'说明明确总容量口径',f.document.querySelector('.team-usage-description').textContent.includes('成员已用空间占团队总容量的百分比'))
+   if(item.memberBytes)check(item.label+'提示采用总容量口径',bar.title==='占团队总容量 '+item.text)
+   check(item.label+'页面无运行错误',f.errors.length===0)
+  } finally {f.dom.window.close()}
+ }
 })
 await scenario('TEAM-RESOURCE-DELETE', async () => {
  for (const role of ['owner', 'member', 'peer']) {
@@ -243,6 +287,41 @@ await scenario('TEAM-INPUT-LIMITS', async () => {
 await scenario('TEAM-004',async()=>{const f=await mount();try{await f.input(f.document.querySelector('input[placeholder*="直接邀请成员"]'),'candidate');await waitFor(()=>f.document.querySelector('.team-suggestions button'),'suggestions');f.document.querySelector('.team-suggestions button').click();await delay(30);await f.click('邀请');check('脱敏候选通过账号ID邀请',f.calls.some(c=>c.url==='/api/account/workspace/members'&&JSON.parse(c.body).target==='candidate'))}finally{f.dom.window.close()}})
 await scenario('TEAM-005',async()=>{for(const suffix of ['/share/','/collect/','/']){const f=await mount('/e/team-slug'+suffix,'');try{await waitFor(()=>f.document.body.textContent.includes('登录后申请加入'),'invite login');check('无token显示入团落地页 '+suffix,f.document.body.textContent.includes('你收到一个团队空间邀请')&&f.document.body.textContent.includes('隔离验证团队'));check('入口探测正确团队 '+suffix,f.calls.some(c=>c.url==='/api/organizations/team-slug/join-request'));check('未请求空token资源 '+suffix,!f.calls.some(c=>c.url.startsWith('/api/shares/')||c.url.startsWith('/api/collections/')))}finally{f.dom.window.close()}}const f=await mount('/e/wrong/');try{check('无效邀请明确提示',f.document.body.textContent.includes('这个邀请链接已失效'))}finally{f.dom.window.close()}})
 await scenario('TEAM-007',async()=>{for(const role of ['owner','admin','member']){const f=await mount('/team',role);try{const manager=['owner','admin'].includes(role);check(role+' 管理栏目权限一致',!![...f.document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.includes('团队成员'))===manager);check(role+' 搜索邀请权限一致',!!f.document.querySelector('input[placeholder*="直接邀请成员"]')===manager);if(manager){const tab=[...f.document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.includes('团队成员'));tab.click();await delay(30)}check(role+' 解散按钮权限一致',!!f.find('解散团队')===(role==='owner'));check(role+' 退出按钮权限一致',!!f.find('退出团队空间')===(role!=='owner'));check(role+' 无运行错误',f.errors.length===0)}finally{f.dom.window.close()}}})
+
+await scenario('TEAM-PASSWORD-AND-LIMIT',async()=>{
+ for (const role of ['owner','admin','member','peer']) {
+  const f=await mount('/team?tab=resources',role,'隔离验证团队',true,1,{resourcePassword:true})
+  try {
+   let anchors=0, invalidations=0
+   f.document.addEventListener('click',event=>{if(event.target.tagName==='A'&&event.target.download){anchors++;event.preventDefault()}})
+   f.window.addEventListener('kunqiong:account-session',()=>invalidations++)
+   await f.click('下载 安全文件.txt')
+   await waitFor(()=>f.document.querySelector('.download-progress input[type=password]'),'download password prompt')
+   check(role+' 未解锁不发起文件下载',anchors===0&&f.calls.filter(c=>String(c.url).includes('/api/shares/')).every(c=>c.method==='HEAD'))
+   await f.input(f.document.querySelector('.download-progress input'),'wrong');await f.click('验证并下载')
+   check(role+' 错误密码保留输入入口',!!f.document.querySelector('.download-progress input')&&f.document.body.textContent.includes('提取密码不正确')&&anchors===0)
+   await f.input(f.document.querySelector('.download-progress input'),'中文密码123');await f.click('验证并下载')
+   await waitFor(()=>anchors===1,'native download after unlock')
+   check(role+' 中文密码JSON解锁后下载',f.calls.some(c=>c.method==='POST'&&JSON.parse(c.body).password==='中文密码123')&&f.document.body.textContent.includes('已交给浏览器下载'))
+   check(role+' 密码不进入URL或HTTP头',f.calls.every(c=>!String(c.url).includes('中文密码')&&!c.headers?.['x-share-password']))
+   check(role+' 密码错误不注销账号',invalidations===0&&!!f.document.querySelector('.team-page'))
+   f.exhaustDownloads();await f.click('下载 安全文件.txt')
+   check(role+' 次数耗尽禁止再次下载',anchors===1&&f.document.body.textContent.includes('下载次数已用完'))
+  } finally {f.dom.window.close()}
+  const preview=await mount('/team?tab=resources',role,'隔离验证团队',true,1,{resourcePassword:true})
+  try {
+   await preview.click('预览 安全文件.txt')
+   await waitFor(()=>preview.document.querySelector('.preview-modal input[type=password]'),'preview password prompt')
+   check(role+' 密码校验前不读取正文',!preview.calls.some(c=>String(c.url).includes('/api/shares/')&&c.method==='GET'))
+   await preview.input(preview.document.querySelector('.preview-modal input'),'wrong');await preview.click('验证并预览')
+   check(role+' 错误密码不展示正文',preview.document.body.textContent.includes('提取密码不正确')&&!preview.document.querySelector('.text-preview'))
+   await preview.input(preview.document.querySelector('.preview-modal input'),'中文密码123');await preview.click('验证并预览')
+   await waitFor(()=>preview.document.querySelector('.text-preview'),'preview content after unlock')
+   check(role+' 正确密码才展示正文',preview.document.querySelector('.text-preview').textContent==='团队正文')
+   check(role+' 密码交互无页面错误',preview.errors.length===0)
+  } finally {preview.dom.window.close()}
+ }
+})
 
 await scenario('TEAM-CLOSED-MANAGEMENT',async()=>{
  for(const role of ['owner','admin','member','peer']){

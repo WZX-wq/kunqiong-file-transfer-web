@@ -213,7 +213,7 @@ try {
   const htmlName = '<script>alert(1)</script>'
   const htmlSubmit = await api(`/api/collections/${nameTask.token}/submissions`, { method: 'POST', body: form([{ name: 'b.txt' }], { participantName: htmlName }) })
   check('HTML 姓名按文本接受（存储原样，渲染层转义）', htmlSubmit.status === 201, `status=${htmlSubmit.status}`)
-  const storedHtml = (await api(`/api/collections/manage/${diskCollections().find((item) => item.token === nameTask.token).manageToken}`)).data.collection.submissions.find((item) => item.participantName === htmlName)
+  const storedHtml = (await api(`/api/collections/manage/${diskCollections().find((item) => item.token === nameTask.token).manageToken}`, { user: 'owner' })).data.collection.submissions.find((item) => item.participantName === htmlName)
   check('管理数据中姓名按原文保留（不做 HTML 解析）', Boolean(storedHtml))
   const longName = '很长的名字'.repeat(80)
   const longNameSubmit = await api(`/api/collections/${nameTask.token}/submissions`, { method: 'POST', body: form([{ name: 'c.txt' }], { participantName: longName }) })
@@ -261,12 +261,22 @@ try {
   const assembled = fs.readFileSync(path.join(fixture, 'storage', 'collections', chunkTask.token, projSub.id, projSub.files[0].storedName))
   check('组装后字节逐位一致（含跨片尾部）', assembled.equals(Buffer.concat([bigChunkA, bigChunkB])))
 
-  const guestCookie = 'kq_guest_id=coll008guestholder12345678'
-  const anonymousSession = await api('/api/upload-sessions', { method: 'POST', headers: { cookie: guestCookie }, body: {
+  // 游客会话必须沿用服务端首次签发的签名身份；任意客户端自造的
+  // kq_guest_id 会被拒绝，避免通过轮换 Cookie 绕过累计配额和会话归属。
+  const initialGuestCookie = 'kq_guest_id=coll008guestholder12345678'
+  const anonymousSession = await api('/api/upload-sessions', { method: 'POST', headers: { cookie: initialGuestCookie }, body: {
     mode: 'collection', collectionToken: chunkTask.token, participantName: '匿名续传者', files: [{ name: 'guest.bin', size: 16 }],
   } })
   const guestId = anonymousSession.data.sessionId
+  const guestCookie = (anonymousSession.headers.get('set-cookie') || '').split(';')[0]
   check('匿名提交者可创建自己的会话', anonymousSession.status === 201)
+  const sameNetworkSession = await api('/api/upload-sessions', { method: 'POST', body: {
+    mode: 'collection', collectionToken: chunkTask.token, participantName: '另一位匿名提交者', files: [{ name: 'guest.bin', size: 16 }],
+  } })
+  check('同一网络相同文件仍创建独立匿名会话', sameNetworkSession.status === 201 && sameNetworkSession.data.sessionId !== guestId)
+  check('同一网络的另一浏览器不能取消原提交者会话', (await api(`/api/upload-sessions/${guestId}`, { headers: { cookie: guestCookie } })).status === 200)
+  const sameNetworkCookie = (sameNetworkSession.headers.get('set-cookie') || '').split(';')[0]
+  await api(`/api/upload-sessions/${sameNetworkSession.data.sessionId}`, { method: 'DELETE', headers: { cookie: sameNetworkCookie } })
   for (const [method, suffix] of [['GET', ''], ['POST', '/chunks'], ['POST', '/complete'], ['DELETE', '']]) {
     const outsider = await api(`/api/upload-sessions/${guestId}${suffix}`, { method, headers: { cookie: 'kq_guest_id=coll008otherbrowser123456' } })
     check(`其他浏览器不能操作匿名会话：${method}${suffix}`, outsider.status === 403)
@@ -280,7 +290,11 @@ try {
   const taskX = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '任务X' } })).data
   const taskY = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '任务Y-机密' } })).data
   await api(`/api/collections/${taskX.collection.token}/submissions`, { method: 'POST', body: form([{ name: 'x.txt' }], { participantName: 'X的提交者' }) })
-  const manageX = await api(`/api/collections/manage/${taskX.manageToken}`)
+  const ownerManageUnauthenticated = await api(`/api/collections/manage/${taskX.manageToken}`)
+  check('账号收集管理链接无会话时拒绝', ownerManageUnauthenticated.status === 401, `status=${ownerManageUnauthenticated.status}`)
+  const ownerManageStranger = await api(`/api/collections/manage/${taskX.manageToken}`, { user: 'stranger' })
+  check('账号收集管理链接拒绝其他账号', ownerManageStranger.status === 403, `status=${ownerManageStranger.status}`)
+  const manageX = await api(`/api/collections/manage/${taskX.manageToken}`, { user: 'owner' })
   const manageXText = JSON.stringify(manageX.data)
   check('管理页只含本任务提交', (manageX.data.collection.submissions || []).every((item) => item.participantName === 'X的提交者'))
   check('不泄漏其他任务的 token/manageToken', !manageXText.includes(taskY.collection.token) && !manageXText.includes(taskY.manageToken))
@@ -289,11 +303,11 @@ try {
   const delTask = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '删除提交' } })).data
   const s1 = await api(`/api/collections/${delTask.collection.token}/submissions`, { method: 'POST', body: form([{ name: 'keep.txt', content: '保留内容' }], { participantName: '甲' }) })
   const s2 = await api(`/api/collections/${delTask.collection.token}/submissions`, { method: 'POST', body: form([{ name: 'remove.txt', content: '待删除内容' }], { participantName: '乙' }) })
-  const delRes = await api(`/api/collections/manage/${delTask.manageToken}/submissions/${s2.data.submission.id}`, { method: 'DELETE' })
+  const delRes = await api(`/api/collections/manage/${delTask.manageToken}/submissions/${s2.data.submission.id}`, { user: 'owner', method: 'DELETE' })
   check('删除指定提交成功且列表更新', delRes.status === 200 && !JSON.stringify(delRes.data).includes(s2.data.submission.id), `status=${delRes.status}`)
   check('其余提交不受影响', (delRes.data.collection.submissions || []).some((item) => item.id === s1.data.submission.id))
   await delay(300) // 异步目录删除（不阻塞请求）
-  const delZip = await api(`/api/collections/manage/${delTask.manageToken}/download`, { raw: true })
+  const delZip = await api(`/api/collections/manage/${delTask.manageToken}/download`, { user: 'owner', raw: true })
   const delZipNames = zipEntryNames(delZip.buffer).map((item) => item.name)
   check('ZIP 只含剩余提交内容', delZipNames.some((name) => name.includes('keep.txt')) && !delZipNames.some((name) => name.includes('remove.txt')), `entries=${delZipNames.join('|')}`)
 
@@ -321,15 +335,15 @@ try {
   zipForm.append('relativePaths', JSON.stringify(dirFiles.map(([name]) => name)))
   const zipSubmit = await api(`/api/collections/${zipTask.collection.token}/submissions`, { method: 'POST', body: zipForm })
   check('中文目录结构提交成功', zipSubmit.status === 201, `status=${zipSubmit.status} msg=${zipSubmit.data.message}`)
-  const allZip = await api(`/api/collections/manage/${zipTask.manageToken}/download`, { raw: true })
+  const allZip = await api(`/api/collections/manage/${zipTask.manageToken}/download`, { user: 'owner', raw: true })
   const allEntries = zipEntryNames(allZip.buffer)
   check('ZIP 下载 200 且含全部文件', allZip.status === 200 && allEntries.length === 3, `entries=${allEntries.map((item) => item.name).join('|')}`)
   check('ZIP 内保留中文目录层级（提交者名-哈希/目录/文件）', allEntries.some((item) => /^张三-[0-9a-f]{6}\/一级目录\/二级目录\/深层文件\.txt$/.test(item.name)) || allEntries.some((item) => item.name.includes('一级目录/二级目录/深层文件.txt')), `entries=${allEntries.map((item) => item.name).join('|')}`)
   check('ZIP 文件名 UTF-8 标记（中文不乱码）', allEntries.every((item) => item.utf8), `flags=${allEntries.map((item) => item.utf8).join(',')}`)
-  const oneZip = await api(`/api/collections/manage/${zipTask.manageToken}/submissions/${zipSubmit.data.submission.id}/download`, { raw: true })
+  const oneZip = await api(`/api/collections/manage/${zipTask.manageToken}/submissions/${zipSubmit.data.submission.id}/download`, { user: 'owner', raw: true })
   const oneEntries = zipEntryNames(oneZip.buffer)
   check('单提交 ZIP 下载内容正确', oneZip.status === 200 && oneEntries.length === 3, `entries=${oneEntries.map((item) => item.name).join('|')}`)
-  const previewFile = await api(`/api/collections/manage/${zipTask.manageToken}/submissions/${zipSubmit.data.submission.id}/files/0/preview`, { raw: true })
+  const previewFile = await api(`/api/collections/manage/${zipTask.manageToken}/submissions/${zipSubmit.data.submission.id}/files/0/preview`, { user: 'owner', raw: true })
   check('单文件预览可用（text/plain 防注入）', previewFile.status === 200 && String(previewFile.headers.get('content-type') || '').includes('text/plain'), `status=${previewFile.status} type=${previewFile.headers.get('content-type')}`)
 } catch (error) {
   console.error('\n套件异常:', error.message)

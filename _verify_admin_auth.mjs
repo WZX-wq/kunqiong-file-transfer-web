@@ -18,7 +18,7 @@ try { fs.writeFileSync(logFile, '') } catch {}
 const PORT = 8097
 const BASE = `http://127.0.0.1:${PORT}`
 const ADMIN_USER = 'ljxkjadmin'
-const ADMIN_PASS = 'jxljxkj009900'
+const ADMIN_PASS = process.env.KUNQIONG_ADMIN_PASSWORD
 
 // 白名单里的鲲穹账号 —— 修复前它可以完全绕过密码进后台。
 const WHITELIST_ID = process.env.KQ_ADMIN_USER_ID || 'fixture-admin-id'

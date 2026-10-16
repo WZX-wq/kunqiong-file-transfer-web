@@ -21,17 +21,20 @@ import {
   addGuestUsage, applyShareUpdate, assertConfiguredUploadLimits, assertGuestQuota,
   assertSafeUploadFiles, assertServiceWritable, cleanupUploadedFiles, createShareFromTempFiles,
   enforceDownloadOrigin, ensureStoredFilesScanned, findShareByCode, findShareByManageToken,
-  publicShare, readShareOptions, registerShareDownload, reserveUploadCapacity,
+  prepareDirectUpload, publicShare, readShareOptions, registerShareDownload, reserveUploadCapacity,
   sendDownloadFile, sendPreviewFile, setShareAccessCookie, shareLookupRateLimited, streamZip,
   validateEnterpriseSlug, validateShareRequest, validateTeamShareManager
 } from '../services/shares.js'
 import {
   uploadReservations
 } from '../state.js'
+import { httpError } from '../lib/http.js'
 
 function validateManagedFileAccess(share, req) {
   const access = validateTeamShareManager(share, req)
-  if (!access.ok || share.teamResource || !share.ownerUserId) return access
+  if (!access.ok) return access
+  if (share.teamResource) return validateShareRequest(share, req, { allowOwner: true })
+  if (!share.ownerUserId) return access
   const viewer = authSessionFromRequest(req)?.user
   if (!viewer) return { ok: false, status: 401, message: '请先登录文件所属账号' }
   if (viewer.id !== share.ownerUserId) return { ok: false, status: 403, message: '无权访问其他账号的文件' }
@@ -39,7 +42,7 @@ function validateManagedFileAccess(share, req) {
 }
 
 export function registerShareCreateRoutes(app) {
-  app.post('/api/shares', upload.array('files', MAX_FILES), normalizeUploadedFileNames, async (req, res, next) => {
+  app.post('/api/shares', prepareDirectUpload, upload.array('files', MAX_FILES), normalizeUploadedFileNames, async (req, res, next) => {
   let reservationId
   try {
     assertServiceWritable(req)
@@ -50,8 +53,10 @@ export function registerShareCreateRoutes(app) {
     assertConfiguredUploadLimits(req, uploadedFiles)
     const guestKey = assertGuestQuota(req, res, uploadedFiles)
     const ownerSession = authSessionFromRequest(req)
-    const options = readShareOptions(req.body, ownerSession?.user)
-    reservationId = reserveUploadCapacity({ files: uploadedFiles, guestKey, ownerUserId: ownerSession?.user?.id || '' })
+    if (req.body.mode !== undefined && req.body.mode !== req.directUploadMode) throw httpError(400, '上传模式与接收入口不一致，团队文件请使用团队上传入口')
+    const options = readShareOptions(req.body, ownerSession?.user, req.directUploadMode === 'team_resource')
+    options.teamOrganizationId = req.uploadOrganizationId || ''
+    reservationId = reserveUploadCapacity({ files: uploadedFiles, guestKey, organizationId: options.teamOrganizationId, ownerUserId: ownerSession?.user?.id || '' }, req.directUploadReservationId)
     await assertSafeUploadFiles(uploadedFiles)
 
     const files = uploadedFiles.map((file, index) => {
@@ -82,7 +87,17 @@ export function registerShareCreateRoutes(app) {
 }
 
 export function registerShareAccessRoutes(app) {
-  // 团队文件本体的管理下载不受公开提取链接关闭、密码或次数影响。
+  app.post('/api/shares/manage/:manageToken/unlock', (req, res) => {
+    const share = findShareByManageToken(req.params.manageToken)
+    if (!share) return res.status(404).json({ message: '分享管理链接不存在' })
+    const manager = validateTeamShareManager(share, req)
+    if (!manager.ok) return res.status(manager.status).json({ message: manager.message })
+    const access = validateShareRequest(share, req, { password: req.body.password, allowOwner: true })
+    if (!access.ok) return res.status(access.status).json({ message: access.message, code: access.code || '' })
+    setShareAccessCookie(res, req, share)
+    res.json({ ok: true })
+  })
+  // 团队管理下载与公开下载共用密码校验、次数预留和成功计数。
   app.get('/api/shares/manage/:manageToken/download', async (req, res, next) => {
     try {
       const share = findShareByManageToken(req.params.manageToken)
@@ -95,6 +110,10 @@ export function registerShareAccessRoutes(app) {
       if (findShareByManageToken(req.params.manageToken) !== share) return res.status(404).json({ message: '分享管理链接不存在' })
       const currentAccess = validateManagedFileAccess(share, req)
       if (!currentAccess.ok) return res.status(currentAccess.status).json({ message: currentAccess.message })
+      if (share.teamResource) {
+        if (req.method === 'HEAD') setShareAccessCookie(res, req, share)
+        registerShareDownload(share, res)
+      }
       if (share.files.length === 1) {
         const file = share.files[0]
         return sendDownloadFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
@@ -117,6 +136,10 @@ export function registerShareAccessRoutes(app) {
         if (findShareByManageToken(req.params.manageToken) !== share) return res.status(404).json({ message: '分享管理链接不存在' })
         const currentAccess = validateManagedFileAccess(share, req)
         if (!currentAccess.ok) return res.status(currentAccess.status).json({ message: currentAccess.message })
+        if (share.teamResource) {
+          if (req.method === 'HEAD') setShareAccessCookie(res, req, share)
+          if (action === 'download') registerShareDownload(share, res)
+        }
         const send = action === 'preview' ? sendPreviewFile : sendDownloadFile
         send(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
       } catch (error) {

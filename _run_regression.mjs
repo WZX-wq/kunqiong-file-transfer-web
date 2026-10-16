@@ -3,8 +3,8 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const ROOT = 'C:\\Users\\admin\\Desktop\\鲲穹文件传输web'
-const NODE = 'C:/Users/admin/.workbuddy/binaries/node/versions/22.22.2-3/node.exe'
+const ROOT = import.meta.dirname
+const NODE = process.execPath
 
 // 需要真实网络/线上服务的排除在外
 const EXCLUDE = new Set(['_verify_admin_live.mjs', '_verify_avatar_e2e.mjs', '_verify_avatar_restart.mjs'])

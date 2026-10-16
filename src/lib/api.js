@@ -1,3 +1,4 @@
+import { resumeDigest } from './resume-digest.js'
 // 由 main.jsx 抽取的工具函数（2026-10-09）
 // 纯函数，零 React/组件依赖。
 
@@ -57,7 +58,8 @@ export function uploadResumeSignature(files, chunkSize, uploadConfig, shareOptio
   return JSON.stringify({
     chunkSize,
     files: files.map((item) => ({ name: item.name, size: item.size, relativePath: item.relativePath || '', mimeType: item.file?.type || item.mimeType || '' })),
-    options: shareOptions,
+    version: 2,
+    optionsHash: resumeDigest(JSON.stringify(shareOptions)),
     mode: uploadConfig.sessionBody || {},
   })
 }
@@ -170,6 +172,10 @@ export const ACCOUNT_SESSION_EVENT = 'kunqiong:account-session'
 let sessionUserId = ''
 let sessionGeneration = 0
 
+export function accountSessionKey() {
+  return `${sessionGeneration}:${sessionUserId}`
+}
+
 function reportSession(userId = '', expiresAt = '') {
   const previousId = sessionUserId
   sessionUserId = userId
@@ -194,7 +200,7 @@ export async function apiRequest(url, options = {}) {
   if (url === '/api/auth/me' && response.ok) reportSession(data.user?.id || '', data.sessionExpiresAt || '')
   if (url === '/api/auth/logout' && response.ok) invalidateAccountSession()
   if (!response.ok) {
-    if (response.status === 401 && !String(url).startsWith('/api/admin/')) invalidateAccountSession()
+    if (response.status === 401 && data.code !== 'share_password_invalid' && !String(url).startsWith('/api/admin/')) invalidateAccountSession()
     const error = new Error(data.message || ([502, 504].includes(response.status) ? '服务连接暂时中断，请稍后重试' : '请求失败'))
     error.status = response.status
     error.code = data.code || ''
@@ -212,7 +218,8 @@ export function xhrRequest(url, { method = 'POST', body, onProgress, onRequest }
     onRequest?.(xhr)
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100)) }
     xhr.onload = () => {
-      const data = JSON.parse(xhr.responseText || '{}')
+      let data
+      try { data = JSON.parse(xhr.responseText || '{}') } catch { reject(new Error('服务响应格式不正确，请重试')); return }
       if (xhr.status >= 200 && xhr.status < 300) resolve(data)
       else reject(new Error(data.message || '上传失败'))
     }
@@ -240,6 +247,7 @@ export function createDownloadState() {
     isEstimated: false,
     retryCount: 0,
     retryConfig: null,
+    needsPassword: false,
     error: '',
   }
 }
@@ -391,6 +399,7 @@ export function createShareFileDownloadConfig(share, file, fileIndex, { password
     label: `下载 ${file.name || '文件'}`,
     totalBytes: Number(file.size || 0),
     headers: password ? { 'x-share-password': password } : {},
+    unlockUrl: share.code ? `/api/shares/lookup/${encodeURIComponent(share.code)}` : '',
   }
 }
 
@@ -406,7 +415,14 @@ export function createSubmissionFileDownloadConfig(collection, submission, fileI
 
 export async function downloadBinaryWithProgress(config, onProgress) {
   onProgress({ status: 'preparing', label: config.label, filename: config.filename, error: '' })
-  const response = await fetch(config.url, { method: 'HEAD', credentials: 'include', headers: config.headers || {} })
+  const headers = { ...config.headers }
+  if (config.unlockUrl && headers['x-share-password']) {
+    // JSON 同时支持中文密码；解锁凭证供后续原生下载使用，密码不进入 URL。
+    const unlocked = await fetch(config.unlockUrl, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: headers['x-share-password'] }) })
+    if (!unlocked.ok) throw await downloadResponseError(unlocked)
+    delete headers['x-share-password']
+  }
+  const response = await fetch(config.url, { method: 'HEAD', credentials: 'include', headers })
   if (!response.ok) throw await downloadResponseError(response)
   const filename = config.filename || filenameFromContentDisposition(response.headers.get('content-disposition')) || '下载文件'
   const link = document.createElement('a')

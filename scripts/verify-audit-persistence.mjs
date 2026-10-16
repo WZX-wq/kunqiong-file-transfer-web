@@ -33,7 +33,7 @@ app.post('/__fixture/write', (_req, res) => { metadata.systemConfig.maxBatchFile
 app.post('/__fixture/purge', (_req, res) => res.json(purgeExpiredAuditLogs()));
 app.post('/__fixture/stop', (_req, res) => { res.json({ok:true}); setTimeout(() => shutdown('fixture'), 20); });
 `
-fs.writeFileSync(path.join(fixture, 'server.mjs'), fs.readFileSync(path.join(root, 'server.mjs'), 'utf8').replace("app.set('trust proxy', true)", control + "\napp.set('trust proxy', true)"))
+fs.writeFileSync(path.join(fixture, 'server.mjs'), fs.readFileSync(path.join(root, 'server.mjs'), 'utf8').replace("app.set('trust proxy', 'loopback')", "app.set('trust proxy', 'loopback')\n" + control))
 fs.mkdirSync(path.join(fixture, 'storage'))
 const metadataFile = path.join(fixture, 'storage/metadata.json')
 const now = new Date().toISOString()
@@ -118,10 +118,10 @@ export const databasePool = {
  execute: async () => [{affectedRows:1}]
 };
 `)
-  const migration = spawnSync(process.execPath, ['--input-type=module', '-e', "const {loadMetadata}=await import('./server/lib/metadata-store.js'); console.log(JSON.stringify(await loadMetadata()));"], { cwd: fixture, windowsHide: true, env: { ...env, KUNQIONG_DB_HOST: 'fixture', KUNQIONG_DB_NAME: 'fixture', KUNQIONG_DB_USER: 'fixture' }, encoding: 'utf8' })
+  const migration = spawnSync(process.execPath, ['--input-type=module', '-e', "const {loadMetadata}=await import('./server/lib/metadata-store.js'); console.log(JSON.stringify(await loadMetadata()));"], { cwd: fixture, windowsHide: true, env: { ...env, KUNQIONG_DATA_KEY: '12'.repeat(32), KUNQIONG_DB_HOST: 'fixture', KUNQIONG_DB_NAME: 'fixture', KUNQIONG_DB_USER: 'fixture' }, encoding: 'utf8' })
   assert.equal(migration.status, 0, migration.stderr)
   const migrated = JSON.parse(migration.stdout.trim().split('\n').at(-1))
-  check('JSON to database migration retains independent audit history', migrated.auditLogs.some(row => row.details?.requestId === requestId) && migrated.auditLogs.some(row => row.details?.requestId === recoveredResponse.headers.get('x-request-id')))
+  check('JSON to database migration keeps audit journal independent', migrated.auditStorage === 'journal-v1' && Array.isArray(migrated.auditLogs) && migrated.auditLogs.length === 0)
 } finally {
   await Promise.all(children.map(instance => kill(instance)))
   console.log('Audit persistence checks: ' + passed + '; fixture=' + fixture)

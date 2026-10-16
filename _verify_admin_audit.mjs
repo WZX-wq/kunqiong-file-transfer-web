@@ -42,7 +42,8 @@ process.env.KUNQIONG_DB_ENABLED = 'false'
 process.env.PORT = String(PORT)
 process.env.KUNQIONG_STORAGE_DIR = join(SANDBOX, 'storage')
 process.env.KUNQIONG_ADMIN_USERNAME = 'ljxkjadmin'
-process.env.KUNQIONG_ADMIN_PASSWORD = 'jxljxkj009900'
+const fixtureAdminPassword = 'fixture-admin-password-for-tests'
+process.env.KUNQIONG_ADMIN_PASSWORD = fixtureAdminPassword
 // 故意配置白名单，证明它不再是后台通道
 process.env.KUNQIONG_ADMIN_USER_IDS = VICTIM_ID
 
@@ -60,7 +61,7 @@ const req = async (path, init = {}) => {
 }
 const j = (o) => ({ headers: { 'content-type': 'application/json' }, ...o })
 
-const login = await req('/api/admin/login', { method: 'POST', ...j({ body: JSON.stringify({ username: 'ljxkjadmin', password: 'jxljxkj009900' }) }) })
+const login = await req('/api/admin/login', { method: 'POST', ...j({ body: JSON.stringify({ username: 'ljxkjadmin', password: process.env.KUNQIONG_ADMIN_PASSWORD }) }) })
 const CK = (login.cookies.find((c) => c.startsWith('kunqiong_admin_session')) || '').split(';')[0]
 const auth = (extra = {}) => ({ headers: { cookie: CK, 'content-type': 'application/json' }, ...extra })
 
@@ -132,7 +133,7 @@ line('-- 5. 登录限流：伪造 X-Forwarded-For 不可绕过（本段会耗尽
     })
   }
   check('★ 20 次伪造 IP 的错误尝试后被限流（429）', last?.status === 429, `last=${last?.status}`)
-  const blocked = await req('/api/admin/login', { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '10.9.9.9' }, body: JSON.stringify({ username: 'ljxkjadmin', password: 'jxljxkj009900' }) })
+  const blocked = await req('/api/admin/login', { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '10.9.9.9' }, body: JSON.stringify({ username: 'ljxkjadmin', password: process.env.KUNQIONG_ADMIN_PASSWORD }) })
   check('★ 限流期间正确口令同样被拦截', blocked.status === 429, `status=${blocked.status}`)
 }
 

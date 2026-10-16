@@ -126,7 +126,7 @@ try {
   check('complete 后会话目录已清理', !fs.existsSync(path.join(SANDBOX, 'storage', 'tmp', 'upload-sessions', sessionId)))
 
   // ---------- 场景 4：管理员把游客累计上限调到 3MB ----------
-  const adminLogin = await fetch(`${BASE}/api/admin/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'ljxkjadmin', password: 'jxljxkj009900' }) })
+  const adminLogin = await fetch(`${BASE}/api/admin/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'ljxkjadmin', password: process.env.KUNQIONG_ADMIN_PASSWORD }) })
   check('管理员登录成功', adminLogin.status === 200, `status=${adminLogin.status}`)
   const adminCookie = setCookiesOf(adminLogin).map((c) => c.split(';')[0]).join('; ')
   const patch = await fetch(`${BASE}/api/admin/config`, { method: 'PATCH', headers: { 'content-type': 'application/json', cookie: adminCookie }, body: JSON.stringify({ anonymousTotalSizeMb: 3 }) })
