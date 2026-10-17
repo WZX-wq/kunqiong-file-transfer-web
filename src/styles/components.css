@@ -1327,6 +1327,28 @@
 .team-page .team-capacity-meta { gap: 6px 12px; margin-top: 8px; font-size: 11px; }
 .orders-empty { min-height: 200px; padding: 24px 20px; }
 
+/* 桌面表格的元数据列共用列中心，文本和 Flex 内容采用一致的对齐方式。 */
+@media (min-width: 841px) {
+  .records-page .records-table-head > span:nth-child(n + 3),
+  .records-page-records .record-direction,
+  .records-page-records .record-row-enhanced .record-code,
+  .records-page-records .record-size,
+  .records-page-records .record-time,
+  .records-page-files .record-expiry,
+  .records-page-files .file-center-row .record-code,
+  .records-page .record-row-enhanced .row-menu-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    justify-self: stretch;
+    min-width: 0;
+    width: 100%;
+    text-align: center;
+  }
+  .records-page .record-row-enhanced .record-type { justify-self: center; width: max-content; max-width: 100%; }
+  .records-page-records .record-row-enhanced .record-submit-button { justify-self: center; width: max-content; max-width: 100%; }
+}
+
 @media (max-width: 840px) {
   .team-page .team-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
