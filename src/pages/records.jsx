@@ -538,7 +538,6 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                     <div className="record-main">
                       <div className="record-title-line">
                         <RecordNameText name={item.name} />
-                        <span className="scope-pill">{item.categoryLabel}</span>
                         <span className="scope-pill file-format-pill">{item.formatLabel}</span>
                         <span className="scope-pill muted">{recordScopeLabel(record.scope)}</span>
                       </div>
