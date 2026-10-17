@@ -187,8 +187,8 @@ export function WorkspacePage() {
     }
   }
   return (
-    <PublicShell>
-      <section className="workspace-page">
+    <PublicShell className="workspace-shell">
+      <section className="workspace-page workspace-overview-page">
         {(message || error) && <div className="workspace-toast"><FeedbackMessage message={message || error} tone={error ? 'error' : feedbackTone(message)} /></div>}
       <div className="workspace-grid">
             <div className="public-card workspace-hero">

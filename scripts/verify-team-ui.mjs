@@ -16,6 +16,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  const calls=[],errors=[],virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',e=>{if(!/navigation/.test(e.message))errors.push(e)})
  const dom=new JSDOM('<div id="root"></div>',{url:'http://fixture.local'+route,...(navigation.referrer?{referrer:navigation.referrer}:{}),pretendToBeVisual:true,runScripts:'outside-only',virtualConsole})
  const {window}=dom,document=window.document
+ if(navigation.includeResourceStyles){const style=document.createElement('style');style.textContent=fs.readFileSync(path.join(root,'src/styles/base.css'),'utf8')+'\n'+fs.readFileSync(path.join(root,'src/styles/components.css'),'utf8');document.head.append(style)}
  if(navigation.previousRoutes?.length){window.history.replaceState(null,'',navigation.previousRoutes[0]);for(const previous of navigation.previousRoutes.slice(1))window.history.pushState(null,'',previous);window.history.pushState(null,'',route)}
  let roleChangeFailure=false; let currentRole=role,removed=!hasOrganization,name=teamName,hasTeam=hasOrganization,renameFailure=false,resourceDeleted=false,deleteFailure=false,holdDelete=false,releaseDelete=null,resourceUnlocked=false,quotaUsed=false
  const plan={id:'enterprise',label:'企业版',team:true,totalBytes:2048*1024**3,teamSpaceBytes:1024**4,permanent:true,features:[]}
@@ -40,6 +41,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
    if(removed){status=404;data={message:'你尚未加入团队空间'}}
    else {
     data=overview()
+    if(navigation.includeReadOnlyResource)data.resources.push({...data.resources[0],id:'readonlyfile',name:'只读文件.txt',canDelete:false,manageToken:'readonly',manageUrl:'/share/manage/readonly'})
     if(navigation.usageFixture){
      data.capacity={...data.capacity,totalBytes:navigation.usageFixture.totalBytes,usedBytes:navigation.usageFixture.usedBytes}
      data.memberUsage=data.memberUsage.map(member=>member.userId==='member'?{...member,usedBytes:navigation.usageFixture.memberBytes}:member)
@@ -94,7 +96,8 @@ await scenario('TEAM-BACK-NAVIGATION', async () => {
  } finally { missing.dom.window.close() }
  const team = await mount('/team?tab=resources', 'member', '隔离验证团队', true, 1, { previousRoutes: ['/team', '/workspace'], referrer: 'http://fixture.local/workspace' })
  try {
-  check('有团队时返回会员空间，不依赖历史记录', team.document.querySelector('.team-page-actions a')?.getAttribute('href') === '/workspace')
+  check('有团队时返回会员空间，不依赖历史记录', team.document.querySelector('.team-page-actions a[href="/workspace"]')?.textContent.includes('返回会员空间'))
+  check('团队空间提供固定返回首页入口', team.document.querySelector('.team-page-actions a[href="/"]')?.textContent.includes('返回首页'))
   check('导航入口无页面错误', team.errors.length === 0)
  } finally { team.dom.window.close() }
 })
@@ -151,7 +154,7 @@ await scenario('TEAM-RESOURCE-DELETE', async () => {
    f.releaseResourceDelete()
    await waitFor(() => !f.document.querySelector('.team-resource-row'), 'deleted row removed')
    await waitFor(() => f.document.body.textContent.includes('文件已删除'), 'delete feedback')
-   check(role + '删除成功刷新列表和用量', f.document.querySelector('.team-kpi').parentElement.textContent.includes('0 B') && !f.document.querySelector('.team-resource-row'))
+   check(role + '删除成功刷新列表和用量', f.document.querySelector('.team-capacity-number')?.textContent.includes('0 B') && !f.document.querySelector('.team-resource-row'))
    check(role + '删除无页面运行错误', f.errors.length === 0)
   } finally { f.releaseResourceDelete(); f.dom.window.close() }
  }
@@ -169,6 +172,19 @@ await scenario('TEAM-RESOURCE-DELETE', async () => {
   await batch.click('取消')
   check('取消批量删除保留整组资源', !!batch.document.querySelector('.team-resource-row') && !batch.calls.some(c => c.method === 'DELETE'))
  } finally { batch.dom.window.close() }
+})
+await scenario('TEAM-RESOURCE-ACTION-ALIGNMENT', async () => {
+ const f=await mount('/team?tab=resources','owner','隔离验证团队',true,1,{includeReadOnlyResource:true,includeResourceStyles:true})
+ try {
+  const rows=[...f.document.querySelectorAll('.team-resource-row')]
+  const actionWidths=rows.map(row=>f.window.getComputedStyle(row.querySelector('.team-resource-actions')).width)
+  const gridTracks=rows.map(row=>f.window.getComputedStyle(row).gridTemplateColumns)
+  const statusStyles=rows.map(row=>f.window.getComputedStyle(row.querySelector('.team-resource-status')))
+  check('可删除与只读团队资源同时显示',rows.length===2)
+  check('无删除权限的资源仍隐藏删除按钮',!!rows[0].querySelector('.team-resource-delete')&&!rows[1].querySelector('.team-resource-delete'))
+  check('不同权限行保留相同操作区宽度和列表列轨道',actionWidths.every(width=>width==='134px')&&gridTracks.every(tracks=>tracks===gridTracks[0]))
+  check('状态底色贴合文字并保持居中',statusStyles.every(style=>style.display==='inline-flex'&&style.width==='max-content'&&style.justifySelf==='center'&&style.alignItems==='center'))
+ } finally { f.dom.window.close() }
 })
 await scenario('TEAM-012-PICKERS',async()=>{
  const f=await mount('/team?tab=resources','member')

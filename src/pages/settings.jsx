@@ -158,7 +158,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
                 <SettingsInfoRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定'} />
                 <AccountCapacityCard user={user} />
                 <button className="workspace-entry-button" onClick={onOpenWorkspace}><Building2 size={15} /> 查看会员与团队空间 <ChevronRight size={15} /></button>
-                <AccountBenefits benefits={user.benefits} />
+                <AccountBenefits benefits={user.benefits?.filter((benefit) => benefit.label !== '账号容量' && !(user.teamEntitlement?.organizationName && benefit.label === '团队空间'))} />
               </div>
             </>
           )}

@@ -1,7 +1,7 @@
 import React from 'react'
 import { canReopenCollection, fileCategoryIcon, isDateInputStillOpen, managedFileItemsFromRecords, matchesManagedFileCategory, matchesManagedFileSearch, matchesRecordDate, matchesRecordScope, matchesRecordStatus, normalizeRecord, recordCopyLabel, recordCopyTarget, recordDetail, recordDisplayName, recordDisplayStatus, recordExpiryLabel, recordIconForScope, recordLink, recordManageUrl, recordOpenLabel, recordScopeLabel, recordStatusGroup, toDateInputValue } from '../lib/records.js'
 import { useEffect, useState } from 'react'
-import { defaultDeadline, formatBytes, isClosedStatus } from '../lib/format.js'
+import { defaultDeadline, formatBytes, formatDate, isClosedStatus } from '../lib/format.js'
 import { CalendarDays, Check, Clock3, Copy, ExternalLink, Eye, FileWarning, HardDrive, History, Link2, MoreHorizontal, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, X } from 'lucide-react'
 import { DatePicker, FileFormatBadge, FilePreviewModal, QrPreviewModal, RecordNameText, RecordPreviewChooser, RenameRecordModal } from '../components/ui.jsx'
 import { useDownloadTask } from '../hooks.js'
@@ -82,6 +82,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [recordQuery, setRecordQuery] = useState('')
   const [fileQuery, setFileQuery] = useState('')
   const [fileCategory, setFileCategory] = useState('all')
   const [expiringOnly, setExpiringOnly] = useState(false)
@@ -103,6 +104,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     matchesRecordScope(record, scopeFilter)
     && matchesRecordDate(record, dateFilter, dateFrom, dateTo)
     && matchesRecordStatus(record, statusFilter)
+    && (!recordQuery.trim() || `${recordDisplayName(record)} ${record.name} ${record.code}`.toLowerCase().includes(recordQuery.trim().toLowerCase()))
   ))
   const fileItems = managedFileItemsFromRecords(normalizedRecords)
   const filteredFileItems = fileItems.filter((item) => (
@@ -110,7 +112,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     && matchesManagedFileCategory(item, fileCategory)
     && (!expiringOnly || item.expiringSoon)
   ))
-  const recordsPageSize = 8
+  const recordsPageSize = 10
   const recordPageCount = Math.max(1, Math.ceil(filteredRecords.length / recordsPageSize))
   const filePageCount = Math.max(1, Math.ceil(filteredFileItems.length / recordsPageSize))
   const safeRecordPage = Math.min(recordPage, recordPageCount)
@@ -141,7 +143,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     setMenuPlacement('down')
     setRecordPage(1)
     setFilePage(1)
-  }, [viewMode, scopeFilter, dateFilter, dateFrom, dateTo, statusFilter, fileQuery, fileCategory, expiringOnly])
+  }, [viewMode, scopeFilter, dateFilter, dateFrom, dateTo, statusFilter, recordQuery, fileQuery, fileCategory, expiringOnly])
 
   useEffect(() => {
     const liveIds = new Set(normalizedRecords.map((record) => record.id))
@@ -210,12 +212,13 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     setSelectedIds(new Set())
   }
 
-  const hasRecordFilters = dateFilter !== 'all' || Boolean(dateFrom) || Boolean(dateTo) || statusFilter !== 'all'
+  const hasRecordFilters = dateFilter !== 'all' || Boolean(dateFrom) || Boolean(dateTo) || statusFilter !== 'all' || Boolean(recordQuery.trim())
   const resetRecordFilters = () => {
     setDateFilter('all')
     setDateFrom('')
     setDateTo('')
     setStatusFilter('all')
+    setRecordQuery('')
   }
   const hasFileFilters = Boolean(fileQuery.trim()) || fileCategory !== 'all' || expiringOnly
   const resetFileFilters = () => {
@@ -333,102 +336,123 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     )
   }
 
+  const recordModeTabs = (
+    <div className="records-mode-tabs" role="tablist" aria-label="记录视图">
+      {RECORD_VIEW_MODES.map(([key, label]) => (
+        <button key={key} role="tab" aria-selected={viewMode === key} className={viewMode === key ? 'active' : ''} onClick={() => setViewMode(key)}>
+          <span>{label}</span>
+          <strong>{key === 'files' ? fileItems.length : normalizedRecords.length}</strong>
+        </button>
+      ))}
+    </div>
+  )
+
   return (
-    <section className="workspace-page records-page">
+    <section className={`workspace-page records-page${viewMode === 'records' ? ' records-page-records' : ' records-page-files'}`}>
       <div className="workspace-heading records-heading">
         <div>
-          <p className="eyebrow"><span className="eyebrow-dot" /> 你的临时空间</p>
           <h1>{viewMode === 'files' ? '文件管理中心' : '收发记录'}</h1>
-          <p>按发送、接收、收集和提交归档最近活动，登录后同步到账号。</p>
+          <p>{viewMode === 'files' ? '管理近期收发的文件、收集任务和提交内容。' : '查看你发送与接收过的文件，可随时复制取件码或重新分享。'}</p>
         </div>
-      </div>
-
-      <div className="records-mode-tabs" role="tablist" aria-label="记录视图">
-        {RECORD_VIEW_MODES.map(([key, label]) => (
-          <button key={key} role="tab" aria-selected={viewMode === key} className={viewMode === key ? 'active' : ''} onClick={() => setViewMode(key)}>
-            <span>{label}</span>
-            <strong>{key === 'files' ? fileItems.length : normalizedRecords.length}</strong>
-          </button>
-        ))}
+        <div className="records-heading-actions">
+          {recordModeTabs}
+          {viewMode === 'records' && (
+            <button type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空记录</button>
+          )}
+        </div>
       </div>
 
       {viewMode === 'records' ? (
         <>
-          <div className="record-scope-tabs" role="tablist" aria-label="记录分类">
-            {RECORD_SCOPE_TABS.map((tab) => (
-              <button key={tab.key} role="tab" aria-selected={scopeFilter === tab.key} className={scopeFilter === tab.key ? 'active' : ''} onClick={() => setScopeFilter(tab.key)}>
-                <span>{tab.label}</span>
-                <strong>{recordCounts[tab.key] || 0}</strong>
-              </button>
-            ))}
-          </div>
-
-          <div className="records-filter-panel">
-            <div className="records-filter-row">
-              <label className="record-filter-field">
-                <span>日期</span>
-                <select value={dateFilter} onChange={(event) => setDateFilter(event.target.value)}>
-                  {RECORD_DATE_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </label>
-              {dateFilter === 'range' && (
-                <div className="record-filter-field record-date-field">
-                  <span>日期范围</span>
-                  <div className="record-date-range">
-                    <DatePicker value={dateFrom} onChange={setDateFrom} ariaLabel="开始日期" placeholder="开始日期" />
-                    <DatePicker value={dateTo} onChange={setDateTo} ariaLabel="结束日期" placeholder="结束日期" />
-                  </div>
-                </div>
-              )}
-              <label className="record-filter-field">
-                <span>状态</span>
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+          <div className="records-filter-panel records-page-toolbar">
+            <div className="records-toolbar-main">
+              <div className="record-scope-tabs" role="tablist" aria-label="记录分类">
+                {RECORD_SCOPE_TABS.map((tab) => (
+                  <button key={tab.key} role="tab" aria-selected={scopeFilter === tab.key} className={scopeFilter === tab.key ? 'active' : ''} onClick={() => setScopeFilter(tab.key)}>
+                    <span>{tab.label}</span>
+                    <strong>{recordCounts[tab.key] || 0}</strong>
+                  </button>
+                ))}
+              </div>
+              <label className="record-date-select record-status-select">
+                <select aria-label="状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                   {RECORD_STATUS_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
               </label>
-              <div className="record-filter-actions">
-                <button className="secondary-button filter-reset-button" onClick={resetRecordFilters} disabled={!hasRecordFilters}><RotateCcw size={15} /> 重置</button>
-                <button className="secondary-button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</button>
-              </div>
-            </div>
-            <div className="records-bulk-row">
-              <label className="record-select-all">
-                <input type="checkbox" checked={allVisibleSelected} disabled={!visibleIds.length} onChange={toggleVisibleSelection} />
-                <span>已选 {selectedIds.size} 条 · 本页 {visibleRecords.length} 条 / 筛选 {filteredRecords.length} 条</span>
+              <label className="record-date-select">
+                <select aria-label="日期筛选" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)}>
+                  {RECORD_DATE_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
               </label>
-              <div className="record-bulk-actions">
-                <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
-                <button className="secondary-button" disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> {scopeClearLabel}</button>
+              <label className="record-search-box records-search-box">
+                <Search size={15} />
+                <input type="search" maxLength={160} value={recordQuery} onChange={(event) => setRecordQuery(event.target.value)} placeholder="搜索文件名或取件码" aria-label="搜索文件名或取件码" />
+              </label>
+            </div>
+            <div className="records-secondary-row">
+              <div className="records-secondary-main">
+                {dateFilter === 'range' && (
+                  <div className="record-filter-field record-date-field">
+                    <span>日期范围</span>
+                    <div className="record-date-range">
+                      <DatePicker value={dateFrom} onChange={setDateFrom} ariaLabel="开始日期" placeholder="开始日期" />
+                      <DatePicker value={dateTo} onChange={setDateTo} ariaLabel="结束日期" placeholder="结束日期" />
+                    </div>
+                  </div>
+                )}
+                <label className="record-select-all">
+                  <input type="checkbox" checked={allVisibleSelected} disabled={!visibleIds.length} onChange={toggleVisibleSelection} />
+                  <span>已选 {selectedIds.size} 条 · 本页 {visibleRecords.length} 条 / 筛选 {filteredRecords.length} 条</span>
+                </label>
+              </div>
+              <div className="records-secondary-actions">
+                <div className="record-filter-actions">
+                  <button className="secondary-button filter-reset-button" onClick={resetRecordFilters} disabled={!hasRecordFilters}><RotateCcw size={15} /> 重置</button>
+                  <button className="secondary-button" aria-label="刷新记录" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</button>
+                </div>
+                <div className="record-bulk-actions">
+                  <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="records-list enhanced-records-list">
+          <div className="records-table-surface" role="table" aria-label="收发记录列表">
+            <div className="records-table-head" role="row">
+              <span aria-hidden="true" />
+              {['文件名', '方向', '取件码/入口', '大小', '时间', '状态', '操作'].map((label) => <span role="columnheader" key={label}>{label}</span>)}
+            </div>
+          <div className="records-list enhanced-records-list" role="rowgroup">
             {filteredRecords.length ? visibleRecords.map((record) => {
               const Icon = recordIconForScope(record.scope)
               const statusGroup = recordStatusGroup(record)
               const selected = selectedIds.has(record.id)
               return (
-                <div className={`record-row record-row-enhanced ${record.scope === 'collect_from_me' ? 'record-submission-row' : ''} ${selected ? 'selected' : ''}`} key={record.id}>
-                  <label className="record-check" aria-label={`选择 ${recordDisplayName(record)}`}>
+                <div className={`record-row record-row-enhanced ${record.scope === 'collect_from_me' ? 'record-submission-row' : ''} ${selected ? 'selected' : ''}`} key={record.id} role="row">
+                  <label className="record-check" role="cell" aria-label={`选择 ${recordDisplayName(record)}`}>
                     <input type="checkbox" checked={selected} onChange={() => toggleRecord(record.id)} />
                   </label>
-                  <span className={`record-icon ${record.scope}`}><Icon size={17} /></span>
-                  <div className="record-main">
-                    <div className="record-title-line">
-                      <RecordNameText name={recordDisplayName(record)} />
-                      <FileFormatBadge record={record} />
-                      <span className="scope-pill">{recordScopeLabel(record.scope)}</span>
+                  <div className="record-file-cell" role="cell">
+                    <span className={`record-icon ${record.scope}`}><Icon size={17} /></span>
+                    <div className="record-main">
+                      <div className="record-title-line">
+                        <RecordNameText name={recordDisplayName(record)} />
+                        <FileFormatBadge record={record} />
+                      </div>
+                      <span>{record.meta || recordDetail(record)}</span>
                     </div>
-                    <span>{record.meta || recordDetail(record)}</span>
                   </div>
-                  <span className="record-expiry">{recordExpiryLabel(record)}</span>
-                  <span className={`record-type ${statusGroup}`}>{recordDisplayStatus(record)}</span>
+                  <span className={`record-direction ${record.scope}`} role="cell">{record.scope === 'my_sent' ? '发出' : record.scope === 'sent_to_me' ? '接收' : record.scope === 'my_collections' ? '收集' : '提交'}</span>
                   {record.scope === 'collect_from_me' ? (
-                    <button type="button" className="record-code record-submit-button" disabled={!recordLink(record) || !onOpen} aria-label={`${recordOpenLabel(record)}：${recordDisplayName(record)}`} onClick={() => onOpen(record)}><ExternalLink size={14} />{recordOpenLabel(record)}</button>
-                  ) : <span className="record-code">{record.code || '-'}</span>}
-                  <div className="menu-wrap row-menu-wrap">
-                    {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
+                    <button type="button" role="cell" className="record-code record-submit-button" disabled={!recordLink(record) || !onOpen} aria-label={`${recordOpenLabel(record)}：${recordDisplayName(record)}`} onClick={() => onOpen(record)}><ExternalLink size={14} />{recordOpenLabel(record)}</button>
+                  ) : <span className="record-code" role="cell">{record.code || '-'}</span>}
+                  <span className="record-size" role="cell">{record.totalSize > 0 ? formatBytes(record.totalSize) : '—'}</span>
+                  <time className="record-time" role="cell" dateTime={record.createdAt}>{formatDate(record.createdAt)}</time>
+                  <span className={`record-type ${statusGroup}`} role="cell">{recordDisplayStatus(record)}</span>
+                  <div className="menu-wrap row-menu-wrap" role="cell">
+                    <span className="record-preview-slot">
+                      {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
+                    </span>
                     <button className="ghost-icon" aria-label={`更多操作：${recordDisplayName(record)}`} onClick={(event) => toggleMenu(record.id, event)}><MoreHorizontal size={17} /></button>
                     {openMenu === record.id && renderRecordMenu(record)}
                   </div>
@@ -437,6 +461,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
             }) : (
               <div className="empty-manage records-empty"><History size={25} /><span>没有符合当前筛选的记录</span></div>
             )}
+          </div>
           </div>
           <AdminPagination page={safeRecordPage} pageCount={recordPageCount} total={filteredRecords.length} pageSize={recordsPageSize} onPageChange={setRecordPage} />
         </>
@@ -493,31 +518,40 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
             </div>
           </div>
 
-          <div className="records-list enhanced-records-list file-center-list">
+          <div className="records-table-surface file-center-table-surface" role="table" aria-label="文件管理列表">
+            <div className="records-table-head file-center-table-head" role="row">
+              <span aria-hidden="true" />
+              {['文件项目', '有效期', '状态', '大小', '操作'].map((label) => <span role="columnheader" key={label}>{label}</span>)}
+            </div>
+          <div className="records-list enhanced-records-list file-center-list" role="rowgroup">
             {filteredFileItems.length ? visibleFileItems.map((item) => {
               const record = item.record
               const Icon = fileCategoryIcon(item.category)
               const selected = selectedIds.has(record.id)
               return (
-                <div className={`record-row record-row-enhanced file-center-row ${selected ? 'selected' : ''}`} key={item.id}>
-                  <label className="record-check" aria-label={`选择 ${item.name}`}>
+                <div className={`record-row record-row-enhanced file-center-row ${selected ? 'selected' : ''}`} key={item.id} role="row">
+                  <label className="record-check" role="cell" aria-label={`选择 ${item.name}`}>
                     <input type="checkbox" checked={selected} onChange={() => toggleRecord(record.id)} />
                   </label>
-                  <span className={`record-icon file-category-${item.category}`}><Icon size={17} /></span>
-                  <div className="record-main">
-                    <div className="record-title-line">
-                      <RecordNameText name={item.name} />
-                      <span className="scope-pill">{item.categoryLabel}</span>
-                      <span className="scope-pill file-format-pill">{item.formatLabel}</span>
-                      <span className="scope-pill muted">{recordScopeLabel(record.scope)}</span>
+                  <div className="record-file-cell" role="cell">
+                    <span className={`record-icon file-category-${item.category}`}><Icon size={17} /></span>
+                    <div className="record-main">
+                      <div className="record-title-line">
+                        <RecordNameText name={item.name} />
+                        <span className="scope-pill">{item.categoryLabel}</span>
+                        <span className="scope-pill file-format-pill">{item.formatLabel}</span>
+                        <span className="scope-pill muted">{recordScopeLabel(record.scope)}</span>
+                      </div>
+                      <span>{item.detail}</span>
                     </div>
-                    <span>{item.detail}</span>
                   </div>
-                  <span className="record-expiry">{recordExpiryLabel(record)}</span>
-                  <span className={`record-type ${item.statusGroup}`}>{recordDisplayStatus(record)}</span>
-                  <span className="record-code">{item.size ? formatBytes(item.size) : `${item.fileCount || 1} 项`}</span>
-                  <div className="menu-wrap row-menu-wrap">
-                    {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${item.name}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
+                  <span className="record-expiry" role="cell">{recordExpiryLabel(record)}</span>
+                  <span className={`record-type ${item.statusGroup}`} role="cell">{recordDisplayStatus(record)}</span>
+                  <span className="record-code" role="cell">{item.size ? formatBytes(item.size) : `${item.fileCount || 1} 项`}</span>
+                  <div className="menu-wrap row-menu-wrap" role="cell">
+                    <span className="record-preview-slot">
+                      {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${item.name}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
+                    </span>
                     <button className="ghost-icon" aria-label={`更多操作：${item.name}`} onClick={(event) => toggleMenu(item.id, event)}><MoreHorizontal size={17} /></button>
                     {openMenu === item.id && renderRecordMenu(record)}
                   </div>
@@ -526,6 +560,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
             }) : (
               <div className="empty-manage records-empty"><HardDrive size={25} /><span>没有符合当前筛选的文件项目</span></div>
             )}
+          </div>
           </div>
           <AdminPagination page={safeFilePage} pageCount={filePageCount} total={filteredFileItems.length} pageSize={recordsPageSize} onPageChange={setFilePage} />
         </>
