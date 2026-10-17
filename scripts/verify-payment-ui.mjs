@@ -18,6 +18,8 @@ const plans = [
   { id: 'free', label: '基础版', totalBytes: 1024 ** 3, monthlyPrice: 0 },
   { id: 'member', label: '会员版', totalBytes: 100 * 1024 ** 3, monthlyPrice: 1900, validityDays: 30 },
 ]
+const enterprisePlan = { id: 'enterprise', label: '企业版', totalBytes: 2048 * 1024 ** 3, teamSpaceBytes: 1024 ** 3, monthlyPrice: 15900, permanent: true }
+const enterprisePlans = [...plans, { id: 'team', label: '团队版', totalBytes: 500 * 1024 ** 3, monthlyPrice: 4900, validityDays: 90 }, enterprisePlan]
 const initialWorkspace = () => ({ plan: plans[0], plans, capacity: {}, orders: [], paymentReconciliation: { pending: false, requiresLogin: false } })
 const initialOrder = () => ({ id: 'fixture-order', orderNo: 'fixture-order-no', planId: 'member', planLabel: '会员版', status: 'pending_payment', amount: 1900, createdAt: new Date().toISOString() })
 let passed = 0
@@ -26,7 +28,7 @@ async function waitFor(condition, name) {
   for (let i = 0; i < 150; i++) { if (condition()) return; await delay(10) }
   assert.fail(name)
 }
-async function mount({ pending = false, paymentReady = true, confirmationFailures = 0, statusFailures = 0, conflict = false, ageMs = 0 } = {}) {
+async function mount({ pending = false, paymentReady = true, confirmationFailures = 0, statusFailures = 0, conflict = false, ageMs = 0, currentPlan = plans[0], availablePlans = plans, pricing = { member: { available: true, priceCents: 1900, validityDays: 30 } } } = {}) {
   const jsErrors = []
   const console = new VirtualConsole()
   console.on('jsdomError', (error) => jsErrors.push(error))
@@ -36,6 +38,8 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
   window.Date.now = () => clock
   const timers = new Map()
   let nextTimer = 0, workspace = initialWorkspace(), order = null, loggedIn = true
+  workspace.plan = currentPlan
+  workspace.plans = availablePlans
   if (pending) {
     order = { ...initialOrder(), createdAt: new Date(clock - ageMs).toISOString(), ...(paymentReady ? { remoteOrderNo: 'fixture-remote-order', payment: { qrcode_img_url: 'data:image/png;base64,YQ==' } } : {}) }
     workspace.orders = [order]; workspace.paymentReconciliation.pending = true
@@ -47,7 +51,7 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
   window.fetch = async (url, options = {}) => {
     let payload = {}, status = 200
     if (url === '/api/auth/me') payload = { user: loggedIn ? { id: 'fixture-user', nickname: '测试用户' } : null }
-    else if (url === '/api/account/upgrade-pricing') payload = { source: 'remote', pricing: { member: { available: true, priceCents: 1900, validityDays: 30 } } }
+    else if (url === '/api/account/upgrade-pricing') payload = { source: 'remote', pricing }
     else if (url === '/api/account/workspace') {
       workspaceCalls++; active++; maxActive = Math.max(maxActive, active)
       payload = structuredClone(workspace)
@@ -113,7 +117,7 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
 
 const fixture = await mount()
 try {
-  await fixture.click('升级权益', '.workspace-benefits-cta button')
+  await fixture.click('套餐对比与升级', '.workspace-benefits-cta button')
   fixture.hold()
   await fixture.click('创建升级订单')
   await waitFor(fixture.isHeld, 'Pre-checkout workspace response is held')
@@ -146,7 +150,7 @@ try {
 
 const alipayFixture = await mount()
 try {
-  await alipayFixture.click('升级权益', '.workspace-benefits-cta button')
+  await alipayFixture.click('套餐对比与升级', '.workspace-benefits-cta button')
   await alipayFixture.click('支付宝')
   await alipayFixture.click('创建升级订单')
   await waitFor(() => alipayFixture.document.querySelector('iframe[title="支付宝收银台"]'), 'Selected Alipay checkout loads automatically')
@@ -155,7 +159,7 @@ try {
 
 const retryFixture = await mount({ confirmationFailures: 1 })
 try {
-  await retryFixture.click('升级权益', '.workspace-benefits-cta button')
+  await retryFixture.click('套餐对比与升级', '.workspace-benefits-cta button')
   await retryFixture.click('创建升级订单')
   await waitFor(() => retryFixture.text().includes('支付服务暂不可用'), 'Automatic payment failure is visible')
   await delay(80)
@@ -174,7 +178,7 @@ try {
 for (const options of [{ pending: true, paymentReady: false }, { conflict: true }]) {
   const restored = await mount(options)
   try {
-    await restored.click('升级权益', '.workspace-benefits-cta button')
+    await restored.click('套餐对比与升级', '.workspace-benefits-cta button')
     if (options.conflict) await restored.click('创建升级订单')
     await waitFor(() => restored.document.querySelector('img[alt="微信支付二维码"]'), 'Existing unpaid order automatically loads its QR code')
     check('Existing unpaid order resumes payment automatically ' + (options.conflict ? 'after creation conflict' : 'when reopened'), restored.confirmCalls() === 1 && restored.createCalls() === (options.conflict ? 1 : 0))
@@ -183,7 +187,7 @@ for (const options of [{ pending: true, paymentReady: false }, { conflict: true 
 
 const pendingFixture = await mount({ pending: true })
 try {
-  await pendingFixture.click('升级权益', '.workspace-benefits-cta button')
+  await pendingFixture.click('套餐对比与升级', '.workspace-benefits-cta button')
   check('Reopening an order with a QR code reuses the existing checkout', pendingFixture.confirmCalls() === 0 && !!pendingFixture.document.querySelector('img[alt="微信支付二维码"]'))
   pendingFixture.holdStatus()
   await pendingFixture.tick(2000)
@@ -205,7 +209,7 @@ try {
 for (const refresh of ['manual', 'automatic']) {
   const recovered = await mount({ pending: true, statusFailures: 1 })
   try {
-    await recovered.click('升级权益', '.workspace-benefits-cta button')
+    await recovered.click('套餐对比与升级', '.workspace-benefits-cta button')
     await recovered.click('刷新支付状态')
     check('Payment query failure keeps the original checkout ' + refresh, recovered.text().includes('支付服务返回的套餐有效期无效') && !!recovered.document.querySelector('.upgrade-payment-qr'))
     recovered.paid()
@@ -219,7 +223,7 @@ for (const refresh of ['manual', 'automatic']) {
 }
 const expiryFixture = await mount({ pending: true, ageMs: 14 * 60000 })
 try {
-  await expiryFixture.click('升级权益', '.workspace-benefits-cta button')
+  await expiryFixture.click('套餐对比与升级', '.workspace-benefits-cta button')
   check('Reopened checkout keeps the original fifteen-minute deadline', expiryFixture.document.querySelector('.upgrade-payment-countdown')?.textContent.includes('01:00'))
   await expiryFixture.advance(59000)
   check('Payment stays visible one second before expiry', !!expiryFixture.document.querySelector('img[alt="微信支付二维码"]') && expiryFixture.text().includes('00:01'))
@@ -233,20 +237,20 @@ try {
 
 const expiredOnOpen = await mount({ pending: true, paymentReady: false, ageMs: 15 * 60000 })
 try {
-  await expiredOnOpen.click('升级权益', '.workspace-benefits-cta button')
+  await expiredOnOpen.click('套餐对比与升级', '.workspace-benefits-cta button')
   check('Opening an expired order never requests a new code for it', expiredOnOpen.confirmCalls() === 0 && expiredOnOpen.text().includes('支付已超时'))
 } finally { expiredOnOpen.close() }
 
 const suspended = await mount({ pending: true })
 try {
-  await suspended.click('升级权益', '.workspace-benefits-cta button')
+  await suspended.click('套餐对比与升级', '.workspace-benefits-cta button')
   await suspended.returnAfter(16 * 60000)
   check('Returning from a suspended tab catches up without restarting the timer', !suspended.document.querySelector('.upgrade-payment-qr') && suspended.text().includes('支付已超时') && suspended.confirmCalls() === 0)
 } finally { suspended.close() }
 
 const expiryAlipay = await mount()
 try {
-  await expiryAlipay.click('升级权益', '.workspace-benefits-cta button')
+  await expiryAlipay.click('套餐对比与升级', '.workspace-benefits-cta button')
   await expiryAlipay.click('支付宝')
   await expiryAlipay.click('创建升级订单')
   await waitFor(() => expiryAlipay.document.querySelector('iframe'), 'Alipay is ready')
@@ -257,4 +261,20 @@ try {
   await waitFor(() => expiryAlipay.document.querySelector('.upgrade-success-view'), 'Payment at the deadline is still reconciled')
   check('A confirmed payment at expiry still activates entitlements', !expiryAlipay.text().includes('重新创建订单'))
 } finally { expiryAlipay.close() }
+
+const highestPlan = await mount({
+  currentPlan: enterprisePlan,
+  availablePlans: enterprisePlans,
+  pricing: {
+    member: { available: true, priceCents: 1900, validityDays: 30 },
+    team: { available: true, priceCents: 4900, validityDays: 90 },
+    enterprise: { available: true, priceCents: 15900, validityDays: 0 },
+  },
+})
+try {
+  await highestPlan.click('查看已购权益', '.workspace-benefits-cta button')
+  await waitFor(() => highestPlan.document.querySelector('.upgrade-modal'), 'Highest tier modal opens')
+  check('Highest tier with no upgrade option does not show an unavailable-plan error', !highestPlan.text().includes('套餐暂不可用，请稍后重试'))
+  check('Highest tier explains that the current entitlement is already the maximum', highestPlan.text().includes('已拥有当前最高等级权益'))
+} finally { highestPlan.close() }
 console.log(`Payment UI checks: ${passed}/${passed}`)

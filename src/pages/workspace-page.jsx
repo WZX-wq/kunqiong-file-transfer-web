@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRemotePlanPricing } from '../hooks.js'
 import { apiRequest, copyTextToClipboard, mergePlanPricing, upgradeApiRequest } from '../lib/api.js'
 import { ConfirmModal, FeedbackMessage, PublicShell } from '../components/common.jsx'
-import { ArrowLeft, BadgeCheck, BarChart3, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, Link2, ListChecks, PencilLine, RefreshCw, RotateCcw, ScanLine, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, BarChart3, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, Link2, PencilLine, RefreshCw, RotateCcw, ScanLine, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
 import { feedbackTone, formatBytes, formatDate, formatPlanPrice } from '../lib/format.js'
 import { PlanSpaceSummary } from '../components/ui.jsx'
 import { ACCOUNT_PLAN_ICON, ACCOUNT_PLAN_RANK, UPGRADE_ORDER_STATUS_LABELS } from '../lib/constants.js'
@@ -24,6 +24,7 @@ export function WorkspacePage() {
   const [selectedPlanId, setSelectedPlanId] = useState('')
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const loadRunning = useRef(null)
+  const workspacePlanId = useRef(null)
   const mounted = useRef(false)
   // 远端主站套餐实价：工作台展示价与升级弹窗/订单支付同源，拉不到时回落本地配置价
   const remotePricing = useRemotePlanPricing(user?.id)
@@ -94,11 +95,15 @@ export function WorkspacePage() {
     }
   }, [user?.id, workspace?.paymentReconciliation?.pending])
   useEffect(() => {
-    if (workspace?.plan?.id) setSelectedPlanId(workspace.plan.id)
-  }, [workspace?.plan?.id])
-  useEffect(() => {
     if (workspace?.organization?.name && !editingTeamName) setWorkspaceName(workspace.organization.name)
   }, [workspace?.organization?.name, editingTeamName])
+  useEffect(() => {
+    const nextPlanId = workspace?.plan?.id
+    if (!nextPlanId || workspacePlanId.current === nextPlanId) return
+    const isInitialPlan = workspacePlanId.current === null
+    workspacePlanId.current = nextPlanId
+    setSelectedPlanId((current) => isInitialPlan && current ? current : nextPlanId)
+  }, [workspace?.plan?.id])
   useEffect(() => {
     if (!message) return undefined
     const timer = window.setTimeout(() => setMessage(''), 3000)
@@ -156,7 +161,6 @@ export function WorkspacePage() {
   const planDisplay = mergePlanPricing(plan, remotePricing)
   const orders = workspace?.orders || []
   const pendingOrder = orders.find((order) => order.status === 'pending_payment') || null
-  const selectedPlan = plans.find((item) => item.id === selectedPlanId) || plan
   const capacity = workspace?.capacity || {}
   const organization = workspace?.organization
   // teamEntitlement 是「借用的团队侧能力」，与个人套餐分开：
@@ -166,12 +170,17 @@ export function WorkspacePage() {
   const canUseTeamSpace = Boolean(teamEntitlement.canUseTeamSpace)
   const teamSpaceBytes = Number(teamEntitlement.teamSpaceBytes || plan.teamSpaceBytes || 0)
   const teamRole = teamEntitlement.role || ''
+  const highestTeamPlan = plans.filter((item) => item.team).reduce((highest, item) => !highest || accountPlanRank(item.id) > accountPlanRank(highest.id) ? item : highest, null)
+  const hasMaximumTeamEntitlement = Boolean(teamEntitlement.organizationId && teamEntitlement.teamPlanId && highestTeamPlan && accountPlanRank(teamEntitlement.teamPlanId) >= accountPlanRank(highestTeamPlan.id))
   const canManageTeam = Boolean(workspace?.canManage)
   const members = organization?.members || []
   const ownerMember = members.find((member) => member.role === 'owner') || members[0] || null
   // 当前空间用量只跟随账号实际权益，套餐比较选择不改变已购额度。
   const currentTotalBytes = Number(capacity.totalBytes ?? plan.totalBytes ?? 0)
   const ratio = currentTotalBytes ? Math.min(100, Math.round((capacity.usedBytes / currentTotalBytes) * 100)) : 0
+  const isSelectablePlan = (item) => item.id !== 'free' && accountPlanRank(item.id) >= accountPlanRank(plan.id) && !(item.id === plan.id && item.permanent)
+  const defaultSelectedPlan = plans.find(isSelectablePlan) || plan
+  const selectedPlan = plans.find((item) => item.id === selectedPlanId && isSelectablePlan(item)) || defaultSelectedPlan
   const currentPlanLabel = plan.label || '基础版'
   const planValidity = plan.id === 'free' ? '长期免费' : plan.permanent ? '永久有效' : workspace?.planExpiresAt ? `有效至 ${formatDate(workspace.planExpiresAt)}` : '长期有效'
   // 团队邀请入口：走企业专属路径，访客打开后登录即可在页面底部直接申请入团。
@@ -196,10 +205,33 @@ export function WorkspacePage() {
               <div className="orders-workspace-links"><a className="secondary-button" href="/settings/orders"><Wallet size={15} /> 我的订单</a><a className="secondary-button workspace-back-button" href="/"><ArrowLeft size={15} /> 返回首页</a></div>
             </div>
             <div className="public-card workspace-section workspace-benefits-card">
-              <div className="workspace-section-heading"><div><p className="eyebrow">当前权益</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div><span className="workspace-status" title={plan.permanent ? '会员版及以上权益支持永久保存文件。' : '临时保存文件到期会失效。'}>{plan.permanent ? '支持永久保存' : '临时保存'}</span></div>
+              <div className="workspace-section-heading"><div><p className="eyebrow">当前套餐</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div></div>
               <div className="workspace-capacity"><div><span>已使用空间 · {currentPlanLabel}</span><strong>{formatBytes(capacity.usedBytes || 0)} / {formatBytes(currentTotalBytes)}</strong></div><div className="capacity-bar" title={`已使用 ${ratio}%`} role="progressbar" aria-valuenow={ratio} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${ratio}%` }} /></div><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务 · {capacity.fileCount || 0} 个文件</small></div>
-              <div className="plan-comparison" role="tablist" aria-label="账号权益版本">{plans.map((item) => <button type="button" className={item.id === selectedPlan.id ? 'current' : ''} key={item.id} onClick={() => setSelectedPlanId(item.id)} role="tab" aria-selected={item.id === selectedPlan.id ? 'true' : 'false'}><em className="plan-current-tag">{item.id === plan.id ? '当前' : item.team ? '推荐' : ''}</em><span className="plan-title-line">{(() => { const PlanIcon = accountPlanIcon(item.id); return <PlanIcon size={15} /> })()}<strong>{item.label}</strong></span><PlanSpaceSummary plan={item} /><small className="plan-price-summary">{formatPlanPrice(item)}</small></button>)}</div>
-              <div className="workspace-benefits-cta"><span>{plan.id === 'enterprise' ? '你已拥有最高企业版权益。' : '需要更多空间、永久保存或团队协作？'}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {plan.id === 'enterprise' ? '查看权益详情' : '升级权益'}</button></div>
+              <div className="workspace-plan-attributes" aria-label="套餐与团队权益">
+                <span className={plan.permanent ? 'is-on' : 'is-muted'}>{plan.permanent ? <Check size={14} /> : <Clock3 size={14} />} {plan.permanent ? '文件永久保存' : '文件临时保存'}</span>
+                <span className={hasTeamPlan || canUseTeamSpace ? 'is-on' : 'is-muted'}>{hasTeamPlan || canUseTeamSpace ? <Check size={14} /> : <X size={14} />} {teamRole === 'member' && !hasTeamPlan ? `共享团队空间${teamSpaceBytes ? ` · ${formatBytes(teamSpaceBytes)}` : ''}` : hasTeamPlan || canUseTeamSpace ? '团队协作已开通' : '团队协作未开通'}</span>
+              </div>
+              {hasMaximumTeamEntitlement && <div className="upgrade-maximum-notice workspace-team-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong><span>{teamEntitlement.teamPlanLabel || highestTeamPlan.label}团队权益由组织提供；下方价格卡仅用于升级你的个人套餐。</span></div></div>}
+              <div className="workspace-plan-catalog-heading"><strong>个人套餐价格</strong></div>
+              <div className="plan-comparison" role="group" aria-label="选择套餐">
+                {plans.map((item) => {
+                  const PlanIcon = accountPlanIcon(item.id)
+                  const isCurrentPlan = item.id === plan.id
+                  const isIncludedPlan = accountPlanRank(item.id) < accountPlanRank(plan.id) || (isCurrentPlan && item.permanent)
+                  const isTeamEntitlementPlan = item.team && teamEntitlement.teamPlanId && accountPlanRank(item.id) <= accountPlanRank(teamEntitlement.teamPlanId)
+                  const isSelectable = isSelectablePlan(item)
+                  const isSelected = item.id === selectedPlan.id
+                  return <button type="button" data-plan-id={item.id} className={`${isCurrentPlan ? 'current ' : ''}${isSelected ? 'selected' : ''}`} key={item.id} onClick={() => isSelectable && setSelectedPlanId(item.id)} disabled={!isSelectable} aria-pressed={isSelected}>
+                    <em className="plan-current-tag">{isCurrentPlan ? '当前套餐' : isIncludedPlan ? '已包含' : isTeamEntitlementPlan ? '团队已拥有' : item.team ? '团队推荐' : ''}</em>
+                    <span className="plan-title-line"><PlanIcon size={15} /><strong>{item.label}</strong></span>
+                    <PlanSpaceSummary plan={item} compact />
+                    <small className="plan-price-summary">{formatPlanPrice(item)}</small>
+                  </button>
+                })}
+              </div>
+              {pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}
+              {workspace?.paymentReconciliation?.requiresLogin && <div className="workspace-payment-warning" role="status">支付订单需要重新登录核对状态。<button type="button" className="team-manage-link" onClick={login}><UserRound size={14} /> 重新登录</button></div>}
+              <div className="workspace-benefits-cta"><span>{selectedPlan.id === plan.id ? '当前个人套餐' : `个人套餐已选：${selectedPlan.label}`}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}>{plan.id === 'enterprise' ? <BadgeCheck size={15} /> : <Zap size={15} />} {plan.id === 'enterprise' ? '查看已购权益' : hasMaximumTeamEntitlement ? '个人套餐对比' : '套餐对比与升级'}</button></div>
             </div>
             <div className="workspace-lower-row">
             <div className="public-card workspace-section workspace-team-card">
@@ -231,42 +263,34 @@ export function WorkspacePage() {
                   {teamRole === 'member' && <div className="workspace-share-notice"><Users size={18} /><div><strong>你已加入「{organization.name}」，正在共享团队空间</strong><span>团队空间的容量由团队所有者提供，你个人的空间与权益保持不变。</span></div></div>}
                   <div className="workspace-team-body">
                     <div className="workspace-team-block">
-                      <p className="workspace-block-label">团队所有者</p>
                       {ownerMember && <div className="workspace-owner-summary"><span className="workspace-member-avatar">{(ownerMember.displayName || '团').slice(0, 1)}</span><div><strong>{ownerMember.displayName || ownerMember.email || ownerMember.phone || '团队所有者'}</strong><span>{ownerMember.email || ownerMember.phone || ownerMember.userId || '当前账号'} · 所有者</span></div><span className="workspace-member-state active">所有者</span></div>}
                     </div>
                     <div className="workspace-team-block">
-                      <p className="workspace-block-label"><Link2 size={14} /> 团队邀请链接</p>
                       {canManageTeam ? (
                         <>
-                          <p className="workspace-block-hint">把它发给同事，对方登录后即可申请加入，申请会出现在团队空间里由你审批。</p>
+                          <p className="workspace-block-label"><Link2 size={14} /> 管理邀请链接</p>
+                          <p className="workspace-block-hint">把链接发给同事，对方登录后即可申请加入，申请会出现在团队空间里由你审批。</p>
                           <div className="workspace-invite-link-row">
                             <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
                             <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={14} /> 复制</button>
                           </div>
                         </>
                       ) : (
-                        <>
-                          <p className="workspace-block-hint">邀请链接由团队所有者管理，如需邀请同事请联系所有者。</p>
-                          <div className="workspace-invite-link-row">
-                            <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
-                            <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={14} /> 复制</button>
-                          </div>
-                        </>
+                        <div className="workspace-invite-notice" role="note"><Link2 size={15} /><span>邀请链接由团队所有者或管理员管理，如需邀请同事请联系他们。</span></div>
                       )}
                     </div>
                   </div>
                   <div className="workspace-team-foot">
-                    <span>其他成员、待加入成员和入团申请请前往团队空间查看</span>
+                    <span>查看团队成员、入团申请和使用情况</span>
                     <button type="button" className="team-manage-link" onClick={() => { window.location.href = '/team' }}><BarChart3 size={14} /> 查看团队成员与使用情况 <ChevronRight size={14} /></button>
                   </div>
                 </>
               )}
             </div>
-            <div className="public-card workspace-side-card workspace-status-card"><div className="workspace-side-heading"><ListChecks size={22} /><strong>当前状态</strong></div><div className="workspace-status-list"><span className={plan.permanent ? 'on' : 'off'}>{plan.permanent ? <Check size={13} /> : <X size={13} />} 文件永久保存</span><span className={hasTeamPlan || canUseTeamSpace ? 'on' : 'off'}>{hasTeamPlan || canUseTeamSpace ? <Check size={13} /> : <X size={13} />} {teamRole === 'member' && !hasTeamPlan ? '共享团队空间' : '团队协作与成员管理'}</span><span className={organization ? 'on' : 'off'}>{organization ? <Check size={13} /> : <X size={13} />} 分享链接入团申请</span></div>{pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}{workspace?.paymentReconciliation?.requiresLogin && <div className="workspace-payment-warning" role="status">支付订单需要重新登录核对状态。<button type="button" className="team-manage-link" onClick={login}><UserRound size={14} /> 重新登录</button></div>}<button className="primary-button" onClick={() => setUpgradeOpen(true)}><Zap size={15} /> {canManageTeam ? '升级权益' : '查看升级方式'}</button></div>
             </div>
         </div>
       </section>
-      {upgradeOpen && <UpgradeModal workspace={workspace} onClose={() => setUpgradeOpen(false)} onRefresh={load} onNotify={(text, tone) => { if (tone === 'error') setError(text); else setMessage(text) }} />}
+      {upgradeOpen && <UpgradeModal workspace={workspace} initialPlanId={selectedPlan.id} onClose={() => setUpgradeOpen(false)} onRefresh={load} onNotify={(text, tone) => { if (tone === 'error') setError(text); else setMessage(text) }} />}
     </PublicShell>
   )
 }
@@ -275,7 +299,7 @@ export const accountPlanRank = (planId) => ACCOUNT_PLAN_RANK[planId] ?? 0
 
 export const accountPlanIcon = (planId) => ACCOUNT_PLAN_ICON[planId] || HardDrive
 
-export function UpgradeModal({ workspace, initialOrder = null, onClose, onRefresh, onNotify, requireCancelConfirmation = false }) {
+export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = null, onClose, onRefresh, onNotify, requireCancelConfirmation = false }) {
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -283,11 +307,19 @@ export function UpgradeModal({ workspace, initialOrder = null, onClose, onRefres
   }, [])
 
   const plan = workspace?.plan || {}
-  const localPlans = (workspace?.plans || []).filter((item) => item.id !== 'free')
+  const accountPlans = workspace?.plans || []
+  const teamEntitlement = workspace?.teamEntitlement || {}
+  const localPlans = accountPlans.filter((item) => item.id !== 'free')
+  const freePlan = accountPlans.find((item) => item.id === 'free') || (plan.id === 'free' ? plan : null)
   const pendingOrder = (workspace?.orders || []).find((order) => order.status === 'pending_payment') || null
   const currentPlanRank = accountPlanRank(plan.id)
+  const hasPlanCatalog = localPlans.length > 0
+  const highestTeamPlan = localPlans.filter((item) => item.team).reduce((highest, item) => !highest || accountPlanRank(item.id) > accountPlanRank(highest.id) ? item : highest, null)
+  const hasMaximumTeamEntitlement = Boolean(teamEntitlement.organizationId && teamEntitlement.teamPlanId && highestTeamPlan && accountPlanRank(teamEntitlement.teamPlanId) >= accountPlanRank(highestTeamPlan.id))
   const defaultPlanId = localPlans.find((item) => accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && item.permanent))?.id || ''
-  const [selectedPlanId, setSelectedPlanId] = useState(defaultPlanId)
+  const hasMaximumPersonalEntitlement = hasPlanCatalog && !defaultPlanId
+  const preferredPlanId = localPlans.find((item) => item.id === initialPlanId && accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && item.permanent))?.id || ''
+  const [selectedPlanId, setSelectedPlanId] = useState(preferredPlanId || defaultPlanId)
   const [storedOrder, setOrderView] = useState(initialOrder || pendingOrder)
   const [now, setNow] = useState(Date.now)
   const orderView = paymentOrderView(storedOrder, now)
@@ -304,10 +336,13 @@ export function UpgradeModal({ workspace, initialOrder = null, onClose, onRefres
   const attemptedPaymentOrder = useRef(null)
   const paymentRequestRunning = useRef(false)
   // 远端主站套餐实价：与订单创建/支付同源，避免「展示价 ≠ 下单应付金额」
-  const remotePricing = useRemotePlanPricing(true)
+  const remotePricing = useRemotePlanPricing(Boolean(defaultPlanId))
   const plans = localPlans.map((item) => mergePlanPricing(item, remotePricing))
+  const comparisonPlans = [...(freePlan ? [mergePlanPricing(freePlan, remotePricing)] : []), ...plans]
   const priceAvailable = (id) => Boolean(remotePricing?.[id] && remotePricing[id].available !== false && !remotePricing.error)
-  const pricingError = remotePricing?.error || (remotePricing && !priceAvailable(selectedPlanId) ? '套餐暂不可用，请稍后重试' : '')
+  const pricingError = defaultPlanId
+    ? remotePricing?.error || (remotePricing && selectedPlanId && !priceAvailable(selectedPlanId) ? '套餐暂不可用，请稍后重试' : '')
+    : ''
 
   useEffect(() => {
     if (pendingOrder) setOrderView(current => {
@@ -481,7 +516,7 @@ export function UpgradeModal({ workspace, initialOrder = null, onClose, onRefres
         <div className="modal-body upgrade-modal-body">
           {error && <FeedbackMessage message={error} tone="error" />}
           {!orderView && pricingError && <FeedbackMessage message={pricingError} tone="error" />}
-          {!orderView && !remotePricing && <p role="status">正在加载套餐价格…</p>}
+          {!orderView && defaultPlanId && !remotePricing && <p role="status">正在加载套餐价格…</p>}
           {orderView ? (orderView.status === 'paid' ? (
             <div className="upgrade-success-view" role="status">
               <span className="upgrade-success-icon"><BadgeCheck size={34} /></span>
@@ -531,18 +566,19 @@ export function UpgradeModal({ workspace, initialOrder = null, onClose, onRefres
             </div>
           )) : (
             <>
-              <p className="upgrade-intro">当前权益：<strong>{plan.label || '基础版'}</strong>。价格和有效期以当前支付套餐为准，创建订单前会同步主站实际金额。</p>
+              <p className="upgrade-intro">当前个人套餐：<strong>{plan.label || '基础版'}</strong>。价格和有效期以当前支付套餐为准，创建订单前会同步主站实际金额。</p>
+              <div className="workspace-plan-catalog-heading"><strong>个人套餐价格</strong></div>
               <div className="upgrade-plan-grid">
-                {plans.map((item) => (
+                {comparisonPlans.map((item) => (
                   <button
                     type="button"
                     key={item.id}
-                    className={`upgrade-plan-card ${item.id === selectedPlanId ? 'selected' : ''} ${isIncludedPlan(item) ? 'is-current' : ''}`}
-                    onClick={() => !isIncludedPlan(item) && setSelectedPlanId(item.id)}
-                    disabled={isIncludedPlan(item) || !priceAvailable(item.id)}
+                    className={`upgrade-plan-card ${item.id === selectedPlanId ? 'selected' : ''} ${item.id === 'free' || isIncludedPlan(item) ? 'is-current' : ''}`}
+                    onClick={() => item.id !== 'free' && !isIncludedPlan(item) && setSelectedPlanId(item.id)}
+                    disabled={item.id === 'free' || isIncludedPlan(item) || !priceAvailable(item.id)}
                     aria-pressed={item.id === selectedPlanId}
                   >
-                    <span className="upgrade-plan-top">{(() => { const PlanIcon = accountPlanIcon(item.id); return <span className="upgrade-plan-icon"><PlanIcon size={16} /></span> })()}<strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
+                    <span className="upgrade-plan-top">{(() => { const PlanIcon = accountPlanIcon(item.id); return <span className="upgrade-plan-icon"><PlanIcon size={16} /></span> })()}<strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team && teamEntitlement.teamPlanId && accountPlanRank(item.id) <= accountPlanRank(teamEntitlement.teamPlanId) ? <em>团队已拥有</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
                     <PlanSpaceSummary plan={item} compact />
                     <span className="upgrade-plan-tags"><strong className="upgrade-plan-price">{formatPlanPrice(item)}</strong><span className="upgrade-plan-detail">{item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</span></span>
                     <ul className="upgrade-plan-features">
@@ -551,6 +587,7 @@ export function UpgradeModal({ workspace, initialOrder = null, onClose, onRefres
                   </button>
                 ))}
               </div>
+              {(hasMaximumPersonalEntitlement || hasMaximumTeamEntitlement) && <div className="upgrade-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong>{hasMaximumTeamEntitlement && <span>{teamEntitlement.teamPlanLabel || highestTeamPlan.label}团队权益由组织提供；以下价格卡和订单用于你的个人套餐。</span>}</div></div>}
               {selectedPlan && paymentMethodSelector}
               {selectedPlan && (
                 <div className="upgrade-summary">

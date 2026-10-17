@@ -834,15 +834,12 @@ h1, h2, p { margin-top: 0; }
    出现右侧留白甚至被挤到下一行。 */
 .workspace-grid .public-card { width: 100%; }
 .workspace-benefits-card { grid-column: 1 / -1; }
-/* 团队空间卡片：作为 lower-row 的第一栏（1.6fr），由 lower-row 决定它通栏。
-   这里绝不能再写 1 / -1 —— 在只有 2 列的 lower-row 网格里，1 / -1 会让它
-   横跨两栏独占整行，把状态卡挤到下一行（真实浏览器实测过）。 */
+/* 团队摘要独占一行，保持名称、身份、所有者和团队入口有足够宽度。 */
 .workspace-team-card { min-width: 0; }
-.workspace-lower-row { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 22px; align-items: stretch; }
+.workspace-lower-row { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; align-items: stretch; }
 /* 栅格轨道已由 grid-template-columns 决定宽度，卡片的 max-width 必须放开，
    否则 .public-card 的 570px 上限会覆盖轨道宽度。 */
-.workspace-lower-row > .workspace-team-card { grid-column: 1 / 2; }
-.workspace-lower-row > .workspace-status-card { grid-column: 2 / 3; }
+.workspace-lower-row > .workspace-team-card { grid-column: 1 / -1; }
 .workspace-lower-row > .public-card { width: 100%; max-width: none; }
 .workspace-hero { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 22px; padding: 30px 32px; }
 .workspace-grid .workspace-hero { grid-column: 1 / -1; margin-bottom: 0; }
@@ -876,7 +873,11 @@ h1, h2, p { margin-top: 0; }
 .plan-comparison { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .plan-comparison > button { display: flex; min-width: 0; min-height: 112px; flex-direction: column; gap: 5px; padding: 13px 12px; color: inherit; background: #f5f8f7; border: 1px solid #e4eeeb; border-radius: 8px; text-align: left; transition: background .18s ease, border-color .18s ease, transform .18s ease; }
 .plan-comparison > button:hover { background: #edf7f3; border-color: #bfe1d6; transform: translateY(-1px); }
-.plan-comparison > button.current { background: #e5f5ef; border-color: #8ecbb8; box-shadow: inset 0 0 0 1px rgba(22, 139, 115, .12); }
+.plan-comparison > button:disabled { cursor: default; }
+.plan-comparison > button:disabled:hover { transform: none; }
+.plan-comparison > button.current { background: #f0f8f5; border-color: #b9d9cf; }
+.plan-comparison > button.selected { background: #e5f5ef; border-color: #8ecbb8; box-shadow: inset 0 0 0 1px rgba(22, 139, 115, .12); }
+.plan-comparison > button:focus-visible { outline: 2px solid #75b7a5; outline-offset: 2px; }
 .plan-comparison strong { color: #52766c; font-size: 14px; }
 .plan-comparison span { color: var(--ink); font-family: 'DM Sans', 'Noto Sans SC', sans-serif; font-size: 15px; font-weight: 800; }
 .plan-comparison small { display: block; min-width: 0; color: #6b7874; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; word-break: break-word; }
@@ -907,6 +908,7 @@ h1, h2, p { margin-top: 0; }
 .workspace-member-state.pending { color: #936520; background: #fff2df; }
 .button-spinner { display: block; width: 14px; height: 14px; border: 2px solid #d8e7e2; border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
 .workspace-team-card, .workspace-link-card, .workspace-status-card { align-self: stretch; display: flex; flex-direction: column; min-height: 332px; }
+.workspace-overview-page .workspace-team-card { min-height: 0; }
 .workspace-side-card { width: 100%; min-height: 0; padding: 28px; }
 .workspace-link-card { grid-column: span 4; }
 .workspace-status-card { align-self: stretch; }
@@ -937,17 +939,36 @@ h1, h2, p { margin-top: 0; }
 .workspace-share-notice div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .workspace-share-notice strong { color: #3f6d62; font-size: 14px; }
 .workspace-share-notice span { color: #637a74; font-size: 13px; line-height: 1.7; }
+.workspace-overview-page .workspace-share-notice { align-items: center; margin-top: 8px; padding: 8px 10px; }
+.workspace-overview-page .workspace-share-notice strong { font-size: 11px; }
+.workspace-overview-page .workspace-share-notice span { font-size: 10.5px; line-height: 1.5; }
+.workspace-invite-notice { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; color: #61756f; background: #f6f9f8; border: 1px solid #e2ece8; border-radius: 7px; font-size: 11px; line-height: 1.55; }
+.workspace-invite-notice svg { flex: none; margin-top: 1px; color: #748a82; }
 /* 账号面板：团队共享说明 */
 .account-team-hint { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; padding-top: 10px; color: #637a74; border-top: 1px solid #e4efeb; font-size: 11px; line-height: 1.6; }
 .account-team-hint svg { flex: none; color: var(--accent); }
 .workspace-message { margin: 14px 0 0; color: var(--accent-dark); font-size: 13px; text-align: center; }
 .workspace-toast { position: fixed; right: 26px; bottom: 26px; z-index: 12; width: min(360px, calc(100vw - 32px)); animation: toastIn .18s ease-out; }
-.plan-current-tag { display: block; min-height: 13px; color: #6c7873; font-size: 9px; font-style: normal; font-weight: 800; letter-spacing: .04em; }
+.plan-current-tag { display: block; min-height: 13px; color: #6c7873; font-size: 9px; font-style: normal; font-weight: 800; }
 .plan-comparison > button.current .plan-current-tag { color: var(--accent-dark); }
 .workspace-benefits-cta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 12px 14px; background: #f5faf8; border: 1px dashed #cfe5dd; border-radius: 8px; }
+.workspace-plan-catalog-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 2px; }
+.workspace-plan-catalog-heading strong { color: #3f6058; font-size: 12px; }
+.workspace-overview-page .plan-comparison { gap: 8px; }
+.workspace-overview-page .plan-comparison > button { min-height: 126px; gap: 5px; padding: 10px; }
+.workspace-overview-page .plan-comparison .plan-space-summary.compact { gap: 5px 8px; }
+.workspace-overview-page .plan-comparison .plan-space-summary.compact b { font-size: 13px; }
+.workspace-overview-page .plan-comparison .plan-price-summary { margin-top: auto; }
 .workspace-benefits-cta > span { color: #677974; font-size: 11px; }
 .workspace-benefits-cta .primary-button { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 34px; padding: 0 16px; color: #fff; background: var(--accent); border-radius: 8px; font-size: 11px; font-weight: 700; }
 .workspace-benefits-cta .primary-button:hover { background: var(--accent-dark); }
+.workspace-plan-attributes { display: flex; min-width: 0; flex-wrap: wrap; gap: 7px 16px; color: var(--accent-dark); font-size: 11px; font-weight: 700; }
+.workspace-plan-attributes > span { display: inline-flex; min-width: 0; align-items: center; gap: 6px; }
+.workspace-plan-attributes svg { flex: none; color: var(--accent); }
+.workspace-plan-attributes > .is-muted { color: #6b7874; font-weight: 600; }
+.workspace-plan-attributes > .is-muted svg { color: #8c9a95; }
+.workspace-payment-warning { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 8px 10px; color: #8a6116; background: #fdf3dd; border: 1px solid #ecd9a8; border-radius: 7px; font-size: 11px; }
+.workspace-payment-warning .team-manage-link { margin-top: 0; }
 .workspace-status-card .workspace-status-list { display: flex; flex-direction: column; gap: 12px; margin: 18px 0 22px; }
 .workspace-status-list span { display: flex; align-items: center; gap: 7px; color: #55776e; font-size: 13px; }
 .workspace-status-list span.off { color: #6e7874; }
