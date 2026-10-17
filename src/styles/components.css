@@ -117,7 +117,7 @@
 /* 团队空间卡片内部：分区块 + 底部操作条 */
 .workspace-team-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 22px; padding: 20px 0 18px; }
 .workspace-team-block { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
-.workspace-block-label { display: flex; align-items: center; gap: 6px; margin: 0; color: #677975; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.workspace-block-label { display: flex; align-items: center; gap: 6px; margin: 0; color: #677975; font-size: 11px; font-weight: 700; }
 .workspace-block-label svg { flex: none; color: var(--accent); }
 .workspace-block-hint { margin: 0; color: #677975; font-size: 11px; line-height: 1.6; }
 /* 区块内已由 .workspace-team-body 的间距分隔，这里去掉自身上下边框避免出现双线。 */
@@ -126,6 +126,8 @@
 .workspace-team-foot { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 15px; border-top: 1px solid #edf3f0; }
 .workspace-team-foot > span { min-width: 0; color: #6b7874; font-size: 11px; }
 .workspace-team-foot .team-manage-link { flex: none; }
+.workspace-overview-page .workspace-team-foot { padding-top: 10px; }
+.workspace-overview-page .workspace-team-foot .team-manage-link { min-height: 38px; padding: 0 13px; font-size: 12px; }
 /* 团队邀请链接：工作台卡片内与团队空间页共用同一套样式 */
 .workspace-invite-link-row, .team-invite-link-row { display: flex; align-items: center; gap: 8px; }
 .workspace-invite-link-row code, .team-invite-link-row code { flex: 1; min-width: 0; overflow: hidden; padding: 9px 11px; color: #4b6f65; background: #fff; border: 1px solid #dbe8e4; border-radius: 7px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -189,13 +191,13 @@
 .team-manage-link svg:last-child { color: #5c7c73; }
 .team-manage-link:hover { background: #e5f5ef; }
 .upgrade-backdrop { z-index: 30; }
-.upgrade-modal { display: flex; flex-direction: column; width: min(720px, 100%); max-height: calc(100dvh - 40px); overflow: hidden; }
+.upgrade-modal { display: flex; flex-direction: column; width: min(940px, 100%); max-height: calc(100dvh - 40px); overflow: hidden; }
 .upgrade-modal > .modal-header { flex-shrink: 0; }
 .upgrade-modal-body { display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .upgrade-intro { margin: 0; color: #667974; font-size: 12.5px; }
 .upgrade-intro strong { color: var(--accent-dark); }
-.upgrade-plan-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.upgrade-plan-card { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding: 15px 14px; background: #f7faf9; border: 1px solid #e2edea; border-radius: 10px; cursor: pointer; text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+.upgrade-plan-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.upgrade-plan-card { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding: 13px 11px; background: #f7faf9; border: 1px solid #e2edea; border-radius: 10px; cursor: pointer; text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
 .upgrade-plan-card:hover { border-color: #a9d4c6; transform: translateY(-1px); }
 .upgrade-plan-card.selected { background: #eef8f3; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .upgrade-plan-card.is-current { cursor: default; opacity: .82; }
@@ -220,9 +222,9 @@
 .plan-space-summary > span { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .plan-space-summary b { min-width: 0; color: var(--accent-dark); font-family: 'DM Sans', 'Noto Sans SC', sans-serif; font-size: 15px; font-weight: 800; overflow-wrap: anywhere; }
 .plan-space-summary small { min-width: 0; color: #6b7874; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
-.plan-space-summary.compact { display: flex; flex-wrap: wrap; gap: 5px 10px; }
-.plan-space-summary.compact > span { flex: 1 1 78px; }
-.plan-space-summary.compact b { font-size: 16px; }
+.plan-space-summary.compact { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; }
+.plan-space-summary.compact > span { min-width: 0; }
+.plan-space-summary.compact b { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
 .plan-space-summary.compact small { font-size: 10px; }
 .plan-price-summary { display: block; min-width: 0; color: #647a73 !important; font-size: 10.5px !important; line-height: 1.45 !important; overflow-wrap: anywhere; word-break: break-word; }
 .upgrade-plan-tags { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; color: #647a73; font-size: 11.5px; line-height: 1.5; }
@@ -239,6 +241,13 @@
 .upgrade-summary .primary-button:hover { background: var(--accent-dark); }
 .upgrade-summary .primary-button:disabled { opacity: .6; }
 .upgrade-hint { margin: 0; color: #6d7874; font-size: 11px; line-height: 1.6; }
+.upgrade-maximum-notice { display: flex; align-items: center; gap: 10px; margin: 0; padding: 12px 14px; color: #145943; background: #e9f6ef; border: 1px solid #b9dfca; border-radius: 9px; font-size: 13px; font-weight: 750; line-height: 1.6; animation: upgrade-maximum-notice-in .22s ease-out both; }
+.upgrade-maximum-notice > svg { flex: none; color: #19764f; }
+.upgrade-maximum-notice > div { display: grid; min-width: 0; gap: 2px; }
+.upgrade-maximum-notice > div strong { color: #145943; font-size: 14px; font-weight: 800; }
+.upgrade-maximum-notice > div span { color: #376455; font-size: 12px; font-weight: 600; }
+.workspace-team-maximum-notice { margin: 10px 0; }
+@keyframes upgrade-maximum-notice-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
 .upgrade-order-view { display: flex; flex-direction: column; gap: 14px; }
 .upgrade-order-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .upgrade-order-plan { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 16px; font-weight: 800; }
@@ -774,13 +783,10 @@
   .workspace-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); }
   .workspace-grid .workspace-hero, .workspace-benefits-card { grid-column: 1 / -1; }
   .workspace-link-card { grid-column: span 6; }
-  /* 900px 以下：团队卡与状态卡改为上下堆叠，避免并排后每栏过窄。
-     必须显式复位子元素的 grid-column —— 上面为并排写的 1/2、2/3 会覆盖
-     lower-row 的单列定义，导致状态卡被压成窄条而不是换行。 */
+  /* 900px 以下：团队摘要保留整行宽度，避免名称和角色被挤窄。 */
   .workspace-lower-row { grid-template-columns: minmax(0, 1fr); gap: 18px; }
-  .workspace-lower-row > .workspace-team-card,
-  .workspace-lower-row > .workspace-status-card { grid-column: 1 / -1; }
-  .upgrade-plan-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .workspace-lower-row > .workspace-team-card { grid-column: 1 / -1; }
+  .upgrade-plan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 650px) {
@@ -796,6 +802,8 @@
   .workspace-team-foot { align-items: stretch; flex-direction: column; gap: 10px; }
   .workspace-team-foot .team-manage-link { justify-content: center; width: 100%; }
   .workspace-hero .secondary-button { width: 100%; }
+  .workspace-benefits-cta { align-items: stretch; flex-direction: column; }
+  .workspace-benefits-cta .primary-button { width: 100%; justify-content: center; }
   .workspace-section { padding: 20px 18px; }
   .workspace-section-heading { align-items: flex-start; flex-direction: column; gap: 9px; }
   .workspace-inline-form { grid-template-columns: 1fr; }
@@ -1333,7 +1341,8 @@
 }
 
 @media (min-width: 901px) {
-  .workspace-shell .public-page { place-items: start center; padding: 8px 24px 10px; }
+  .workspace-shell .public-page { flex: 0 0 auto; place-items: start center; padding: 8px 24px 10px; }
+  .workspace-shell .page-footer { margin: 12px auto 0; }
   .workspace-overview-page { margin-top: 0; }
   .workspace-overview-page .workspace-grid { gap: 8px; }
   .workspace-overview-page .workspace-hero { padding: 14px 24px; }
@@ -1341,35 +1350,26 @@
   .workspace-overview-page .workspace-hero p:last-child { margin-top: 6px; line-height: 1.55; }
   .workspace-overview-page .workspace-section { padding: 14px 22px; }
   .workspace-overview-page .workspace-section-heading { padding-bottom: 10px; }
-  .workspace-overview-page .workspace-benefits-card { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); column-gap: 20px; row-gap: 8px; align-content: start; }
+  .workspace-overview-page .workspace-benefits-card { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); column-gap: 20px; row-gap: 8px; align-content: start; }
   .workspace-overview-page .workspace-benefits-card > .workspace-section-heading { grid-column: 1; align-self: center; min-height: 68px; padding-bottom: 0; border-bottom: 0; }
   .workspace-overview-page .workspace-capacity { gap: 8px; padding: 13px 0 12px; }
   .workspace-overview-page .workspace-benefits-card > .workspace-capacity { grid-column: 2; align-self: center; border-bottom: 1px solid #edf3f0; }
   .workspace-overview-page .workspace-capacity > div:first-child strong { font-size: 19px; }
   .workspace-overview-page .workspace-capacity .capacity-bar { height: 9px; }
+  .workspace-overview-page .workspace-plan-attributes,
+  .workspace-overview-page .workspace-team-maximum-notice,
+  .workspace-overview-page .workspace-plan-catalog-heading,
   .workspace-overview-page .plan-comparison,
+  .workspace-overview-page .workspace-pending-banner,
+  .workspace-overview-page .workspace-payment-warning,
   .workspace-overview-page .workspace-benefits-cta { grid-column: 1 / -1; }
-  .workspace-overview-page .plan-comparison { gap: 8px; }
-  .workspace-overview-page .plan-comparison > button { min-height: 94px; gap: 3px; padding: 9px 10px; }
-  .workspace-overview-page .plan-comparison .plan-space-summary { gap: 3px; }
-  .workspace-overview-page .plan-comparison .plan-space-summary b { font-size: 14px; }
-  .workspace-overview-page .plan-comparison .plan-space-summary small,
-  .workspace-overview-page .plan-comparison > button > small { font-size: 10px; line-height: 1.4; }
-  .workspace-overview-page .workspace-benefits-cta { margin-top: 10px; padding: 8px 12px; }
+  .workspace-overview-page .workspace-benefits-cta { margin-top: 0; padding: 8px 12px; }
   .workspace-overview-page .workspace-lower-row { display: contents; }
-  .workspace-overview-page .workspace-benefits-card { grid-column: 1 / 9; grid-row: 2; }
-  .workspace-overview-page .workspace-team-card,
-  .workspace-overview-page .workspace-status-card { min-height: 0; }
+  .workspace-overview-page .workspace-benefits-card { grid-column: 1 / -1; grid-row: 2; }
   .workspace-overview-page .workspace-team-card { grid-column: 1 / -1; grid-row: 3; }
-  .workspace-overview-page .workspace-status-card { grid-column: 9 / -1; grid-row: 2; }
-  .workspace-overview-page .workspace-share-notice { margin-top: 8px; padding: 9px 11px; }
-  .workspace-overview-page .workspace-side-card { padding: 18px 22px; }
-  .workspace-overview-page .workspace-side-heading { min-height: 24px; margin-bottom: 6px; }
-  .workspace-overview-page .workspace-status-list { gap: 8px; margin: 8px 0 12px; }
-  .workspace-overview-page .workspace-team-body { gap: 16px; padding: 10px 0 8px; }
+  .workspace-overview-page .workspace-team-body { gap: 12px; padding: 8px 0; }
   .workspace-overview-page .workspace-team-block { gap: 5px; }
   .workspace-overview-page .workspace-team-block .workspace-owner-summary { padding-top: 5px; }
   .workspace-overview-page .workspace-block-hint { line-height: 1.4; }
   .workspace-overview-page .workspace-invite-link-row code { padding: 7px 9px; font-size: 11px; }
-  .workspace-overview-page .workspace-team-foot { padding-top: 9px; }
 }
