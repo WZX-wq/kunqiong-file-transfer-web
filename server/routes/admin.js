@@ -210,6 +210,13 @@ export function registerAdminRoutes(app) {
 
     try {
       const tokenData = await exchangeOAuthToken(code, pendingState.redirectUri)
+      // 禁用账号不能创建短暂的登录会话，否则后续 /api/auth/me 会静默清掉会话，
+      // 前端只能显示“会话未生效”，用户会误以为是地址或 Cookie 问题。
+      const existingAccount = accountUserById(tokenData.user?.id)
+      if (tokenData.user?.status === 'disabled' || existingAccount?.status === 'disabled') {
+        setOAuthStateCookie(res, req, state, '')
+        return res.redirect(appendAuthResult(returnTo, 'failed', '该账号已被后台禁用，暂时无法登录，请联系管理员。'))
+      }
       const session = createAuthSession(tokenData)
       setAuthCookie(res, session.id, session.expiresAt, req)
       setOAuthStateCookie(res, req, state, '')

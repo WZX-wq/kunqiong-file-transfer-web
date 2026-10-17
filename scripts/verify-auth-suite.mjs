@@ -51,7 +51,7 @@ app.post('/__auth_fixture', async (req, res) => {
 `
 fs.writeFileSync(path.join(fixture, 'server.mjs'), fs.readFileSync(path.join(root, 'server.mjs'), 'utf8').replace('registerAccountRoutes(app)', control + '\nregisterAccountRoutes(app)'))
 const future = new Date(Date.now() + 86400000 * 30).toISOString()
-const users = Object.fromEntries(['alice','bob','logout','expire'].map(id => [id, { id, username:id, nickname:id, planId:'free', status:'active', providerAvatar:'https://example.invalid/avatar.png' }]))
+const users = Object.fromEntries(['alice','bob','logout','expire','disabled'].map(id => [id, { id, username:id, nickname:id, planId:'free', status:id==='disabled'?'disabled':'active', providerAvatar:'https://example.invalid/avatar.png' }]))
 users.bob.email = 'occupied@example.test'
 users.bob.phone = '13800009999'
 const share = (id, owner, expiry) => ({ id, code:id.toUpperCase(), ownerUserId:owner, status:'active', createdAt:new Date().toISOString(), expiresAt:expiry, files:[{ name:'safe.txt', storedName:'safe.txt', size:4, scanStatus:'clean' }] })
@@ -71,7 +71,7 @@ const oauth=http.createServer(async(req,res)=>{
   res.setHeader('content-type','application/json')
   if(data.code==='fail') res.end(JSON.stringify({code:400,message:'secret=FIXTURE_CLIENT_SECRET token=PRIVATE_FIXTURE_TOKEN'}))
   else {
-    const user=data.code==='contact-conflict'?{...users.alice,id:'duplicate-oauth',email:'occupied@example.test',phone:'13800009999'}:data.code==='stale-contact'?{...users.alice,email:'stale@example.test',phone:'13500003333'}:users.alice
+    const user=data.code==='contact-conflict'?{...users.alice,id:'duplicate-oauth',email:'occupied@example.test',phone:'13800009999'}:data.code==='stale-contact'?{...users.alice,email:'stale@example.test',phone:'13500003333'}:data.code==='disabled'?{...users.disabled,status:'active'}:users.alice
     res.end(JSON.stringify({code:200,data:{access_token:'PRIVATE_FIXTURE_TOKEN',expires_in:3600,user}}))
   }
 })
@@ -152,6 +152,13 @@ try {
   const response=await callback(await login(),'contact-conflict')
   check('OAuth import cannot duplicate another account contact',new URL(response.headers.get('location')).searchParams.get('login')==='failed'&&stored().sessions.length===before&&!stored().users['duplicate-oauth'])
  })
+  await group('AUTH-OAuth-disabled-account',async()=>{
+   const before=stored().sessions.length
+   const response=await callback(await login(),'disabled')
+   const location=new URL(response.headers.get('location'))
+   check('disabled OAuth account is rejected before session creation',location.searchParams.get('login')==='failed'&&stored().sessions.length===before)
+   check('disabled OAuth account receives actionable message',location.searchParams.get('message')==='该账号已被后台禁用，暂时无法登录，请联系管理员。')
+  })
  await group('AUTH-004-disabled',async()=>{
   for(const target of ['mail@example.test','13500001111']){const r=await api('/api/auth/code',{method:'POST',body:{target}});check('disabled channel gives clear 503 without code: '+JSON.stringify({status:r.status,...r.data}),r.status===503&&!('debugCode'in r.data)&&/未配置/.test(r.data.message))}
  })
