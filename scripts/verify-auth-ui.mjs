@@ -166,6 +166,14 @@ await scenario('AUTH-006-HTML-display',async()=>{
 await scenario('AUTH-012-late-response',async()=>{
  const f=await mount();try{f.holdProfile();await f.click('保存昵称');await waitFor(f.profilePending,'profile response held');f.expire();f.window.dispatchEvent(new f.window.Event('focus'));await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'session cleared before response');f.releaseProfile();await delay(80);check('old success response cannot restore expired account',!f.document.body.textContent.includes('alice')&&!f.document.querySelector('.settings-nav'));check('late response has no runtime errors',f.errors.length===0)}finally{f.releaseProfile();f.dom.window.close()}
 })
+await scenario('AUTH-disabled-login-message',async()=>{
+ const message='该账号已被后台禁用，暂时无法登录，请联系管理员。'
+ const f=await mount('/?login=failed&message='+encodeURIComponent(message),'');try{
+  await waitFor(()=>f.document.querySelector('[role="alert"]')?.textContent.includes(message),'disabled account login message shown')
+  check('disabled account login explains the actual reason',f.document.querySelector('[role="alert"]')?.textContent===message)
+  check('disabled account login message has no runtime errors',f.errors.length===0)
+ }finally{f.dom.window.close()}
+})
 const result={executedAt:new Date().toISOString(),passed,failures,cases}
 if(process.env.AUTH_TEST_EVIDENCE_DIR){fs.mkdirSync(process.env.AUTH_TEST_EVIDENCE_DIR,{recursive:true});fs.writeFileSync(path.join(process.env.AUTH_TEST_EVIDENCE_DIR,'auth-ui-results.json'),JSON.stringify(result,null,2))}
 console.log(JSON.stringify(result,null,2));process.exitCode=failures.length?1:0
