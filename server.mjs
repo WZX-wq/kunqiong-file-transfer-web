@@ -59,6 +59,8 @@ import { registerCollectionRoutes } from './server/routes/collections.js'
 // 按域拆出的路由模块
 import { registerShareCreateRoutes, registerShareAccessRoutes } from './server/routes/shares.js'
 import { registerUploadRoutes } from './server/routes/upload.js'
+import { registerSeoRoutes } from './server/routes/seo.js'
+import { renderSpaDocument } from './server/services/seo.js'
 
 // 分享/上传域业务逻辑（路由仍在本文件注册，按域逐步迁移）
 import {
@@ -255,8 +257,13 @@ app.use('/api', (_req, res) => {
   res.status(404).json({ message: '接口不存在' })
 })
 
+// SEO 路由必须在静态托管之前注册：public/ 里没有同名文件，靠路由动态生成。
+registerSeoRoutes(app)
+
 if (fs.existsSync(distRoot)) {
   app.use(express.static(distRoot, {
+    // index:false —— 否则 express.static 会直接吐出未注入 head 的 index.html，绕过下面的路由注入。
+    index: false,
     maxAge: '7d',
     immutable: true,
     setHeaders(res, filePath) {
@@ -266,8 +273,12 @@ if (fs.existsSync(distRoot)) {
       }
     },
   }))
-  app.get('*', (_req, res) => {
+  app.get('*', (req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
+    // 按路由注入 title / description / canonical / OG / JSON-LD —— SPA 唯一的 SEO 出口。
+    const html = renderSpaDocument(distRoot, req)
+    if (html) return res.type('html').send(html)
+    // 注入失败（dist 未构建或 index.html 的 SEO 标记被改动）时退回原行为，页面照常渲染。
     res.sendFile(path.join(distRoot, 'index.html'))
   })
 }
