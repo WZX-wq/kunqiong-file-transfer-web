@@ -6,8 +6,10 @@
  * ⚠️ 导入顺序即原 styles.css 的书写顺序，不可调整：
  *    base → components，后者覆盖前者（同特异性时）。
  *
- * 远程字体 @import 必须留在本文件首位（Vite 不内联外链）。
+ * ⚠️ 远程字体已移出本文件（2026-10-17）：原先的 @import url(fonts.googleapis.com)
+ * 属于「CSS 内阻塞下载」——字体域名不可达时（国内网络常见）会拖住首屏渲染，直接影响 LCP。
+ * 现改为 index.html 里的 media=print 非阻塞 <link> + preconnect，首屏用系统字体兜底。
+ * 组件里对 'DM Sans' / 'Noto Sans SC' 的引用保持不变，字体加载完成后自动生效。
  */
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap');
 @import './styles/base.css';
 @import './styles/components.css';
