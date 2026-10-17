@@ -38,16 +38,33 @@ const previous = ${JSON.stringify(previous)};
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 for (const [file, digest] of Object.entries(manifest)) assert.equal(hash('/app/' + file), digest, 'Runtime source mismatch: ' + file);
 const base = 'http://127.0.0.1:' + (process.env.PORT || 8045);
+const appOrigin = (() => { try { return new URL(process.env.KUNQIONG_APP_URL).origin; } catch { return new URL(base).origin; } })();
 const healthResponse = await fetch(base + '/api/health');
 assert.equal(healthResponse.status, 200);
 const health = await healthResponse.json();
 assert.equal(health.release, expected, 'Live health release must match the full commit');
-for (const route of ['/', '/workspace', '/team', '/admin']) {
+const html = fs.readFileSync('/app/dist/index.html', 'utf8');
+const seoStart = html.indexOf('<!--seo:start-->');
+const seoEnd = html.indexOf('<!--seo:end-->');
+assert.ok(seoStart >= 0 && seoEnd > seoStart, 'Built HTML must contain the SEO injection markers');
+const sharedHead = html.slice(0, seoStart);
+const sharedTail = html.slice(seoEnd + '<!--seo:end-->'.length);
+const pages = [
+  {route:'/', title:'鲲穹文件传输 - 免登录大文件传输与文件收集平台', robots:'index,follow,max-image-preview:large'},
+  {route:'/workspace', title:'工作台 - 鲲穹文件传输', robots:'noindex,follow'},
+  {route:'/team', title:'团队空间 - 鲲穹文件传输', robots:'noindex,follow'},
+  {route:'/admin', title:'管理后台 - 鲲穹文件传输', robots:'noindex,follow'},
+];
+for (const {route, title, robots} of pages) {
   const response = await fetch(base + route);
   assert.equal(response.status, 200, 'Page unavailable: ' + route);
-  assert.equal(await response.text(), fs.readFileSync('/app/dist/index.html', 'utf8'), 'Page serves an old build: ' + route);
+  const page = await response.text();
+  assert.ok(page.startsWith(sharedHead) && page.endsWith(sharedTail), 'Page serves an old build: ' + route);
+  assert.ok(!page.includes('<!--seo:'), 'SEO markers must be replaced: ' + route);
+  assert.ok(page.includes('<title>' + title + '</title>'), 'Route title is incorrect: ' + route);
+  assert.ok(page.includes('<meta name="robots" content="' + robots + '" />'), 'Route indexing policy is incorrect: ' + route);
+  assert.ok(page.includes('<link rel="canonical" href="' + appOrigin + route + '" />'), 'Route canonical is incorrect: ' + route);
 }
-const html = fs.readFileSync('/app/dist/index.html', 'utf8');
 const assets = [...new Set([...html.matchAll(/(?:src|href)="(\\/assets\\/[^"\\s]+)"/g)].map(match => match[1]).concat(fs.readdirSync('/app/dist/assets').filter(name => /\\.(?:js|css)$/.test(name)).map(name => '/assets/' + name)))];
 assert.ok(assets.length >= 2, 'Built assets must exist');
 for (const asset of assets) {
