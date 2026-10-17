@@ -5,7 +5,7 @@ import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canPreviewFile, createShareDownloadConfig, createShareFilePreviewConfig, uploadShareInChunks } from '../lib/transfer.js'
 import { createShareRecord, saveLocalRecord, upsertCloudRecords } from '../lib/records.js'
 import { ConfirmModal, FeedbackMessage, PublicShell } from '../components/common.jsx'
-import { ArrowLeft, Check, ClipboardCheck, Copy, Crown, Database, Download, Eye, FileText, FolderOpen, HardDrive, Link2, LogOut, PencilLine, Search, Settings2, Trash2, UploadCloud, UserPlus, UserRound, Users, X } from 'lucide-react'
+import { ArrowLeft, Check, ClipboardCheck, Copy, Crown, Database, Download, Eye, FileText, FolderOpen, HardDrive, Home, Link2, LogOut, PencilLine, Search, Settings2, Trash2, UploadCloud, UserPlus, UserRound, Users, X } from 'lucide-react'
 import { formatBytes, formatDate } from '../lib/format.js'
 import { AdminPagination } from './AdminPage.jsx'
 import { MAX_FILES, MAX_FILE_SIZE } from '../lib/constants.js'
@@ -428,7 +428,8 @@ export function TeamPage() {
     : resources
   const totalBytes = Number(capacity.totalBytes || 0)
   const usedBytes = Number(capacity.usedBytes || 0)
-  const ratio = totalBytes ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0
+  const ratio = totalBytes ? Math.min(100, (usedBytes / totalBytes) * 100) : 0
+  const ratioLabel = ratio > 0 && ratio < 0.01 ? '<0.01%' : `${ratio.toFixed(ratio < 1 ? 2 : ratio < 10 ? 1 : 0)}%`
   const statusLabel = (status) => status === 'active' ? '进行中' : status === 'expired' ? '已过期' : status === 'closed' ? '已关闭' : status
   const teamPageSize = 8
   const memberUsagePageCount = Math.max(1, Math.ceil(filteredMembers.length / teamPageSize))
@@ -513,6 +514,7 @@ export function TeamPage() {
         <div className="team-page-actions">
           {isOwner && !editingTeamName && <button type="button" className="secondary-button" onClick={() => { setTeamName(organization.name || ''); setTeamNameError(''); setEditingTeamName(true) }}><PencilLine size={15} /> 编辑团队名称</button>}
           <a className="secondary-button" href={savingTeamName ? undefined : '/workspace'} aria-disabled={savingTeamName || undefined}><ArrowLeft size={15} /> 返回会员空间</a>
+          <a className="secondary-button" href="/"><Home size={15} /> 返回首页</a>
         </div>
       </div>
       {!isOwner && <div className="public-card team-panel team-leave-card">
@@ -534,9 +536,9 @@ export function TeamPage() {
           <button type="button" className="copy-button" onClick={copyTeamInviteLink}><Copy size={14} /> 复制链接</button>
         </div>
       </div>}
-      <div className="team-kpi-grid"><div className="team-kpi"><span><Users size={16} /> 成员</span><strong>{members.filter((item) => item.status !== 'invited').length}</strong><small>{members.filter((item) => item.status === 'invited').length} 个待加入</small></div><div className="team-kpi"><span><HardDrive size={16} /> 已使用空间</span><strong>{formatBytes(usedBytes)}</strong><small>共 {formatBytes(totalBytes)}</small></div><div className="team-kpi"><span><Database size={16} /> 文件资源</span><strong>{resources.reduce((sum, item) => sum + item.fileCount, 0)}</strong><small>{resources.length} 个分享或收集任务</small></div><div className="team-kpi"><span><Link2 size={16} /> 活跃资源</span><strong>{resources.filter((item) => item.status === 'active').length}</strong><small>{isOwner ? '你是团队所有者' : data.canManage ? '团队管理员视图' : '团队成员视图'}</small></div></div>
+      <div className="team-kpi-grid"><div className="team-kpi"><span><Users size={16} /> 成员</span><strong>{members.filter((item) => item.status !== 'invited').length}</strong><small>{members.filter((item) => item.status === 'invited').length} 个待加入</small></div><div className="team-kpi"><span><Database size={16} /> 文件资源</span><strong>{resources.reduce((sum, item) => sum + item.fileCount, 0)}</strong><small>{resources.length} 个分享或收集任务</small></div><div className="team-kpi"><span><Link2 size={16} /> 活跃资源</span><strong>{resources.filter((item) => item.status === 'active').length}</strong><small>{isOwner ? '你是团队所有者' : data.canManage ? '团队管理员视图' : '团队成员视图'}</small></div></div>
       <div className="team-overview-grid">
-        <div className="public-card team-panel team-capacity-panel"><div className="team-panel-heading"><div><p className="eyebrow">空间使用</p><h2>团队容量</h2><small className="team-capacity-plan">{teamPlanLabel}团队空间{teamPlanExpiresAt ? ` · 有效至 ${formatDate(teamPlanExpiresAt)}` : ' · 按团队套餐权益'}</small></div><span className="workspace-status">{ratio}%</span></div><div className="team-capacity-number"><span>团队已用</span><strong>{formatBytes(usedBytes)}</strong><span>/ 团队总容量 {formatBytes(totalBytes)}</span></div><div className="capacity-bar"><span style={{ width: `${ratio}%` }} /></div><p className="team-capacity-hint">这里显示团队共享空间的额度；个人中心的账号容量按你的个人套餐单独计算。</p><div className="team-capacity-meta"><span>{capacity.shareCount || 0} 个分享</span><span>{capacity.collectionCount || 0} 个收集任务</span><span>{capacity.fileCount || 0} 个文件</span></div></div>
+        <div className="public-card team-panel team-capacity-panel"><div className="team-panel-heading"><div><p className="eyebrow">空间使用</p><h2>团队容量</h2><small className="team-capacity-plan">{teamPlanLabel}团队空间{teamPlanExpiresAt ? ` · 有效至 ${formatDate(teamPlanExpiresAt)}` : ' · 按团队套餐权益'}</small></div><span className="workspace-status">{ratioLabel}</span></div><div className="team-capacity-number"><span>团队已用</span><strong>{formatBytes(usedBytes)}</strong><span>/ 团队总容量 {formatBytes(totalBytes)}</span></div><div className="capacity-bar"><span style={{ width: `${ratio}%` }} /></div><p className="team-capacity-hint">这里显示团队共享空间的额度；个人中心的账号容量按你的个人套餐单独计算。</p><div className="team-capacity-meta"><span>{capacity.shareCount || 0} 个分享</span><span>{capacity.collectionCount || 0} 个收集任务</span><span>{capacity.fileCount || 0} 个文件</span></div></div>
       </div>
       <div className="team-tabs-shell">
         <div className="team-tabs" role="tablist" aria-label="团队详情">

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -6,6 +7,10 @@ import { JSDOM, VirtualConsole } from 'jsdom'
 import { build } from 'vite'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const recordsStyles = (await Promise.all([
+  'src/styles/base.css',
+  'src/styles/components.css',
+].map(file => readFile(path.resolve(root, file), 'utf8')))).join('\n')
 const bundle = await build({
   root, configFile: false, logLevel: 'silent',
   plugins: [{
@@ -54,6 +59,57 @@ async function fixture(handler) {
 const ok = body => new Response(body, { status: 200 })
 const failure = (status, message) => new Response(JSON.stringify({ message }), { status, headers: { 'x-error-message': encodeURIComponent(message), 'content-type': 'application/json' } })
 const record = { kind: 'share', scope: 'my_sent', shareId: 'share', code: 'ABC123', manageToken: 'manage', files: [{ name: 'records.pdf', size: 603 }], status: '已关闭' }
+
+const recordsLayout = await fixture(() => ok('{}'))
+try {
+  const received = { ...record, id: 'received-share', shareId: 'received-share', code: 'ZX9876', scope: 'sent_to_me', alias: '客户需求.zip', files: [{ name: '客户需求.zip', size: 2048 }], status: '有效' }
+  recordsLayout.api.renderRecords([record, received])
+  await waitFor(() => recordsLayout.document.querySelectorAll('.record-row').length === 2, 'Records table rows mount')
+  const headings = [...recordsLayout.document.querySelectorAll('.records-table-head [role="columnheader"]')].map(item => item.textContent.trim())
+  check('Records page uses prototype table columns', headings.join('|') === '文件名|方向|取件码/入口|大小|时间|状态|操作')
+  const recordsHeading = recordsLayout.document.querySelector('.records-heading')
+  check('Records view tabs and clear action share the page heading row', Boolean(recordsHeading?.querySelector('.records-mode-tabs') && recordsHeading.querySelector('.records-clear-button')))
+  const primaryFilters = recordsLayout.document.querySelector('.records-toolbar-main')
+  check('Category, status, date and search share the primary filter row', Boolean(primaryFilters?.querySelector('.record-scope-tabs') && primaryFilters.querySelector('[aria-label="状态筛选"]') && primaryFilters.querySelector('[aria-label="日期筛选"]') && primaryFilters.querySelector('.records-search-box')))
+  const utilityRow = recordsLayout.document.querySelector('.records-secondary-row')
+  check('Selection, reset, refresh and bulk deletion remain in the compact utility row', Boolean(utilityRow?.querySelector('.record-select-all input') && utilityRow.querySelector('.filter-reset-button') && utilityRow.querySelector('[aria-label="刷新记录"]') && utilityRow.querySelector('.record-bulk-actions .danger-lite')))
+  check('Records page retains all categories and status options', recordsLayout.document.querySelectorAll('.record-scope-tabs [role="tab"]').length === 5 && recordsLayout.document.querySelectorAll('[aria-label="状态筛选"] option').length === 4)
+  check('Status and date filters use matching native select controls', recordsLayout.document.querySelector('.record-status-select select') && recordsLayout.document.querySelector('.record-date-select:not(.record-status-select) select') && recordsStyles.includes('.record-status-select select'))
+  check('Records page retains date, refresh, selection and bulk deletion controls', Boolean(recordsLayout.document.querySelector('[aria-label="日期筛选"]')) && Boolean(recordsLayout.document.querySelector('[aria-label="刷新记录"]')) && Boolean(recordsLayout.document.querySelector('.record-select-all input')) && Boolean(recordsLayout.document.querySelector('.record-bulk-actions .danger-lite')))
+  check('Table headings and record rows share responsive grid tracks', recordsStyles.includes('--records-grid-columns: 28px') && recordsStyles.includes('grid-template-columns: var(--records-grid-columns)'))
+  check('Table headings and column values use a common left alignment', /records-table-head > span:not\(:first-child\)[\s\S]*?text-align:\s*left/.test(recordsStyles) && /\.record-direction\s*\{[^}]*text-align:\s*left/.test(recordsStyles) && /\.record-code\s*\{[^}]*text-align:\s*left/.test(recordsStyles) && /\.record-type\s*\{[^}]*justify-self:\s*start/.test(recordsStyles) && /\.row-menu-wrap\s*\{[^}]*justify-content:\s*flex-start/.test(recordsStyles))
+  check('Operation buttons reserve a stable preview slot even when preview is unavailable', recordsLayout.document.querySelectorAll('.record-row .record-preview-slot').length === 2 && recordsLayout.document.querySelectorAll('.record-row .record-preview-slot .record-preview-button').length === 1 && recordsStyles.includes('.record-preview-slot'))
+  const search = recordsLayout.document.querySelector('input[placeholder="搜索文件名或取件码"]')
+  check('Records page adds prototype filename and pickup-code search', Boolean(search))
+  Object.getOwnPropertyDescriptor(recordsLayout.window.HTMLInputElement.prototype, 'value').set.call(search, 'ZX9876')
+  search.dispatchEvent(new recordsLayout.window.Event('input', { bubbles: true }))
+  await waitFor(() => recordsLayout.document.querySelectorAll('.record-row').length === 1, 'Pickup-code search filters records')
+  check('Pickup-code search matches the expected record', recordsLayout.document.querySelector('.record-row .record-main').textContent.includes('客户需求.zip'))
+  recordsLayout.document.querySelector('.records-mode-tabs [role="tab"]:not(.active)').click()
+  await waitFor(() => recordsLayout.document.querySelectorAll('.file-center-row').length === 2, 'File management rows mount')
+  const fileHeadings = [...recordsLayout.document.querySelectorAll('.file-center-table-head [role="columnheader"]')].map(item => item.textContent.trim())
+  check('File management uses aligned table columns and a shared heading-row tab switch', fileHeadings.join('|') === '文件项目|有效期|状态|大小|操作' && recordsLayout.document.querySelector('.records-heading .records-mode-tabs'))
+  check('File-management operations retain a stable slot without preview support', recordsLayout.document.querySelectorAll('.file-center-row .record-preview-slot').length === 2 && recordsLayout.document.querySelectorAll('.file-center-row .record-preview-button').length === 1)
+} finally { recordsLayout.close() }
+
+const paginationLayout = await fixture(() => ok('{}'))
+try {
+  const pageRecords = Array.from({ length: 11 }, (_, index) => ({
+    ...record,
+    id: `page-record-${index}`,
+    shareId: `page-record-${index}`,
+    manageToken: `page-manager-${index}`,
+    code: `PC${index}`,
+    files: [{ name: `分页文件-${index}.pdf`, size: 1024 }],
+    createdAt: `2026-10-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
+  }))
+  paginationLayout.api.renderRecords(pageRecords)
+  await waitFor(() => paginationLayout.document.querySelectorAll('.record-row').length === 10, 'First records page mounts ten rows')
+  check('Records first page shows ten rows, matching the prototype', paginationLayout.document.querySelector('.admin-pagination span')?.textContent.trim() === '显示 1-10 / 11')
+  paginationLayout.document.querySelector('.records-mode-tabs [role="tab"]:not(.active)').click()
+  await waitFor(() => paginationLayout.document.querySelectorAll('.file-center-row').length === 10, 'First file-management page mounts ten rows')
+  check('File management first page also shows ten rows', paginationLayout.document.querySelector('.admin-pagination span')?.textContent.trim() === '显示 1-10 / 11')
+} finally { paginationLayout.close() }
 
 const configs = await fixture(() => ok('{}'))
 try {

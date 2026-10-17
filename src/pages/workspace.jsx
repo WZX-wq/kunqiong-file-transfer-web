@@ -1005,7 +1005,7 @@ export function WorkspaceApp() {
         </div>
       </header>
 
-      <main className="page-content">
+      <main className={`page-content${!isSettingsRoute && activeView === 'collect' ? ' collect-content' : !isSettingsRoute && activeView === 'records' ? ' records-content' : ''}`}>
         {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} onOpenWorkspace={() => { window.location.href = '/workspace' }} />}
         {!isSettingsRoute && activeView === 'send' && (
           <SendView
@@ -1128,7 +1128,6 @@ export function SendView({ user, files, inputRef, folderInputRef, isDragging, se
         <div className="transfer-column">
           <div className="section-intro">
             <div>
-              <p className="eyebrow"><span className="eyebrow-dot" /> 不登录也能用</p>
               <h1>简单两步，<span>把文件交给他。</span></h1>
               <p className="intro-copy">拖进来，生成链接。临时传输，不占你的云盘。</p>
             </div>
@@ -1302,10 +1301,9 @@ export function CollectView({ result, manageData, manageLoading, records, onCrea
   }
 
   return (
-    <section className="workspace-page">
+    <section className="workspace-page collection-page">
       <div className="workspace-heading">
         <div>
-          <p className="eyebrow"><span className="eyebrow-dot" /> 多人文件收集</p>
           <h1>让大家把文件交到同一个地方。</h1>
           <p>创建收集任务，分享链接后，提交者无需注册即可上传。</p>
         </div>
