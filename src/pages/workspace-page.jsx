@@ -178,7 +178,7 @@ export function WorkspacePage() {
   // 当前空间用量只跟随账号实际权益，套餐比较选择不改变已购额度。
   const currentTotalBytes = Number(capacity.totalBytes ?? plan.totalBytes ?? 0)
   const ratio = currentTotalBytes ? Math.min(100, Math.round((capacity.usedBytes / currentTotalBytes) * 100)) : 0
-  const isSelectablePlan = (item) => item.id !== 'free' && accountPlanRank(item.id) >= accountPlanRank(plan.id) && !(item.id === plan.id && plan.permanent)
+  const isSelectablePlan = (item) => item.id !== 'free' && accountPlanRank(item.id) > accountPlanRank(plan.id)
   const hasMaximumPersonalEntitlement = plans.length > 0 && !plans.some(item => accountPlanRank(item.id) > accountPlanRank(plan.id))
   const defaultSelectedPlan = plans.find(isSelectablePlan) || plan
   const selectedPlan = plans.find((item) => item.id === selectedPlanId && isSelectablePlan(item)) || defaultSelectedPlan
@@ -308,7 +308,6 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
   }, [])
 
   const plan = workspace?.plan || {}
-  const canCreateOrder = plan.id !== 'year'
   const accountPlans = (workspace?.plans || []).filter(item => !item.retired)
   const teamEntitlement = workspace?.teamEntitlement || {}
   const localPlans = accountPlans.filter((item) => item.id !== 'free')
@@ -318,13 +317,18 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
   const hasPlanCatalog = localPlans.length > 0
   const highestTeamPlan = localPlans.filter((item) => item.team).reduce((highest, item) => !highest || accountPlanRank(item.id) > accountPlanRank(highest.id) ? item : highest, null)
   const hasMaximumTeamEntitlement = Boolean(teamEntitlement.organizationId && teamEntitlement.teamPlanId && highestTeamPlan && accountPlanRank(teamEntitlement.teamPlanId) >= accountPlanRank(highestTeamPlan.id))
-  const defaultPlanId = localPlans.find((item) => accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && plan.permanent))?.id || ''
+  const isUpgradePlan = (item) => accountPlanRank(item.id) > currentPlanRank
+  const defaultPlanId = localPlans.find(isUpgradePlan)?.id || ''
+  const canCreateOrder = hasPlanCatalog ? Boolean(defaultPlanId) : plan.id !== 'year'
   const hasMaximumPersonalEntitlement = hasPlanCatalog && !localPlans.some(item => accountPlanRank(item.id) > currentPlanRank)
-  const preferredPlanId = localPlans.find((item) => item.id === initialPlanId && accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && plan.permanent))?.id || ''
+  const preferredPlanId = localPlans.find((item) => item.id === initialPlanId && isUpgradePlan(item))?.id || ''
   const [selectedPlanId, setSelectedPlanId] = useState(preferredPlanId || defaultPlanId)
   const [storedOrder, setOrderView] = useState(initialOrder || pendingOrder)
   const [now, setNow] = useState(Date.now)
   const orderView = paymentOrderView(storedOrder, now)
+  const orderPurchaseBlocked = Boolean(orderView && (orderView.canPurchase === false || !isUpgradePlan({ id: orderView.planId })))
+  const canPurchaseOrder = Boolean(orderView && !orderView.retired && !orderPurchaseBlocked)
+  const orderPurchaseBlockedReason = orderView?.purchaseBlockedReason || '套餐有效期内仅可升级至更高档套餐，不能购买同档或更低档套餐'
   const remainingSeconds = Math.max(0, Math.ceil((paymentDeadline(orderView) - now) / 1000))
   const countdown = `${String(Math.floor(remainingSeconds / 60)).padStart(2, '0')}:${String(remainingSeconds % 60).padStart(2, '0')}`
   const currentOrderId = useRef(orderView?.id)
@@ -346,6 +350,9 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
     ? remotePricing?.error || (remotePricing && selectedPlanId && !priceAvailable(selectedPlanId) ? '套餐暂不可用，请稍后重试' : '')
     : ''
 
+  useEffect(() => {
+    if (!localPlans.some(item => item.id === selectedPlanId && isUpgradePlan(item))) setSelectedPlanId(defaultPlanId)
+  }, [selectedPlanId, defaultPlanId, currentPlanRank])
   useEffect(() => {
     if (pendingOrder) setOrderView(current => {
       if (current && current.id !== pendingOrder.id) return current
@@ -394,14 +401,14 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
     return () => { window.clearInterval(timer); controller.abort() }
   }, [orderView?.remoteOrderNo, orderView?.id, orderView?.status])
 
-  const selectedPlan = plans.find((item) => item.id === selectedPlanId && accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && plan.permanent)) || null
+  const selectedPlan = plans.find((item) => item.id === selectedPlanId && isUpgradePlan(item)) || null
   const isCurrentPlan = (item) => item.id === plan.id
-  const isIncludedPlan = (item) => accountPlanRank(item.id) < currentPlanRank || (item.id === plan.id && plan.permanent)
+  const isIncludedPlan = (item) => accountPlanRank(item.id) <= currentPlanRank
 
   const createOrder = async (replacementPlanId = null) => {
     const isReplacement = typeof replacementPlanId === 'string'
     const planId = isReplacement ? replacementPlanId : selectedPlan?.id
-    if (!canCreateOrder || !planId || busy || (!isReplacement && !priceAvailable(planId))) return
+    if (!canCreateOrder || !planId || !isUpgradePlan({ id: planId }) || (isReplacement && !canPurchaseOrder) || busy || (!isReplacement && !priceAvailable(planId))) return
     setBusy(true)
     setError('')
     setNotice('')
@@ -427,7 +434,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
   }
 
   const loadPayment = async () => {
-    if (!orderView || orderView.retired || paymentOrderView(orderView)?.status !== 'pending_payment' || busy || paymentRequestRunning.current) return
+    if (!canPurchaseOrder || paymentOrderView(orderView)?.status !== 'pending_payment' || busy || paymentRequestRunning.current) return
     paymentRequestRunning.current = true
     setBusy(true)
     setError('')
@@ -463,10 +470,10 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
 
   useEffect(() => {
     if (!orderView) { attemptedPaymentOrder.current = null; return }
-    if (orderView.retired || orderView.status !== 'pending_payment' || payment || busy || attemptedPaymentOrder.current === orderView.id) return
+    if (!canPurchaseOrder || orderView.status !== 'pending_payment' || payment || busy || attemptedPaymentOrder.current === orderView.id) return
     attemptedPaymentOrder.current = orderView.id
     loadPayment()
-  }, [orderView?.id, orderView?.status, payment, busy])
+  }, [orderView?.id, orderView?.status, canPurchaseOrder, payment, busy])
 
   const checkPayStatus = async () => {
     if (!orderView || busy) return
@@ -547,24 +554,25 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
                 <div><dt>应付金额</dt><dd>{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '价格以支付通道为准'}</dd></div>
               </dl>
               {orderView.retired && <p className="upgrade-order-note" role="status">该套餐已下架，不能继续支付或重新下单。已购权益保留；如已付款，可核对原单支付状态。</p>}
-              {!orderView.retired && <>
+              {canPurchaseOrder && <>
               {orderView.status === 'pending_payment' && !payment && paymentMethodSelector}
               {orderView.status === 'pending_payment' && !payment && (busy || !error) && <div className="upgrade-payment-qr" role="status"><span className="loading-dot" /><span>{payType === 2 ? '正在加载支付宝收银台…' : '正在加载微信支付二维码…'}</span></div>}
               {orderView.status === 'pending_payment' && <div className={`upgrade-payment-countdown ${remainingSeconds <= 60 ? 'is-urgent' : ''}`}><Clock3 size={15} /><span>支付剩余时间 <strong role="timer" aria-label="支付剩余时间">{countdown}</strong><small>订单创建后 15 分钟内有效，超时需重新创建订单</small></span></div>}
               {orderView.status === 'pending_payment' && payment?.qrcode_img_url && <div className="upgrade-payment-qr"><img src={payment.qrcode_img_url} alt="微信支付二维码" /><span>请使用微信扫码支付</span></div>}
               {orderView.status === 'pending_payment' && payment?.alipaysubmit_html && <div className="upgrade-payment-qr upgrade-payment-alipay"><div className="upgrade-payment-alipay-frame"><iframe title="支付宝收银台" scrolling="no" sandbox="allow-scripts allow-forms allow-popups allow-top-navigation-by-user-activation" referrerPolicy="no-referrer" srcDoc={payment.alipaysubmit_html} /></div><span>请使用支付宝扫码支付</span></div>}
               </>}
-              <div className="upgrade-order-note" role="status"><Clock3 size={15} /><span>{orderView.retired ? '请选择当前在售套餐，或查看已购权益。' : orderView.status === 'expired' ? '支付已超时，请重新创建订单支付；如已付款，可核对原单支付状态。' : notice || '支付成功后会员权益会自动开通。'}</span></div>
+              <div className="upgrade-order-note" role="status"><Clock3 size={15} /><span>{orderView.retired ? '请选择当前在售套餐，或查看已购权益。' : orderPurchaseBlocked ? `${orderPurchaseBlockedReason}。如已付款，可核对原单支付状态。` : orderView.status === 'expired' ? '支付已超时，请重新创建订单支付；如已付款，可核对原单支付状态。' : notice || '支付成功后会员权益会自动开通。'}</span></div>
               {orderView.status === 'pending_payment' ? (
                 <div className="upgrade-order-actions">
-                  {!orderView.retired && !payment && error && <button className="primary-button" onClick={loadPayment} disabled={busy}><RefreshCw size={15} /> {busy ? '正在加载…' : '重新加载支付码'}</button>}
+                  {canPurchaseOrder && !payment && error && <button className="primary-button" onClick={loadPayment} disabled={busy}><RefreshCw size={15} /> {busy ? '正在加载…' : '重新加载支付码'}</button>}
                   {(payment || orderView.remoteOrderNo) && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</button>}
                   <button className="secondary-button" onClick={() => requireCancelConfirmation ? setCancelConfirmation(true) : cancelOrder()} disabled={busy}><X size={15} /> 取消订单</button>
                 </div>
               ) : (
                 <div className="upgrade-order-actions">
                   {orderView.status === 'expired' && !orderView.retired ? <>
-                    {canCreateOrder && <button className="primary-button" onClick={() => createOrder(orderView.planId)} disabled={busy}><RotateCcw size={15} /> {busy ? '正在创建…' : '重新创建订单'}</button>}
+                    {canCreateOrder && canPurchaseOrder && <button className="primary-button" onClick={() => createOrder(orderView.planId)} disabled={busy}><RotateCcw size={15} /> {busy ? '正在创建…' : '重新创建订单'}</button>}
+                    {orderPurchaseBlocked && <button className="secondary-button" onClick={() => { setOrderView(null); setPayment(null); setError('') }}><RotateCcw size={15} /> 重新选择套餐</button>}
                     {orderView.remoteOrderNo && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 核对支付状态</button>}
                   </> : <button className="primary-button" onClick={() => { setOrderView(null); setPayment(null); onRefresh?.({ silent: true }) }}><RotateCcw size={15} /> 重新选择套餐</button>}
                 </div>
@@ -598,10 +606,10 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
               {canCreateOrder && selectedPlan && (
                 <div className="upgrade-summary">
                   <span><Sparkles size={14} /> {plan.label || '基础版'} → <strong>{selectedPlan.label}</strong>：{selectedPlan.tagline}</span>
-                  <button className="primary-button" onClick={createOrder} disabled={busy || !priceAvailable(selectedPlan.id)}><Zap size={15} /> {busy ? '正在创建…' : selectedPlan.id === plan.id ? '创建续费订单' : '创建升级订单'}</button>
+                  <button className="primary-button" onClick={createOrder} disabled={busy || !priceAvailable(selectedPlan.id)}><Zap size={15} /> {busy ? '正在创建…' : '创建升级订单'}</button>
                 </div>
               )}
-              {canCreateOrder && <p className="upgrade-hint">支付成功后权益自动生效，续费会顺延有效期。</p>}
+              {canCreateOrder && <p className="upgrade-hint">套餐有效期内仅可升级至更高档套餐，到期后可重新购买。支付成功后权益自动生效。</p>}
             </>
           )}
         </div>

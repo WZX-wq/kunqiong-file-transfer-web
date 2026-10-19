@@ -22,11 +22,11 @@ import {
 } from '../lib/metadata-store.js'
 
 import {
-  accountEffectivePlanForUser, accountPlanRank, accountUserById, accountWorkspacePayload,
+  accountUserById, accountWorkspacePayload,
   acquireUpgradeLock, createWebMemberPaymentOrder, ensurePaymentAssets, expirePendingUpgradeOrders, findUpgradeOrder,
   paymentAmountCents, publicPaymentPayload, reconcileUpgradeOrder, reconcileUserUpgradeOrders,
   remoteUpgradePricing, requireAuthSession, resolveWebMemberPackage,
-  retainPaymentQueryCredential, upgradeOrderSummary, upgradeOrdersForUser
+  retainPaymentQueryCredential, upgradeOrderSummary, upgradeOrdersForUser, upgradePurchaseRestriction
 } from '../services/account.js'
 export function registerUpgradeRoutes(app) {
   app.get('/api/account/upgrade-orders', async (req, res) => {
@@ -90,12 +90,9 @@ export function registerUpgradeRoutes(app) {
       release = await acquireUpgradeLock(`create:${session.user.id}`)
       await reconcileUserUpgradeOrders(session, true)
       const stored = accountUserById(session.user.id) || session.user
-      const effective = accountEffectivePlanForUser(stored)
       if (planId === 'free') return res.status(400).json({ message: '基础版为默认权益，无需订购' })
-      if (planId === effective.id && effective.permanent) return res.status(409).json({ message: `当前${effective.label}永久有效，无需续费` })
-      if (accountPlanRank(planId) < accountPlanRank(effective.id)) {
-        return res.status(409).json({ message: `当前已享有${effective.label}权益，无需订购低等级套餐` })
-      }
+      const restriction = upgradePurchaseRestriction(stored, planId)
+      if (restriction) return res.status(409).json({ message: restriction })
 
       expirePendingUpgradeOrders(upgradeOrdersForUser(stored.id))
       const existing = upgradeOrdersForUser(stored.id).find((order) => order.status === 'pending_payment')
@@ -104,6 +101,8 @@ export function registerUpgradeRoutes(app) {
       }
 
       const { package: memberPackage } = await resolveWebMemberPackage(session, planId)
+      const latestRestriction = upgradePurchaseRestriction(accountUserById(stored.id) || stored, planId)
+      if (latestRestriction) return res.status(409).json({ message: latestRestriction })
       const now = new Date().toISOString()
       const order = {
         id: createToken(12),
@@ -166,6 +165,8 @@ export function registerUpgradeRoutes(app) {
       expirePendingUpgradeOrders([order])
       if (order.status !== 'pending_payment') return res.status(409).json({ message: order.status === 'expired' ? '支付已超时，请重新创建订单支付' : '当前订单不支持支付确认', order: upgradeOrderSummary(order) })
       if (configuredAccountPlan(order.planId).retired) return res.status(410).json({ message: '该套餐已下架，不能继续支付；如已付款，请核对支付状态', order: upgradeOrderSummary(order) })
+      const restriction = upgradePurchaseRestriction(accountUserById(session.user.id) || session.user, order.planId)
+      if (restriction) return res.status(409).json({ message: restriction, order: upgradeOrderSummary(order) })
       const payType = req.body?.payType === undefined ? normalizeWebMemberPayType(order.payType || 1) : integerInput(req.body.payType,'支付方式',1,2)
       const payment = order.remoteOrderNo
         ? { order_no: order.remoteOrderNo, pay_type: order.payType || payType, ...(order.payment || {}) }
@@ -178,6 +179,9 @@ export function registerUpgradeRoutes(app) {
       expirePendingUpgradeOrders([order])
       persistMetadata()
       if (order.status !== 'pending_payment') return res.status(409).json({ message: '支付已超时，请重新创建订单支付', order: upgradeOrderSummary(order) })
+      // Membership can change while the provider creates the order or QR assets.
+      const latestRestriction = upgradePurchaseRestriction(accountUserById(session.user.id) || session.user, order.planId)
+      if (latestRestriction) return res.status(409).json({ message: latestRestriction, order: upgradeOrderSummary(order) })
       res.json({
         message: payment.pay_type === 2 ? '支付宝收银台已创建，请在当前弹窗完成支付' : '微信支付二维码已创建，请扫码支付',
         order: upgradeOrderSummary(order),

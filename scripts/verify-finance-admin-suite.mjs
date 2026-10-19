@@ -78,7 +78,59 @@ try{
   remoteError=false;packages=packagesDefault();await stop();await start();await ctl();
  })
  await group('PAY-002',async()=>{const result=await Promise.all([api('/api/account/upgrade-orders',{user:'wechat',method:'POST',body:{planId:'member'}}),api('/api/account/upgrade-orders',{user:'wechat',method:'POST',body:{planId:'member'}})]);check('并发本地订单只创建一次',result.filter(r=>r.status===201).length===1&&result.filter(r=>r.status===409).length===1);const o=result.find(r=>r.status===201).data.order;const r=await confirm('wechat',o);check('微信金额/套餐/二维码',r.status===200&&r.data.order.amount===1900&&r.data.order.remotePackageId===1&&r.data.payment.qrcode_img_url.startsWith('data:image/png'));check('绑定用户隔离',(await confirm('stranger',o)).status===404);const ali=await confirm('alipay',await create('alipay'),2);check('支付宝入口',ali.status===200&&!!ali.data.payment.alipaysubmit_html);check('日志不包含支付凭证',!log.includes('payment-fixture-'))})
- await group('PAY-003',async()=>{const o=await create('renew');const r=await confirm('renew',o);orders.get(r.data.order.remoteOrderNo).paid=true;const done=await status('renew',o);check('同套餐允许续费',done.status===200&&done.data.order.status==='paid');check('追加原到期时间',new Date(stored().users.renew.planExpiresAt).getTime()===new Date(future).getTime()+30*86400000)})
+ await group('PAY-003',async()=>{
+  const tiers=['member','team','halfyear','year']
+  for(const [rank,planId] of tiers.entries()) {
+   await ctl({user:'renew',patch:{planId,planExpiresAt:future}})
+   for(const [targetRank,target] of tiers.entries()) {
+    const before=seq
+    const r=await api('/api/account/upgrade-orders',{user:'renew',method:'POST',body:{planId:target}})
+    if(targetRank<=rank) check(planId+'禁止购买同档或低档 '+target,r.status===409&&r.data.message.includes('仅可升级')&&seq===before)
+    else {
+     check(planId+'允许升级 '+target,r.status===201)
+     if(r.status===201){check('高档订单可支付 '+planId+'→'+target,(await confirm('renew',r.data.order)).status===200);await cancel('renew',r.data.order)}
+    }
+   }
+  }
+  const boundary=Date.now()
+  try {
+   await ctl({user:'renew',patch:{planId:'year',planExpiresAt:new Date(boundary).toISOString()},clock:boundary})
+   for(const target of tiers) {const o=await create('renew',target);check('到期边界可重新购买 '+target,(await confirm('renew',o)).status===200);await cancel('renew',o)}
+  } finally {await ctl({clock:null})}
+  await ctl({user:'renew',patch:{planId:'free',planExpiresAt:null}})
+  const stale=await create('renew')
+  await ctl({user:'renew',patch:{planId:'member',planExpiresAt:future}})
+  const before=seq,rejected=await confirm('renew',stale)
+  check('旧同档订单确认被拦截且不建远端单',rejected.status===409&&rejected.data.order?.canPurchase===false&&!rejected.data.order?.payment&&seq===before)
+  const detail=await api('/api/account/upgrade-orders/'+stale.id,{user:'renew'})
+  check('订单详情提供支付限制及说明',detail.data.order?.canPurchase===false&&detail.data.order.purchaseBlockedReason.includes('仅可升级'))
+  await cancel('renew',stale)
+  await ctl({user:'renew',patch:{planId:'free',planExpiresAt:null}})
+  const issued=await create('renew'),checkout=await confirm('renew',issued)
+  await ctl({user:'renew',patch:{planId:'team',planExpiresAt:future}})
+  const blocked=await confirm('renew',issued)
+  check('已生成支付码的低档旧单不再返回收银台',blocked.status===409&&!blocked.data.payment&&!blocked.data.order?.payment)
+  const workspace=(await api('/api/account/workspace',{user:'renew'})).data
+  check('工作台不再暴露旧单支付码',!workspace.orders.find(o=>o.id===issued.id)?.payment)
+  orders.get(checkout.data.order.remoteOrderNo).paid=true
+  const recovered=await status('renew',issued)
+  check('历史已付款仍可核对且不降档',recovered.status===200&&recovered.data.order.status==='paid'&&stored().users.renew.planId==='team'&&stored().users.renew.planExpiresAt===future)
+  await status('renew',issued)
+  check('付款补偿保持幂等',stored().messages.renew.filter(m=>m.eventType==='membershipActivated').length===1)
+  await ctl({user:'renew',patch:{planId:'free',planExpiresAt:null}})
+  const racing=await create('renew')
+  try {
+   holdCreate=true;createRelease=null
+   const request=confirm('renew',racing)
+   for(let i=0;i<100&&!createRelease;i++)await delay(10)
+   assert.ok(createRelease,'Remote order creation started')
+   await ctl({user:'renew',patch:{planId:'year',planExpiresAt:future}})
+   holdCreate=false;createRelease()
+   const delayed=await request
+   check('异步支付期间套餐升档也不返回支付码',delayed.status===409&&!delayed.data.payment&&!delayed.data.order?.payment)
+   check('异步拦截保留远端单用于对账',!!stored().upgradeOrders.find(o=>o.id===racing.id).remoteOrderNo)
+  } finally {holdCreate=false;createRelease?.();await cancel('renew',racing)}
+ })
  await group('PAY-004',async()=>{const o=await create('concurrent','team');const before=seq;const results=await Promise.all([confirm('concurrent',o),confirm('concurrent',o)]);check('并发确认一个远端订单',results.every(r=>r.status===200)&&seq===before+1);orders.get(results[0].data.order.remoteOrderNo).paid=true;await Promise.all([status('concurrent',o),status('concurrent',o)]);const expiry=stored().users.concurrent.planExpiresAt;await status('concurrent',o);check('权益只开通一次',stored().users.concurrent.planExpiresAt===expiry&&stored().messages.concurrent.filter(m=>m.eventType==='membershipActivated').length===1)})
  await group('PAY-005',async()=>{const o=await create('status','year');const r=await confirm('status',o);check('未支付不授予权益',(await status('status',o)).data.order.status==='pending_payment'&&stored().users.status.planId==='free');remoteError=true;const err=await status('status',o);check('异常不成功且错误脱敏',err.status>=400&&!JSON.stringify(err.data).includes('secret_fixture_password')&&stored().users.status.planId==='free');remoteError=false;orders.get(r.data.order.remoteOrderNo).paid=true;const done=await status('status',o);check('已支付年卡按期限开通',done.data.order.status==='paid'&&stored().users.status.planId==='year'&&Math.round((new Date(stored().users.status.planExpiresAt)-Date.now())/86400000)===365)})
  await group('PAY-006',async()=>{
