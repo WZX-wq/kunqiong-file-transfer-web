@@ -116,12 +116,16 @@ export function verificationSendBlocked(target, req) {
 export function upgradeOrderSummary(order = {}) {
   const plan = configuredAccountPlan(order.planId)
   const status = order.status === 'pending_payment' && upgradePaymentExpired(order) ? 'expired' : order.status
+  const purchaseBlockedReason = upgradePurchaseRestriction(accountUserById(order.userId) || {}, order.planId)
+  const canPurchase = !plan.retired && plan.id !== 'free' && !purchaseBlockedReason
   return {
     id: order.id,
     orderNo: order.orderNo,
     planId: order.planId,
     planLabel: plan.label,
     retired: Boolean(plan.retired),
+    canPurchase,
+    purchaseBlockedReason,
     status,
     amount: order.amount,
     payType: order.payType || 1,
@@ -131,7 +135,7 @@ export function upgradeOrderSummary(order = {}) {
     remotePackageDays: order.remotePackageDays || null,
     ...(Object.hasOwn(order, 'entitlementDays') ? { entitlementDays: order.entitlementDays } : {}),
     permanent: Object.hasOwn(order, 'entitlementDays') ? order.entitlementDays === null : order.status === 'paid' ? !order.remoteExpireAt && order.planId === 'enterprise' : plan.permanent,
-    payment: status === 'pending_payment' ? publicPaymentPayload(order.payment) : null,
+    payment: status === 'pending_payment' && canPurchase ? publicPaymentPayload(order.payment) : null,
     createdAt: order.createdAt,
     paymentExpiresAt: upgradePaymentDeadline(order) ? new Date(upgradePaymentDeadline(order)).toISOString() : null,
     updatedAt: order.updatedAt,
@@ -197,6 +201,14 @@ export function accountPlanForUser(user = {}) {
 export function accountPersonalPlanForUser(user = {}) {
   const directUser = typeof user === 'string' ? accountUserById(user) || {} : user
   return accountPlanForUser(directUser)
+}
+
+// Expired personal plans resolve to free; borrowed team rights never restrict purchases.
+export function upgradePurchaseRestriction(user, planId) {
+  const current = accountPersonalPlanForUser(user)
+  return accountPlanRank(planId) <= accountPlanRank(current.id)
+    ? `当前${current.label}仍在有效期内，仅可升级至更高档套餐，不能购买同档或更低档套餐`
+    : ''
 }
 
 // 团队套餐是组织资产。新数据直接读取 organization.teamPlan*；旧数据没有组织套餐

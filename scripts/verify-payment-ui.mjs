@@ -277,4 +277,39 @@ try {
   check('Highest tier with no upgrade option does not show an unavailable-plan error', !highestPlan.text().includes('套餐暂不可用，请稍后重试'))
   check('Highest tier explains that the current entitlement is already the maximum', highestPlan.text().includes('已拥有当前最高等级权益'))
 } finally { highestPlan.close() }
+
+const upgradePricing = { member: { available: true, priceCents: 1900, validityDays: 30 }, team: { available: true, priceCents: 4900, validityDays: 90 } }
+const activeMember = await mount({ currentPlan: plans[1], availablePlans: enterprisePlans, pricing: upgradePricing })
+try {
+  const currentCard = activeMember.document.querySelector('.plan-comparison [data-plan-id="member"]')
+  check('Active current tier is disabled in the workspace price cards', currentCard?.disabled)
+  await activeMember.click('套餐对比与升级', '.workspace-benefits-cta button')
+  const modal = activeMember.document.querySelector('.upgrade-modal')
+  const memberCard = [...modal.querySelectorAll('.upgrade-plan-card')].find(item => item.textContent.includes('会员版'))
+  const selected = modal.querySelector('.upgrade-plan-card.selected')
+  check('Current tier cannot be selected and a higher tier is selected by default', memberCard?.disabled && selected?.textContent.includes('团队版'))
+  check('Checkout explains upgrades only and removes renewal copy', modal.textContent.includes('到期后可重新购买') && !modal.textContent.includes('续费'))
+} finally { activeMember.close() }
+
+for (const currentPlan of [plans[1], enterprisePlans.find(item => item.id === 'team')]) {
+  for (const paymentReady of [false, true]) {
+    const blocked = await mount({ currentPlan, availablePlans: enterprisePlans, pricing: upgradePricing, pending: true, paymentReady })
+    try {
+      await blocked.click('套餐对比与升级', '.workspace-benefits-cta button')
+      const modal = blocked.document.querySelector('.upgrade-modal')
+      check('Same or lower pending order hides payment and explains restriction ' + currentPlan.id + '/' + paymentReady, modal.textContent.includes('仅可升级') && !modal.querySelector('.upgrade-payment-qr, iframe, .upgrade-pay-type, .upgrade-payment-countdown'))
+      await delay(60)
+      check('Ineligible pending order never auto-confirms ' + currentPlan.id + '/' + paymentReady, blocked.confirmCalls() === 0 && blocked.createCalls() === 0)
+      if (paymentReady) check('Previously issued payments retain status verification ' + currentPlan.id, modal.textContent.includes('刷新支付状态'))
+      await blocked.click('取消订单')
+      check('Cancelling the blocked order restores higher-tier selection ' + currentPlan.id, !!blocked.document.querySelector('.upgrade-summary button'))
+    } finally { blocked.close() }
+  }
+}
+
+const blockedExpired = await mount({ currentPlan: plans[1], availablePlans: enterprisePlans, pricing: upgradePricing, pending: true, ageMs: 15 * 60000 })
+try {
+  await blockedExpired.click('套餐对比与升级', '.workspace-benefits-cta button')
+  check('Expired same-tier order cannot be recreated during active membership', !blockedExpired.text().includes('重新创建订单') && blockedExpired.text().includes('核对支付状态') && blockedExpired.confirmCalls() === 0)
+} finally { blockedExpired.close() }
 console.log(`Payment UI checks: ${passed}/${passed}`)

@@ -25,7 +25,7 @@ fs.copyFileSync(path.join(root, 'server.mjs'), path.join(fixture, 'server.mjs'))
 const GB = 1024 ** 3, future = new Date(Date.now() + 60 * 86400000).toISOString()
 const planIds = ['free', 'member', 'team', 'halfyear', 'year', 'enterprise']
 const activePlanIds = planIds.filter(id => id !== 'enterprise')
-const users = Object.fromEntries([...planIds, 'sender', 'other', 'buyer', 'finite-buyer', 'managed', 'legacy-managed', 'invited'].map(id => [id, { id, username: id, planId: planIds.includes(id) ? id : id === 'managed' ? 'enterprise' : 'free', status: 'active', planExpiresAt: ['enterprise', 'managed', 'buyer', 'finite-buyer'].includes(id) ? null : future }]))
+const users = Object.fromEntries([...planIds, 'sender', 'other', 'buyer', 'permanent-buyer', 'finite-buyer', 'managed', 'legacy-managed', 'invited'].map(id => [id, { id, username: id, planId: planIds.includes(id) ? id : id === 'managed' ? 'enterprise' : 'free', status: 'active', planExpiresAt: ['enterprise', 'managed', 'buyer', 'permanent-buyer', 'finite-buyer'].includes(id) ? null : future }]))
 const organizations = { org: { id: 'org', slug: 'org', name: 'fixture', ownerUserId: 'team', teamPlanId: 'team', teamPlanExpiresAt: future, members: ['team', 'sender'].map(userId => ({ id: userId, userId, status: 'active', role: userId === 'team' ? 'owner' : 'member' })) } }
 users['timed-member'] = { id: 'timed-member', username: 'timed-member', planId: 'member', status: 'active', planExpiresAt: new Date(Date.now() + 20 * 86400000).toISOString() }
 organizations.org.members.push({ id: 'timed-member', userId: 'timed-member', status: 'active', role: 'member' })
@@ -187,16 +187,16 @@ try {
   await api('/api/account/upgrade-orders/' + finiteOrder.id + '/confirm', { user: 'finite-buyer', method: 'POST', body: { payType: 1 } })
   eq((await api('/api/account/upgrade-orders/' + finiteOrder.id + '/pay-status', { user: 'finite-buyer', method: 'POST' })).data.order.permanent, false, 'year purchase is not labeled permanent')
   await config({ planOverrides: { ...overrides, member: { ...overrides.member, validityDays: 0 } } })
-  const lifetimeOrder = (await api('/api/account/upgrade-orders', { user: 'buyer', method: 'POST', body: { planId: 'member' } })).data.order
-  await api('/api/account/upgrade-orders/' + lifetimeOrder.id + '/confirm', { user: 'buyer', method: 'POST', body: { payType: 1 } })
-  eq((await api('/api/account/upgrade-orders/' + lifetimeOrder.id + '/pay-status', { user: 'buyer', method: 'POST' })).data.order.permanent, true, 'zero-day configuration activates permanent rights')
+  const lifetimeOrder = (await api('/api/account/upgrade-orders', { user: 'permanent-buyer', method: 'POST', body: { planId: 'member' } })).data.order
+  await api('/api/account/upgrade-orders/' + lifetimeOrder.id + '/confirm', { user: 'permanent-buyer', method: 'POST', body: { payType: 1 } })
+  eq((await api('/api/account/upgrade-orders/' + lifetimeOrder.id + '/pay-status', { user: 'permanent-buyer', method: 'POST' })).data.order.permanent, true, 'zero-day configuration activates permanent rights')
   await config({ planOverrides: { ...overrides, member: { ...overrides.member, validityDays: 60 } } })
-  eq((await api('/api/account/workspace', { user: 'buyer' })).data.plan.permanent, true, 'changing package term does not revoke purchased permanent rights')
+  eq((await api('/api/account/workspace', { user: 'permanent-buyer' })).data.plan.permanent, true, 'changing package term does not revoke purchased permanent rights')
   const originalExpiry = stored().users.member.planExpiresAt
   await stop(); await start(); await login()
   overview = (await api('/api/admin/overview', { admin: true })).data
   eq(overview.plans.find(plan => plan.id === 'member').validityDays, 60, 'configuration survives restart')
-  eq((await api('/api/account/workspace', { user: 'buyer' })).data.plan.permanent, true, 'new permanent grant survives restart and configuration changes')
+  eq((await api('/api/account/workspace', { user: 'permanent-buyer' })).data.plan.permanent, true, 'new permanent grant survives restart and configuration changes')
   eq((await api('/api/account/workspace', { user: 'finite-buyer' })).data.plan.permanent, false, 'finite year grant survives restart without becoming permanent')
   eq(stored().users.member.planExpiresAt, originalExpiry, 'changing validity never rewrites existing paid expiry')
   const legacy = (await api('/api/account/workspace', { user: 'enterprise' })).data

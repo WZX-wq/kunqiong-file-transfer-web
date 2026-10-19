@@ -17,13 +17,14 @@ const initialOrders = () => Array.from({ length: 24 }, (_, i) => ({ id: 'order-'
   status: i === 0 ? 'pending_payment' : i === 1 ? 'paid' : i === 2 ? 'expired' : 'canceled',
   createdAt: i === 0 ? new Date().toISOString() : '2026-10-15T07:16:07Z', paidAt: i === 1 ? '2026-10-15T08:18:52Z' : null,
   remoteExpireAt: i === 1 ? '2027-01-13T08:18:52Z' : null }))
-async function mount({ url = '/settings/orders', loggedIn = true, failList = false, retiredOrders = false } = {}) {
+async function mount({ url = '/settings/orders', loggedIn = true, failList = false, retiredOrders = false, blockedOrders = false } = {}) {
   const errors = [], requests = [], timers = new Map(), copies = []
   const vc = new VirtualConsole(); vc.on('jsdomError', error => errors.push(error))
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://fixture.local' + url, pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole: vc })
   const { window } = dom, { document } = window
   let orders = initialOrders(), force401 = false, detailFailure = false, statusFailure = false, holdQuery = '', holdDetail = false, releaseHeld, releaseDetail, nextTimer = 0
   if (retiredOrders) for (const index of [0, 2]) Object.assign(orders[index], { planId: 'enterprise', planLabel: '历史企业权益', retired: true })
+  if (blockedOrders) for (const index of [0, 2]) Object.assign(orders[index], { canPurchase: false, purchaseBlockedReason: '套餐有效期内仅可升级至更高档套餐，不能购买同档或更低档套餐' })
   window.setInterval = (callback, ms) => { const id = ++nextTimer; timers.set(id, { callback, ms }); return id }
   window.clearInterval = id => timers.delete(id)
   Object.defineProperty(window.navigator, 'clipboard', { value: { writeText: async value => copies.push(value) } })
@@ -193,5 +194,18 @@ for (const [index, status] of [[0, 'pending_payment'], [2, 'expired']]) {
     check('下架订单不提供继续支付或重新下单 ' + status, retired.text().includes('该套餐已下架') && !actions.includes('继续支付') && !actions.includes('重新下单'))
     check('下架订单保留历史支付核对入口 ' + status, actions.includes('核对支付状态'))
   } finally { retired.close() }
+}
+for (const [index, status] of [[0, 'pending_payment'], [2, 'expired']]) {
+  const blocked = await mount({ url: '/settings/orders?status=' + status, blockedOrders: true })
+  try {
+    await waitFor(() => blocked.document.querySelector(`[data-order-id="order-${index}"]`), 'Blocked order listed')
+    await blocked.click('查看订单 WM1-ORDER-' + index)
+    const actions = blocked.document.querySelector('.orders-dialog-actions').textContent
+    check('同档或低档订单隐藏支付与重新下单入口 ' + status, blocked.text().includes('仅可升级') && !actions.includes('继续支付') && !actions.includes('重新下单'))
+    check('受限订单保留核对支付状态 ' + status, actions.includes('核对支付状态'))
+    await blocked.click('核对支付状态')
+    check('受限订单已付款仍可核对成功 ' + status, blocked.text().includes('支付成功，会员权益已开通'))
+    check('受限订单不会发起新支付单 ' + status, !blocked.requests.some(r => r.url.endsWith('/confirm') || (r.method === 'POST' && r.url === '/api/account/upgrade-orders')))
+  } finally { blocked.close() }
 }
 console.log(JSON.stringify({ passed }))
