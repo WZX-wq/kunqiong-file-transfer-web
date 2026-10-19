@@ -201,9 +201,10 @@ export function AdminPage() {
     try {
       const form = new FormData(event.currentTarget)
       const planOverrides = {}
-      ;['free', 'member', 'team', 'enterprise'].forEach((planId) => {
-        const override = {}
-        for (const [field, suffix] of [['totalGb', 'gb'], ['validityDays', 'days']]) {
+      ;(data.plans || []).filter(plan => !plan.retired).forEach(({ id: planId }) => {
+        const previousOverride = data.config?.planOverrides?.[planId] || {}
+        const override = Object.hasOwn(previousOverride, 'validityDays') ? { validityDays: previousOverride.validityDays } : {}
+        for (const [field, suffix] of [['totalGb', 'gb'], ['teamGb', 'teamGb'], ['singleFileGb', 'singleFileGb'], ['collectionParticipantLimit', 'participants'], ['activeCollectionLimit', 'tasks']]) {
           const value = String(form.get(`plan-${planId}-${suffix}`) ?? '').trim()
           if (value !== '') override[field] = value
         }
@@ -214,13 +215,15 @@ export function AdminPage() {
         maxShareDays: form.get('maxShareDays'),
         anonymousMaxFileSizeMb: form.get('anonymousMaxFileSizeMb'),
         anonymousTotalSizeMb: form.get('anonymousTotalSizeMb'),
+        anonymousCollectionParticipantLimit: form.get('anonymousCollectionParticipantLimit'),
+        anonymousActiveCollectionLimit: form.get('anonymousActiveCollectionLimit'),
         maxBatchFiles: form.get('maxBatchFiles'),
         auditLogRetentionDays: form.get('auditLogRetentionDays'),
         orphanGraceHours: form.get('orphanGraceHours'),
         maintenanceMode: form.get('maintenanceMode') === 'on',
         planOverrides,
       }) })
-      setData((current) => ({ ...current, config: result.config }))
+      setData((current) => ({ ...current, config: result.config, plans: result.plans || current.plans }))
       showToast('系统配置已保存，新配置立即生效')
     } catch (err) {
       showToast(err.message || '系统配置保存失败', 'error')
@@ -269,9 +272,9 @@ export function AdminPage() {
         <div className="admin-content">
           {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-list">{trend.map((item) => <div className="admin-trend-row" key={item.date}><span>{item.label}</span><div><i style={{ width: `${(item.activeUsers / trendMax) * 100}%` }} title={`活跃用户 ${item.activeUsers}`} /><i className="upload" style={{ width: `${(item.uploads / trendMax) * 100}%` }} title={`上传 ${item.uploads}`} /><i className="download" style={{ width: `${(item.downloads / trendMax) * 100}%` }} title={`下载 ${item.downloads}`} /></div><small>{item.activeUsers} / {item.uploads} / {item.downloads}</small></div>)}</div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
           {tab === 'resources' && <AdminResources resources={data.resources} total={data.totals?.resources ?? data.resources.length} requestConfirm={requestConfirm} onChanged={(message, tone, overview) => { if (overview) { setData((current) => ({ ...current, ...overview })) } else { load() } if (message) showToast(message, tone) }} />}
-          {tab === 'users' && <AdminUsers users={data.users} total={data.totals?.users ?? data.users.length} onUpdate={updateUser} />}
+          {tab === 'users' && <AdminUsers plans={data.plans} users={data.users} total={data.totals?.users ?? data.users.length} onUpdate={updateUser} />}
           {tab === 'security' && <AdminLogs logs={data.auditLogs} total={data.totals?.auditLogs ?? data.auditLogs.length} />}
-          {tab === 'config' && <AdminConfig config={data.config} saving={savingConfig} onSubmit={saveConfig} />}
+          {tab === 'config' && <AdminConfig plans={data.plans} planDefaults={data.planDefaults} config={data.config} saving={savingConfig} onSubmit={saveConfig} />}
         </div>
       </section>
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
@@ -333,7 +336,7 @@ export function AdminResources({ resources = [], total = 0, requestConfirm, onCh
   return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">分享与收集</p><h2>资源管理</h2></div><span>共 {total} 个资源{total > resources.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索资源名称、ID、提取码或归属用户" /></label><div className="admin-table">{filteredResources.length ? visibleResources.map((item) => <div className="admin-table-row" key={`${item.kind}-${item.id}`}><div className="admin-user-identity"><strong>{kindLabel(item)} · {item.name}</strong><span>{statusLabel(item.status)} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)} · 归属 {item.ownerUserId || '匿名'} · 建于 {formatDate(item.createdAt)}</span><span className="admin-resource-id-row"><button type="button" className="admin-resource-id" title={`资源 ID（${item.kind === 'share' ? '即分享链接 /share/ 末段' : '即收集链接 /collect/ 末段'}），点击复制`} onClick={() => copyResourceId(item)}>{copiedId === item.id ? <Check size={11} /> : <Copy size={11} />}<i>{item.id}</i>{copiedId === item.id ? '已复制' : ''}</button>{item.code ? <em className="admin-resource-code" title="提取码">提取码 {item.code}</em> : null}</span></div><div className="admin-user-actions"><small className="admin-user-usage">{item.expiresAt ? `截止 ${formatDate(item.expiresAt)}` : '永久有效'}</small><button className="secondary-button danger-lite" disabled={busyId === item.id} onClick={() => removeResource(item)}><Trash2 size={14} /> {busyId === item.id ? '删除中' : '删除'}</button></div></div>) : <div className="empty-manage"><Database size={25} /><span>没有匹配的资源</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredResources.length} pageSize={pageSize} onPageChange={setPage} /></div>
 }
 
-export function AdminUsers({ users = [], total = 0, onUpdate }) {
+export function AdminUsers({ plans = [], users = [], total = 0, onUpdate }) {
   const pageSize = 8
   const [page, setPage] = useState(1)
   const [query, setQuery] = useState('')
@@ -345,23 +348,44 @@ export function AdminUsers({ users = [], total = 0, onUpdate }) {
   const safePage = Math.min(page, pageCount)
   const visibleUsers = filteredUsers.slice((safePage - 1) * pageSize, safePage * pageSize)
   useEffect(() => { setPage(1) }, [users.length, normalizedQuery])
-  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">账号与权益</p><h2>用户管理</h2></div><span>共 {total || users.length} 个用户{total > users.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索账号、手机号、邮箱或用户 ID" /></label><div className="admin-table">{filteredUsers.length ? visibleUsers.map((user) => <div className="admin-table-row" key={user.id}><div className="admin-user-identity"><strong>{user.nickname || user.username || user.id}</strong><span>{user.email || user.phone || user.id}</span></div><div className="admin-user-actions"><select className="admin-user-plan" value={user.planId} onChange={(event) => onUpdate(user, { planId: event.target.value })} aria-label={`${user.nickname || user.username || user.id}的套餐`}><option value="free">基础版</option><option value="member">会员版</option><option value="team">团队版</option><option value="enterprise">企业版</option></select><button className={user.status === 'disabled' ? 'secondary-button' : 'secondary-button danger-lite'} onClick={() => onUpdate(user, { status: user.status === 'disabled' ? 'active' : 'disabled' })}>{user.status === 'disabled' ? '启用' : '禁用'}</button><small className="admin-user-usage">{user.planLabel} · {formatBytes(user.usageBytes || 0)}</small></div></div>) : <div className="empty-manage"><Search size={25} /><span>没有匹配的用户</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredUsers.length} pageSize={pageSize} onPageChange={setPage} /></div>
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">账号与权益</p><h2>用户管理</h2></div><span>共 {total || users.length} 个用户{total > users.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索账号、手机号、邮箱或用户 ID" /></label><div className="admin-table">{filteredUsers.length ? visibleUsers.map((user) => <div className="admin-table-row" key={user.id}><div className="admin-user-identity"><strong>{user.nickname || user.username || user.id}</strong><span>{user.email || user.phone || user.id}</span></div><div className="admin-user-actions"><select className="admin-user-plan" value={user.planId} onChange={(event) => onUpdate(user, { planId: event.target.value })} aria-label={`${user.nickname || user.username || user.id}的套餐`}>{!plans.some(plan => plan.id === user.planId && !plan.retired) && <option value={user.planId} disabled>{user.planLabel || "历史已购权益"}</option>}{plans.filter(plan => !plan.retired).map(plan => <option key={plan.id} value={plan.id}>{plan.label}</option>)}</select><button className={user.status === 'disabled' ? 'secondary-button' : 'secondary-button danger-lite'} onClick={() => onUpdate(user, { status: user.status === 'disabled' ? 'active' : 'disabled' })}>{user.status === 'disabled' ? '启用' : '禁用'}</button><small className="admin-user-usage">{user.planLabel} · {formatBytes(user.usageBytes || 0)}</small></div></div>) : <div className="empty-manage"><Search size={25} /><span>没有匹配的用户</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredUsers.length} pageSize={pageSize} onPageChange={setPage} /></div>
 }
 
-export function AdminConfig({ config = {}, saving = false, onSubmit }) {
+export function AdminConfig({ plans = [], planDefaults = [], config = {}, saving = false, onSubmit }) {
   const overrides = config.planOverrides || {}
   return <form className="public-card admin-panel admin-config-form" onSubmit={onSubmit}>
     <div className="admin-panel-heading"><div><p className="eyebrow">运行参数</p><h2>系统配置</h2></div></div>
     <div className="admin-config-grid">
       <label className="manage-field"><span>默认保存时效（天）</span><input name="defaultShareDays" type="number" min="1" max="365" defaultValue={config.defaultShareDays} /></label>
       <label className="manage-field"><span>普通分享最长有效期（天）</span><input name="maxShareDays" type="number" min="1" max="365" defaultValue={config.maxShareDays} /></label>
-      <label className="manage-field"><span>匿名单文件上限（MB）</span><input name="anonymousMaxFileSizeMb" type="number" min="1" max="5120" defaultValue={config.anonymousMaxFileSizeMb} /></label>
+      <label className="manage-field"><span>匿名单文件上限（MB）</span><input name="anonymousMaxFileSizeMb" type="number" min="1" max="20480" step="0.1" defaultValue={config.anonymousMaxFileSizeMb} /></label>
       <label className="manage-field"><span>未登录累计传输上限（MB）</span><input name="anonymousTotalSizeMb" type="number" min="0" max="102400" defaultValue={config.anonymousTotalSizeMb} /></label>
+      <label className="manage-field"><span>游客每个任务最多提交人数（0 不限）</span><input name="anonymousCollectionParticipantLimit" type="number" min="0" max="10000" defaultValue={config.anonymousCollectionParticipantLimit} /></label>
+      <label className="manage-field"><span>游客进行中任务数（0 不限）</span><input name="anonymousActiveCollectionLimit" type="number" min="0" max="1000" defaultValue={config.anonymousActiveCollectionLimit} /></label>
       <label className="manage-field"><span>单次最多文件数</span><input name="maxBatchFiles" type="number" min="1" max="100" defaultValue={config.maxBatchFiles} /></label>
       <label className="manage-field"><span>审计日志保留（天）</span><input name="auditLogRetentionDays" type="number" min="1" max="3650" defaultValue={config.auditLogRetentionDays} /></label>
       <label className="manage-field"><span>孤立目录宽限（小时）</span><input name="orphanGraceHours" type="number" min="1" max="720" defaultValue={config.orphanGraceHours} /></label>
     </div>
-    <div className="admin-plan-config"><div className="admin-plan-config-heading"><strong>会员权益配置</strong><span>留空恢复默认，容量使用 GB。购买价格由会员主站统一管理，如需调整请在主站修改。</span></div>{[['free', '基础版'], ['member', '会员版'], ['team', '团队版'], ['enterprise', '企业版']].map(([id, label]) => <div className="admin-plan-row" key={id}><strong>{label}</strong><label><span>容量 GB</span><input name={`plan-${id}-gb`} type="number" min="1" step="1" defaultValue={overrides[id]?.totalBytes ? Math.round(overrides[id].totalBytes / 1024 ** 3) : ''} placeholder="默认" /></label><label><span>有效期（天）</span><input name={`plan-${id}-days`} type="number" min="1" max="3650" defaultValue={overrides[id]?.validityDays ?? ''} placeholder="默认" /></label></div>)}</div>
+    <div className="admin-plan-config">
+      <div className="admin-plan-config-heading"><strong>套餐权益配置</strong><span>留空恢复默认，价格由会员主站管理</span></div>
+      <p className="admin-plan-help">容量按整数 GB 设置，每次增减 1GB。容量、上传和收集限额保存后立即生效。人数和任务数填 0 表示不限。游客按设备统计人数，登录用户按账号统计。</p>
+      <div className="admin-plan-scroll"><div className="admin-plan-table">
+        {plans.filter(plan => !plan.retired).map(plan => {
+          const { id, label } = plan
+          const defaults = planDefaults.find(item => item.id === id) || plan
+          const override = overrides[id] || {}
+          const fields = [
+            ['个人容量 GB', 'gb', 'totalBytes', 1024 ** 3, 1, 20480],
+            ['团队容量 GB', 'teamGb', 'teamSpaceBytes', 1024 ** 3, 0, 20480],
+            ['单文件 GB', 'singleFileGb', 'singleFileLimitBytes', 1024 ** 3, 1, 20],
+            ['提交人数 / 任务', 'participants', 'collectionParticipantLimit', 1, 0, 10000],
+            ['进行中任务数', 'tasks', 'activeCollectionLimit', 1, 0, 1000],
+          ]
+          return <div className="admin-plan-row" key={id}><strong>{label}</strong>{fields.map(([title, suffix, key, divisor, min, max]) => <label key={key}><span>{title}</span><input aria-label={`${label}${title}`} name={`plan-${id}-${suffix}`} type="number" min={min} max={max} step="1" defaultValue={Object.hasOwn(override, key) ? (override[key] ?? 0) / divisor : ''} placeholder={`默认 ${(defaults[key] ?? 0) / divisor}`} /></label>)}</div>
+        })}
+      </div></div>
+      <p className="admin-plan-help">单文件业务上限为 20GB。当前 ClamAV 对约 2GB 以上文件可能无法完成完整扫描；超过扫描能力的文件仍会被拦截，请勿通过关闭安全检查放行。</p>
+    </div>
     <label className="switch-row"><div><strong>维护模式</strong><span>开启后会阻止非管理员创建分享、收集任务或提交文件。</span></div><input name="maintenanceMode" type="checkbox" defaultChecked={config.maintenanceMode} /></label>
     <button className="primary-button" disabled={saving}><SlidersHorizontal size={15} /> {saving ? '保存中' : '保存配置'}</button>
   </form>

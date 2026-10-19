@@ -52,6 +52,13 @@ export function normalizeMetadata(value = {}) {
       runtime.metadataNeedsPersist = true
     }
   }
+  const systemConfig = normalizeSystemConfig(value.systemConfig)
+  // Upgrade only the previous shipped guest defaults; retain custom admin values.
+  if (!value.systemConfig?.entitlementsVersion) {
+    if (Number(value.systemConfig?.anonymousMaxFileSizeMb) === 500) systemConfig.anonymousMaxFileSizeMb = DEFAULT_SYSTEM_CONFIG.anonymousMaxFileSizeMb
+    if (Number(value.systemConfig?.anonymousTotalSizeMb) === 1024) systemConfig.anonymousTotalSizeMb = DEFAULT_SYSTEM_CONFIG.anonymousTotalSizeMb
+    runtime.metadataNeedsPersist = true
+  }
   const sessions = Array.isArray(value.sessions)
     ? value.sessions
       .filter((session) => session?.id && session?.user)
@@ -78,7 +85,7 @@ export function normalizeMetadata(value = {}) {
     organizations: normalizeOrganizations(value.organizations),
     upgradeOrders: normalizeUpgradeOrders(value.upgradeOrders),
     guestUsage: normalizeGuestUsageStore(value.guestUsage),
-    systemConfig: normalizeSystemConfig(value.systemConfig),
+    systemConfig,
   }
 }
 
@@ -101,6 +108,8 @@ export function normalizeUpgradeOrders(value = []) {
       remotePackageId: normalizeNullablePositiveInteger(item?.remotePackageId),
       remotePackageName: trimRecordString(item?.remotePackageName, 80),
       remotePackageDays: normalizeNullablePositiveInteger(item?.remotePackageDays),
+      ...(Object.hasOwn(item || {}, 'entitlementDays') && (item.entitlementDays === null || (Number.isInteger(item.entitlementDays) && item.entitlementDays > 0 && item.entitlementDays <= 3650)) ? { entitlementDays: item.entitlementDays === null ? null : normalizeNullablePositiveInteger(item.entitlementDays) } : {}),
+      ...(item?.entitlementSource ? { entitlementSource: item.entitlementSource === 'provider' ? 'provider' : 'local' } : {}),
       payment: normalizePaymentPayload(item?.payment),
       createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
       updatedAt: normalizeRecordDate(item?.updatedAt) || new Date().toISOString(),
@@ -139,14 +148,17 @@ export function normalizeSystemConfig(value = {}) {
   const auditLogRetentionDays = Number(source.auditLogRetentionDays)
   const orphanGraceHours = Number(source.orphanGraceHours)
   return {
+    entitlementsVersion: 1,
     maintenanceMode: Boolean(source.maintenanceMode),
     defaultShareDays: Number.isFinite(defaultShareDays) ? Math.min(365, Math.max(1, Math.floor(defaultShareDays))) : DEFAULT_SYSTEM_CONFIG.defaultShareDays,
     maxShareDays: Number.isFinite(maxShareDays) ? Math.min(365, Math.max(1, Math.floor(maxShareDays))) : DEFAULT_SYSTEM_CONFIG.maxShareDays,
-    anonymousMaxFileSizeMb: Number.isFinite(anonymousMaxFileSizeMb) ? Math.min(5120, Math.max(1, Math.floor(anonymousMaxFileSizeMb))) : DEFAULT_SYSTEM_CONFIG.anonymousMaxFileSizeMb,
+    anonymousMaxFileSizeMb: Number.isFinite(anonymousMaxFileSizeMb) ? Math.min(20480, Math.max(1, anonymousMaxFileSizeMb)) : DEFAULT_SYSTEM_CONFIG.anonymousMaxFileSizeMb,
     anonymousTotalSizeMb: Number.isFinite(anonymousTotalSizeMb) ? Math.min(102400, Math.max(0, Math.floor(anonymousTotalSizeMb))) : DEFAULT_SYSTEM_CONFIG.anonymousTotalSizeMb,
     maxBatchFiles: Number.isFinite(maxBatchFiles) ? Math.min(MAX_FILES, Math.max(1, Math.floor(maxBatchFiles))) : DEFAULT_SYSTEM_CONFIG.maxBatchFiles,
     auditLogRetentionDays: Number.isFinite(auditLogRetentionDays) ? Math.min(3650, Math.max(1, Math.floor(auditLogRetentionDays))) : DEFAULT_SYSTEM_CONFIG.auditLogRetentionDays,
     orphanGraceHours: Number.isFinite(orphanGraceHours) ? Math.min(720, Math.max(1, Math.floor(orphanGraceHours))) : DEFAULT_SYSTEM_CONFIG.orphanGraceHours,
+    anonymousCollectionParticipantLimit: Math.min(10000, Math.max(0, Math.floor(Number(source.anonymousCollectionParticipantLimit ?? DEFAULT_SYSTEM_CONFIG.anonymousCollectionParticipantLimit) || 0))),
+    anonymousActiveCollectionLimit: Math.min(1000, Math.max(0, Math.floor(Number(source.anonymousActiveCollectionLimit ?? DEFAULT_SYSTEM_CONFIG.anonymousActiveCollectionLimit) || 0))),
     planOverrides: normalizePlanOverrides(source.planOverrides),
   }
 }
@@ -156,13 +168,20 @@ export function normalizePlanOverrides(value = {}) {
   const overrides = {}
   for (const planId of Object.keys(ACCOUNT_PLANS)) {
     const plan = source[planId] && typeof source[planId] === 'object' ? source[planId] : {}
-    const totalGb = Number(plan.totalGb ?? plan.totalGB ?? (Number(plan.totalBytes) / 1024 ** 3))
-    const validityDays = plan.validityDays === null || plan.validityDays === '' ? null : Number(plan.validityDays)
     const normalized = {}
-    // Old local price overrides never changed the provider's payable amount.
-    // Ignore them so saved metadata cannot present a conflicting fallback price.
-    if (Number.isFinite(totalGb) && totalGb > 0) normalized.totalBytes = Math.round(Math.min(20480, totalGb) * 1024 ** 3)
-    if (validityDays === null || (Number.isFinite(validityDays) && validityDays > 0)) normalized.validityDays = validityDays === null ? null : Math.min(3650, Math.floor(validityDays))
+    for (const [field, alias, min, max] of [['totalBytes', 'totalGb', 1, 20480 * 1024 ** 3], ['teamSpaceBytes', 'teamGb', 0, 20480 * 1024 ** 3], ['singleFileLimitBytes', 'singleFileGb', 1, 20 * 1024 ** 3]]) {
+      const gb = plan[alias] ?? (field === 'totalBytes' ? plan.totalGB : undefined)
+      const value = gb === undefined ? Number(plan[field]) : Number(gb) * 1024 ** 3
+      if (Number.isFinite(value) && value >= min) normalized[field] = Math.round(Math.min(max, value))
+    }
+    for (const [field, max] of [['collectionParticipantLimit', 10000], ['activeCollectionLimit', 1000]]) {
+      if (plan[field] !== undefined && Number.isFinite(Number(plan[field])) && Number(plan[field]) >= 0) normalized[field] = Math.min(max, Math.floor(Number(plan[field])))
+    }
+    if (Object.hasOwn(plan, 'validityDays')) {
+      const days = Number(plan.validityDays)
+      if (plan.validityDays === null || days === 0) normalized.validityDays = null
+      else if (Number.isFinite(days) && days > 0) normalized.validityDays = Math.min(3650, Math.floor(days))
+    }
     if (Object.keys(normalized).length) overrides[planId] = normalized
   }
   return overrides
@@ -223,6 +242,7 @@ export function normalizeOrganizations(value = []) {
       teamPlanId: item.teamPlanId ? normalizePlanId(item.teamPlanId) : '',
       teamPlanStartedAt: normalizeRecordDate(item.teamPlanStartedAt),
       teamPlanExpiresAt: normalizeRecordDate(item.teamPlanExpiresAt),
+      teamPlanPermanent: item.teamPlanPermanent ?? (!item.teamPlanExpiresAt && Boolean(ACCOUNT_PLANS[item.teamPlanId]?.permanent)),
       createdAt: normalizeRecordDate(item.createdAt) || new Date().toISOString(),
       updatedAt: normalizeRecordDate(item.updatedAt) || new Date().toISOString(),
       members,
@@ -240,7 +260,19 @@ export function configuredAccountPlan(planId) {
   const id = normalizePlanId(planId)
   const base = ACCOUNT_PLANS[id] || ACCOUNT_PLANS.free
   const override = normalizeSystemConfig(runtime.metadataReady?.systemConfig || {}).planOverrides[id] || {}
-  return { ...base, ...override, id: base.id, label: base.label, permanent: base.permanent, team: base.team, features: base.features }
+  const plan = { ...base, ...override, id: base.id, label: base.label }
+  plan.permanent = id !== 'free' && plan.validityDays === null
+  plan.team = plan.teamSpaceBytes > 0
+  const gb = bytes => `${Number((bytes / 1024 ** 3).toFixed(3))} GB`
+  plan.features = [
+    `${gb(plan.totalBytes)} 个人空间`,
+    ...(plan.team ? [`${gb(plan.teamSpaceBytes)} 团队空间`] : []),
+    `单文件最大 ${gb(plan.singleFileLimitBytes)}`,
+    plan.collectionParticipantLimit ? `每个收集任务最多 ${plan.collectionParticipantLimit} 人` : '收集提交人数不限',
+    plan.activeCollectionLimit ? `同时进行 ${plan.activeCollectionLimit} 个收集任务` : '进行中的收集任务数不限',
+    id === 'free' ? '文件临时保存，到期自动失效' : plan.permanent ? '永久权益' : `权益有效期 ${plan.validityDays} 天`,
+  ]
+  return plan
 }
 
 export function normalizeGuestUsageStore(value = {}) {
@@ -326,13 +358,13 @@ export function normalizeAccountUser(user = {}) {
   const testEnterpriseKeys = [id, base.username, base.email, base.phone]
     .map((value) => String(value || '').trim().toLowerCase())
     .filter(Boolean)
-  const testEnterpriseOverride = testEnterpriseForAllUsers
-    || (testEnforceEnterpriseAllowlist && testEnterpriseKeys.some((value) => TEST_ENTERPRISE_USER_KEYS.has(value)))
+  const testEnterpriseOverride = !normalizeRecordDate(user.planManagedAt) && (testEnterpriseForAllUsers
+    || (testEnforceEnterpriseAllowlist && testEnterpriseKeys.some((value) => TEST_ENTERPRISE_USER_KEYS.has(value))))
   // 白名单仅补充演示企业权益；普通账号的真实购买和后台配置不能被测试开关降级。
   const planId = testEnterpriseOverride ? 'enterprise' : normalizePlanId(user.planId || base.planId || 'free')
   const plan = configuredAccountPlan(planId)
-  const planExpiresAt = plan.permanent ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
-  if (testEnterpriseOverride || (plan.permanent && (user.planExpiresAt || base.planExpiresAt))) runtime.metadataNeedsPersist = true
+  const planExpiresAt = testEnterpriseOverride ? null : normalizeRecordDate(user.planExpiresAt || base.planExpiresAt)
+  if (testEnterpriseOverride) runtime.metadataNeedsPersist = true
   const now = new Date().toISOString()
   return {
     ...base,
@@ -341,6 +373,8 @@ export function normalizeAccountUser(user = {}) {
     planId,
     planStartedAt: normalizeRecordDate(user.planStartedAt || base.planStartedAt),
     planExpiresAt,
+    planPermanent: testEnterpriseOverride || (user.planPermanent ?? base.planPermanent ?? (!planExpiresAt && Boolean(ACCOUNT_PLANS[planId]?.permanent))),
+    planManagedAt: normalizeRecordDate(user.planManagedAt),
     organizationId: trimRecordString(user.organizationId || base.organizationId, 80),
     organizationRole: ['owner', 'admin', 'member'].includes(user.organizationRole) ? user.organizationRole : '',
     status: user.status === 'disabled' ? 'disabled' : 'active',
@@ -394,6 +428,8 @@ export function mergeAccountUser(existing = null, incoming = {}) {
     planId: base.planId || normalized.planId || 'free',
     planStartedAt: base.planStartedAt || null,
     planExpiresAt: base.planExpiresAt || null,
+    planPermanent: base.planPermanent ?? normalized.planPermanent ?? false,
+    planManagedAt: base.planManagedAt || null,
     organizationId: normalized.organizationId || base.organizationId,
     organizationRole: normalized.organizationRole || base.organizationRole,
     status: base.status === 'disabled' ? 'disabled' : normalized.status || base.status || 'active',

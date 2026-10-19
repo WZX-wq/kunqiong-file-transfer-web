@@ -20,7 +20,7 @@ import nodemailer from 'nodemailer'
 import QRCode from 'qrcode'
 
 import {
-  ACCOUNT_PLANS, ACCOUNT_PLAN_RANK, ACCOUNT_SINGLE_FILE_BYTES, AUTH_COOKIE_NAME,
+  ACCOUNT_PLANS, ACCOUNT_PLAN_RANK, AUTH_COOKIE_NAME,
   DEFAULT_ACCOUNT_MESSAGES, DEFAULT_WEB_MEMBER_PACKAGE_IDS, EXPIRING_SOON_MS,
   JOIN_REQUEST_MAX_PER_WINDOW, JOIN_REQUEST_REJECT_COOLDOWN_MS, JOIN_REQUEST_WINDOW_MS,
   MAX_ACCOUNT_RECORDS, MAX_VERIFICATION_CODES, OAUTH_STATE_TTL_MS,
@@ -46,7 +46,7 @@ import {
   publicUser, trimRecordString,
 } from '../lib/metadata-normalizers.js'
 
-import { metadata, persistMetadata, persistAuditLog } from '../lib/metadata-store.js'
+import { metadata, persistMetadata, persistAuditLog, readAuditLogs } from '../lib/metadata-store.js'
 import { contactMatchesUser } from '../lib/contact-input.js'
 import { booleanInput, dateInput, integerInput, objectInput } from '../lib/input-validation.js'
 
@@ -121,6 +121,7 @@ export function upgradeOrderSummary(order = {}) {
     orderNo: order.orderNo,
     planId: order.planId,
     planLabel: plan.label,
+    retired: Boolean(plan.retired),
     status,
     amount: order.amount,
     payType: order.payType || 1,
@@ -128,6 +129,8 @@ export function upgradeOrderSummary(order = {}) {
     remotePackageId: order.remotePackageId || null,
     remotePackageName: order.remotePackageName || '',
     remotePackageDays: order.remotePackageDays || null,
+    ...(Object.hasOwn(order, 'entitlementDays') ? { entitlementDays: order.entitlementDays } : {}),
+    permanent: Object.hasOwn(order, 'entitlementDays') ? order.entitlementDays === null : order.status === 'paid' ? !order.remoteExpireAt && order.planId === 'enterprise' : plan.permanent,
     payment: status === 'pending_payment' ? publicPaymentPayload(order.payment) : null,
     createdAt: order.createdAt,
     paymentExpiresAt: upgradePaymentDeadline(order) ? new Date(upgradePaymentDeadline(order)).toISOString() : null,
@@ -179,14 +182,14 @@ export function accountPlanRank(planId) {
 }
 
 export function configuredAccountPlans() {
-  return Object.keys(ACCOUNT_PLANS).map(configuredAccountPlan)
+  return Object.values(ACCOUNT_PLANS).filter(plan => !plan.retired).map(plan => configuredAccountPlan(plan.id))
 }
 
 export function accountPlanForUser(user = {}) {
   const plan = configuredAccountPlan(user.planId)
   const expiresAt = user.planExpiresAt ? new Date(user.planExpiresAt).getTime() : 0
   if (plan.id !== 'free' && Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now()) return configuredAccountPlan('free')
-  return plan
+  return { ...plan, permanent: plan.id !== 'free' && !user.planExpiresAt && (user.planPermanent ?? ACCOUNT_PLANS[plan.id]?.permanent ?? false) }
 }
 
 // 个人套餐 = 用户**自己**订购的套餐，只取决于 user.planId，与团队归属无关。
@@ -202,7 +205,7 @@ export function accountPersonalPlanForUser(user = {}) {
 export function organizationTeamPlanForOrganization(organization) {
   if (!organization) return configuredAccountPlan('free')
   if (organization.teamPlanId) {
-    return accountPlanForUser({ planId: organization.teamPlanId, planExpiresAt: organization.teamPlanExpiresAt })
+    return accountPlanForUser({ planId: organization.teamPlanId, planExpiresAt: organization.teamPlanExpiresAt, planPermanent: organization.teamPlanPermanent })
   }
   const ownerPlan = accountPersonalPlanForUser(accountUserById(organization.ownerUserId) || {})
   if (ownerPlan.team) return ownerPlan
@@ -238,9 +241,10 @@ export function syncOrganizationTeamPlanFromOwner(userOrId) {
     const user = accountUserById(userId) || (typeof userOrId === 'object' ? userOrId : {})
     const plan = accountPersonalPlanForUser(user)
     const expiresAt = plan.permanent ? null : user.planExpiresAt || null
-    if (organization.teamPlanId !== plan.id || organization.teamPlanExpiresAt !== expiresAt) {
+    if (organization.teamPlanId !== plan.id || organization.teamPlanExpiresAt !== expiresAt || organization.teamPlanPermanent !== plan.permanent) {
       organization.teamPlanId = plan.id
       organization.teamPlanStartedAt = organization.teamPlanStartedAt || user.planStartedAt || new Date().toISOString()
+      organization.teamPlanPermanent = plan.permanent
       organization.teamPlanExpiresAt = expiresAt
       organization.updatedAt = new Date().toISOString()
       changed = true
@@ -263,7 +267,7 @@ export function accountTeamEntitlementForUser(user = {}) {
   const personal = accountPersonalPlanForUser(user)
   const organization = accountOrganizationForUser(userId)
   if (!organization) return personal
-  const teamPlan = organizationTeamPlanForOrganization(organization)
+  const teamPlan = accountOrganizationPlanForUser(user, organization)
   if (!teamPlan.team) return personal
   // 不把团队套餐的个人 totalBytes / permanent / label 套到成员账号上。
   return {
@@ -286,6 +290,36 @@ export function accountEffectivePlanForUser(user = {}) {
 export function organizationTeamSpaceBytes(organization) {
   const plan = organizationTeamPlanForOrganization(organization)
   return plan.team ? Number(plan.teamSpaceBytes || 0) : 0
+}
+
+// An explicit administrator plan assignment caps this account's borrowed team rights.
+// Keep the cap after payment: a new purchase restores only the newly purchased features.
+export function accountOrganizationPlanForUser(userOrId, organization = null) {
+  const user = accountUserById(typeof userOrId === 'string' ? userOrId : userOrId?.id) || userOrId || {}
+  const personal = accountPersonalPlanForUser(user)
+  const teamPlan = organizationTeamPlanForOrganization(organization || accountOrganizationForUser(user.id))
+  if (user.planManagedAt && accountPlanRank(personal.id) <= accountPlanRank(teamPlan.id)) return personal
+  return teamPlan
+}
+
+export function restoreAdminPlanRestrictions() {
+  const edits = new Map()
+  for (const log of readAuditLogs()) {
+    if (log.type !== 'admin' || log.action !== '更新用户状态或权益' || log.details?.planChanged === false
+      || !Object.hasOwn(ACCOUNT_PLANS, log.details?.planId)) continue
+    const time = new Date(log.createdAt).getTime()
+    if (!Number.isFinite(time) || time <= 0 || time > Date.now()) continue
+    const previous = edits.get(log.targetId)
+    if (!previous || time > new Date(previous.createdAt).getTime()) edits.set(log.targetId, log)
+  }
+  let changed = false
+  for (const user of Object.values(metadata.users || {})) {
+    const edit = edits.get(user.id)
+    if (user.planManagedAt || !edit || user.planId !== edit.details.planId) continue
+    user.planManagedAt = edit.createdAt
+    changed = true
+  }
+  if (changed) runtime.metadataNeedsPersist = true
 }
 
 export function publicOrganization(organization, viewerId = '') {
@@ -339,7 +373,7 @@ export function accountOrganizationForUser(userId) {
 }
 
 export function isOrganizationManager(organization, userId) {
-  return ['owner', 'admin'].includes(organizationRoleForUser(organization, userId))
+  return ['owner', 'admin'].includes(organizationRoleForUser(organization, userId)) && accountOrganizationPlanForUser(userId, organization).team
 }
 
 export function organizationBySlug(slug) {
@@ -410,6 +444,7 @@ export function createOrganization(user, name) {
     teamPlanId: ownerPlan.id,
     teamPlanStartedAt: user.planStartedAt || new Date().toISOString(),
     teamPlanExpiresAt: ownerPlan.permanent ? null : user.planExpiresAt || null,
+    teamPlanPermanent: ownerPlan.permanent,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     members: [{
@@ -469,7 +504,7 @@ export function accountWorkspacePayload(user) {
   const organization = accountOrganizationForUser(user.id)
   // plan 仍是「个人套餐」，加入团队不改变它；团队侧能力单独放在 teamEntitlement。
   const plan = accountPersonalPlanForUser(stored)
-  const teamPlan = organizationTeamPlanForOrganization(organization)
+  const teamPlan = accountOrganizationPlanForUser(stored, organization)
   return {
     plan,
     teamEntitlement: {
@@ -477,11 +512,12 @@ export function accountWorkspacePayload(user) {
       organizationName: organization?.name || '',
       role: organizationRoleForUser(organization, stored.id),
       canManage: isOrganizationManager(organization, stored.id),
-      teamSpaceBytes: organizationTeamSpaceBytes(organization),
+      teamSpaceBytes: teamPlan.team ? Number(teamPlan.teamSpaceBytes || 0) : 0,
+      restrictedByAdmin: Boolean(stored.planManagedAt),
       teamPlanId: organization ? teamPlan.id : '',
       teamPlanLabel: organization ? teamPlan.label : '',
-      teamPlanExpiresAt: organizationTeamPlanExpiresAtForOrganization(organization),
-      canUseTeamSpace: Boolean(organization && accountEffectivePlanForUser(stored).team),
+      teamPlanExpiresAt: stored.planManagedAt && teamPlan.id === plan.id ? stored.planExpiresAt || null : organizationTeamPlanExpiresAtForOrganization(organization),
+      canUseTeamSpace: Boolean(organization && teamPlan.team),
     },
     planStartedAt: stored.planStartedAt || null,
     planExpiresAt: plan.permanent ? null : stored.planExpiresAt || null,
@@ -642,7 +678,7 @@ export function publicAccountUser(user = {}) {
   const stored = accountUserById(user.id) || normalizeAccountUser(user) || publicUser(user)
   const organization = accountOrganizationForUser(stored.id)
   const personalPlan = accountPersonalPlanForUser(stored)
-  const teamPlan = organizationTeamPlanForOrganization(organization)
+  const teamPlan = accountOrganizationPlanForUser(stored, organization)
   return {
     ...publicUser(stored),
     capacity: accountUsageForUser(stored.id),
@@ -655,12 +691,13 @@ export function publicAccountUser(user = {}) {
       organizationName: organization?.name || '',
       role: organizationRoleForUser(organization, stored.id),
       canManage: isOrganizationManager(organization, stored.id),
-      teamSpaceBytes: organizationTeamSpaceBytes(organization),
+      teamSpaceBytes: teamPlan.team ? Number(teamPlan.teamSpaceBytes || 0) : 0,
+      restrictedByAdmin: Boolean(stored.planManagedAt),
       teamPlanId: organization ? teamPlan.id : '',
       teamPlanLabel: organization ? teamPlan.label : '',
-      teamPlanExpiresAt: organizationTeamPlanExpiresAtForOrganization(organization),
+      teamPlanExpiresAt: stored.planManagedAt && teamPlan.id === personalPlan.id ? stored.planExpiresAt || null : organizationTeamPlanExpiresAtForOrganization(organization),
       // 成员可用团队空间上传；这是共享能力，不代表个人升级
-      canUseTeamSpace: Boolean(organization && accountTeamEntitlementForUser(stored).team),
+      canUseTeamSpace: Boolean(organization && teamPlan.team),
     },
     // 不再下发 isAdmin：后台入口由账号口令控制，不由鲲穹账号身份决定。
     // 前端顶栏据此不再给白名单账号显示「后台管理」按钮，避免误导。
@@ -897,13 +934,13 @@ export function accountUsageForUser(userId) {
     shareCount: ownedShares.length,
     collectionCount: ownedCollections.length,
     fileCount,
-    singleFileLimitBytes: ACCOUNT_SINGLE_FILE_BYTES,
+    singleFileLimitBytes: plan.singleFileLimitBytes,
   }
 }
 
-export function accountTeamUsageForOrganization(organization) {
-  // 团队空间容量取自组织套餐，成员不贡献容量，所有权转让也不会重置额度。
-  const plan = organizationTeamPlanForOrganization(organization)
+export function accountTeamUsageForOrganization(organization, userOrId = null) {
+  // Keep organization assets, but apply explicit administrative limits to the acting account.
+  const plan = userOrId ? accountOrganizationPlanForUser(userOrId, organization) : organizationTeamPlanForOrganization(organization)
   const shares = metadata.shares.filter((share) => share.teamResource && share.teamOrganizationId === organization?.id && !share.cleanedAt)
   const usedBytes = shares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const totalBytes = Number(plan.teamSpaceBytes || 0)
@@ -917,7 +954,7 @@ export function accountTeamUsageForOrganization(organization) {
     shareCount: shares.length,
     collectionCount: 0,
     fileCount: shares.reduce((sum, share) => sum + (share.files?.length || 0), 0),
-    singleFileLimitBytes: ACCOUNT_SINGLE_FILE_BYTES,
+    singleFileLimitBytes: plan.singleFileLimitBytes,
   }
 }
 
@@ -944,7 +981,7 @@ export function accountBenefitsForUser(user = {}) {
     // 团队空间：所有者看自己套餐是否具备；成员看「已加入团队空间」，
     // 但明确标注为团队共享能力，避免误导成个人已升级。
     isMember
-      ? { label: '团队空间', detail: `已加入「${organization.name}」，共享其团队空间容量`, enabled: true }
+      ? { label: '团队空间', detail: accountOrganizationPlanForUser(stored, organization).team ? `已加入「${organization.name}」，共享其团队空间容量` : '当前套餐不含团队功能，请购买团队套餐后使用', enabled: accountOrganizationPlanForUser(stored, organization).team }
       : { label: '团队空间', detail: plan.team ? '可创建团队空间并管理成员' : '团队空间需要团队版或企业版', enabled: plan.team },
   ]
 }
@@ -1000,6 +1037,7 @@ export function validateShareRecipient(share, viewer) {
     if (!organization) return { ok: false, status: 404, message: '团队资源所属团队已不存在' }
     if (!viewer?.id) return { ok: false, status: 401, message: '请先登录团队成员账号' }
     if (!organization.members.some(member => member.userId === viewer.id && member.status === 'active')) return { ok: false, status: 403, message: '当前账号不是该团队的有效成员' }
+    if (!accountOrganizationPlanForUser(viewer.id, organization).team) return { ok: false, status: 403, message: '管理员已调整当前套餐，请购买团队套餐后使用团队功能' }
   }
   if (!share.deliveryRecipients?.length) return { ok: true }
   if (!viewer?.id) return { ok: false, status: 401, code: 'directed_login_required', message: '此文件为定向分享，请使用收件账号登录' }
@@ -1193,21 +1231,9 @@ export function matchWebMemberPackageFromPackages(planId, packages) {
     .toLowerCase()
   const packageName = (item) => normalizePackageName(item.name)
   const label = normalizePackageName(planLabel)
-  const aliases = {
-    member: ['会员', '月卡', '季卡', '半年卡', '年卡', '永久'],
-    team: ['团队', '成长', '进阶', '半年', '年卡'],
-    enterprise: ['企业', '永久'],
-  }
-  const aliasMatched = list.find((item) => aliases[planId]?.some((alias) => packageName(item).includes(alias)))
-  const durationMatched = planId === 'enterprise'
-    ? list.find((item) => Number(item.days) >= 365 * 1000)
-    : planId === 'team'
-      ? list.find((item) => Number(item.days) >= 90 && Number(item.days) < 365 * 1000)
-      : list.find((item) => Number(item.days) >= 30 && Number(item.days) < 90)
-  return list.find((item) => packageName(item).includes(label) || label.includes(packageName(item)))
-    || aliasMatched
-    || durationMatched
-    || null
+  const expectedDays = { member: 30, team: 90, halfyear: 180, year: 365, enterprise: 0 }[planId]
+  const compatible = list.filter(item => planId === 'enterprise' ? Number(item.days) === 0 || Number(item.days) >= 36500 : Number(item.days) === expectedDays)
+  return compatible.find(item => packageName(item) === label) || compatible[0] || null
 }
 
 // 远端套餐实价缓存 remotePricingCache 在 server/state.js（展示与订单计价必须同源）
@@ -1219,7 +1245,7 @@ export async function remoteUpgradePricing(session) {
   const info = await getWebMemberPackageInfo(session)
   const packages = Array.isArray(info.packages) ? info.packages : []
   const pricing = {}
-  for (const planId of ['member', 'team', 'enterprise']) {
+  for (const { id: planId } of configuredAccountPlans().filter(plan => plan.id !== 'free')) {
     try {
       const pkg = selectWebMemberPackage(planId, packages)
       pricing[planId] = { priceCents: paymentAmountCents(pkg.price_yuan), validityDays: planId === 'enterprise' ? null : Number(pkg.days), packageName: trimRecordString(pkg.name, 80), packageId: Number(pkg.id), available: true }
@@ -1445,15 +1471,18 @@ export function activatePaidUpgradeOrder(order, expireAt = null) {
   const remoteExpiry = checkedExpiry ? new Date(checkedExpiry).getTime() : 0
   const currentPlan = accountPlanForUser(account)
   const renewalBase = currentPlan.id === order.planId ? Math.max(Date.now(), currentExpiry || 0) : Date.now()
+  const frozenContract = Object.hasOwn(order, 'entitlementDays')
+  const localContract = frozenContract && order.entitlementSource !== 'provider'
+  const permanent = frozenContract ? order.entitlementDays === null : plan.permanent
   let packageDays
-  try { packageDays = integerInput(order.remotePackageDays ?? plan.validityDays ?? 30,'套餐有效天数',1,3650) }
+  try { packageDays = integerInput((frozenContract ? order.entitlementDays : order.remotePackageDays ?? plan.validityDays) ?? 30,'套餐有效天数',1,3650) }
   catch { throw httpError(502,'支付服务返回的套餐有效天数无效，请稍后重新查询') }
-  const nextExpiry = Math.max(remoteExpiry, renewalBase + packageDays * 86400000)
+  const nextExpiry = localContract ? renewalBase + packageDays * 86400000 : Math.max(remoteExpiry, renewalBase + packageDays * 86400000)
   if (nextExpiry > Date.now() + 3650 * 86400000) throw httpError(502,'套餐有效期超出允许范围')
   const keepHigherPlan = accountPlanRank(currentPlan.id) > accountPlanRank(order.planId)
-  if (!keepHigherPlan) account.planId = order.planId
+  if (!keepHigherPlan) { account.planId = order.planId; account.planPermanent = permanent }
   account.planStartedAt = account.planStartedAt || new Date().toISOString()
-  if (!keepHigherPlan) account.planExpiresAt = plan.permanent
+  if (!keepHigherPlan) account.planExpiresAt = permanent
     ? null
     : new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
   account.updatedAt = new Date().toISOString()
@@ -1461,7 +1490,7 @@ export function activatePaidUpgradeOrder(order, expireAt = null) {
   order.paymentQueryCredential = null
   order.paymentRequiresLogin = false
   order.paidAt = new Date().toISOString()
-  order.remoteExpireAt = plan.permanent
+  order.remoteExpireAt = permanent
     ? null
     : new Date(Math.max(currentExpiry, nextExpiry)).toISOString()
   order.updatedAt = new Date().toISOString()
@@ -1472,7 +1501,7 @@ export function activatePaidUpgradeOrder(order, expireAt = null) {
     category: 'other',
     eventType: 'membershipActivated',
     title: '会员权益已开通',
-    body: plan.permanent
+    body: permanent
       ? `你的${plan.label}已开通，文件永久保存。`
       : `你的${plan.label}已开通，有效期至${new Date(account.planExpiresAt).toLocaleString('zh-CN')}。`,
   })

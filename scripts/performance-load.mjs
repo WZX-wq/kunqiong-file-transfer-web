@@ -13,8 +13,23 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { readFixtureMetadata } from './lib/read-audit-fixture.mjs'
 
 const root = path.resolve(import.meta.dirname, '..')
-const output = path.resolve(process.env.PERFORMANCE_EVIDENCE_DIR || path.join(root, 'docs/performance-evidence'))
-const reportPath = path.resolve(process.env.PERFORMANCE_REPORT_PATH || path.join(root, 'docs/PERFORMANCE-本机压测报告.md'))
+function readCgroupLimit(filename) {
+  try {
+    const value = fs.readFileSync(filename, 'utf8').trim()
+    return value === 'max' ? null : value
+  } catch { return null }
+}
+const cgroupCpuMax = readCgroupLimit('/sys/fs/cgroup/cpu.max')
+const cgroupMemoryMax = readCgroupLimit('/sys/fs/cgroup/memory.max')
+const cgroupCpuQuota = cgroupCpuMax?.split(/\s+/)
+const cpuQuotaCores = cgroupCpuQuota?.[1] && cgroupCpuQuota[0] !== 'max'
+  ? Number(cgroupCpuQuota[0]) / Number(cgroupCpuQuota[1])
+  : null
+const memoryLimitGiB = cgroupMemoryMax ? Number(cgroupMemoryMax) / 1024 ** 3 : null
+const collectionLoadOnly = process.argv.includes('--collections-only') || process.env.PERFORMANCE_COLLECTION_LOAD_ONLY === 'true'
+const collectionRunDirectory = path.join(os.tmpdir(), `kunqiong-collection-load-${Date.now()}`)
+const output = path.resolve(process.env.PERFORMANCE_EVIDENCE_DIR || (collectionLoadOnly ? collectionRunDirectory : path.join(root, 'docs/performance-evidence')))
+const reportPath = path.resolve(process.env.PERFORMANCE_REPORT_PATH || (collectionLoadOnly ? path.join(output, '收集提交压测报告.md') : path.join(root, 'docs/PERFORMANCE-本机压测报告.md')))
 const stageSeconds = Number(process.env.PERFORMANCE_STAGE_SECONDS || 8)
 assert.ok(stageSeconds >= 2 && stageSeconds <= 30, 'Stage duration must be 2–30 seconds')
 fs.mkdirSync(output, { recursive: true })
@@ -126,7 +141,7 @@ async function stop() {
 }
 const cookie = index => 'kunqiong_session=perf-session-perf-user-' + (index % 20)
 async function metricsSnapshot(reset = false) { const response = await fetch(base + '/__performance/metrics' + (reset ? '?reset=1' : '')); assert.equal(response.status, 200); return response.json() }
-const stages = [], failures = [], auditRequestIds = []
+const stages = [], collectionStages = [], failures = [], auditRequestIds = []
 const rounded = value => Math.round(value * 100) / 100
 function percentile(values, p) { if (!values.length) return 0; const sorted = [...values].sort((a, b) => a - b); return rounded(sorted[Math.ceil(p * sorted.length) - 1]) }
 function summary(values) { return { count: values.length, p50Ms: percentile(values, .5), p95Ms: percentile(values, .95), p99Ms: percentile(values, .99), maxMs: rounded(Math.max(0, ...values)) } }
@@ -138,6 +153,16 @@ async function request(url, { user = 0, method = 'GET', body, hash = false, expe
   else { const buffer = Buffer.from(await response.arrayBuffer()); bytes = buffer.length; if (validate || body || response.status !== expectedStatus) { try { data = JSON.parse(buffer.toString()) } catch {} } }
   const valid = response.status === expectedStatus && (expectedBytes === undefined || bytes === expectedBytes) && (!hash || digest.digest('hex') === expectedHash) && (!validate || validate(data))
   return { status: response.status, bytes, valid, data, requestId: response.headers.get('x-request-id') }
+}
+async function submitCollectionFile(token, sequence) {
+  const form = new FormData()
+  form.append('participantName', `压测提交者-${sequence + 1}`)
+  form.append('files', new Blob([Buffer.alloc(1024, 0x61)], { type: 'text/plain' }), `participant-${sequence + 1}.txt`)
+  const response = await fetch(base + '/api/collections/' + token + '/submissions', { method: 'POST', body: form, signal: AbortSignal.timeout(30000) })
+  const buffer = Buffer.from(await response.arrayBuffer())
+  let data
+  try { data = JSON.parse(buffer.toString()) } catch {}
+  return { status: response.status, bytes: buffer.length, valid: response.status === 201 && Boolean(data?.submission?.id), data }
 }
 const apiMix = [
   { name: '登录会话', url: '/api/auth/me', validate: data => Boolean(data?.user?.id) },
@@ -160,7 +185,7 @@ async function stage(name, concurrency, operation, { seconds = stageSeconds, cou
         const label = result.endpoint || name; (endpoints[label] ||= []).push(elapsed)
         statusCounts[result.status] = (statusCounts[result.status] || 0) + 1
         if (result.valid) successful++
-        else if (errors.length < 10) errors.push({ sequence, status: result.status, endpoint: label, message: 'Status, body, bytes or checksum validation failed' })
+        else if (errors.length < 10) errors.push({ sequence, status: result.status, endpoint: label, message: result.data?.message || 'Status, body, bytes or checksum validation failed' })
       } catch (error) { durations.push(performance.now() - requestStarted); statusCounts.transport_error = (statusCounts.transport_error || 0) + 1; if (errors.length < 10) errors.push({ sequence, message: error.message }) }
     }
   }))
@@ -185,44 +210,60 @@ const mixedRequest = async (sequence, worker) => {
 let baselineMetadataBytes, rateLimit, auditVerification
 try {
   await start(); baselineMetadataBytes = (await metricsSnapshot()).metadataBytes
-  for (let index = 0; index < 10; index++) assert.ok((await mixedRequest(index, index)).valid, 'Warmup endpoint response')
-  await stage('健康检查基线', 50, () => request('/api/health', { validate: data => data?.ok === true }), { seconds: 5 })
-  await stage('前端页面基线', 50, () => request('/team'), { seconds: 5 })
-  for (const concurrency of [1, 10, 30, 50]) await stage('业务混合读取 C' + concurrency, concurrency, mixedRequest)
-  await stage('业务读取持续稳定性 C30', 30, mixedRequest, { seconds: 30 })
-  for (const concurrency of [1, 4, 8]) {
-    await stage('16MiB分片上传 C' + concurrency, concurrency, async (sequence, worker) => {
-      const name = `perf-upload-${concurrency}-${sequence}.bin`
-      const session = await request('/api/upload-sessions', { user: worker, method: 'POST', expectedStatus: 201, body: { mode: 'team_resource', chunkSize: chunkBytes, expiryDays: '0', downloadLimit: 'unlimited', files: [{ name, relativePath: name, size: transferBytes, mimeType: 'application/octet-stream' }] } })
-      assert.ok(session.valid, 'Upload session creation ' + JSON.stringify(session.data)); const id = session.data.sessionId
-      for (let index = 0; index < 4; index++) {
-        const chunk = transferContent.subarray(index * chunkBytes, (index + 1) * chunkBytes), form = new FormData()
-        form.append('fileIndex', '0'); form.append('chunkIndex', String(index)); form.append('totalChunks', '4'); form.append('chunkHash', crypto.createHash('sha256').update(chunk).digest('hex')); form.append('chunk', new Blob([chunk]), 'chunk')
-        assert.ok((await request('/api/upload-sessions/' + id + '/chunks', { user: worker, method: 'POST', body: form })).valid, 'Upload chunk acknowledgement')
-      }
-      const done = await request('/api/upload-sessions/' + id + '/complete', { user: worker, method: 'POST', body: {}, expectedStatus: 201 })
-      assert.ok(done.valid && done.data.share.files[0].scanEngine === 'clamav', 'Upload completion and scan')
-      const original = JSON.parse(fs.readFileSync(metadataFile, 'utf8')).shares.find(share => share.id === done.data.share.id)
-      const disk = fs.readFileSync(path.join(fixture, 'storage/files', original.id, original.files[0].storedName))
-      const valid = disk.length === transferBytes && crypto.createHash('sha256').update(disk).digest('hex') === expectedHash
-      return { status: 201, valid, bytes: transferBytes }
-    }, { count: concurrency, kind: 'upload' })
-  }
-  for (const concurrency of [1, 4, 8]) await stage('16MiB完整下载 C' + concurrency, concurrency, () => request('/api/shares/perf-download/files/0/download', { hash: true, expectedBytes: transferBytes }), { count: concurrency * 2, kind: 'download' })
-  let invalid = 0, limited = 0, unexpected = 0
-  for (let index = 0; index < 65; index++) { const response = await request('/api/collections', { method: 'POST', body: { title: '' }, expectedStatus: 400 }); if (response.status === 400) invalid++; else if (response.status === 429) limited++; else unexpected++ }
-  rateLimit = { attempts: 65, validationRejected: invalid, rateLimited: limited, unexpected, passed: invalid === 60 && limited === 5 && unexpected === 0 }
-  assert.ok(rateLimit.passed, 'Resource creation rate limit')
-  await metricsSnapshot()
-  const durableAudit = readFixtureMetadata(metadataFile).auditLogs
-  auditVerification = { retained: durableAudit.length, checkedRequestIds: auditRequestIds.length, matchedRequestIds: auditRequestIds.filter(id => durableAudit.some(row => row.details?.requestId === id)).length }
-  assert.equal(auditVerification.matchedRequestIds, auditVerification.checkedRequestIds, 'Audit remains enabled and persisted under load')
-  assert.equal(auditVerification.retained, 5000, 'Audit retention cap')
-  await stop()
-  // Attribution experiment only: same fixture, no modification to repository source or service.
-  if (process.env.PERFORMANCE_SKIP_DIAGNOSTIC !== 'true') {
-    await start(true)
-    await stage('诊断对照：临时关闭访问审计 C30', 30, mixedRequest, { diagnostic: true })
+  if (collectionLoadOnly) {
+    for (const target of [10, 30, 100, 300, 500]) {
+      const created = await request('/api/collections', { user: 0, method: 'POST', expectedStatus: 201, body: { title: `收集人数压测-${target}`, maxFileSizeMb: 1 }, validate: data => Boolean(data?.collection?.token && data?.manageToken) })
+      assert.ok(created.valid, 'Collection creation ' + JSON.stringify(created.data))
+      const token = created.data.collection.token
+      const concurrency = Math.min(target, 4)
+      const measured = await stage(`收集任务提交 ${target} 人`, concurrency, sequence => submitCollectionFile(token, sequence), { count: target, kind: 'collection-submit' })
+      const persisted = readFixtureMetadata(metadataFile).collections.find(item => item.token === token)?.submissions?.length || 0
+      const row = { targetParticipants: target, concurrency, accepted: measured.successful, failures: measured.errorCount, persistedParticipants: persisted, p50Ms: measured.latency.p50Ms, p95Ms: measured.latency.p95Ms, p99Ms: measured.latency.p99Ms, requestsPerSecond: measured.requestsPerSecond, peakRssMiB: measured.server.peakRssMiB, metadataBytes: measured.server.metadataBytes }
+      collectionStages.push(row)
+      console.log(`COLLECTION target=${target} accepted=${row.accepted} persisted=${persisted} p95=${row.p95Ms}ms errors=${row.failures}`)
+      if (row.accepted !== target || row.persistedParticipants !== target) failures.push({ stage: `收集任务提交 ${target} 人`, message: `Expected ${target} persisted submissions; accepted=${row.accepted}, persisted=${row.persistedParticipants}` })
+    }
+    await stop()
+  } else {
+    for (let index = 0; index < 10; index++) assert.ok((await mixedRequest(index, index)).valid, 'Warmup endpoint response')
+    await stage('健康检查基线', 50, () => request('/api/health', { validate: data => data?.ok === true }), { seconds: 5 })
+    await stage('前端页面基线', 50, () => request('/team'), { seconds: 5 })
+    for (const concurrency of [1, 10, 30, 50]) await stage('业务混合读取 C' + concurrency, concurrency, mixedRequest)
+    await stage('业务读取持续稳定性 C30', 30, mixedRequest, { seconds: 30 })
+    for (const concurrency of [1, 4, 8]) {
+      await stage('16MiB分片上传 C' + concurrency, concurrency, async (sequence, worker) => {
+        const name = `perf-upload-${concurrency}-${sequence}.bin`
+        const session = await request('/api/upload-sessions', { user: worker, method: 'POST', expectedStatus: 201, body: { mode: 'team_resource', chunkSize: chunkBytes, expiryDays: '0', downloadLimit: 'unlimited', files: [{ name, relativePath: name, size: transferBytes, mimeType: 'application/octet-stream' }] } })
+        assert.ok(session.valid, 'Upload session creation ' + JSON.stringify(session.data)); const id = session.data.sessionId
+        for (let index = 0; index < 4; index++) {
+          const chunk = transferContent.subarray(index * chunkBytes, (index + 1) * chunkBytes), form = new FormData()
+          form.append('fileIndex', '0'); form.append('chunkIndex', String(index)); form.append('totalChunks', '4'); form.append('chunkHash', crypto.createHash('sha256').update(chunk).digest('hex')); form.append('chunk', new Blob([chunk]), 'chunk')
+          assert.ok((await request('/api/upload-sessions/' + id + '/chunks', { user: worker, method: 'POST', body: form })).valid, 'Upload chunk acknowledgement')
+        }
+        const done = await request('/api/upload-sessions/' + id + '/complete', { user: worker, method: 'POST', body: {}, expectedStatus: 201 })
+        assert.ok(done.valid && done.data.share.files[0].scanEngine === 'clamav', 'Upload completion and scan')
+        const original = JSON.parse(fs.readFileSync(metadataFile, 'utf8')).shares.find(share => share.id === done.data.share.id)
+        const disk = fs.readFileSync(path.join(fixture, 'storage/files', original.id, original.files[0].storedName))
+        const valid = disk.length === transferBytes && crypto.createHash('sha256').update(disk).digest('hex') === expectedHash
+        return { status: 201, valid, bytes: transferBytes }
+      }, { count: concurrency, kind: 'upload' })
+    }
+    for (const concurrency of [1, 4, 8]) await stage('16MiB完整下载 C' + concurrency, concurrency, () => request('/api/shares/perf-download/files/0/download', { hash: true, expectedBytes: transferBytes }), { count: concurrency * 2, kind: 'download' })
+    let invalid = 0, limited = 0, unexpected = 0
+    for (let index = 0; index < 65; index++) { const response = await request('/api/collections', { method: 'POST', body: { title: '' }, expectedStatus: 400 }); if (response.status === 400) invalid++; else if (response.status === 429) limited++; else unexpected++ }
+    rateLimit = { attempts: 65, validationRejected: invalid, rateLimited: limited, unexpected, passed: invalid === 60 && limited === 5 && unexpected === 0 }
+    assert.ok(rateLimit.passed, 'Resource creation rate limit')
+    await metricsSnapshot()
+    const durableAudit = readFixtureMetadata(metadataFile).auditLogs
+    auditVerification = { retained: durableAudit.length, checkedRequestIds: auditRequestIds.length, matchedRequestIds: auditRequestIds.filter(id => durableAudit.some(row => row.details?.requestId === id)).length }
+    assert.equal(auditVerification.matchedRequestIds, auditVerification.checkedRequestIds, 'Audit remains enabled and persisted under load')
+    assert.equal(auditVerification.retained, 5000, 'Audit retention cap')
+    await stop()
+    // Attribution experiment only: same fixture, no modification to repository source or service.
+    if (process.env.PERFORMANCE_SKIP_DIAGNOSTIC !== 'true') {
+      await start(true)
+      await stage('诊断对照：临时关闭访问审计 C30', 30, mixedRequest, { diagnostic: true })
+    }
   }
 } catch (error) { failures.push({ stage: 'harness', message: error.stack || error.message }); console.error(error.message) }
 finally { await stop(); await new Promise(resolve => scanner.close(resolve)); fs.writeFileSync(path.join(output, 'server.log'), serverLog) }
@@ -236,7 +277,8 @@ function profileSummary(filename) {
   return active.sort((a, b) => b[1] - a[1]).slice(0, 15).map(([frame, samples]) => ({ frame, samples, activeSamplePercent: rounded(100 * samples / total) }))
 }
 const normal = stages.find(stage => stage.name === '业务混合读取 C30'), diagnostic = stages.find(stage => stage.diagnostic)
-const result = { executedAt: new Date().toISOString(), fixture, environment: { os: os.type() + ' ' + os.release(), node: process.version, cpu: os.cpus()[0]?.model, logicalCpus: os.cpus().length, totalMemoryGiB: rounded(os.totalmem() / 1024 ** 3), freeMemoryGiB: rounded(os.freemem() / 1024 ** 3), mode: 'single Node process, local JSON metadata, loopback, client and server on same host', fixtureCounts: { users: 20, teamMembers: 20, seededShares: 201, records: 400, auditLogs: 5000 }, baselineMetadataBytes, scanMode: 'required INSTREAM emulator; real antivirus processing not measured' }, stages, rateLimit, auditVerification, scanner: { files: scannerFiles, bytes: scannerBytes }, failures, stopError, diagnosticComparison: normal && diagnostic ? { baselineRps: normal.requestsPerSecond, noAccessAuditRps: diagnostic.requestsPerSecond, throughputMultiplier: rounded(diagnostic.requestsPerSecond / normal.requestsPerSecond), baselineP95Ms: normal.latency.p95Ms, noAccessAuditP95Ms: diagnostic.latency.p95Ms, note: 'Attribution experiment only; access audit must remain enabled in deployed service.' } : null, profiles: { normal: profileSummary(path.join(output, 'normal.cpuprofile')), diagnostic: profileSummary(path.join(output, 'diagnostic.cpuprofile')) } }
+const result = { executedAt: new Date().toISOString(), fixture, environment: { os: os.type() + ' ' + os.release(), node: process.version, cpu: os.cpus()[0]?.model, logicalCpus: os.cpus().length, availableParallelism: os.availableParallelism?.() ?? null, cpuQuotaCores, memoryLimitGiB: memoryLimitGiB === null ? null : rounded(memoryLimitGiB), totalMemoryGiB: rounded(os.totalmem() / 1024 ** 3), freeMemoryGiB: rounded(os.freemem() / 1024 ** 3), mode: 'single Node process, local JSON metadata, loopback, client and server on same host', fixtureCounts: { users: 20, teamMembers: 20, seededShares: 201, records: 400, auditLogs: 5000 }, baselineMetadataBytes, scanMode: 'required INSTREAM emulator; real antivirus processing not measured' }, stages, rateLimit, auditVerification, scanner: { files: scannerFiles, bytes: scannerBytes }, failures, stopError, diagnosticComparison: normal && diagnostic ? { baselineRps: normal.requestsPerSecond, noAccessAuditRps: diagnostic.requestsPerSecond, throughputMultiplier: rounded(diagnostic.requestsPerSecond / normal.requestsPerSecond), baselineP95Ms: normal.latency.p95Ms, noAccessAuditP95Ms: diagnostic.latency.p95Ms, note: 'Attribution experiment only; access audit must remain enabled in deployed service.' } : null, profiles: { normal: profileSummary(path.join(output, 'normal.cpuprofile')), diagnostic: profileSummary(path.join(output, 'diagnostic.cpuprofile')) } }
+result.collectionStages = collectionStages
 fs.writeFileSync(path.join(output, 'performance-results.json'), JSON.stringify(result, null, 2))
 const apiStages = stages.filter(stage => stage.name.startsWith('业务'))
 const row = stage => `| ${stage.name} | ${stage.concurrency} | ${stage.requests} | ${stage.requestsPerSecond} | ${stage.latency.p95Ms} | ${stage.latency.p99Ms} | ${stage.errorCount} | ${stage.server.peakRssMiB} |`
@@ -260,5 +302,10 @@ const analysis = normal && diagnostic ? `
 ` : ''
 fs.mkdirSync(path.dirname(reportPath), { recursive: true })
 fs.writeFileSync(reportPath, report + analysis)
-console.log(JSON.stringify({ stages: stages.map(stage => ({ name: stage.name, concurrency: stage.concurrency, rps: stage.requestsPerSecond, p95Ms: stage.latency.p95Ms, errors: stage.errorCount })), failures, diagnosticComparison: result.diagnosticComparison, report: reportPath }, null, 2))
+if (collectionLoadOnly) {
+  const rows = collectionStages.map(stage => `| ${stage.targetParticipants} | ${stage.concurrency} | ${stage.accepted} | ${stage.persistedParticipants} | ${stage.p50Ms} | ${stage.p95Ms} | ${stage.p99Ms} | ${stage.requestsPerSecond} | ${stage.peakRssMiB} |`).join('\n')
+  const collectionReport = `# 收集任务多人提交压测报告\n\n执行时间：${date}（Asia/Shanghai）。${failures.length ? '存在失败或持久化条数不匹配，详见结果 JSON。' : '各档提交成功且持久化人数与目标一致。'}\n\n测试资源硬限制：CPU 配额 ${result.environment.cpuQuotaCores ?? '未检测到'} 核、内存上限 ${result.environment.memoryLimitGiB ?? '未检测到'} GiB；容器可见 ${result.environment.logicalCpus} 个逻辑处理器和 ${result.environment.totalMemoryGiB} GiB 内存。Node ${process.version}，${result.environment.os}。压测在临时项目副本中运行，使用合成账号和本机回环请求，没有访问线上服务或当前本地服务。扫描路径使用本机 INSTREAM 协议模拟器，不代表真实 ClamAV 的扫描耗时。\n\n每位提交者上传一个 1 KiB 文本文件，5 档分别以最多4路并发提交者发送 ${collectionStages.reduce((sum, stage) => sum + stage.targetParticipants, 0)} 个请求；每档单独创建收集任务，并从临时副本的 metadata.json 核对落盘提交数。服务端当前每进程限制最多4个直传请求同时接收。\n\n| 目标提交人数 | 并发提交数 | HTTP成功 | 落盘提交数 | P50 ms | P95 ms | P99 ms | 提交/秒 | 进程峰值RSS MiB |\n| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${rows}\n\n客户端、服务端与文件写入均在同一台机器；此结果用于本机容量诊断，不等同线上公网并发能力。真实 ClamAV、MySQL/多实例、跨机网络、磁盘长期容量和大文件扫描未纳入本次测试。临时副本：${fixture}\n\n完整指标和失败样本：[performance-results.json](${path.join(output, 'performance-results.json').replaceAll('\\', '/')})。复现命令：容器设置 --cpus=4、--memory=8g 后执行 node scripts/performance-load.mjs --collections-only。\n`
+  fs.writeFileSync(reportPath, collectionReport)
+}
+console.log(JSON.stringify({ stages: stages.map(stage => ({ name: stage.name, concurrency: stage.concurrency, rps: stage.requestsPerSecond, p95Ms: stage.latency.p95Ms, errors: stage.errorCount })), collectionStages, failures, diagnosticComparison: result.diagnosticComparison, report: reportPath }, null, 2))
 process.exitCode = failures.length || stopError ? 1 : 0

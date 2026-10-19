@@ -1,10 +1,11 @@
+import { collectionSizeOptions } from '../lib/plan-limits.js'
 import { AuthButton } from '../components/account.jsx'
 import React from 'react'
 import heroFolder from '../assets/hero-folder.webp'
 import brandLogo from '../assets/brand-logo-header.webp'
 import { SecurityCheckFailure, SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { defaultDeadline, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
-import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, MAX_FILE_SIZE, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
+import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState } from '../lib/api.js'
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
@@ -64,6 +65,9 @@ export function WorkspaceApp() {
   const [settings, setSettings] = useState(defaultSettings)
   const [records, setRecords] = useState(() => readRecords())
   const [recordsSyncing, setRecordsSyncing] = useState(false)
+  const [runtimeConfig, setRuntimeConfig] = useState(null)
+  const uploadLimitBytes = runtimeConfig?.upload?.singleFileLimitBytes || 1.2 * 1024 ** 3
+  const batchLimit = runtimeConfig?.maxBatchFiles || MAX_FILES
   const [authUser, setAuthUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authMenuOpen, setAuthMenuOpen] = useState(false)
@@ -220,6 +224,7 @@ export function WorkspaceApp() {
       }
     })
     apiRequest('/api/runtime-config').then((config) => {
+      setRuntimeConfig(config)
       const days = String(config.defaultShareDays || '')
       if (!['1', '3', '7'].includes(days)) return
       setSettings((current) => current.expiryDays === defaultSettings.expiryDays
@@ -227,6 +232,15 @@ export function WorkspaceApp() {
         : current)
     }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const refreshLimits = () => apiRequest('/api/runtime-config').then(config => { if (!cancelled) setRuntimeConfig(config) }).catch(() => {})
+    refreshLimits()
+    window.addEventListener('focus', refreshLimits)
+    const timer = window.setInterval(refreshLimits, 30000)
+    return () => { cancelled = true; window.removeEventListener('focus', refreshLimits); window.clearInterval(timer) }
+  }, [authUser?.id])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -279,16 +293,16 @@ export function WorkspaceApp() {
       relativePath: file.webkitRelativePath || file.name,
     }))
     if (!nextFiles.length) return
-    const invalid = nextFiles.find((item) => item.size > MAX_FILE_SIZE)
+    const invalid = nextFiles.find((item) => item.size > uploadLimitBytes)
     if (invalid) {
-      setToast(`${invalid.name} 超过 5 GB 限制`)
+      setToast(`${invalid.name} 超过当前单文件上限 ${formatBytes(uploadLimitBytes)}`)
       return
     }
     cancelSendUpload()
     setFiles((current) => {
       const merged = [...current, ...nextFiles]
-      if (merged.length > MAX_FILES) setToast(`单次最多选择 ${MAX_FILES} 个文件，已保留前 ${MAX_FILES} 个`)
-      return merged.slice(0, MAX_FILES)
+      if (merged.length > batchLimit) setToast(`单次最多选择 ${batchLimit} 个文件，已保留前 ${batchLimit} 个`)
+      return merged.slice(0, batchLimit)
     })
     setShareResult(null)
   }
@@ -1009,6 +1023,8 @@ export function WorkspaceApp() {
         {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} onOpenWorkspace={() => { window.location.href = '/workspace' }} />}
         {!isSettingsRoute && activeView === 'send' && (
           <SendView
+            uploadLimitBytes={uploadLimitBytes}
+            batchLimit={batchLimit}
             user={authUser}
             files={files}
             inputRef={inputRef}
@@ -1038,6 +1054,7 @@ export function WorkspaceApp() {
         )}
         {!isSettingsRoute && activeView === 'collect' && (
           <CollectView
+            entitlement={runtimeConfig?.upload}
             result={collectionResult}
             manageData={collectionManageData}
             manageLoading={collectionManageLoading}
@@ -1062,7 +1079,7 @@ export function WorkspaceApp() {
 
       <footer className="page-footer">
         <span>鲲穹文件传输 · 临时传输，轻装上阵</span>
-        <div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a><button onClick={() => setFooterContentKey('help')}><HelpCircle size={13} /> 帮助中心</button><button onClick={() => setFooterContentKey('terms')}><ShieldCheck size={13} /> 服务协议</button><button onClick={() => setFooterContentKey('privacy')}><LockKeyhole size={13} /> 隐私政策</button></div>
+        <div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a><button onClick={() => setFooterContentKey('help')}><HelpCircle size={13} /> 帮助中心</button><button onClick={() => setFooterContentKey('terms')}><ShieldCheck size={13} /> 服务协议</button><button onClick={() => setFooterContentKey('privacy')}><LockKeyhole size={13} /> 隐私政策</button><a className="footer-manual-link" href="https://www.kunqiongai.com/feedback/" target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> 问题反馈</a></div>
       </footer>
 
       {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} user={authUser} onClose={() => setSettingsOpen(false)} onSave={() => { setSettingsOpen(false); setToast('分享设置已保存') }} />}
@@ -1119,7 +1136,7 @@ export function GuestQuotaModal({ quota, onClose, onLogin }) {
   )
 }
 
-export function SendView({ user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
+export function SendView({ uploadLimitBytes = 1.2 * 1024 ** 3, batchLimit = MAX_FILES, user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
   const showUploadStatus = ['uploading', 'paused', 'failed', 'finalizing'].includes(uploadState.status)
   const recipientError = recipientInputError(settings.recipients, user)
   return (
@@ -1142,12 +1159,12 @@ export function SendView({ user, files, inputRef, folderInputRef, isDragging, se
                   <img src={heroFolder} width="680" height="500" alt="" draggable={false} />
                 </div>
                 <h2>{isDragging ? '松开即可添加文件' : '把文件拖到这里'}</h2>
-                <p>支持多文件与文件夹，单次最多 100 个文件</p>
+                <p>支持多文件与文件夹，单次最多 {batchLimit} 个文件</p>
                 <div className="upload-choice">
                   <button className="primary-button" onClick={() => inputRef.current?.click()}><FolderOpen size={17} /> 选择文件</button>
                   <button className="secondary-button" onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> 选择文件夹</button>
                 </div>
-                <span className="upload-note">登录后单文件最大 5 GB（未登录 500 MB）· 分片续传 · 上传后自动生成取件码</span>
+                <span className="upload-note">当前单文件最大 {formatBytes(uploadLimitBytes)} · 分片续传 · 上传后自动生成取件码</span>
               </div>
             )}
             {files.length > 0 && !shareResult && (
@@ -1286,7 +1303,8 @@ export function ShareNotificationStatus({ result }) {
   )
 }
 
-export function CollectView({ result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
+export function CollectView({ entitlement, result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
+  const collectionMaxMb = Math.floor((entitlement?.singleFileLimitBytes || 1.2 * 1024 ** 3) / 1024 ** 2)
   const [form, setForm] = useState(createDefaultCollectionForm)
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const collectionRecords = records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
@@ -1337,8 +1355,9 @@ export function CollectView({ result, manageData, manageLoading, records, onCrea
                 </label>
                 <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} min={formatDateInput(new Date())} ariaLabel="截止时间" /></label>
                 <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
-                <label>单文件大小限制<select value={form.maxFileSizeMb} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select></label>
-                <button className="primary-button wide" onClick={() => onCreate(form)}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
+                <label>单文件大小限制<select value={Math.min(form.maxFileSizeMb, collectionMaxMb)} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}>{collectionSizeOptions(collectionMaxMb, form.maxFileSizeMb).map(size => <option key={size} value={size}>{formatBytes(size * 1024 ** 2)}</option>)}</select></label>
+                <p className="admin-plan-help">每个任务最多 {(entitlement?.collectionParticipantLimit ?? 10) || '不限'} 人提交 · 同时进行 {(entitlement?.activeCollectionLimit ?? 1) || '不限'} 个任务</p>
+                <button className="primary-button wide" onClick={() => onCreate({ ...form, maxFileSizeMb: Math.min(form.maxFileSizeMb, collectionMaxMb) })}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
               </div>
             </>
           ) : (
@@ -1385,12 +1404,22 @@ export function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager
         <h2>{result.title}</h2>
         <p>分享下面的链接，参与者即可匿名提交文件。</p>
         <CollectionLimitInfo allowedTypes={result.allowedTypes} maxFileSizeMb={result.maxFileSizeMb} />
-        <div className="collection-share"><Link2 size={16} /><strong>{result.publicUrl}</strong><button onClick={() => onCopy(result.publicUrl)} aria-label="复制收集链接"><Copy size={15} /></button></div>
-        {result.enterpriseUrl && <div className="collection-share enterprise-link"><Building2 size={16} /><strong>{result.enterpriseUrl}</strong><button onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制企业专属链接"><Copy size={15} /></button></div>}
+        <div className="collection-links">
+          <div className="collection-link-item">
+            <strong className="collection-link-label">普通收集链接</strong>
+            <span className="collection-link-description">发给参与者，用于提交文件</span>
+            <div className="collection-share"><Link2 size={16} /><strong title={result.publicUrl}>{result.publicUrl}</strong><button onClick={() => onCopy(result.publicUrl)} aria-label="复制普通收集链接" title="复制普通收集链接"><Copy size={15} /></button></div>
+          </div>
+          {result.enterpriseUrl && <div className="collection-link-item">
+            <strong className="collection-link-label">团队专属收集链接</strong>
+            <span className="collection-link-description">提交到同一任务，页面另有申请加入团队入口</span>
+            <div className="collection-share enterprise-link"><Building2 size={16} /><strong title={result.enterpriseUrl}>{result.enterpriseUrl}</strong><button onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制团队专属收集链接" title="复制团队专属收集链接"><Copy size={15} /></button></div>
+          </div>}
+        </div>
         {result.qrDataUrl && (
           <button className="qr-trigger" onClick={() => setQrOpen(true)} aria-label="打开收集二维码">
             <img className="collection-qr" src={result.qrDataUrl} alt="收集二维码" />
-            <span>点击放大</span>
+            <span>普通收集链接二维码 · 点击放大</span>
           </button>
         )}
         <div className="result-actions">
@@ -1398,11 +1427,12 @@ export function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager
           <button className="secondary-button" onClick={() => onOpenManager(result.manageUrl)}><FolderOpen size={15} /> 查看已收文件</button>
           <button className="primary-button" onClick={() => onCopy(result.manageUrl)}><KeyRound size={15} /> 复制管理链接</button>
         </div>
+        <div className="collection-management-note">管理链接供创建者查看、下载和管理已收文件</div>
       </div>
       {qrOpen && (
         <QrPreviewModal
           title="收集二维码"
-          detail="分享链接"
+          detail="普通收集链接，参与者扫码后即可提交文件"
           qrDataUrl={result.qrDataUrl}
           targetUrl={result.publicUrl}
           onClose={() => setQrOpen(false)}

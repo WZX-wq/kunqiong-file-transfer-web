@@ -17,12 +17,13 @@ const initialOrders = () => Array.from({ length: 24 }, (_, i) => ({ id: 'order-'
   status: i === 0 ? 'pending_payment' : i === 1 ? 'paid' : i === 2 ? 'expired' : 'canceled',
   createdAt: i === 0 ? new Date().toISOString() : '2026-10-15T07:16:07Z', paidAt: i === 1 ? '2026-10-15T08:18:52Z' : null,
   remoteExpireAt: i === 1 ? '2027-01-13T08:18:52Z' : null }))
-async function mount({ url = '/settings/orders', loggedIn = true, failList = false } = {}) {
+async function mount({ url = '/settings/orders', loggedIn = true, failList = false, retiredOrders = false } = {}) {
   const errors = [], requests = [], timers = new Map(), copies = []
   const vc = new VirtualConsole(); vc.on('jsdomError', error => errors.push(error))
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://fixture.local' + url, pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole: vc })
   const { window } = dom, { document } = window
   let orders = initialOrders(), force401 = false, detailFailure = false, statusFailure = false, holdQuery = '', holdDetail = false, releaseHeld, releaseDetail, nextTimer = 0
+  if (retiredOrders) for (const index of [0, 2]) Object.assign(orders[index], { planId: 'enterprise', planLabel: '历史企业权益', retired: true })
   window.setInterval = (callback, ms) => { const id = ++nextTimer; timers.set(id, { callback, ms }); return id }
   window.clearInterval = id => timers.delete(id)
   Object.defineProperty(window.navigator, 'clipboard', { value: { writeText: async value => copies.push(value) } })
@@ -183,4 +184,14 @@ try {
   check('订单中心无需套餐列表也能创建新单并显示倒计时', replacement.requests.filter(r => r.url === '/api/account/upgrade-orders' && r.method === 'POST').length === 1 && replacement.requests.some(r => r.url.endsWith('/replacement-order/confirm')) && replacement.text().includes('15:00'))
   check('重新下单不复用过期支付单', !replacement.requests.some(r => r.url.endsWith('/order-2/confirm')))
 } finally { replacement.close() }
+for (const [index, status] of [[0, 'pending_payment'], [2, 'expired']]) {
+  const retired = await mount({ url: '/settings/orders?status=' + status, retiredOrders: true })
+  try {
+    await waitFor(() => retired.document.querySelector(`[data-order-id="order-${index}"]`), 'Retired order listed')
+    await retired.click('查看订单 WM1-ORDER-' + index)
+    const actions = retired.document.querySelector('.orders-dialog-actions').textContent
+    check('下架订单不提供继续支付或重新下单 ' + status, retired.text().includes('该套餐已下架') && !actions.includes('继续支付') && !actions.includes('重新下单'))
+    check('下架订单保留历史支付核对入口 ' + status, actions.includes('核对支付状态'))
+  } finally { retired.close() }
+}
 console.log(JSON.stringify({ passed }))

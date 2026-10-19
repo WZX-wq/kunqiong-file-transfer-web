@@ -20,7 +20,7 @@ const SEO_END = '<!--seo:end-->'
 
 const DEFAULT_TITLE = `${SITE_NAME} - ${SITE_TAGLINE}`
 // 155 字符以内，前 78 字符在移动端结果页就可见，所以卖点前置。
-const DEFAULT_DESCRIPTION = '鲲穹文件传输支持免登录发送大文件，单个文件最大 5 GB，可生成取件码、链接与二维码；也能创建匿名文件收集任务，多人提交后一键打包下载。上传即用，到期自动清理。'
+const DEFAULT_DESCRIPTION = '鲲穹文件传输支持免登录发送大文件，文件额度按当前套餐配置，可生成取件码、链接与二维码；也能创建匿名文件收集任务，多人提交后一键打包下载。上传即用，到期自动清理。'
 const DEFAULT_KEYWORDS = '文件传输,大文件传输,免登录传文件,文件分享,取件码,文件收集,临时文件分享,团队文件空间'
 const OG_IMAGE_PATH = '/og-cover.png'
 

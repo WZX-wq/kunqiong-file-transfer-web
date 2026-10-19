@@ -1,3 +1,4 @@
+import { configuredAccountPlan } from '../lib/metadata-normalizers.js'
 // upgrade 域路由（原 server.mjs 内联处理器，逐行搬迁，未改逻辑）
 //
 // 依赖方向：routes → services → lib → state → config（单向）
@@ -84,11 +85,12 @@ export function registerUpgradeRoutes(app) {
     try {
       const session = requireAuthSession(req, res)
       if (!session) return
+      const planId = normalizePlanId(req.body?.planId)
+      if (configuredAccountPlan(planId).retired) return res.status(410).json({ message: '该套餐已下架，请选择其他套餐' })
       release = await acquireUpgradeLock(`create:${session.user.id}`)
       await reconcileUserUpgradeOrders(session, true)
       const stored = accountUserById(session.user.id) || session.user
       const effective = accountEffectivePlanForUser(stored)
-      const planId = normalizePlanId(req.body?.planId)
       if (planId === 'free') return res.status(400).json({ message: '基础版为默认权益，无需订购' })
       if (planId === effective.id && effective.permanent) return res.status(409).json({ message: `当前${effective.label}永久有效，无需续费` })
       if (accountPlanRank(planId) < accountPlanRank(effective.id)) {
@@ -115,6 +117,8 @@ export function registerUpgradeRoutes(app) {
         remotePackageId: Number(memberPackage.id) || null,
         remotePackageName: trimRecordString(memberPackage.name, 80),
         remotePackageDays: normalizeNullablePositiveInteger(memberPackage.days),
+        entitlementDays: configuredAccountPlan(planId).validityDays,
+        entitlementSource: Object.hasOwn(metadata.systemConfig.planOverrides?.[planId] || {}, 'validityDays') ? 'local' : 'provider',
         payment: null,
         createdAt: now,
         updatedAt: now,
@@ -161,6 +165,7 @@ export function registerUpgradeRoutes(app) {
       release = await acquireUpgradeLock(order.id)
       expirePendingUpgradeOrders([order])
       if (order.status !== 'pending_payment') return res.status(409).json({ message: order.status === 'expired' ? '支付已超时，请重新创建订单支付' : '当前订单不支持支付确认', order: upgradeOrderSummary(order) })
+      if (configuredAccountPlan(order.planId).retired) return res.status(410).json({ message: '该套餐已下架，不能继续支付；如已付款，请核对支付状态', order: upgradeOrderSummary(order) })
       const payType = req.body?.payType === undefined ? normalizeWebMemberPayType(order.payType || 1) : integerInput(req.body.payType,'支付方式',1,2)
       const payment = order.remoteOrderNo
         ? { order_no: order.remoteOrderNo, pay_type: order.payType || payType, ...(order.payment || {}) }

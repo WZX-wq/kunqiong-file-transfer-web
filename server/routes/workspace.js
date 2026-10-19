@@ -19,7 +19,7 @@ import {
 } from '../lib/metadata-store.js'
 
 import {
-  accountEffectivePlanForUser, accountMessagesForUser, accountOrganizationForUser,
+  accountEffectivePlanForUser, accountOrganizationPlanForUser, accountMessagesForUser, accountOrganizationForUser,
   accountTeamUsageForOrganization, accountUserById, accountWorkspacePayload, addAccountMessage,
   authSessionFromRequest, createOrganization, currentShareStatus, displayAccountName,
   fileListSize, findAccountUserByInvitationTarget, getOrigin, isJoinRequestRateLimited,
@@ -51,6 +51,11 @@ export function registerWorkspaceRoutes(app) {
     if (!session) return
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
+    const account = accountUserById(session.user.id) || session.user
+    const teamPlan = accountOrganizationPlanForUser(account, organization)
+    if (!teamPlan.team) return res.status(403).json({ message: '管理员已调整当前套餐，请购买团队套餐后使用团队功能' })
+    const teamPlanExpiresAt = account.planManagedAt && teamPlan.id === account.planId
+      ? account.planExpiresAt || null : organizationTeamPlanExpiresAtForOrganization(organization)
     // 待审批的入团申请（status='requested'）不是成员，不计入成员观察/成员列表，也不应参与团队资源归属判定。
     const canManageTeam = isOrganizationManager(organization, session.user.id)
     const rosterMembers = organization.members.filter(member => canManageTeam ? member.status !== 'requested' : member.status === 'active')
@@ -94,10 +99,10 @@ export function registerWorkspaceRoutes(app) {
       organization: publicOrganization(organization, session.user.id),
       canManage: canManageTeam,
       isOwner: organization.ownerUserId === session.user.id,
-      plan: organizationTeamPlanForOrganization(organization),
-      teamPlanId: organizationTeamPlanForOrganization(organization).id,
-      teamPlanExpiresAt: organizationTeamPlanExpiresAtForOrganization(organization),
-      capacity: accountTeamUsageForOrganization(organization),
+      plan: teamPlan,
+      teamPlanId: teamPlan.id,
+      teamPlanExpiresAt: teamPlan.permanent ? null : teamPlanExpiresAt,
+      capacity: accountTeamUsageForOrganization(organization, session.user.id),
       memberUsage,
       joinRequests: isOrganizationManager(organization, session.user.id) ? publicJoinRequestsForOrganization(organization) : [],
       resources: resources.slice(0, 200),
@@ -142,7 +147,7 @@ export function registerWorkspaceRoutes(app) {
       }
       persistMetadata()
       recordAuditLog({ type: 'account', action: '删除团队资源', userId: session.user.id, targetId: share.id, details: { organizationId: organization.id, deletedFileCount, releasedBytes } })
-      res.json({ ok: true, deletedResourceId: share.id, deletedFileCount, releasedBytes, capacity: accountTeamUsageForOrganization(organization) })
+      res.json({ ok: true, deletedResourceId: share.id, deletedFileCount, releasedBytes, capacity: accountTeamUsageForOrganization(organization, session.user.id) })
     } catch (error) { next(error) }
   })
 
@@ -201,6 +206,7 @@ export function registerWorkspaceRoutes(app) {
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
     if (organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以修改团队空间' })
+    if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '当前套餐不含团队管理功能，请购买团队套餐后使用' })
     const result = validateTeamName(req.body?.name, organization.id)
     if (result.status) return res.status(result.status).json({ message: result.message })
     organization.name = result.name
@@ -357,6 +363,7 @@ export function registerWorkspaceRoutes(app) {
     if (!session) return
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization || organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以调整管理员角色' })
+    if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '当前套餐不含团队管理功能，请购买团队套餐后使用' })
     objectInput(req.body, ['role'], { nonempty: true })
     if (!['admin', 'member'].includes(req.body.role)) return res.status(400).json({ message: '角色仅支持管理员或普通成员' })
     const member = organization.members.find(item => item.id === req.params.memberId)

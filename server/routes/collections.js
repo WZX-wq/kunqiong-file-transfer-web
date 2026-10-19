@@ -1,3 +1,4 @@
+import { assertActiveCollectionLimit, assertCollectionParticipant, personalEntitlements } from '../services/entitlements.js'
 // collections 域路由（原 server.mjs 内联处理器，逐行搬迁，未改逻辑）
 //
 // 依赖方向：routes → services → lib → state → config（单向）
@@ -28,7 +29,7 @@ import {
   enforceDownloadOrigin, ensureStoredFilesScanned, guestQuotaLimitBytes, isAllowedType,
   normalizeExpiryInput, publicSubmission, publishCollectionSubmission,
   reserveUploadCapacity, resolveCollectionSubmitter, sendDownloadFile, sendPreviewFile,
-  streamZip, validateCollection, validateEnterpriseSlug, prepareDirectUpload,
+  streamZip, validateCollection, validateEnterpriseSlug, prepareDirectUpload, resolveGuestKey,
 } from '../services/shares.js'
 import {
   uploadReservations
@@ -59,13 +60,16 @@ export function registerCollectionRoutes(app) {
     try {
       assertServiceWritable(req)
       const ownerSession = authSessionFromRequest(req)
+      const ownerGuestKey = ownerSession?.user?.id ? '' : resolveGuestKey(req, res)
+      const entitlement = personalEntitlements(ownerSession?.user?.id)
+      assertActiveCollectionLimit(ownerSession?.user?.id, ownerGuestKey)
       // 与 applyCollectionUpdate 保持一致的服务端校验：
       // 标题/说明超长直接拒绝（400 + 可理解的错误信息，不再静默截断入库），
       // 单人大小限制必须为有限正数（此前负数/NaN 会被接受并创建出「永远无法提交」的废任务）。
       const title = textInput(req.body.title, '任务名称', COLLECTION_TITLE_MAX)
       if (!title) return res.status(400).json({ message: '请填写任务名称' })
       if (title.length > COLLECTION_TITLE_MAX) return res.status(400).json({ message: `任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字` })
-      const maxFileSizeMbRaw = integerInput(req.body.maxFileSizeMb ?? 500,'单文件大小限制',1,5120)
+      const maxFileSizeMbRaw = integerInput(req.body.maxFileSizeMb ?? 500,'单文件大小限制',1,Math.floor(entitlement.singleFileLimitBytes / 1024 ** 2))
       if (!Number.isFinite(maxFileSizeMbRaw) || maxFileSizeMbRaw <= 0) return res.status(400).json({ message: '单人大小限制不正确' })
       const descriptionRaw = textInput(req.body.description ?? '', '收集说明', COLLECTION_DESCRIPTION_MAX, {optional:true,multiline:true})
       if (descriptionRaw.length > COLLECTION_DESCRIPTION_MAX) return res.status(400).json({ message: `收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字` })
@@ -87,10 +91,12 @@ export function registerCollectionRoutes(app) {
         capacityBytes: ownerSession?.user?.id ? null : guestQuotaLimitBytes() || 1024 * 1024 * 1024,
         createdAt: new Date().toISOString(),
         ownerUserId: ownerSession?.user?.id || '',
+        ownerGuestKey,
         status: 'active',
         submissions: [],
       }
       task.qrDataUrl = await QRCode.toDataURL(`${getOrigin(req)}/collect/${token}`, { width: 180, margin: 1 })
+      assertActiveCollectionLimit(task.ownerUserId, ownerGuestKey)
       metadata.collections.push(task)
       persistMetadata()
       res.status(201).json({ collection: publicCollection(task, req, true), manageToken })
@@ -125,7 +131,8 @@ export function registerCollectionRoutes(app) {
         cleanupUploadedFiles(req.files)
         return res.status(access.status).json({ message: access.message })
       }
-      const submitter = resolveCollectionSubmitter(req)
+      const submitter = resolveCollectionSubmitter(req, res)
+      assertCollectionParticipant(task, submitter)
       const participantName = submitter.participantName
       if (!participantName) {
         cleanupUploadedFiles(req.files)
@@ -140,7 +147,7 @@ export function registerCollectionRoutes(app) {
       assertConfiguredUploadLimits(req, uploadedFiles)
       const guestKey = assertGuestQuota(req, res, uploadedFiles)
       assertCollectionFiles(task, uploadedFiles)
-      reservationId = reserveUploadCapacity({ files: uploadedFiles, guestKey, collectionToken: task.token, capacityOwnerUserId: task.ownerUserId }, req.directUploadReservationId)
+      reservationId = reserveUploadCapacity({ files: uploadedFiles, guestKey, collectionToken: task.token, uploadUserId: submitter.submitterUserId || '', participantKey: submitter.participantKey, submitterUserId: submitter.submitterUserId, capacityOwnerUserId: task.ownerUserId }, req.directUploadReservationId)
       await assertSafeUploadFiles(uploadedFiles)
       const invalidFile = uploadedFiles.find((file) => file.size > task.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.originalname, task.allowedTypes))
       if (invalidFile) {

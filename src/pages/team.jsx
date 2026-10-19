@@ -74,6 +74,11 @@ export function TeamPage() {
 
   useEffect(() => { load() }, [])
   useEffect(() => {
+    const refresh = () => { if (document.visibilityState === 'visible') load({ silent: true }) }
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [])
+  useEffect(() => {
     if (!notice) return undefined
     const timer = window.setTimeout(() => setNotice(null), 3200)
     return () => window.clearTimeout(timer)
@@ -352,9 +357,9 @@ export function TeamPage() {
       return false
     })
   })()
-  const oversizedTeamFile = teamFiles.find((file) => file.size > MAX_FILE_SIZE)
+  const oversizedTeamFile = teamFiles.find((file) => file.size > (data?.capacity?.singleFileLimitBytes || MAX_FILE_SIZE))
   const teamSelectionError = teamFiles.length > MAX_FILES ? `单次最多上传 ${MAX_FILES} 个文件，请移除多余文件后再上传。`
-    : oversizedTeamFile ? `${oversizedTeamFile.name} 超过 5 GB 限制`
+    : oversizedTeamFile ? `${oversizedTeamFile.name} 超过团队单文件上限 ${formatBytes(data?.capacity?.singleFileLimitBytes || MAX_FILE_SIZE)}`
       : duplicateTeamFile ? `待上传列表中存在相同路径“${duplicateTeamFile.relativePath}”，请重命名或移除重复文件。` : ''
 
   const uploadTeamFiles = async () => {

@@ -91,10 +91,10 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, onClo
             <div><dt>创建时间</dt><dd>{dateLabel(order.createdAt)}</dd></div>
             {order.paymentExpiresAt && <div><dt>支付截止时间</dt><dd>{dateLabel(order.paymentExpiresAt)}</dd></div>}
             <div><dt>支付确认时间</dt><dd>{order.paidAt ? dateLabel(order.paidAt) : '—'}</dd></div>
-            <div><dt>本单有效期</dt><dd>{order.planId === 'enterprise' && order.status === 'paid' ? '永久有效' : dateLabel(order.remoteExpireAt)}</dd></div>
+            <div><dt>本单有效期</dt><dd>{(order.permanent ?? (order.planId === 'enterprise' && !order.remoteExpireAt)) && order.status === 'paid' ? '永久有效' : dateLabel(order.remoteExpireAt)}</dd></div>
           </dl>
           {order.status === 'paid' && <p className="orders-validity-note">本单有效期为历史支付记录，<a href="/workspace">查看当前会员权益</a>。</p>}
-          {order.status === 'expired' && <p className="orders-inline-note">支付已超时，请重新创建订单支付。如已付款，可核对原单支付状态。</p>}
+          {order.retired ? <p className="orders-inline-note">该套餐已下架，不能继续支付或重新下单。已购权益保留；如已付款，可核对原单支付状态。</p> : order.status === 'expired' && <p className="orders-inline-note">支付已超时，请重新创建订单支付。如已付款，可核对原单支付状态。</p>}
           {order.paymentRequiresLogin && <div className="orders-inline-note" role="status">此支付单需要重新登录后核对。<button type="button" className="orders-text-action" onClick={onLogin}>重新登录</button></div>}
           {notice && <p className="orders-inline-note success" role="status">{notice}</p>}
           {error && <div className="orders-inline-note error" role="alert">{error}{onRetry && <button className="orders-text-action" onClick={onRetry}>重试详情</button>}</div>}
@@ -105,8 +105,8 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, onClo
             </div>
           ) : (
             <div className="orders-dialog-actions">
-              {order.status === 'pending_payment' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 继续支付</button>}
-              {order.status === 'expired' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 重新下单</button>}
+              {!order.retired && order.status === 'pending_payment' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 继续支付</button>}
+              {!order.retired && order.status === 'expired' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 重新下单</button>}
               {canCheck && <button type="button" className="secondary-button" onClick={onCheck} disabled={actionsDisabled}><RefreshCw size={15} className={busy ? 'is-spinning' : ''} /> {busy ? '正在核对…' : '核对支付状态'}</button>}
               {order.status === 'pending_payment' && <button type="button" className="orders-text-action" onClick={onAskCancel} disabled={actionsDisabled}>取消订单</button>}
             </div>

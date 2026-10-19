@@ -1,3 +1,4 @@
+import { personalEntitlements } from './server/services/entitlements.js'
 import { allowedOrigins } from './server/lib/request-security.js'
 // 鲲穹文件传输服务端入口
 //
@@ -50,7 +51,7 @@ import {
 // 账号域业务逻辑（路由仍在本文件注册，按域逐步迁移）
 import {
   authSessionFromRequest, cleanupExpired, isSmtpConfigured,
-  isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog, repairLegacyTestAdminPlans, repairLegacyTestPaidPlans
+  isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog, repairLegacyTestAdminPlans, repairLegacyTestPaidPlans, restoreAdminPlanRestrictions
 } from './server/services/account.js'
 
 import { registerAdminRoutes } from './server/routes/admin.js'
@@ -108,6 +109,7 @@ for (const share of metadata.shares) {
 runtime.metadataReady = metadata
 repairLegacyTestAdminPlans()
 repairLegacyTestPaidPlans()
+restoreAdminPlanRestrictions()
 if (runtime.metadataNeedsPersist) persistMetadata()
 const app = express()
 
@@ -209,9 +211,11 @@ app.get('/api/health', (_req, res) => {
   })
 })
 
-app.get('/api/runtime-config', (_req, res) => {
+app.get('/api/runtime-config', (req, res) => {
+  res.set('Cache-Control', 'no-store')
   const config = normalizeSystemConfig(metadata.systemConfig)
   res.json({
+    upload: personalEntitlements(authSessionFromRequest(req)?.user?.id),
     defaultShareDays: config.defaultShareDays,
     maxShareDays: config.maxShareDays,
     maxBatchFiles: config.maxBatchFiles,
