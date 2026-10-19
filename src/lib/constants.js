@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 
 export const MAX_FILES = 100
-export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
+export const MAX_FILE_SIZE = 20 * 1024 * 1024 * 1024
 export const defaultSettings = {
   expiry: '3 天',
   expiryDays: '3',
@@ -52,7 +52,7 @@ export const FOOTER_CONTENT = {
         items: [
           '在“发文件”页面选择文件或文件夹，也可以直接拖拽到上传区域。',
           '上传完成后系统会生成取件码、分享链接和二维码，对方无需注册即可提取。',
-          '单次最多 100 个文件；登录后单文件最大 5 GB，未登录 500 MB。大文件会自动分片上传，异常中断后可重试。',
+          '单文件上限和文件数量以当前上传页显示为准，由账号套餐与后台配置决定。默认未登录单文件最大 1.2 GB。大文件会自动分片上传，异常中断后可重试。',
         ],
       },
       {
@@ -210,9 +210,9 @@ export const UPGRADE_ORDER_STATUS_LABELS = {
   canceled: '已取消',
   expired: '已过期',
 }
-export const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, enterprise: 3 }
+export const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, halfyear: 3, year: 4, enterprise: 5 }
 
-export const ACCOUNT_PLAN_ICON = { free: HardDrive, member: Sparkles, team: Users, enterprise: Crown }
+export const ACCOUNT_PLAN_ICON = { free: HardDrive, member: Sparkles, team: Users, halfyear: Users, year: Crown, enterprise: Crown }
 
 export const RECORD_STORAGE_KEY = 'kunqiong-records'
 export const MAX_LOCAL_RECORDS = 100

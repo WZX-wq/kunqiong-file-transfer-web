@@ -1,3 +1,4 @@
+import { assertActiveCollectionLimit, collectionFileLimitBytes, collectionParticipantCount, personalEntitlements } from './entitlements.js'
 // 收集（匿名文件收集）域业务逻辑
 //
 // 依赖方向（单向）：本模块只依赖 config / state / lib / services/*，
@@ -14,7 +15,7 @@ import {
   httpError
 } from '../lib/http.js'
 import {
-  currentCollectionStatus, fileListSize, getOrigin
+  authSessionFromRequest, currentCollectionStatus, fileListSize, getOrigin
 } from '../services/account.js'
 import {
   collectionCapacityBytes, enterpriseOrganizationForUser, collectionTypesInput,
@@ -34,7 +35,10 @@ export function publicCollection(task, req, includeManage = false) {
     description: task.description,
     deadline: task.deadline,
     allowedTypes: task.allowedTypes,
-    maxFileSizeMb: task.maxFileSizeMb,
+    maxFileSizeMb: Math.min(collectionFileLimitBytes(task), includeManage ? Infinity : personalEntitlements(authSessionFromRequest(req)?.user?.id).singleFileLimitBytes) / 1024 ** 2,
+    maxConfigurableFileSizeMb: Math.floor(personalEntitlements(task.ownerUserId).singleFileLimitBytes / 1024 ** 2),
+    participantLimit: personalEntitlements(task.ownerUserId).collectionParticipantLimit,
+    participantCount: collectionParticipantCount(task),
     capacityBytes: collectionCapacityBytes(task),
     usedBytes: task.submissions.reduce((sum, submission) => sum + fileListSize(submission.files), 0),
     status,
@@ -80,6 +84,7 @@ export function applyCollectionUpdate(task, body = {}) {
   objectInput(body, ['title','description','deadline','allowedTypes','maxFileSizeMb','status'], {nonempty:true})
   const draft = structuredClone(task)
   applyCollectionUpdateDraft(draft, body)
+  if (currentCollectionStatus(draft) === 'active' && currentCollectionStatus(task) !== 'active') assertActiveCollectionLimit(task.ownerUserId, task.ownerGuestKey, task.id)
   Object.assign(task, draft)
 }
 function applyCollectionUpdateDraft(task, body = {}) {
@@ -107,7 +112,7 @@ function applyCollectionUpdateDraft(task, body = {}) {
     task.allowedTypes = collectionTypesInput(body.allowedTypes)
   }
   if (Object.prototype.hasOwnProperty.call(body, 'maxFileSizeMb')) {
-    const maxFileSizeMb = integerInput(body.maxFileSizeMb,'单文件大小限制',1,5120)
+    const maxFileSizeMb = integerInput(body.maxFileSizeMb,'单文件大小限制',1,Math.floor(personalEntitlements(task.ownerUserId).singleFileLimitBytes / 1024 ** 2))
     if (!Number.isFinite(maxFileSizeMb) || maxFileSizeMb <= 0) throw httpError(400, '单人大小限制不正确')
     task.maxFileSizeMb = Math.floor(maxFileSizeMb)
   }

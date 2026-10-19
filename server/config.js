@@ -29,7 +29,7 @@ export function parseBooleanEnv(value, fallback = false) {
 }
 
 // ── 上传与限流 ──
-export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
+export const MAX_FILE_SIZE = 20 * 1024 * 1024 * 1024
 export const MAX_FILES = 100
 export const TEAM_NAME_MAX = 80
 export const TEAM_QUERY_MAX = 160
@@ -42,32 +42,19 @@ export const UPLOAD_CHUNK_DEFAULT_BYTES = 8 * 1024 * 1024
 // ── 业务常量：套餐与默认项 ──
 // 元数据层（规范化）与业务层（路由、后台）都要用，放在配置层避免互相 import。
 
+const GB = 1024 ** 3
+// Prices are display fallbacks only; the membership provider owns payable prices.
 export const ACCOUNT_PLANS = {
-  free: {
-    id: 'free', label: '基础版', totalBytes: 20 * 1024 * 1024 * 1024, permanent: false, team: false,
-    tagline: '个人临时传输', monthlyPrice: 0, validityDays: null,
-    features: ['20 GB 存储空间', '文件临时保存，到期自动失效', '分享码 / 链接 / 二维码取件', '文件收集任务'],
-  },
-  member: {
-    id: 'member', label: '会员版', totalBytes: 100 * 1024 * 1024 * 1024, permanent: false, team: false,
-    // monthlyPrice 仅作「主站实价拉不到时」的兜底展示价，尽量对齐主站当前挂牌价（轻享月卡 ¥19）；
-    // 真实下单/支付金额始终以主站 pay_amount 为准（createWebMemberPaymentOrder 会覆盖 order.amount）。
-    tagline: '个人会员空间', monthlyPrice: 1900, validityDays: 30,
-    features: ['100 GB 存储空间', '会员期内文件持续保存', '完整分享与收集能力', '会员专属标识'],
-  },
-  team: {
-    id: 'team', label: '团队版', totalBytes: 500 * 1024 * 1024 * 1024, teamSpaceBytes: 250 * 1024 * 1024 * 1024, permanent: false, team: true,
-    tagline: '小团队协作', monthlyPrice: 4900, validityDays: 90,
-    features: ['500 GB 个人空间', '250 GB 团队空间', '团队成员邀请与协作', '企业专属分享链接'],
-  },
-  enterprise: {
-    id: 'enterprise', label: '企业版', totalBytes: 2 * 1024 * 1024 * 1024 * 1024, teamSpaceBytes: 1024 * 1024 * 1024 * 1024, permanent: true, team: true,
-    tagline: '企业统一管控', monthlyPrice: 15900, validityDays: null,
-    features: ['2048 GB 个人空间', '1024 GB 团队空间', '组织与成员统一管理', '企业专属入口与审计日志'],
-  },
+  free: { id: 'free', label: '基础版', tagline: '个人临时传输', totalBytes: 20 * GB, teamSpaceBytes: 0, singleFileLimitBytes: 2 * GB, collectionParticipantLimit: 10, activeCollectionLimit: 1, permanent: false, team: false, monthlyPrice: 0, validityDays: null },
+  member: { id: 'member', label: '月卡会员', tagline: '个人会员空间', totalBytes: 100 * GB, teamSpaceBytes: 0, singleFileLimitBytes: 5 * GB, collectionParticipantLimit: 50, activeCollectionLimit: 5, permanent: false, team: false, monthlyPrice: 1900, validityDays: 30 },
+  team: { id: 'team', label: '团队季卡', tagline: '小团队协作', totalBytes: 500 * GB, teamSpaceBytes: 200 * GB, singleFileLimitBytes: 10 * GB, collectionParticipantLimit: 100, activeCollectionLimit: 20, permanent: false, team: true, monthlyPrice: 4900, validityDays: 90 },
+  halfyear: { id: 'halfyear', label: '半年卡', tagline: '长期团队协作', totalBytes: 1024 * GB, teamSpaceBytes: 500 * GB, singleFileLimitBytes: 15 * GB, collectionParticipantLimit: 300, activeCollectionLimit: 50, permanent: false, team: true, monthlyPrice: 7900, validityDays: 180 },
+  year: { id: 'year', label: '年卡', tagline: '全年团队协作', totalBytes: 1024 * GB, teamSpaceBytes: 500 * GB, singleFileLimitBytes: 20 * GB, collectionParticipantLimit: 500, activeCollectionLimit: 100, permanent: false, team: true, monthlyPrice: 12900, validityDays: 365 },
+  // Retired from sale and administration; retain the definition for purchased rights and historical orders.
+  enterprise: { id: 'enterprise', label: '历史企业权益', retired: true, tagline: '已购企业权益', totalBytes: 2048 * GB, teamSpaceBytes: 1024 * GB, singleFileLimitBytes: 20 * GB, collectionParticipantLimit: 0, activeCollectionLimit: 0, permanent: true, team: true, monthlyPrice: 15900, validityDays: null },
 }
 
-export const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, enterprise: 3 }
+export const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, halfyear: 3, year: 4, enterprise: 5 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS = {
   inApp: true,
@@ -96,9 +83,11 @@ export const DEFAULT_SYSTEM_CONFIG = {
   maintenanceMode: false,
   defaultShareDays: 3,
   maxShareDays: 30,
-  anonymousMaxFileSizeMb: 500,
+  anonymousMaxFileSizeMb: 1228.8,
+  anonymousCollectionParticipantLimit: 10,
+  anonymousActiveCollectionLimit: 1,
   // 游客累计可传输大小（MB），0 表示不限制。防止匿名通道被无限白嫖。
-  anonymousTotalSizeMb: 1024,
+  anonymousTotalSizeMb: 2048,
   maxBatchFiles: MAX_FILES,
   auditLogRetentionDays: 90,
   orphanGraceHours: 24,
@@ -141,6 +130,8 @@ export const webMemberSubsiteName = String(process.env.KUNQIONG_WEB_MEMBER_SUBSI
 export const WEB_MEMBER_PACKAGE_ENV_KEYS = {
   member: 'KUNQIONG_WEB_MEMBER_PACKAGE_MEMBER_ID',
   team: 'KUNQIONG_WEB_MEMBER_PACKAGE_TEAM_ID',
+  halfyear: 'KUNQIONG_WEB_MEMBER_PACKAGE_HALFYEAR_ID',
+  year: 'KUNQIONG_WEB_MEMBER_PACKAGE_YEAR_ID',
   enterprise: 'KUNQIONG_WEB_MEMBER_PACKAGE_ENTERPRISE_ID',
 }
 // These are the currently enabled package IDs returned by the member service.
@@ -149,6 +140,8 @@ export const WEB_MEMBER_PACKAGE_ENV_KEYS = {
 export const DEFAULT_WEB_MEMBER_PACKAGE_IDS = {
   member: 1,
   team: 2,
+  halfyear: 3,
+  year: 4,
   enterprise: 5,
 }
 

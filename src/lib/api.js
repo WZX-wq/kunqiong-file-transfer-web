@@ -451,11 +451,11 @@ export async function upgradeApiRequest(url, options = {}) {
 }
 
 // 把远端实价合并进套餐对象（只改展示字段，不动 permanent/team 等权益字段；
-// remotePriced 标记供 formatPlanPrice 区分「天数跟随主站」与本地兜底展示）
+// remotePriced 标记价格来源；本站配置的权益期限保持不变）
 export function mergePlanPricing(plan, remotePricing) {
   const pricing = remotePricing?.[plan?.id]
   if (!plan || !pricing || pricing.available === false) return plan
-  return { ...plan, monthlyPrice: pricing.priceCents, validityDays: pricing.validityDays, remotePriced: true, remotePackageName: pricing.packageName || '' }
+  return { ...plan, monthlyPrice: pricing.priceCents, remotePriced: true, remotePackageName: pricing.packageName || '' }
 }
 
 export async function copyTextToClipboard(value) {

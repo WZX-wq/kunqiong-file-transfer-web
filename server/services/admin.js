@@ -1,3 +1,4 @@
+import { ACCOUNT_PLANS } from '../config.js'
 import { clientAddress } from '../lib/request-security.js'
 import { equalSecret, pruneAttempts } from '../lib/security-primitives.js'
 // 后台管理与身份（OAuth 回调 / 管理员会话 / 运维清理）域业务逻辑
@@ -225,6 +226,7 @@ export function buildAdminOverview() {
     auditLogs: auditLogsAll.slice(0, 100),
     config: normalizeSystemConfig(metadata.systemConfig),
     plans: configuredAccountPlans(),
+    planDefaults: Object.values(ACCOUNT_PLANS).filter(plan => !plan.retired),
   }
 }
 

@@ -1,3 +1,4 @@
+import { collectionSizeOptions } from '../lib/plan-limits.js'
 export { UserAvatar, userAvatarSource, displayUserInitial, displayUserSubtitle } from './account.jsx'
 import React from 'react'
 import { sanitizeOfficeHtml } from '../office-html.js'
@@ -647,7 +648,7 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
       description,
       deadline: collectionForm.deadline,
       allowedTypes: normalizeCollectionTypes(collectionForm.allowedTypes),
-      maxFileSizeMb: Number(collectionForm.maxFileSizeMb),
+      maxFileSizeMb: Math.min(Number(collectionForm.maxFileSizeMb), data.maxConfigurableFileSizeMb || 20480),
     }
   }
 
@@ -764,7 +765,7 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
               </label>
               <label className="manage-field">
                 <span>单文件大小限制</span>
-                <select value={collectionForm.maxFileSizeMb} onChange={(event) => updateCollection({ maxFileSizeMb: event.target.value })}><option value="500">500 MB</option><option value="1024">1 GB</option><option value="5120">5 GB</option></select>
+                <select value={Math.min(Number(collectionForm.maxFileSizeMb), data.maxConfigurableFileSizeMb || 20480)} onChange={(event) => updateCollection({ maxFileSizeMb: event.target.value })}>{collectionSizeOptions(data.maxConfigurableFileSizeMb || 20480, collectionForm.maxFileSizeMb).map(size => <option key={size} value={size}>{formatBytes(size * 1024 ** 2)}</option>)}</select>
               </label>
             </>
           )}

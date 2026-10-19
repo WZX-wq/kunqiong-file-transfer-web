@@ -1,3 +1,4 @@
+import { assertCollectionParticipant } from '../services/entitlements.js'
 // upload 域路由（原 server.mjs 内联处理器，逐行搬迁，未改逻辑）
 //
 // 依赖方向：routes → services → lib → state → config（单向）
@@ -22,7 +23,7 @@ import {
   chunkUpload, prepareChunkUpload
 } from '../lib/upload.js'
 import {
-  accountOrganizationForUser, accountUserById, authSessionFromRequest, readCookie
+  accountOrganizationForUser, accountOrganizationPlanForUser, accountUserById, authSessionFromRequest, readCookie
 } from '../services/account.js'
 import {
   addGuestUsage, assertAccountCapacity, assertCollectionFiles,
@@ -54,7 +55,7 @@ export function registerUploadRoutes(app) {
   uniqueFilePaths(normalizedFiles)
   if (normalizedFiles.some((file) => !Number.isSafeInteger(file.size) || file.size < 0)) return res.status(400).json({ message: '文件大小必须为有效的非负整数' })
   const invalid = normalizedFiles.find((file) => file.size > MAX_FILE_SIZE)
-  if (invalid) return res.status(413).json({ message: `${invalid.name} 超过 5 GB 限制` })
+  if (invalid) return res.status(413).json({ message: `${invalid.name} 超过 20 GB 系统上限` })
   assertConfiguredUploadLimits(req, normalizedFiles)
   const guestKey = assertGuestQuota(req, res, normalizedFiles)
   const ownerSession = authSessionFromRequest(req)
@@ -66,7 +67,8 @@ export function registerUploadRoutes(app) {
     if (!collectionTask) return res.status(404).json({ message: '收集任务不存在' })
     const access = validateCollection(collectionTask)
     if (!access.ok) return res.status(access.status).json({ message: access.message })
-    collectionSubmitter = resolveCollectionSubmitter(req)
+    collectionSubmitter = resolveCollectionSubmitter(req, res)
+    assertCollectionParticipant(collectionTask, collectionSubmitter)
     if (!collectionSubmitter.participantName) return res.status(400).json({ message: '请先登录，或填写提交人名称' })
     const invalidCollectionFile = normalizedFiles.find((file) => file.size > collectionTask.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.name, collectionTask.allowedTypes))
     if (invalidCollectionFile) return res.status(413).json({ message: `${invalidCollectionFile.name} 不符合当前收集任务的文件限制` })
@@ -75,11 +77,12 @@ export function registerUploadRoutes(app) {
     if (!ownerSession?.user?.id) return res.status(401).json({ message: '请先登录后上传到团队空间' })
     teamOrganization = accountOrganizationForUser(ownerSession.user.id)
     if (!teamOrganization) return res.status(404).json({ message: '你尚未加入团队空间' })
+    if (!accountOrganizationPlanForUser(ownerSession.user.id, teamOrganization).team) return res.status(403).json({ message: '管理员已调整当前套餐，请购买团队套餐后使用团队功能' })
     if (!teamOrganization.members.some((member) => member.userId === ownerSession.user.id && member.status === 'active')) {
       return res.status(403).json({ message: '当前成员状态不能上传到团队空间' })
     }
     assertUniqueTeamResourceNames(teamOrganization, normalizedFiles)
-    assertTeamCapacity(teamOrganization, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
+    assertTeamCapacity(teamOrganization, normalizedFiles.reduce((sum, file) => sum + file.size, 0), ownerSession.user.id)
   } else {
     assertAccountCapacity(collectionTask ? accountUserById(collectionTask.ownerUserId) : ownerSession?.user, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
   }
@@ -111,6 +114,7 @@ export function registerUploadRoutes(app) {
     organizationId: teamOrganization?.id || '',
     collectionToken: collectionTask?.token || '',
     participantName: collectionSubmitter ? collectionSubmitter.participantName : String(req.body.participantName || '').trim().slice(0, 40),
+    participantKey: collectionSubmitter?.participantKey || '',
     submitterUserId: collectionSubmitter?.submitterUserId || '',
     submitterName: collectionSubmitter?.submitterName || '',
     relativePaths: paths,
@@ -290,7 +294,7 @@ function prepareUpload(req, session) {
   const checkedPaths = relativePathsInput(session.relativePaths, checkedFiles)
   checkedFiles.forEach((file,index) => { file.relativePath = checkedPaths[index] })
   uniqueFilePaths(checkedFiles)
-  assertConfiguredUploadLimits(req, checkedFiles)
+  assertConfiguredUploadLimits(req, checkedFiles, session)
   assertUploadCapacity(session, session.id)
   // 分片直写模式：这里只做完整性校验（逐 index 齐片 + 目标文件大小），
   // 不再合并 —— 旧版同步合并 5GB 文件会阻塞事件循环 10~35 秒。
@@ -321,6 +325,7 @@ async function completeUpload(req, session, mergedFiles) {
     if (session.completion) session.completion = { ...session.completion, ...progress, currentFile: file?.name || '', fileIndex: file ? index + 1 : 0 }
   })
   assertUploadSessionOwner(session, req)
+  assertUploadCapacity(session, session.id)
   assertServiceWritable(req)
   if (session.completion) {
     session.completion = { ...session.completion, status: 'publishing', currentFile: '' }
@@ -334,14 +339,14 @@ async function completeUpload(req, session, mergedFiles) {
     assertCollectionFiles(task, mergedFiles)
     assertUploadCapacity(session, session.id)
     const participantName = textInput(session.participantName, '提交人名称', 40)
-    const submission = await publishCollectionSubmission(task, mergedFiles, { participantName, submitterUserId: session.submitterUserId, submitterName: session.submitterName }, req, { uploadSessionId: session.id, guestKey: session.guestKey })
+    const submission = await publishCollectionSubmission(task, mergedFiles, { participantName, participantKey: session.participantKey, submitterUserId: session.submitterUserId, submitterName: session.submitterName }, req, { uploadSessionId: session.id, guestKey: session.guestKey })
     return { submission: publicSubmission(submission) }
   }
   if (session.mode === 'team_resource') {
     const organization = Object.values(metadata.organizations || {}).find((item) => item.id === session.organizationId)
     if (!organization) throw httpError(404, '团队空间不存在')
     assertUniqueTeamResourceNames(organization, mergedFiles)
-    assertTeamCapacity(organization, mergedFiles.reduce((sum, file) => sum + file.size, 0))
+    assertTeamCapacity(organization, mergedFiles.reduce((sum, file) => sum + file.size, 0), session.uploadUserId ?? session.ownerUserId)
   }
   const share = await createShareFromTempFiles(mergedFiles, {
     ...session.options,

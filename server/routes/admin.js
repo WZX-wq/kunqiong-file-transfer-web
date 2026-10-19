@@ -4,7 +4,7 @@
 // 注册顺序即 Express 匹配顺序，调用点顺序不可调整。
 import {
   ADMIN_ACCOUNT_PASSWORD, ADMIN_ACCOUNT_USERNAME, adminCredentialsConfigured, collectionsRoot,
-  filesRoot
+  filesRoot, ACCOUNT_PLANS
 } from '../config.js'
 import {
   requestIp
@@ -16,10 +16,10 @@ import {
   configuredAccountPlan, normalizePlanId, normalizeRecordDate, normalizeSystemConfig, publicUser
 } from '../lib/metadata-normalizers.js'
 import {
-  metadata, persistMetadata, refreshAuditPersistence
+  metadata, persistMetadata, refreshAuditPersistence, flushMetadataWrites
 } from '../lib/metadata-store.js'
 import {
-  accountUserById, appendAuthResult, recordAuditLog, safeReturnUrl, syncAccountUserSessions,
+  accountUserById, appendAuthResult, configuredAccountPlans, recordAuditLog, safeReturnUrl, syncAccountUserSessions,
   syncOrganizationTeamPlanFromOwner,
   setOAuthStateCookie
 } from '../services/account.js'
@@ -113,19 +113,26 @@ export function registerAdminRoutes(app) {
     res.json({ ...result, overview: buildAdminOverview() })
   })
 
-  app.patch('/api/admin/config', (req, res) => {
-    const auth = requireAdminSession(req, res)
-    if (!auth) return
-    const validationError = systemConfigError(req.body, metadata.systemConfig)
-    if (validationError) return res.status(400).json({ message: validationError })
-    metadata.systemConfig = normalizeSystemConfig({
-      ...metadata.systemConfig,
-      ...req.body,
-      planOverrides: req.body?.planOverrides || metadata.systemConfig.planOverrides,
-    })
-    persistMetadata()
-    recordAuditLog({ type: 'admin', action: '更新系统配置', userId: auth.user.id, details: metadata.systemConfig })
-    res.json({ config: metadata.systemConfig })
+  app.patch('/api/admin/config', async (req, res, next) => {
+    try {
+      const auth = requireAdminSession(req, res)
+      if (!auth) return
+      const validationError = systemConfigError(req.body, metadata.systemConfig)
+      if (validationError) return res.status(400).json({ message: validationError })
+      metadata.systemConfig = normalizeSystemConfig({
+        ...metadata.systemConfig,
+        ...req.body,
+        planOverrides: req.body?.planOverrides ? {
+          // The visible form replaces active overrides but must not reset purchased legacy quotas.
+          ...Object.fromEntries(Object.entries(metadata.systemConfig.planOverrides || {}).filter(([id]) => ACCOUNT_PLANS[id]?.retired)),
+          ...req.body.planOverrides,
+        } : metadata.systemConfig.planOverrides,
+      })
+      persistMetadata()
+      recordAuditLog({ type: 'admin', action: '更新系统配置', userId: auth.user.id, details: metadata.systemConfig })
+      await flushMetadataWrites()
+      res.json({ config: metadata.systemConfig, plans: configuredAccountPlans() })
+    } catch (error) { next(error) }
   })
 
   app.patch('/api/admin/users/:userId', (req, res) => {
@@ -146,15 +153,16 @@ export function registerAdminRoutes(app) {
       return res.status(400).json({ message: '不能禁用当前登录的管理员账号' })
     }
     user.planId = planId
+    const planChanged = Object.hasOwn(req.body, 'planId') || Object.hasOwn(req.body, 'planExpiresAt')
+    if (planChanged) user.planManagedAt = new Date().toISOString()
+    if (req.body.planId) user.planPermanent = configuredAccountPlan(planId).permanent
     user.status = status
-    if (configuredAccountPlan(planId).permanent) {
+    if (req.body.planId && configuredAccountPlan(planId).permanent) {
       user.planExpiresAt = null
     } else if (Object.prototype.hasOwnProperty.call(req.body || {}, 'planExpiresAt')) {
       user.planExpiresAt = normalizeRecordDate(req.body.planExpiresAt)
-    } else if (req.body.planId && planId !== 'free' && user.planExpiresAt
-      && new Date(user.planExpiresAt).getTime() <= Date.now()) {
-      // 后台套餐下拉框没有日期输入；重新授予时不能继承旧套餐的失效日期。
-      user.planExpiresAt = null
+    } else if (req.body.planId && planId !== 'free') {
+      user.planExpiresAt = new Date(Date.now() + (configuredAccountPlan(planId).validityDays || 30) * 86400000).toISOString()
     }
     user.updatedAt = new Date().toISOString()
     if (status === 'disabled') {
@@ -163,7 +171,7 @@ export function registerAdminRoutes(app) {
     syncAccountUserSessions(user)
     syncOrganizationTeamPlanFromOwner(user)
     persistMetadata()
-    recordAuditLog({ type: 'admin', action: '更新用户状态或权益', userId: auth.user.id, targetId: user.id, details: { status, planId, planExpiresAt: user.planExpiresAt || null } })
+    recordAuditLog({ type: 'admin', action: '更新用户状态或权益', userId: auth.user.id, targetId: user.id, details: { status, planId, planChanged, planExpiresAt: user.planExpiresAt || null } })
     res.json({ user: adminUserSummary(user) })
   })
 

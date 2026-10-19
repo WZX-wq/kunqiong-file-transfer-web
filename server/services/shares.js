@@ -1,3 +1,4 @@
+import { assertCollectionParticipant, assertFileEntitlement, collectionFileLimitBytes, personalEntitlements, requestUploadLimitBytes } from './entitlements.js'
 import { keyedDigest } from '../lib/private-key.js'
 import { equalSecret, passwordDigest, passwordMatches, pruneAttempts } from '../lib/security-primitives.js'
 import { clientAddress, allowedOrigins } from '../lib/request-security.js'
@@ -37,7 +38,7 @@ import {
 } from '../lib/metadata-store.js'
 
 import {
-  accountEffectivePlanForUser, accountNotificationSettingsForUser, accountOrganizationForUser,
+  accountEffectivePlanForUser, accountOrganizationPlanForUser, accountNotificationSettingsForUser, accountOrganizationForUser,
   accountPlanForUser, accountTeamUsageForOrganization, accountUsageForUser, accountUserById,
   addAccountMessage, authSessionFromRequest, currentCollectionStatus, currentShareStatus,
   displayAccountName, fileListSize, formatByteSize, getEmailTransporter, getOrigin,
@@ -139,6 +140,7 @@ export function persistUploadSession(session) {
       organizationId: session.organizationId,
       collectionToken: session.collectionToken,
       participantName: session.participantName,
+      participantKey: session.participantKey,
       submitterUserId: session.submitterUserId,
       submitterName: session.submitterName,
       guestKey: session.guestKey || '',
@@ -291,14 +293,14 @@ export function assertServiceWritable(req) {
 
 export function enterpriseOrganizationForUser(userId) {
   const organization = accountOrganizationForUser(userId)
-  if (!organization || !accountEffectivePlanForUser(organization.ownerUserId).team) return null
+  if (!organization || !accountOrganizationPlanForUser(userId, organization).team) return null
   return organization
 }
 
 export function resourceEnterpriseOrganization(item) {
   if (!item?.teamResource) return item?.ownerUserId ? enterpriseOrganizationForUser(item.ownerUserId) : null
   const organization = metadata.organizations?.[item.teamOrganizationId]
-  return organization && accountEffectivePlanForUser(organization.ownerUserId).team ? organization : null
+  return organization && accountOrganizationPlanForUser(organization.ownerUserId, organization).team ? organization : null
 }
 
 export function validateTeamShareManager(share, req) {
@@ -315,6 +317,7 @@ export function validateTeamShareManager(share, req) {
   if (!organization) return { ok: false, status: 404, message: '团队资源所属团队已不存在' }
   if (!viewer) return { ok: false, status: 401, message: '请先登录团队成员账号' }
   if (!organization.members.some(member => member.userId === viewer.id && member.status === 'active')) return { ok: false, status: 403, message: '当前账号不是该团队的有效成员' }
+  if (!accountOrganizationPlanForUser(viewer.id, organization).team) return { ok: false, status: 403, message: '管理员已调整当前套餐，请购买团队套餐后使用团队功能' }
   if (viewer.id !== share.ownerUserId && !isOrganizationManager(organization, viewer.id)) return { ok: false, status: 403, message: '仅资源上传者或团队管理者可以管理该团队资源' }
   return { ok: true }
 }
@@ -534,8 +537,8 @@ export function prepareDirectUpload(req, res, next) {
     assertServiceWritable(req)
     const user = authSessionFromRequest(req)?.user
     const config = normalizeSystemConfig(metadata.systemConfig)
-    let max = 5 * 1024 ** 3
-    let fileMax = user ? max : config.anonymousMaxFileSizeMb * 1024 ** 2
+    let fileMax = requestUploadLimitBytes(req)
+    let max = fileMax * config.maxBatchFiles
     const guestKey = resolveGuestKey(req, res)
     if (guestKey && guestQuotaLimitBytes()) max = Math.min(max, guestQuotaLimitBytes() - guestUsageEntry(guestKey).bytes - pendingUploadBytes(other => other.guestKey === guestKey))
     let ownerId = user?.id
@@ -544,6 +547,7 @@ export function prepareDirectUpload(req, res, next) {
       if (!task) throw httpError(404, '收集任务不存在')
       const access = validateCollection(task)
       if (!access.ok) throw httpError(access.status, access.message)
+      assertCollectionParticipant(task, resolveCollectionSubmitter(req, res))
       ownerId = task.ownerUserId
       fileMax = Math.min(fileMax, task.maxFileSizeMb * 1024 ** 2)
       if (!ownerId) max = Math.min(max, collectionCapacityBytes(task) - task.submissions.reduce((sum, item) => sum + fileListSize(item.files), 0) - pendingUploadBytes(other => other.collectionToken === task.token))
@@ -561,7 +565,7 @@ export function prepareDirectUpload(req, res, next) {
       if (!organization.members.some(member => member.userId === ownerId && member.status === 'active')) throw httpError(403, '当前成员状态不能上传到团队空间')
       organizationId = organization.id
       req.uploadOrganizationId = organizationId
-      const teamUsage = accountTeamUsageForOrganization(organization)
+      const teamUsage = accountTeamUsageForOrganization(organization, ownerId)
       max = Math.min(max, teamUsage.remainingBytes - pendingUploadBytes(other => other.organizationId === organization.id))
     } else if (ownerId) {
       max = Math.min(max, accountUsageForUser(ownerId).remainingBytes - pendingUploadBytes(other => (other.capacityOwnerUserId || other.ownerUserId) === ownerId))
@@ -583,6 +587,7 @@ export function prepareDirectUpload(req, res, next) {
         files: [{ size: reservedBytes }],
         guestKey,
         ownerUserId: ownerId || '',
+        uploadUserId: user?.id || '',
         capacityOwnerUserId: req.params.token ? ownerId || '' : '',
         collectionToken: req.params.token || '',
         organizationId,
@@ -604,16 +609,12 @@ export function prepareDirectUpload(req, res, next) {
   } catch (error) { next(error) }
 }
 
-export function assertConfiguredUploadLimits(req, files = []) {
+export function assertConfiguredUploadLimits(req, files = [], context = {}) {
   const config = normalizeSystemConfig(metadata.systemConfig)
   if (files.length > config.maxBatchFiles) {
     throw httpError(413, `单次最多上传 ${config.maxBatchFiles} 个文件`)
   }
-  const isAnonymous = !authSessionFromRequest(req)?.user?.id
-  if (!isAnonymous) return
-  const maxBytes = config.anonymousMaxFileSizeMb * 1024 * 1024
-  const invalid = files.find((file) => Number(file.size || 0) > maxBytes)
-  if (invalid) throw httpError(413, `匿名上传单文件不能超过 ${config.anonymousMaxFileSizeMb} MB`)
+  assertFileEntitlement(files, requestUploadLimitBytes(req, context))
 }
 
 // ---------- 未登录（游客）累计传输配额 ----------
@@ -621,7 +622,7 @@ export function assertConfiguredUploadLimits(req, files = []) {
 // 登录用户返回空串（不参与游客计费，走个人空间配额）。
 export function resolveGuestKey(req, res) {
   if (authSessionFromRequest(req)?.user?.id) return ''
-  const existing = validGuestId(readCookie(req, GUEST_ID_COOKIE))
+  const existing = validGuestId(readCookie(req, GUEST_ID_COOKIE)) || req.issuedGuestId
   if (!existing) issueGuestCookie(req, res)
   // A signed cookie identifies a browser for session ownership; the network budget
   // survives cookie removal and repeated issuance. Authenticated users use accounts.
@@ -637,6 +638,7 @@ export function validGuestId(value) {
 export function issueGuestCookie(req, res) {
   const token = createToken(32)
   const signed = `${token}.${keyedDigest(`guest:${token}`)}`
+  req.issuedGuestId = signed
   res.append('Set-Cookie', serializeCookie(GUEST_ID_COOKIE, signed, {
     httpOnly: true, maxAge: GUEST_ID_MAX_AGE_SECONDS, path: '/',
     sameSite: 'Lax', secure: isSecureRequest(req),
@@ -935,8 +937,8 @@ export function contentDisposition(type, filename) {
   return `${type}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(String(filename || fallback))}`
 }
 
-export function assertTeamCapacity(organization, incomingBytes) {
-  const usage = accountTeamUsageForOrganization(organization)
+export function assertTeamCapacity(organization, incomingBytes, userOrId = null) {
+  const usage = accountTeamUsageForOrganization(organization, userOrId)
   if (!usage.totalBytes) throw httpError(403, '当前团队套餐没有配置团队空间')
   if (usage.usedBytes + Number(incomingBytes || 0) > usage.totalBytes) {
     throw httpError(507, `团队空间不足，剩余 ${formatByteSize(usage.remainingBytes)}`)
@@ -970,6 +972,7 @@ export function collectionCapacityBytes(task) {
 }
 
 export function assertCollectionFiles(task, files) {
+  assertFileEntitlement(files, collectionFileLimitBytes(task))
   if (files.some((file) => file.size > task.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.originalname || file.name, task.allowedTypes))) {
     throw httpError(413, '文件不符合当前收集任务的大小或格式限制')
   }
@@ -1072,6 +1075,13 @@ export function sweepStaleUploadSessions(now = Date.now()) {
 
 export function assertUploadCapacity(item, excludeId) {
   const incomingBytes = fileListSize(item.files)
+  if (!item.intake) {
+    const config = normalizeSystemConfig(metadata.systemConfig)
+    if (item.files.length > config.maxBatchFiles) throw httpError(413, `单次最多上传 ${config.maxBatchFiles} 个文件`)
+    const organization = item.organizationId && Object.values(metadata.organizations).find(org => org.id === item.organizationId)
+    const limit = organization ? accountTeamUsageForOrganization(organization, item.uploadUserId ?? item.ownerUserId).singleFileLimitBytes : personalEntitlements(item.uploadUserId ?? item.ownerUserId).singleFileLimitBytes
+    assertFileEntitlement(item.files, limit)
+  }
   if (item.guestKey && guestQuotaLimitBytes()) {
     const usedBytes = guestUsageEntry(item.guestKey).bytes
     const reservedBytes = pendingUploadBytes((other) => other.guestKey === item.guestKey, excludeId)
@@ -1082,7 +1092,7 @@ export function assertUploadCapacity(item, excludeId) {
   if (item.collectionToken) {
     const task = metadata.collections.find((task) => task.token === item.collectionToken)
     if (!task) throw httpError(404, '收集任务不存在')
-    if (!item.intake) assertCollectionFiles(task, item.files)
+    if (!item.intake) { assertCollectionFiles(task, item.files); assertCollectionParticipant(task, item) }
     if (!task.ownerUserId) {
       const usedBytes = task.submissions.reduce((sum, submission) => sum + fileListSize(submission.files), 0)
       const reservedBytes = pendingUploadBytes((other) => other.collectionToken === task.token, excludeId)
@@ -1092,7 +1102,7 @@ export function assertUploadCapacity(item, excludeId) {
   if (item.organizationId) {
     const organization = Object.values(metadata.organizations).find((organization) => organization.id === item.organizationId)
     if (!organization) throw httpError(404, '团队空间不存在')
-    assertTeamCapacity(organization, incomingBytes + pendingUploadBytes((other) => other.organizationId === item.organizationId, excludeId))
+    assertTeamCapacity(organization, incomingBytes + pendingUploadBytes((other) => other.organizationId === item.organizationId, excludeId), item.uploadUserId ?? item.ownerUserId)
   } else {
     const ownerId = item.capacityOwnerUserId || item.ownerUserId
     assertAccountCapacity(accountUserById(ownerId), incomingBytes + pendingUploadBytes((other) => !other.organizationId && (other.capacityOwnerUserId || other.ownerUserId) === ownerId, excludeId))
@@ -1303,11 +1313,12 @@ export function publicSubmissionSubmitter(submission = {}) {
 
 // 收集任务提交者身份：登录用户优先（以服务端会话为准，客户端无法伪造），
 // 未登录时回落请求体中的 participantName（保留匿名提交能力）。
-export function resolveCollectionSubmitter(req) {
+export function resolveCollectionSubmitter(req, res) {
   const session = authSessionFromRequest(req)
   const user = session?.user?.id ? accountUserById(session.user.id) : null
   if (!user) {
-    return { submitterUserId: '', submitterName: '', participantName: textInput(req.body?.participantName ?? '', '提交人名称', 40, { optional:true }) }
+    const guest = validGuestId(readCookie(req, GUEST_ID_COOKIE)) || req.issuedGuestId || (res ? issueGuestCookie(req, res) : '')
+    return { participantKey: guest ? `guest:${keyedDigest(`participant:${guest}`)}` : '', submitterUserId: '', submitterName: '', participantName: textInput(req.body?.participantName ?? '', '提交人名称', 40, { optional:true }) }
   }
   const name = displayAccountName(user)
   return {
@@ -1358,7 +1369,11 @@ export async function publishCollectionSubmission(task, tempFiles, submitter, re
   const id = createToken(12)
   const submission = await publishUploadedFiles(tempFiles, path.join(collectionsRoot, task.id, id), {
     attach(files) {
-      const item = { id, ...(uploadSessionId ? { uploadSessionId } : {}), participantName: submitter.participantName, submitterUserId: submitter.submitterUserId || '', submitterName: submitter.submitterName || submitter.participantName, submittedAt: new Date().toISOString(), files }
+      const access = validateCollection(task)
+      if (!access.ok) throw httpError(access.status, access.message)
+      assertCollectionFiles(task, files)
+      assertCollectionParticipant(task, submitter)
+      const item = { id, participantKey: submitter.participantKey || '', ...(uploadSessionId ? { uploadSessionId } : {}), participantName: submitter.participantName, submitterUserId: submitter.submitterUserId || '', submitterName: submitter.submitterName || submitter.participantName, submittedAt: new Date().toISOString(), files }
       task.submissions.push(item)
       return item
     },
@@ -1380,6 +1395,7 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
     const shareUrl = `${getOrigin(req)}/share/${shareToken}`
     const qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
     const ownerSession = authSessionFromRequest(req)
+    assertConfiguredUploadLimits(req, tempFiles, { mode: options.teamResource ? 'team_resource' : 'share' })
     if (options.uploadSessionId) assertUploadSessionOwner(uploadSessions.get(options.uploadSessionId), req)
     // 断点恢复期间可能更换绑定，发布时仍需以当前用户资料校验收件人。
     const recipientError = recipientInputError(options.recipients, accountUserById(ownerSession?.user?.id) || ownerSession?.user)
@@ -1390,7 +1406,7 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
       if (!organization) throw httpError(404, '团队空间不存在')
       if (!organization.members.some(member => member.userId === ownerSession?.user?.id && member.status === 'active')) throw httpError(403, '团队成员权限已失效，无法提交资源')
       assertUniqueTeamResourceNames(organization, tempFiles)
-      assertTeamCapacity(organization, totalSize)
+      assertTeamCapacity(organization, totalSize, ownerSession?.user?.id)
     } else {
       assertAccountCapacity(ownerSession?.user, totalSize)
     }

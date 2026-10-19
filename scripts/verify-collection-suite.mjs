@@ -33,7 +33,8 @@ const templateSource = path.join(root, 'email-templates')
 fs.mkdirSync(path.join(fixture, 'email-templates'))
 for (const name of fs.readdirSync(templateSource)) fs.copyFileSync(path.join(templateSource, name), path.join(fixture, 'email-templates', name))
 fs.mkdirSync(path.join(fixture, 'storage'))
-fs.writeFileSync(path.join(fixture, 'storage', 'metadata.json'), JSON.stringify({ users, sessions, shares: [], collections: [], messages: {}, systemConfig: { anonymousTotalSizeMb: 1 }, upgradeOrders: [] }))
+// CRUD cases need multiple concurrent tasks; quota boundaries have their own runtime-plan suite.
+fs.writeFileSync(path.join(fixture, 'storage', 'metadata.json'), JSON.stringify({ users, sessions, shares: [], collections: [], messages: {}, systemConfig: { anonymousTotalSizeMb: 1, anonymousActiveCollectionLimit: 0, planOverrides: { free: { activeCollectionLimit: 0 } } }, upgradeOrders: [] }))
 
 const scanner = net.createServer((socket) => {
   let input = Buffer.alloc(0), command = false, ended = false

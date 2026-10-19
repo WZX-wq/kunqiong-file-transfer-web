@@ -157,7 +157,7 @@ export function WorkspacePage() {
     return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和入团申请会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
   }
   const plan = workspace?.plan || {}
-  const plans = (workspace?.plans || []).map((item) => mergePlanPricing(item, remotePricing))
+  const plans = (workspace?.plans || []).filter(item => !item.retired).map((item) => mergePlanPricing(item, remotePricing))
   const planDisplay = mergePlanPricing(plan, remotePricing)
   const orders = workspace?.orders || []
   const pendingOrder = orders.find((order) => order.status === 'pending_payment') || null
@@ -178,7 +178,8 @@ export function WorkspacePage() {
   // 当前空间用量只跟随账号实际权益，套餐比较选择不改变已购额度。
   const currentTotalBytes = Number(capacity.totalBytes ?? plan.totalBytes ?? 0)
   const ratio = currentTotalBytes ? Math.min(100, Math.round((capacity.usedBytes / currentTotalBytes) * 100)) : 0
-  const isSelectablePlan = (item) => item.id !== 'free' && accountPlanRank(item.id) >= accountPlanRank(plan.id) && !(item.id === plan.id && item.permanent)
+  const isSelectablePlan = (item) => item.id !== 'free' && accountPlanRank(item.id) >= accountPlanRank(plan.id) && !(item.id === plan.id && plan.permanent)
+  const hasMaximumPersonalEntitlement = plans.length > 0 && !plans.some(item => accountPlanRank(item.id) > accountPlanRank(plan.id))
   const defaultSelectedPlan = plans.find(isSelectablePlan) || plan
   const selectedPlan = plans.find((item) => item.id === selectedPlanId && isSelectablePlan(item)) || defaultSelectedPlan
   const currentPlanLabel = plan.label || '基础版'
@@ -211,13 +212,13 @@ export function WorkspacePage() {
                 <span className={plan.permanent ? 'is-on' : 'is-muted'}>{plan.permanent ? <Check size={14} /> : <Clock3 size={14} />} {plan.permanent ? '文件永久保存' : '文件临时保存'}</span>
                 <span className={hasTeamPlan || canUseTeamSpace ? 'is-on' : 'is-muted'}>{hasTeamPlan || canUseTeamSpace ? <Check size={14} /> : <X size={14} />} {teamRole === 'member' && !hasTeamPlan ? `共享团队空间${teamSpaceBytes ? ` · ${formatBytes(teamSpaceBytes)}` : ''}` : hasTeamPlan || canUseTeamSpace ? '团队协作已开通' : '团队协作未开通'}</span>
               </div>
-              {hasMaximumTeamEntitlement && <div className="upgrade-maximum-notice workspace-team-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong><span>{teamEntitlement.teamPlanLabel || highestTeamPlan.label}团队权益由组织提供；下方价格卡仅用于升级你的个人套餐。</span></div></div>}
+              {hasMaximumPersonalEntitlement && <div className="upgrade-maximum-notice workspace-team-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong></div></div>}
               <div className="workspace-plan-catalog-heading"><strong>个人套餐价格</strong></div>
               <div className="plan-comparison" role="group" aria-label="选择套餐">
                 {plans.map((item) => {
                   const PlanIcon = accountPlanIcon(item.id)
                   const isCurrentPlan = item.id === plan.id
-                  const isIncludedPlan = accountPlanRank(item.id) < accountPlanRank(plan.id) || (isCurrentPlan && item.permanent)
+                  const isIncludedPlan = accountPlanRank(item.id) < accountPlanRank(plan.id) || (isCurrentPlan && plan.permanent)
                   const isTeamEntitlementPlan = item.team && teamEntitlement.teamPlanId && accountPlanRank(item.id) <= accountPlanRank(teamEntitlement.teamPlanId)
                   const isSelectable = isSelectablePlan(item)
                   const isSelected = item.id === selectedPlan.id
@@ -247,7 +248,7 @@ export function WorkspacePage() {
                   ) : (
                     <div className="workspace-name-line">
                       <h2><Users size={18} /> {organization?.name || '创建团队空间'}</h2>
-                      {organization?.ownerUserId === user.id && <button type="button" className="ghost-icon" onClick={() => setEditingTeamName(true)} aria-label="编辑团队名称" title="编辑团队名称"><PencilLine size={15} /></button>}
+                      {organization?.ownerUserId === user.id && canManageTeam && <button type="button" className="ghost-icon" onClick={() => setEditingTeamName(true)} aria-label="编辑团队名称" title="编辑团队名称"><PencilLine size={15} /></button>}
                     </div>
                   )}
                 </div>
@@ -259,8 +260,8 @@ export function WorkspacePage() {
                 hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
               ) : (
                 <>
-                  {teamRole === 'owner' && !canManageTeam && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
-                  {teamRole === 'member' && <div className="workspace-share-notice"><Users size={18} /><div><strong>你已加入「{organization.name}」，正在共享团队空间</strong><span>团队空间的容量由团队所有者提供，你个人的空间与权益保持不变。</span></div></div>}
+                  {!canUseTeamSpace && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
+                  {teamRole === 'member' && canUseTeamSpace && <div className="workspace-share-notice"><Users size={18} /><div><strong>你已加入「{organization.name}」，正在共享团队空间</strong><span>团队空间的容量由团队所有者提供，你个人的空间与权益保持不变。</span></div></div>}
                   <div className="workspace-team-body">
                     <div className="workspace-team-block">
                       {ownerMember && <div className="workspace-owner-summary"><span className="workspace-member-avatar">{(ownerMember.displayName || '团').slice(0, 1)}</span><div><strong>{ownerMember.displayName || ownerMember.email || ownerMember.phone || '团队所有者'}</strong><span>{ownerMember.email || ownerMember.phone || ownerMember.userId || '当前账号'} · 所有者</span></div><span className="workspace-member-state active">所有者</span></div>}
@@ -282,7 +283,7 @@ export function WorkspacePage() {
                   </div>
                   <div className="workspace-team-foot">
                     <span>查看团队成员、入团申请和使用情况</span>
-                    <button type="button" className="team-manage-link" onClick={() => { window.location.href = '/team' }}><BarChart3 size={14} /> 查看团队成员与使用情况 <ChevronRight size={14} /></button>
+                    {canUseTeamSpace ? <button type="button" className="team-manage-link" onClick={() => { window.location.href = '/team' }}><BarChart3 size={14} /> 查看团队成员与使用情况 <ChevronRight size={14} /></button> : <button type="button" className="team-manage-link" onClick={() => setUpgradeOpen(true)}><Zap size={14} /> 购买团队套餐 <ChevronRight size={14} /></button>}
                   </div>
                 </>
               )}
@@ -307,7 +308,8 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
   }, [])
 
   const plan = workspace?.plan || {}
-  const accountPlans = workspace?.plans || []
+  const canCreateOrder = plan.id !== 'year'
+  const accountPlans = (workspace?.plans || []).filter(item => !item.retired)
   const teamEntitlement = workspace?.teamEntitlement || {}
   const localPlans = accountPlans.filter((item) => item.id !== 'free')
   const freePlan = accountPlans.find((item) => item.id === 'free') || (plan.id === 'free' ? plan : null)
@@ -316,9 +318,9 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
   const hasPlanCatalog = localPlans.length > 0
   const highestTeamPlan = localPlans.filter((item) => item.team).reduce((highest, item) => !highest || accountPlanRank(item.id) > accountPlanRank(highest.id) ? item : highest, null)
   const hasMaximumTeamEntitlement = Boolean(teamEntitlement.organizationId && teamEntitlement.teamPlanId && highestTeamPlan && accountPlanRank(teamEntitlement.teamPlanId) >= accountPlanRank(highestTeamPlan.id))
-  const defaultPlanId = localPlans.find((item) => accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && item.permanent))?.id || ''
-  const hasMaximumPersonalEntitlement = hasPlanCatalog && !defaultPlanId
-  const preferredPlanId = localPlans.find((item) => item.id === initialPlanId && accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && item.permanent))?.id || ''
+  const defaultPlanId = localPlans.find((item) => accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && plan.permanent))?.id || ''
+  const hasMaximumPersonalEntitlement = hasPlanCatalog && !localPlans.some(item => accountPlanRank(item.id) > currentPlanRank)
+  const preferredPlanId = localPlans.find((item) => item.id === initialPlanId && accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && plan.permanent))?.id || ''
   const [selectedPlanId, setSelectedPlanId] = useState(preferredPlanId || defaultPlanId)
   const [storedOrder, setOrderView] = useState(initialOrder || pendingOrder)
   const [now, setNow] = useState(Date.now)
@@ -340,7 +342,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
   const plans = localPlans.map((item) => mergePlanPricing(item, remotePricing))
   const comparisonPlans = [...(freePlan ? [mergePlanPricing(freePlan, remotePricing)] : []), ...plans]
   const priceAvailable = (id) => Boolean(remotePricing?.[id] && remotePricing[id].available !== false && !remotePricing.error)
-  const pricingError = defaultPlanId
+  const pricingError = canCreateOrder && defaultPlanId
     ? remotePricing?.error || (remotePricing && selectedPlanId && !priceAvailable(selectedPlanId) ? '套餐暂不可用，请稍后重试' : '')
     : ''
 
@@ -392,14 +394,14 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
     return () => { window.clearInterval(timer); controller.abort() }
   }, [orderView?.remoteOrderNo, orderView?.id, orderView?.status])
 
-  const selectedPlan = plans.find((item) => item.id === selectedPlanId && accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && item.permanent)) || null
+  const selectedPlan = plans.find((item) => item.id === selectedPlanId && accountPlanRank(item.id) >= currentPlanRank && !(item.id === plan.id && plan.permanent)) || null
   const isCurrentPlan = (item) => item.id === plan.id
-  const isIncludedPlan = (item) => accountPlanRank(item.id) < currentPlanRank || (item.id === plan.id && item.permanent)
+  const isIncludedPlan = (item) => accountPlanRank(item.id) < currentPlanRank || (item.id === plan.id && plan.permanent)
 
   const createOrder = async (replacementPlanId = null) => {
     const isReplacement = typeof replacementPlanId === 'string'
     const planId = isReplacement ? replacementPlanId : selectedPlan?.id
-    if (!planId || busy || (!isReplacement && !priceAvailable(planId))) return
+    if (!canCreateOrder || !planId || busy || (!isReplacement && !priceAvailable(planId))) return
     setBusy(true)
     setError('')
     setNotice('')
@@ -425,7 +427,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
   }
 
   const loadPayment = async () => {
-    if (!orderView || paymentOrderView(orderView)?.status !== 'pending_payment' || busy || paymentRequestRunning.current) return
+    if (!orderView || orderView.retired || paymentOrderView(orderView)?.status !== 'pending_payment' || busy || paymentRequestRunning.current) return
     paymentRequestRunning.current = true
     setBusy(true)
     setError('')
@@ -461,7 +463,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
 
   useEffect(() => {
     if (!orderView) { attemptedPaymentOrder.current = null; return }
-    if (orderView.status !== 'pending_payment' || payment || busy || attemptedPaymentOrder.current === orderView.id) return
+    if (orderView.retired || orderView.status !== 'pending_payment' || payment || busy || attemptedPaymentOrder.current === orderView.id) return
     attemptedPaymentOrder.current = orderView.id
     loadPayment()
   }, [orderView?.id, orderView?.status, payment, busy])
@@ -521,10 +523,10 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
             <div className="upgrade-success-view" role="status">
               <span className="upgrade-success-icon"><BadgeCheck size={34} /></span>
               <h3>{orderView.planLabel}权益已开通</h3>
-              <p>{orderView.planId === 'enterprise' ? '文件永久保存，感谢支持' : '文件保存有效期已自动顺延，立即生效'}</p>
+              <p>{(orderView.permanent ?? (orderView.planId === 'enterprise' && !orderView.remoteExpireAt)) ? '文件永久保存，感谢支持' : '文件保存有效期已自动顺延，立即生效'}</p>
               <dl className="upgrade-order-meta">
                 <div><dt>支付金额</dt><dd><strong className="upgrade-success-amount">{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '—'}</strong></dd></div>
-                <div><dt>有效期至</dt><dd>{orderView.planId === 'enterprise' ? '永久有效' : orderView.remoteExpireAt ? formatDate(orderView.remoteExpireAt) : '以主站权益为准'}</dd></div>
+                <div><dt>有效期至</dt><dd>{(orderView.permanent ?? (orderView.planId === 'enterprise' && !orderView.remoteExpireAt)) ? '永久有效' : orderView.remoteExpireAt ? formatDate(orderView.remoteExpireAt) : '以主站权益为准'}</dd></div>
                 <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={async () => { try { await copyTextToClipboard(orderView.orderNo); onNotify?.('订单号已复制', 'success') } catch { /* 忽略 */ } }}><Copy size={13} /> 复制</button></dd></div>
                 {orderView.paidAt && <div><dt>支付时间</dt><dd>{formatDate(orderView.paidAt)}</dd></div>}
               </dl>
@@ -541,24 +543,28 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
               <dl className="upgrade-order-meta">
                 <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={async () => { try { await copyTextToClipboard(orderView.orderNo); onNotify?.('订单号已复制', 'success') } catch { /* 忽略 */ } }}><Copy size={13} /> 复制</button></dd></div>
                 <div><dt>创建时间</dt><dd>{formatDate(orderView.createdAt)}</dd></div>
+                {Object.hasOwn(orderView, 'entitlementDays') && <div><dt>权益期限</dt><dd>{orderView.entitlementDays === null ? '永久有效' : `${orderView.entitlementDays} 天`}</dd></div>}
                 <div><dt>应付金额</dt><dd>{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '价格以支付通道为准'}</dd></div>
               </dl>
+              {orderView.retired && <p className="upgrade-order-note" role="status">该套餐已下架，不能继续支付或重新下单。已购权益保留；如已付款，可核对原单支付状态。</p>}
+              {!orderView.retired && <>
               {orderView.status === 'pending_payment' && !payment && paymentMethodSelector}
               {orderView.status === 'pending_payment' && !payment && (busy || !error) && <div className="upgrade-payment-qr" role="status"><span className="loading-dot" /><span>{payType === 2 ? '正在加载支付宝收银台…' : '正在加载微信支付二维码…'}</span></div>}
               {orderView.status === 'pending_payment' && <div className={`upgrade-payment-countdown ${remainingSeconds <= 60 ? 'is-urgent' : ''}`}><Clock3 size={15} /><span>支付剩余时间 <strong role="timer" aria-label="支付剩余时间">{countdown}</strong><small>订单创建后 15 分钟内有效，超时需重新创建订单</small></span></div>}
               {orderView.status === 'pending_payment' && payment?.qrcode_img_url && <div className="upgrade-payment-qr"><img src={payment.qrcode_img_url} alt="微信支付二维码" /><span>请使用微信扫码支付</span></div>}
               {orderView.status === 'pending_payment' && payment?.alipaysubmit_html && <div className="upgrade-payment-qr upgrade-payment-alipay"><div className="upgrade-payment-alipay-frame"><iframe title="支付宝收银台" scrolling="no" sandbox="allow-scripts allow-forms allow-popups allow-top-navigation-by-user-activation" referrerPolicy="no-referrer" srcDoc={payment.alipaysubmit_html} /></div><span>请使用支付宝扫码支付</span></div>}
-              <div className="upgrade-order-note" role="status"><Clock3 size={15} /><span>{orderView.status === 'expired' ? '支付已超时，请重新创建订单支付；如已付款，可核对原单支付状态。' : notice || '支付成功后会员权益会自动开通。'}</span></div>
+              </>}
+              <div className="upgrade-order-note" role="status"><Clock3 size={15} /><span>{orderView.retired ? '请选择当前在售套餐，或查看已购权益。' : orderView.status === 'expired' ? '支付已超时，请重新创建订单支付；如已付款，可核对原单支付状态。' : notice || '支付成功后会员权益会自动开通。'}</span></div>
               {orderView.status === 'pending_payment' ? (
                 <div className="upgrade-order-actions">
-                  {!payment && error && <button className="primary-button" onClick={loadPayment} disabled={busy}><RefreshCw size={15} /> {busy ? '正在加载…' : '重新加载支付码'}</button>}
-                  {payment && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</button>}
+                  {!orderView.retired && !payment && error && <button className="primary-button" onClick={loadPayment} disabled={busy}><RefreshCw size={15} /> {busy ? '正在加载…' : '重新加载支付码'}</button>}
+                  {(payment || orderView.remoteOrderNo) && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</button>}
                   <button className="secondary-button" onClick={() => requireCancelConfirmation ? setCancelConfirmation(true) : cancelOrder()} disabled={busy}><X size={15} /> 取消订单</button>
                 </div>
               ) : (
                 <div className="upgrade-order-actions">
-                  {orderView.status === 'expired' ? <>
-                    <button className="primary-button" onClick={() => createOrder(orderView.planId)} disabled={busy}><RotateCcw size={15} /> {busy ? '正在创建…' : '重新创建订单'}</button>
+                  {orderView.status === 'expired' && !orderView.retired ? <>
+                    {canCreateOrder && <button className="primary-button" onClick={() => createOrder(orderView.planId)} disabled={busy}><RotateCcw size={15} /> {busy ? '正在创建…' : '重新创建订单'}</button>}
                     {orderView.remoteOrderNo && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 核对支付状态</button>}
                   </> : <button className="primary-button" onClick={() => { setOrderView(null); setPayment(null); onRefresh?.({ silent: true }) }}><RotateCcw size={15} /> 重新选择套餐</button>}
                 </div>
@@ -566,7 +572,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
             </div>
           )) : (
             <>
-              <p className="upgrade-intro">当前个人套餐：<strong>{plan.label || '基础版'}</strong>。价格和有效期以当前支付套餐为准，创建订单前会同步主站实际金额。</p>
+              <p className="upgrade-intro">当前个人套餐：<strong>{plan.label || '基础版'}</strong>。价格由主站提供，权益有效期以本站套餐配置为准{canCreateOrder ? '；创建订单时会确认金额和期限。' : '。'}</p>
               <div className="workspace-plan-catalog-heading"><strong>个人套餐价格</strong></div>
               <div className="upgrade-plan-grid">
                 {comparisonPlans.map((item) => (
@@ -574,8 +580,8 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
                     type="button"
                     key={item.id}
                     className={`upgrade-plan-card ${item.id === selectedPlanId ? 'selected' : ''} ${item.id === 'free' || isIncludedPlan(item) ? 'is-current' : ''}`}
-                    onClick={() => item.id !== 'free' && !isIncludedPlan(item) && setSelectedPlanId(item.id)}
-                    disabled={item.id === 'free' || isIncludedPlan(item) || !priceAvailable(item.id)}
+                    onClick={() => canCreateOrder && item.id !== 'free' && !isIncludedPlan(item) && setSelectedPlanId(item.id)}
+                    disabled={!canCreateOrder || item.id === 'free' || isIncludedPlan(item) || !priceAvailable(item.id)}
                     aria-pressed={item.id === selectedPlanId}
                   >
                     <span className="upgrade-plan-top">{(() => { const PlanIcon = accountPlanIcon(item.id); return <span className="upgrade-plan-icon"><PlanIcon size={16} /></span> })()}<strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team && teamEntitlement.teamPlanId && accountPlanRank(item.id) <= accountPlanRank(teamEntitlement.teamPlanId) ? <em>团队已拥有</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
@@ -587,15 +593,15 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
                   </button>
                 ))}
               </div>
-              {(hasMaximumPersonalEntitlement || hasMaximumTeamEntitlement) && <div className="upgrade-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong>{hasMaximumTeamEntitlement && <span>{teamEntitlement.teamPlanLabel || highestTeamPlan.label}团队权益由组织提供；以下价格卡和订单用于你的个人套餐。</span>}</div></div>}
-              {selectedPlan && paymentMethodSelector}
-              {selectedPlan && (
+              {hasMaximumPersonalEntitlement && <div className="upgrade-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong></div></div>}
+              {canCreateOrder && selectedPlan && paymentMethodSelector}
+              {canCreateOrder && selectedPlan && (
                 <div className="upgrade-summary">
                   <span><Sparkles size={14} /> {plan.label || '基础版'} → <strong>{selectedPlan.label}</strong>：{selectedPlan.tagline}</span>
                   <button className="primary-button" onClick={createOrder} disabled={busy || !priceAvailable(selectedPlan.id)}><Zap size={15} /> {busy ? '正在创建…' : selectedPlan.id === plan.id ? '创建续费订单' : '创建升级订单'}</button>
                 </div>
               )}
-              <p className="upgrade-hint">支付成功后权益自动生效，续费会顺延有效期。</p>
+              {canCreateOrder && <p className="upgrade-hint">支付成功后权益自动生效，续费会顺延有效期。</p>}
             </>
           )}
         </div>

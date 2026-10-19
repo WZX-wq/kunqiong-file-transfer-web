@@ -120,7 +120,7 @@ export function formatPlanPrice(plan = {}) {
   if (plan.id === 'free' || amount === 0) return '免费使用'
   if (!Number.isFinite(amount) || amount < 0) return '价格以主站为准'
   const days = Number(plan.validityDays)
-  // 有主站实价时有效期完全跟随主站套餐（null=买断永久），避免「展示永久、实付年费」反向不一致
+  // Price comes from the provider; duration is the configured local entitlement.
   if (plan.remotePriced && Number.isFinite(days) && days > 0) return `¥${(amount / 100).toFixed(2)} / ${days}天`
   if (plan.permanent || plan.validityDays === null || plan.validityDays === undefined) {
     return `¥${(amount / 100).toFixed(2)} / 永久`
