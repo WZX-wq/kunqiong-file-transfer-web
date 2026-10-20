@@ -1,6 +1,7 @@
 import { collectionSizeOptions } from '../lib/plan-limits.js'
 export { UserAvatar, userAvatarSource, displayUserInitial, displayUserSubtitle } from './account.jsx'
 import React from 'react'
+import { PrototypeFileIcon } from './prototype-asset.jsx'
 import { sanitizeOfficeHtml } from '../office-html.js'
 import { readTextPreview } from '../lib/text-preview.js'
 import { Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, Eye, FileText, Link2, PencilLine, RefreshCw, RotateCcw, UserPlus, UserRound, X } from 'lucide-react'
@@ -864,7 +865,7 @@ export function FileRow({ file, onRemove, onPreview, onDownload, downloadDisable
   const Icon = fileIcon(file.name)
   return (
     <div className="file-row">
-      <span className="file-type"><Icon size={18} /></span>
+      <span className="file-type"><PrototypeFileIcon name={file.name} fallback={Icon} size={24} /></span>
       <div className="file-info"><strong title={file.name}>{file.name}</strong>{showPath && file.relativePath && file.relativePath !== file.name && <small className="file-relative-path" title={file.relativePath}>{file.relativePath}</small>}<span><FileFormatBadge file={file} /> {formatBytes(file.size)}</span></div>
       {onPreview && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={onPreview}><Eye size={16} /></button>}
       {onDownload && <button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={onDownload} disabled={downloadDisabled}><Download size={16} /></button>}
