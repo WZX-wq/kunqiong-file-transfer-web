@@ -7,6 +7,7 @@ import { ConfirmModal, FeedbackMessage, PublicShell } from '../components/common
 import { ArrowLeft, BadgeCheck, BarChart3, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, Link2, PencilLine, RefreshCw, RotateCcw, ScanLine, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
 import { feedbackTone, formatBytes, formatDate, formatPlanPrice } from '../lib/format.js'
 import { PlanSpaceSummary } from '../components/ui.jsx'
+import { PlanCarousel } from '../components/plan-carousel.jsx'
 import { ACCOUNT_PLAN_ICON, ACCOUNT_PLAN_RANK, UPGRADE_ORDER_STATUS_LABELS } from '../lib/constants.js'
 import { TEAM_NAME_MAX, limitInputText } from '../lib/input-limits.js'
 import { paymentDeadline, paymentOrderView } from '../lib/upgrade-payment.js'
@@ -213,8 +214,7 @@ export function WorkspacePage() {
                 <span className={hasTeamPlan || canUseTeamSpace ? 'is-on' : 'is-muted'}>{hasTeamPlan || canUseTeamSpace ? <Check size={14} /> : <X size={14} />} {teamRole === 'member' && !hasTeamPlan ? `共享团队空间${teamSpaceBytes ? ` · ${formatBytes(teamSpaceBytes)}` : ''}` : hasTeamPlan || canUseTeamSpace ? '团队协作已开通' : '团队协作未开通'}</span>
               </div>
               {hasMaximumPersonalEntitlement && <div className="upgrade-maximum-notice workspace-team-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong></div></div>}
-              <div className="workspace-plan-catalog-heading"><strong>个人套餐价格</strong></div>
-              <div className="plan-comparison" role="group" aria-label="选择套餐">
+              <PlanCarousel className="plan-comparison">
                 {plans.map((item) => {
                   const PlanIcon = accountPlanIcon(item.id)
                   const isCurrentPlan = item.id === plan.id
@@ -229,7 +229,7 @@ export function WorkspacePage() {
                     <small className="plan-price-summary">{formatPlanPrice(item)}</small>
                   </button>
                 })}
-              </div>
+              </PlanCarousel>
               {pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}
               {workspace?.paymentReconciliation?.requiresLogin && <div className="workspace-payment-warning" role="status">支付订单需要重新登录核对状态。<button type="button" className="team-manage-link" onClick={login}><UserRound size={14} /> 重新登录</button></div>}
               <div className="workspace-benefits-cta"><span>{selectedPlan.id === plan.id ? '当前个人套餐' : `个人套餐已选：${selectedPlan.label}`}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}>{plan.id === 'enterprise' ? <BadgeCheck size={15} /> : <Zap size={15} />} {plan.id === 'enterprise' ? '查看已购权益' : hasMaximumTeamEntitlement ? '个人套餐对比' : '套餐对比与升级'}</button></div>
@@ -517,7 +517,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
 
   return createPortal(
     <div className="modal-backdrop upgrade-backdrop" onMouseDown={onClose}>
-      <div className="modal upgrade-modal" role="dialog" aria-modal="true" aria-labelledby="upgrade-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+      <div className={`modal upgrade-modal${orderView ? '' : ' upgrade-modal-compare'}`} role="dialog" aria-modal="true" aria-labelledby="upgrade-modal-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">会员与企业版</p><h2 id="upgrade-modal-title">{orderView ? (orderView.status === 'paid' ? '支付成功' : '升级订单') : '升级权益'}</h2></div>
           <button className="ghost-icon modal-close" aria-label="关闭升级窗口" onClick={onClose}><X size={18} /></button>
@@ -581,8 +581,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
           )) : (
             <>
               <p className="upgrade-intro">当前个人套餐：<strong>{plan.label || '基础版'}</strong>。价格由主站提供，权益有效期以本站套餐配置为准{canCreateOrder ? '；创建订单时会确认金额和期限。' : '。'}</p>
-              <div className="workspace-plan-catalog-heading"><strong>个人套餐价格</strong></div>
-              <div className="upgrade-plan-grid">
+              <PlanCarousel className="upgrade-plan-grid">
                 {comparisonPlans.map((item) => (
                   <button
                     type="button"
@@ -600,7 +599,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
                     </ul>
                   </button>
                 ))}
-              </div>
+              </PlanCarousel>
               {hasMaximumPersonalEntitlement && <div className="upgrade-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong></div></div>}
               {canCreateOrder && selectedPlan && paymentMethodSelector}
               {canCreateOrder && selectedPlan && (

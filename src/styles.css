@@ -1,15 +1,18 @@
 /* 样式入口
  *
- * 本文件只做 @import 汇总，不放任何规则 ——
- * CSS 规范要求 @import 位于所有规则之前，只放 import 正好合规。
+ * 本文件只做 @import 汇总，不放任何规则。
  *
- * ⚠️ 导入顺序即原 styles.css 的书写顺序，不可调整：
- *    base → components，后者覆盖前者（同特异性时）。
+ * 导入顺序即层叠顺序，不可调整：base 提供骨架与组件基件，components 在其上覆盖，
+ * prototype-ui 是原型视觉共享组件层，app-* 为各业务域页面级样式（互不依赖，可并行维护）。
  *
- * ⚠️ 远程字体已移出本文件（2026-10-17）：原先的 @import url(fonts.googleapis.com)
- * 属于「CSS 内阻塞下载」——字体域名不可达时（国内网络常见）会拖住首屏渲染，直接影响 LCP。
- * 现改为 index.html 里的 media=print 非阻塞 <link> + preconnect，首屏用系统字体兜底。
- * 组件里对 'DM Sans' / 'Noto Sans SC' 的引用保持不变，字体加载完成后自动生效。
+ * 远程字体已移出本文件（2026-10-17）：改为 index.html 里的 media=print 非阻塞 link + preconnect。
  */
 @import './styles/base.css';
 @import './styles/components.css';
+@import './styles/prototype-ui.css';
+@import './styles/app-main.css';
+@import './styles/app-records.css';
+@import './styles/app-public.css';
+@import './styles/app-settings.css';
+@import './styles/app-team.css';
+@import './styles/app-admin.css';
