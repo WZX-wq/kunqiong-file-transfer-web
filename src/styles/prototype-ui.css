@@ -1,0 +1,162 @@
+/* 原型视觉共享组件层
+ * 来源：kunqiong-full 原型 theme.css 与 pages.css 的徽标、提示条、状态卡、统计条。
+ * 只放跨面复用的组件规则；页面级样式放各业务域文件 app-*.css。
+ * 设计 token 沿用 base.css/components.css 的变量，蓝色强调由 components.css 的 :root 覆盖提供。
+ */
+.proto-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: #f2f5f9;
+  color: #6b7d94;
+  font-size: 11.8px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+.proto-badge i { display: block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.proto-badge.ok { background: #e9f9f0; color: #0d8a56; }
+.proto-badge.warn { background: #fff5e8; color: #b54708; }
+.proto-badge.danger { background: #fdeeed; color: #c8362b; }
+.proto-badge.blue { background: #e8f1ff; color: #2563eb; }
+.proto-badge.violet { background: #f1eeff; color: #5b3fd6; }
+.proto-badge.solid { background: #2563eb; color: #fff; }
+
+.proto-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 13px 15px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  font-size: 13.2px;
+  line-height: 1.6;
+}
+.proto-banner svg { flex: none; margin-top: 2px; }
+.proto-banner b { font-weight: 600; }
+.proto-banner.info { background: #f3f8ff; border-color: #dbe9ff; color: #2a5ea8; }
+.proto-banner.success { background: #f0fbf5; border-color: #cdeee0; color: #0d7a4c; }
+.proto-banner.warn { background: #fff9ef; border-color: #ffe6c2; color: #93500a; }
+.proto-banner.danger { background: #fef3f2; border-color: #fbdcd9; color: #b42318; }
+
+.proto-state-card {
+  max-width: 480px;
+  margin: 20px auto 0;
+  background: #fff;
+  border: 1px solid #e1eaf6;
+  border-radius: 14px;
+  box-shadow: 0 16px 40px -28px rgba(24, 72, 160, .3);
+  text-align: center;
+}
+.proto-state-card .proto-state-body { padding: 38px 36px 30px; }
+.proto-state-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  background: #f3f6fa;
+  color: #93a3b9;
+}
+.proto-state-icon.danger { background: #fff4f3; color: #e8473b; }
+.proto-state-icon.blue { background: #eef5ff; color: #2563eb; }
+.proto-state-icon.ok { background: #e9f9f0; color: #0d8a56; }
+.proto-state-card h2 { margin: 0; color: #101c2e; font-size: 21px; font-weight: 700; }
+.proto-state-card p { margin: 7px 0 0; color: #64748b; font-size: 13.3px; line-height: 1.7; }
+.proto-state-card .proto-state-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 20px; }
+
+.proto-stat-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.proto-stat-strip > div {
+  padding: 13px 15px;
+  background: #fff;
+  border: 1px solid #e1eaf6;
+  border-radius: 12px;
+}
+.proto-stat-strip b { display: block; color: #101c2e; font-size: 19px; font-weight: 700; letter-spacing: -.3px; }
+.proto-stat-strip span { display: block; margin-top: 3px; color: #8496ad; font-size: 12px; }
+.proto-stat-strip .proto-stat-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border-style: dashed;
+  color: #8496ad;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.proto-meta-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 20px 0;
+  padding: 14px 0;
+  border-top: 1px solid #f0f5fc;
+  border-bottom: 1px solid #f0f5fc;
+}
+.proto-meta-strip > div { text-align: center; border-right: 1px solid #f1f6fd; }
+.proto-meta-strip > div:last-child { border-right: 0; }
+.proto-meta-strip span { display: block; margin-bottom: 3px; color: #93a3b9; font-size: 11.9px; }
+.proto-meta-strip b { color: #22324a; font-size: 13.6px; font-weight: 600; }
+
+.proto-table-card {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e1eaf6;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px -26px rgba(24, 72, 160, .35);
+}
+.proto-table-head {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 20px;
+  background: #f8fbff;
+  border-bottom: 1px solid #eef4fc;
+  color: #8496ad;
+  font-size: 12.3px;
+  letter-spacing: .02em;
+}
+.proto-table-row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 9px 20px;
+  border-bottom: 1px solid #f1f6fd;
+  transition: background .16s ease;
+}
+.proto-table-row:last-child { border-bottom: 0; }
+.proto-table-row:hover { background: #f9fcff; }
+.proto-table-row .r { text-align: right; }
+.proto-file-cell { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.proto-file-cell .fname { display: block; overflow: hidden; color: #1c2b3f; font-size: 14.2px; text-overflow: ellipsis; white-space: nowrap; }
+.proto-file-cell small { display: block; margin-top: 1px; color: #8496ad; font-size: 12px; }
+.proto-ftype { display: block; width: 34px; height: 34px; object-fit: contain; }
+.proto-icon-act {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  border-radius: 8px;
+  color: #a7b6ca;
+  transition: background .16s ease, color .16s ease;
+}
+.proto-icon-act:hover { background: #eef5ff; color: #2563eb; }
+.proto-icon-act.danger:hover { background: #fff1f0; color: #c8362b; }
+.proto-row-acts { display: flex; justify-content: flex-end; gap: 4px; }
+
+@media (max-width: 650px) {
+  .proto-stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .proto-stat-strip .proto-stat-note { grid-column: 1 / -1; }
+  .proto-meta-strip { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .proto-meta-strip > div { border-right: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proto-table-row, .proto-icon-act { transition: none; }
+}
