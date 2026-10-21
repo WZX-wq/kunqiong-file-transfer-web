@@ -6,7 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { JSDOM, VirtualConsole } from 'jsdom'
 import { build } from 'vite'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
-const bundle=await build({root,configFile:false,logLevel:'silent',build:{write:false,minify:false,rollupOptions:{input:path.join(root,'src/main.jsx'),output:{format:'iife',inlineDynamicImports:true}}}})
+const bundle=await build({root,configFile:false,logLevel:'silent',worker:{format:'es'},build:{write:false,minify:false,rollupOptions:{input:path.join(root,'src/main.jsx'),output:{format:'iife',inlineDynamicImports:true}}}})
 const code=bundle.output.find(x=>x.type==='chunk').code
 let passed=0,failures=[],cases=[]
 function check(name,value){assert.ok(value,name);passed++;console.log('PASS '+name)}

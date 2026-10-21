@@ -12,7 +12,7 @@ import { previewSupportLabel, previewTypeLabel } from '../lib/transfer.js'
 import { FeedbackMessage } from './common.jsx'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, TEXT_PREVIEW_MAX_BYTES, fileIcon } from '../lib/constants.js'
 import { createCollectionManageForm, createShareManageForm, fileFormatLabel, formatAllowedTypes, formatDateInputDisplay, getManageToken, isClosedOrExpiredStatus, isDateInputStillOpen, normalizeCollectionTypes, recordDisplayName, recordExpiryLabel, recordScopeLabel, toggleCollectionType } from '../lib/records.js'
-import { OFFICE_PREVIEW_LIMITS, assertOfficeFileSize, createOfficePreviewSession, readPreviewResponse, spreadsheetSheetHtml as boundedSpreadsheetSheetHtml } from '../lib/office-preview.js'
+import { OFFICE_PREVIEW_LIMITS, assertOfficeFileSize, createOfficePreviewSession, readPreviewResponse } from '../lib/office-preview-core.js'
 import { limitInputText } from '../lib/input-limits.js'
 
 export function DownloadProgressPanel({ task, onRetry }) {
@@ -420,9 +420,6 @@ export function OfficePreview({ preview }) {
   return null
 }
 
-export function spreadsheetSheetHtml(sheet) {
-  return boundedSpreadsheetSheetHtml(sheet)
-}
 
 export function CollectionLimitInfo({ allowedTypes, maxFileSizeMb, compact = false }) {
   return (

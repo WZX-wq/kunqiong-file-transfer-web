@@ -1,17 +1,18 @@
-import mammoth from 'mammoth/mammoth.browser.js'
-import * as XLSX from 'xlsx'
-import { OFFICE_PREVIEW_LIMITS, assertPreviewHtmlBudget, spreadsheetSheetPage, validatePreviewWorkbook, verifyOfficeZip } from '../lib/office-preview.js'
+import { OFFICE_PREVIEW_LIMITS, assertPreviewHtmlBudget, verifyOfficeZip } from '../lib/office-preview-core.js'
 
 let workbook = null
 export async function parseOfficePreview(buffer, kind) {
   await verifyOfficeZip(buffer, kind)
   if (kind === 'document') {
+    const { default: mammoth } = await import('mammoth/mammoth.browser.min.js')
     const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
     if (!result.value.trim()) throw new Error('文档没有可显示的正文内容')
     assertPreviewHtmlBudget(result.value)
     return { html: result.value }
   }
   if (kind === 'spreadsheet') {
+    const { spreadsheetSheetPage, validatePreviewWorkbook } = await import('../lib/office-preview.js')
+    const XLSX = await import('xlsx')
     const names = XLSX.read(buffer, { type: 'array', bookSheets: true }).SheetNames
     if (names.length > OFFICE_PREVIEW_LIMITS.maxSheets) throw new Error(`工作表超过 ${OFFICE_PREVIEW_LIMITS.maxSheets} 个预览上限，请下载后查看。`)
     // !fullref preserves the declared range when parsing stops at sheetRows.
