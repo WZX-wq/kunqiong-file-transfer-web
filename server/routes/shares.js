@@ -147,12 +147,33 @@ export function registerShareAccessRoutes(app) {
       }
     })
   }
-  app.get('/api/shares/lookup/:code', (req, res) => {
+// 410（已过期/已关闭/次数用尽）时附带脱敏元信息：只有时间、文件数量与总大小，
+// 不含文件名、下载地址或账号信息，供公开页渲染原型里的「已过期」状态卡。
+function shareGonePayload(share, access) {
+  const payload = { message: access.message, code: access.code || '' }
+  if (access.status !== 410) return payload
+  const expiresAt = share.expiresAt || ''
+  const expired = share.closeReason === 'expired' || Boolean(expiresAt && new Date(expiresAt).getTime() <= Date.now())
+  const exhausted = Boolean(share.downloadLimit && share.downloadCount >= share.downloadLimit)
+  const files = Array.isArray(share.files) ? share.files : []
+  return {
+    message: access.message,
+    code: access.code || (expired ? 'share_expired' : exhausted ? 'share_exhausted' : 'share_closed'),
+    share: {
+      state: expired ? 'expired' : exhausted ? 'exhausted' : 'closed',
+      expiresAt,
+      fileCount: files.length,
+      totalSize: files.reduce((sum, file) => sum + (Number(file.size) || 0), 0),
+    },
+  }
+}
+
+app.get('/api/shares/lookup/:code', (req, res) => {
   if (shareLookupRateLimited(req)) return res.status(429).json({ message: '查询过于频繁，请稍后再试' })
   const share = findShareByCode(req.params.code)
   if (!share) return res.status(404).json({ message: '取件码不存在或已失效' })
   const access = validateShareRequest(share, req, { allowMissingPassword: true, allowOwner: true })
-  if (!access.ok) return res.status(access.status).json({ message: access.message, code: access.code || '' })
+  if (!access.ok) return res.status(access.status).json(shareGonePayload(share, access))
   if (share.passwordHash) return res.json({ share: publicShare(share, req, false), requiresPassword: true })
   res.json({ share: publicShare(share, req, true), requiresPassword: false })
 })
@@ -161,7 +182,7 @@ export function registerShareAccessRoutes(app) {
   const share = findShareByCode(req.params.code)
   if (!share) return res.status(404).json({ message: '取件码不存在或已失效' })
   const access = validateShareRequest(share, req, { password: req.body.password, allowOwner: true })
-  if (!access.ok) return res.status(access.status).json({ message: access.message, code: access.code || '' })
+  if (!access.ok) return res.status(access.status).json(shareGonePayload(share, access))
   setShareAccessCookie(res, req, share)
   res.json({ share: publicShare(share, req, true), requiresPassword: false })
 })
@@ -170,7 +191,7 @@ export function registerShareAccessRoutes(app) {
   if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
   if (!validateEnterpriseSlug(share, req.query.organization)) return res.status(404).json({ message: '企业专属链接无效' })
   const access = validateShareRequest(share, req, { allowMissingPassword: true, allowOwner: true })
-  if (!access.ok) return res.status(access.status).json({ message: access.message, code: access.code || '' })
+  if (!access.ok) return res.status(access.status).json(shareGonePayload(share, access))
   const viewer = authSessionFromRequest(req)?.user
   const includeManage = Boolean(viewer?.id && share.ownerUserId && viewer.id === share.ownerUserId)
   res.json({ share: publicShare(share, req, !share.passwordHash, includeManage), requiresPassword: Boolean(share.passwordHash) })

@@ -3,12 +3,27 @@
 // 只被 App 引用，构成完整独立功能域。
 
 import React, { useEffect, useRef, useState } from 'react'
-import { BarChart3, Check, ChevronLeft, ChevronRight, Copy, Database, Eye, HardDrive, Inbox, KeyRound, Link2, LockKeyhole, LogOut, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, Users, X, XCircle } from 'lucide-react'
+import { BarChart3, Check, ChevronLeft, ChevronRight, Copy, Database, Eye, ExternalLink, HardDrive, Inbox, KeyRound, Link2, LockKeyhole, LogOut, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, Users, X, XCircle } from 'lucide-react'
 import { useConfirmDialog } from '../hooks.js'
 import { apiRequest, copyTextToClipboard } from '../lib/api.js'
-import { ConfirmModal, PublicShell } from '../components/common.jsx'
+import { ConfirmModal, ProductBrand } from '../components/common.jsx'
 import { formatBytes, formatDate } from '../lib/format.js'
 import { limitInputText } from '../lib/input-limits.js'
+
+const ADMIN_TABS = new Set(['dashboard', 'resources', 'users', 'security', 'config'])
+
+function readAdminTab(search) {
+  const tab = new URLSearchParams(search).get('tab')
+  return ADMIN_TABS.has(tab) ? tab : 'dashboard'
+}
+
+function writeAdminTab(tab, replace = false) {
+  const url = new URL(window.location.href)
+  if (tab === 'dashboard') url.searchParams.delete('tab')
+  else url.searchParams.set('tab', tab)
+  window.history[replace ? 'replaceState' : 'pushState'](null, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
 export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -21,7 +36,13 @@ export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome
   }
 
   return (
-    <div className="modal-backdrop admin-login-backdrop">
+    <main className="admin-login-backdrop admin-login">
+      <aside className="admin-login-story">
+        <div className="admin-login-brand">运营控制台 <span>内部管理</span></div>
+        <div className="admin-login-copy"><span className="eyebrow">OPERATIONS CONSOLE</span><h1>统一查看用户、资源<br />与系统运行状态</h1><p>安全地管理文件资源、账号权益与运行配置，让每一次传输都有迹可循。</p><ul><li><ShieldCheck size={16} /> 独立管理员会话</li><li><Database size={16} /> 资源与用户管理</li><li><SlidersHorizontal size={16} /> 配置与安全日志</li></ul></div>
+        <p className="admin-login-story-foot">文件传输 · 运营管理</p>
+      </aside>
+      <div className="admin-login-form-side">
       <form className="modal confirm-modal admin-login-modal" role="dialog" aria-modal="true" aria-labelledby="admin-login-title" onSubmit={submit}>
         <div className="admin-login-icon"><ShieldCheck size={22} /></div>
         <p className="eyebrow">运营后台</p>
@@ -66,8 +87,20 @@ export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome
           </button>
         </div>
       </form>
-    </div>
+      </div>
+    </main>
   )
+}
+
+function AdminTopbar({ username }) {
+  return <header className="admin-top">
+    <ProductBrand href="/admin" className="admin-top-brand" />
+    <span className="admin-session-badge">管理员会话</span>
+    <div className="admin-top-right">
+      {username && <span>{username}</span>}
+      <a href="/"><ExternalLink size={14} /> 返回前台</a>
+    </div>
+  </header>
 }
 
 export function AdminPage() {
@@ -77,7 +110,7 @@ export function AdminPage() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [tab, setTab] = useState('dashboard')
+  const [tab, setTab] = useState(() => readAdminTab(window.location.search))
   const [savingConfig, setSavingConfig] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
   const [adminInfo, setAdminInfo] = useState(null)
@@ -85,6 +118,26 @@ export function AdminPage() {
   const [loginError, setLoginError] = useState('')
   const [notice, setNotice] = useState(null)
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
+
+  const changeTab = (nextTab) => {
+    if (!ADMIN_TABS.has(nextTab) || nextTab === tab) return
+    setTab(nextTab)
+    writeAdminTab(nextTab)
+  }
+
+  useEffect(() => {
+    const syncTab = () => {
+      const params = new URLSearchParams(window.location.search)
+      const requestedTab = params.get('tab')
+      const nextTab = readAdminTab(window.location.search)
+      setTab(nextTab)
+      if ((requestedTab && !ADMIN_TABS.has(requestedTab)) || (nextTab === 'dashboard' && requestedTab === 'dashboard')) {
+        writeAdminTab(nextTab, true)
+      }
+    }
+    window.addEventListener('popstate', syncTab)
+    return () => window.removeEventListener('popstate', syncTab)
+  }, [])
 
   // 与用户端一致的右下角 toast 提示
   const showToast = (message, tone = 'success') => setNotice({ message, tone })
@@ -253,33 +306,42 @@ export function AdminPage() {
       showToast(err.message || '清理失败', 'error')
     }
   }
-  if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开后台</h1><p>正在检查管理员登录状态。</p></div></PublicShell>
+  if (loading) return <div className="admin-shell"><AdminTopbar /><main className="admin-page"><div className="admin-inner"><div className="admin-state-block"><span className="loading-dot" /><h1>正在打开后台</h1><p>正在检查管理员登录状态。</p></div></div></main></div>
   // 后台一律先过口令登录。此前这里会因鲲穹白名单账号已登录而直接放行，
   // 表现为「部分账号能直接进后台」—— 白名单通道已移除，访问 /admin 恒定弹登录框。
-  if (!authenticated) return <PublicShell><AdminLoginModal onSubmit={submitLogin} busy={loginBusy} error={loginError || error} onBackHome={() => { window.location.href = '/' }} /></PublicShell>
-  if (error && !data) return <PublicShell><div className="state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p><button className="primary-button" onClick={load}><RefreshCw size={16} /> 重新加载</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button><a className="secondary-button" href="/">返回首页</a></div></PublicShell>
+  if (!authenticated) return <AdminLoginModal onSubmit={submitLogin} busy={loginBusy} error={loginError || error} onBackHome={() => { window.location.href = '/' }} />
+  if (error && !data) return <div className="admin-shell"><AdminTopbar username={adminInfo?.username} /><main className="admin-page"><div className="admin-inner"><div className="admin-state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p><button className="primary-button" onClick={load}><RefreshCw size={16} /> 重新加载</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button><a className="secondary-button" href="/">返回首页</a></div></div></main></div>
   if (!data) return null
   const stats = data.stats || {}
-  const dashboardCards = [['注册用户', stats.users || 0, Users], ['未禁用用户', stats.activeUsers || 0, UserRound], ['分享', stats.shares || 0, Link2], ['收集任务', stats.collections || 0, Inbox], ['占用空间', formatBytes(stats.totalBytes || 0), HardDrive], ['待清理', stats.pendingCleanup || 0, RefreshCw]]
+  const dashboardCards = [
+    ['用户总数', stats.users || 0, Users],
+    ['有效账号', stats.activeUsers || 0, UserRound],
+    ['资源总数', (stats.shares || 0) + (stats.collections || 0), Database],
+    ['占用空间', formatBytes(stats.totalBytes || 0), HardDrive],
+  ]
   const trend = data.trend || []
   const trendMax = Math.max(1, ...trend.flatMap((item) => [item.activeUsers, item.uploads, item.downloads]))
   return (
-    <PublicShell>
-      <section className="admin-page">
+    <div className="admin-shell">
+      <AdminTopbar username={adminInfo?.username} />
+      <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['resources', '资源管理', Database], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button type="button" className={tab === key ? 'active' : ''} aria-current={tab === key ? 'page' : undefined} key={key} onClick={() => changeTab(key)}><Icon size={16} /> {label}</button>)}</nav>
+      <main className="admin-page">
+        <div className="admin-inner">
         <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、安全日志、运行配置和系统概览。</p></div><div className="admin-heading-actions">{adminInfo?.username && <span className="admin-identity" title={`当前登录管理员：${adminInfo.username}`}><ShieldCheck size={14} /> {adminInfo.username}</span>}<button className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</button><button className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button></div></div>
-        <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['resources', '资源管理', Database], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button className={tab === key ? 'active' : ''} key={key} onClick={() => setTab(key)}><Icon size={16} /> {label}</button>)}</nav>
         {error && <p className="public-message">{error}</p>}
         <div className="admin-content">
-          {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-list">{trend.map((item) => <div className="admin-trend-row" key={item.date}><span>{item.label}</span><div><i style={{ width: `${(item.activeUsers / trendMax) * 100}%` }} title={`活跃用户 ${item.activeUsers}`} /><i className="upload" style={{ width: `${(item.uploads / trendMax) * 100}%` }} title={`上传 ${item.uploads}`} /><i className="download" style={{ width: `${(item.downloads / trendMax) * 100}%` }} title={`下载 ${item.downloads}`} /></div><small>{item.activeUsers} / {item.uploads} / {item.downloads}</small></div>)}</div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
+          {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-chart" role="img" aria-label="近 7 天活跃用户、上传和下载趋势"><div className="admin-chart-axis">{[trendMax, Math.round(trendMax * .67), Math.round(trendMax * .33), 0].map((value, index) => <span key={`${value}-${index}`}>{value}</span>)}</div><div className="admin-chart-plot">{trend.map((item) => <div className="admin-chart-day" key={item.date} title={`${item.label} · 活跃用户 ${item.activeUsers} · 上传 ${item.uploads} · 下载 ${item.downloads}`}><div className="admin-chart-bars"><i className="active" style={{ height: `${(item.activeUsers / trendMax) * 100}%` }} /><i className="upload" style={{ height: `${(item.uploads / trendMax) * 100}%` }} /><i className="download" style={{ height: `${(item.downloads / trendMax) * 100}%` }} /></div><span>{item.label}</span></div>)}</div></div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
           {tab === 'resources' && <AdminResources resources={data.resources} total={data.totals?.resources ?? data.resources.length} requestConfirm={requestConfirm} onChanged={(message, tone, overview) => { if (overview) { setData((current) => ({ ...current, ...overview })) } else { load() } if (message) showToast(message, tone) }} />}
           {tab === 'users' && <AdminUsers plans={data.plans} users={data.users} total={data.totals?.users ?? data.users.length} onUpdate={updateUser} />}
           {tab === 'security' && <AdminLogs logs={data.auditLogs} total={data.totals?.auditLogs ?? data.auditLogs.length} />}
           {tab === 'config' && <AdminConfig plans={data.plans} planDefaults={data.planDefaults} config={data.config} saving={savingConfig} onSubmit={saveConfig} />}
+          {tab === 'dashboard' && <div className="public-card admin-panel admin-quick-panel"><div className="admin-panel-heading"><div><p className="eyebrow">快捷操作</p><h2>常用入口</h2></div><span>待清理资源 <strong>{stats.pendingCleanup || 0}</strong></span></div><div className="admin-quick-grid">{[['resources', '资源管理', '查看分享与收集资源', Database], ['users', '用户管理', '查看账号与套餐权益', Users], ['security', '安全日志', '审计操作与安全事件', ShieldCheck], ['config', '系统配置', '配置上传限制与套餐', SlidersHorizontal]].map(([key, label, detail, Icon]) => <button type="button" className="admin-quick-link" key={key} onClick={() => changeTab(key)}><span><Icon size={16} /></span><strong>{label}</strong><small>{detail}</small></button>)}</div></div>}
         </div>
-      </section>
+        </div>
+      </main>
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
       {notice && <div className={`toast ${notice.tone || 'success'}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}><span className="toast-icon">{notice.tone === 'error' ? <X size={18} /> : <Check size={18} />}</span><span>{notice.message}</span></div>}
-    </PublicShell>
+    </div>
   )
 }
 

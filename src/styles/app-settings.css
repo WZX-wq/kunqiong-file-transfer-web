@@ -1,3 +1,81 @@
 /* 账户域：资料、安全、通知、文件清理、订单
  * 视觉来源：原型 assets/screens/account.js、space.js
  */
+
+.settings-page { --settings-accent: #1f6bff; min-width: 0; animation: prototype-page-enter .24s ease-out both; }
+.settings-page .settings-sidebar,
+.settings-page .settings-panel { min-width: 0; }
+.settings-page .settings-nav button,
+.settings-page .settings-row-action,
+.settings-page .workspace-entry-button { transition: color .16s ease, background-color .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.settings-page .settings-nav button.active { color: #1d4ed8; background: #eff5ff; box-shadow: inset 2px 0 #2563eb; }
+.settings-page .settings-nav button:hover:not(.active),
+.settings-page .settings-row-action:hover:not(:disabled),
+.settings-page .workspace-entry-button:hover { color: #1d4ed8; background-color: #f5f8ff; }
+.settings-page .settings-input-field input:focus-visible,
+.settings-page .settings-input-field select:focus-visible,
+.settings-page .settings-input-field textarea:focus-visible { border-color: #8eaddf; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
+.settings-page .settings-panel-header { border-bottom-color: #e6edf8; }
+.settings-page .settings-user-card,
+.settings-page .settings-nav,
+.settings-page .settings-panel { border-color: #e1eaf6; box-shadow: 0 8px 24px rgba(24, 72, 160, .045); }
+.settings-page .settings-account-line,
+.settings-page .settings-row-action,
+.settings-page .settings-action-row strong,
+.settings-page .settings-notice-group h2,
+.settings-page .settings-notice-row strong,
+.settings-page .account-plan-meta strong,
+.settings-page .file-cleanup-settings h2 svg { color: #2458aa; }
+.settings-page .settings-profile-row,
+.settings-page .settings-info-row,
+.settings-page .settings-profile-edit,
+.settings-page .settings-action-row,
+.settings-page .settings-notice-row,
+.settings-page .file-cleanup-options { border-color: #e8eff8; }
+.settings-page .settings-input-field { color: #526b8d; }
+.settings-page .settings-input-field input,
+.settings-page .settings-input-field select,
+.settings-page .settings-input-field textarea { color: #33445d; background: #fbfdff; border-color: #dce6f5; border-radius: 8px; }
+.settings-page .settings-input-field input:focus,
+.settings-page .settings-input-field select:focus,
+.settings-page .settings-input-field textarea:focus { border-color: #79a4ed; }
+.settings-page .settings-notice { color: #496b92; background: #f3f8ff; border-color: #dbe9ff; }
+.settings-page .settings-notice svg,
+.settings-page .account-benefits svg { color: #1f6bff; }
+.settings-page .settings-nav button { color: #536782; }
+.settings-page .settings-nav button.active { color: #1459d9; background: #eef5ff; border-left-color: #1f6bff; }
+.settings-page .settings-nav button.active svg:last-child { color: #1f6bff; }
+.settings-page .settings-nav button:hover:not(.active) { color: #1459d9; background: #f5f8ff; }
+.settings-page .settings-avatar-actions .settings-row-action { color: #2458aa; background: #eef5ff; }
+.settings-page .settings-avatar-actions .settings-row-action:hover { background: #e4efff; }
+.settings-page .account-capacity-card { border-color: #dce7f6; background: #f7faff; }
+.settings-page .capacity-bar { background: #e4edf9; }
+.settings-page .capacity-bar span { background: linear-gradient(90deg, #1f6bff, #5b9bff); }
+.settings-page .account-plan-meta { border-top-color: #e4edf8; }
+.settings-page .account-benefits div { border-color: #e2ebf7; }
+.settings-page .account-bind-debug { color: #496b92; background: #f3f8ff; border-color: #dbe9ff; }
+.settings-page .account-bind-debug svg { color: #1f6bff; }
+.settings-page .account-bind-message,
+.settings-page .contact-input-hint { color: #607696; }
+.settings-page .contact-input-hint.valid { color: #2458aa; }
+.settings-page .settings-row-action:hover { color: #0f5bea; }
+.settings-page .settings-state { border-color: #e1eaf6; box-shadow: 0 8px 24px rgba(24, 72, 160, .045); }
+.settings-page .settings-state-icon { color: #1f6bff; background: #eef5ff; }
+.settings-page .file-cleanup-settings h2 img { flex: none; width: 22px; height: 22px; object-fit: contain; }
+
+@media (max-width: 900px) {
+  .settings-page .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-page .settings-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .settings-page .settings-nav { grid-template-columns: minmax(0, 1fr); }
+  .settings-page .settings-panel { padding: 20px 16px; }
+  .settings-page .settings-profile-row { align-items: flex-start; flex-direction: column; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-page .settings-nav button,
+  .settings-page .settings-row-action,
+  .settings-page .workspace-entry-button { transition: none; }
+}

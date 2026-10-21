@@ -1,0 +1,172 @@
+/* Shared desktop geometry, with each proposal keeping its own visual language. */
+#root .app[class*="design-"] .main:has(.transfer-layout) { padding-top: 46px; }
+#root .app[class*="design-"] .transfer-layout,
+#root .app[class*="design-"] .transfer-layout.has-files,
+#root .app[class*="design-"] .transfer-layout:not(.has-files) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0;
+}
+#root .app[class*="design-"] .transfer-layout .transfer-intro {
+  position: static;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  margin: 0 0 26px;
+  padding: 0;
+  border: 0;
+  text-align: left;
+}
+#root .app[class*="design-"] .transfer-layout .transfer-intro h1 {
+  max-width: none;
+  margin: 0;
+  font-size: clamp(26px, 3vw, 34px);
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -.8px;
+}
+#root .app[class*="design-"] .transfer-layout .transfer-intro h1 span { margin: 0; }
+#root .app[class*="design-"] .transfer-layout .transfer-intro p {
+  max-width: none;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+#root .app[class*="design-"] .transfer-intro > .btn { flex: none; min-height: 40px; font-size: 13px; }
+#root .app[class*="design-"] .transfer-layout .centered-upload {
+  width: 100%;
+  max-width: 720px;
+  min-height: 480px;
+  margin: 0 auto;
+  padding: 0;
+  color: var(--ink);
+  background: var(--surface);
+  transition: border-color .25s, box-shadow .25s;
+}
+#root .app[class*="design-"] .centered-upload .dropzone:not(.compact) {
+  min-height: 382px;
+  margin: 16px;
+  padding: 40px 24px;
+  outline: none;
+  text-align: center;
+  transition: background .25s, border-color .25s;
+}
+#root .app[class*="design-"] .centered-upload .drop-icon {
+  width: 76px;
+  height: 76px;
+  margin: 0 0 25px;
+  transition: transform .3s var(--ease), background .25s, border-color .25s;
+}
+#root .app[class*="design-"] .centered-upload .drop-icon > svg { width: 32px; height: 32px; }
+#root .app[class*="design-"] .centered-upload .dropzone:not(.compact) h2 {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: .2px;
+}
+#root .app[class*="design-"] .centered-upload .dropzone:not(.compact) > p {
+  margin: 10px 0 25px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+#root .app[class*="design-"] .centered-upload .dropzone:not(.compact) .btn {
+  min-height: 44px;
+  min-width: 132px;
+  padding: 10px 20px;
+  font-size: 14px;
+}
+#root .app[class*="design-"] .centered-upload .dropzone:not(.compact) > small {
+  display: block;
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+#root .app[class*="design-"] .centered-upload:has(.dragging) { border-color: var(--blue); }
+#root .app[class*="design-"] .centered-upload .dropzone.dragging { background: var(--blue-light); border-color: var(--blue); }
+#root .app[class*="design-"] .centered-upload .dropzone:hover .drop-icon,
+#root .app[class*="design-"] .centered-upload .dropzone:focus-within .drop-icon { transform: translateY(-4px); }
+#root .app[class*="design-"] .centered-upload .dragging .drop-icon { transform: translateY(-6px) scale(1.06); }
+#root .app[class*="design-"] .centered-upload .dropzone.compact { min-height: 55px; margin: 13px 0 0; padding: 12px 16px; }
+#root .app[class*="design-"] .centered-upload .dropzone.compact .btn { min-height: 32px; padding: 5px 8px; font-size: 13px; }
+#root .app[class*="design-"] .transfer-bottom { width: 100%; max-width: 720px; margin: 28px auto 0; }
+#root .app[class*="design-"] .prototype-hint { width: 100%; max-width: 720px; margin: 16px auto 0; padding: 0; }
+
+/* A: airy cobalt surface with a soft, generous drop target. */
+#root .app.design-a .centered-upload { border: 1px solid #dce5f2; border-radius: 18px; box-shadow: 0 12px 42px #2144710a; }
+#root .app.design-a .centered-upload .dropzone:not(.compact) { background: #f8faff; border: 1px dashed #b2c7ec; border-radius: 12px; }
+#root .app.design-a .centered-upload .drop-icon { color: #2458d3; background: #edf3ff; border-color: #d5e2fc; border-radius: 22px; }
+#root .app.design-a .centered-upload .dropzone:not(.compact) .btn { border-radius: 9px; }
+
+/* B: the upload task belongs to the graphite console, including its empty state. */
+#root .app.design-b .centered-upload { background: #1a232b; border: 1px solid #394a55; border-radius: 8px; box-shadow: 0 18px 46px #0002; }
+#root .app.design-b .centered-upload .dropzone:not(.compact) { background: #1c2730; border: 1px dashed #4e6972; border-radius: 4px; }
+#root .app.design-b .centered-upload .drop-icon { color: #6ad9ce; background: #233a3e; border-color: #3b5e62; border-radius: 12px; }
+#root .app.design-b .centered-upload .drop-icon > span { background: #1c2730; border-color: #3b5e62; }
+#root .app.design-b .centered-upload .dropzone:not(.compact) h2 { color: #edf3f5; font-size: 22px; }
+#root .app.design-b .centered-upload .dropzone:not(.compact) .btn { border-radius: 5px; }
+
+/* C: a quiet paper panel, thin rules and editorial typography. */
+#root .app.design-c .transfer-layout .transfer-intro h1 { font-family: 'Noto Serif SC', 'Songti SC', SimSun, serif; font-weight: 500; letter-spacing: 1px; }
+#root .app.design-c .centered-upload { border: 1px solid #cdd8cc; border-radius: 0; box-shadow: none; }
+#root .app.design-c .centered-upload::before { display: none; }
+#root .app.design-c .centered-upload .dropzone:not(.compact) { background: #fbfcf9; border: 0; border-radius: 0; }
+#root .app.design-c .centered-upload .drop-icon { color: #37664b; background: transparent; border: 1px solid #c4d3c4; border-radius: 50%; }
+#root .app.design-c .centered-upload .drop-icon > span { background: #fbfcf9; border-color: #c4d3c4; }
+#root .app.design-c .centered-upload .dropzone:not(.compact) h2 { font-family: 'Noto Serif SC', 'Songti SC', SimSun, serif; font-size: 26px; font-weight: 500; letter-spacing: 2px; }
+#root .app.design-c .centered-upload .dropzone:not(.compact) .btn { border-radius: 2px; }
+
+/* D: a clear framed work area with signal-orange controls. */
+#root .app.design-d .transfer-layout .transfer-intro { padding-left: 16px; border-left: 3px solid var(--blue); }
+#root .app.design-d .centered-upload { border: 1px solid #343c40; border-top: 3px solid #202427; border-radius: 2px; box-shadow: 4px 4px 0 #cbd1d366; }
+#root .app.design-d .centered-upload .dropzone:not(.compact) { background: #f7f8f8; border: 1px dashed #9da7ac; border-radius: 0; }
+#root .app.design-d .centered-upload .drop-icon { width: 70px; height: 70px; color: #b44820; background: #ffede5; border-color: #f0d3c6; border-radius: 2px; }
+#root .app.design-d .centered-upload .drop-icon > span { border-radius: 2px; background: #f7f8f8; border-color: #d5b6a8; }
+#root .app.design-d .centered-upload .dropzone:not(.compact) .btn { border-radius: 2px; }
+
+/* The review thumbnails mirror the centered composition and their theme. */
+#root .app .design-card .mini-layout { flex-direction: column; gap: 9px; padding: 12px 25px; }
+#root .app .design-card .mini-copy { padding: 0; margin: 0; border: 0; text-align: center; }
+#root .app .design-card .mini-copy > strong { max-width: none; font-size: 15px; line-height: 1.5; letter-spacing: 0; }
+#root .app .design-card .mini-copy > small,
+#root .app .design-card .mini-copy > span,
+#root .app .design-card .mini-drop > small { display: none; }
+#root .app .design-card .mini-drop { width: 100%; max-width: 340px; min-height: 142px; padding: 12px; gap: 9px; border-radius: 8px; }
+#root .app .design-card .mini-drop > .mini-upload-icon { width: 25px; height: 25px; }
+#root .app .design-card.mini-a .mini-copy strong { color: #2458d3; }
+#root .app .design-card.mini-b .mini-drop { color: #6ad9ce; background: #1c2730; border: 1px dashed #4e6972; border-radius: 4px; }
+#root .app .design-card.mini-b .mini-drop b,
+#root .app .design-card.mini-b .mini-drop > svg { color: #6ad9ce; }
+#root .app .design-card.mini-b .mini-drop i { color: #10201f; background: #50c9bc; }
+#root .app .design-card.mini-c .mini-copy strong { font-family: 'Noto Serif SC', 'Songti SC', SimSun, serif; color: #37664b; }
+#root .app .design-card.mini-c .mini-drop { color: #37664b; background: #fbfcf9; border: 1px solid #cdd8cc; border-radius: 0; }
+#root .app .design-card.mini-c .mini-drop i { background: #37664b; }
+#root .app .design-card.mini-d .mini-drop { color: #b44820; background: #f7f8f8; border: 1px solid #343c40; border-top-width: 3px; border-radius: 0; }
+#root .app .design-card.mini-d .mini-drop i { background: #c75225; }
+
+@media (max-width: 640px) {
+  #root .app[class*="design-"] .main:has(.transfer-layout) { padding-top: 30px; }
+  #root .app[class*="design-"] .transfer-layout .transfer-intro { align-items: flex-start; flex-direction: column; gap: 16px; margin-bottom: 20px; }
+  #root .app[class*="design-"] .transfer-layout .transfer-intro h1 { font-size: 27px; }
+  #root .app[class*="design-"] .transfer-layout .centered-upload { min-height: 420px; }
+  #root .app[class*="design-"] .centered-upload .dropzone:not(.compact) { min-height: 350px; margin: 10px; padding: 30px 14px; }
+  #root .app[class*="design-"] .centered-upload .dropzone:not(.compact) h2 { font-size: 21px; }
+  #root .app[class*="design-"] .centered-upload .drop-icon { width: 64px; height: 64px; margin-bottom: 22px; }
+  #root .app[class*="design-"] .centered-upload .dropzone:not(.compact) .inline-actions { flex-direction: column; width: 100%; gap: 10px; }
+  #root .app[class*="design-"] .centered-upload .dropzone:not(.compact) .btn { width: 100%; }
+  #root .app[class*="design-"] .centered-upload .dropzone:not(.compact) > small { margin-top: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #root .app[class*="design-"] .centered-upload,
+  #root .app[class*="design-"] .centered-upload .dropzone,
+  #root .app[class*="design-"] .centered-upload .drop-icon { transition: none; transform: none !important; }
+}

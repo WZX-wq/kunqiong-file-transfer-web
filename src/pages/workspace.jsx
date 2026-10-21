@@ -1,8 +1,7 @@
 import { collectionSizeOptions } from '../lib/plan-limits.js'
 import { AuthButton } from '../components/account.jsx'
 import React from 'react'
-import heroFolder from '../assets/hero-folder.webp'
-import brandLogo from '../assets/brand-logo-header.webp'
+import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { SecurityCheckFailure, SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { defaultDeadline, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
@@ -11,11 +10,11 @@ import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createS
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
 import { cancelUploadSession, canPreviewFile, clearUploadResume, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, readUploadResume, uploadShareInChunks } from '../lib/transfer.js'
-import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronRight, Clock3, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronRight, Clock3, CloudUpload, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
 import { SettingsPage } from './settings.jsx'
 import { RecordsView } from './records.jsx'
 import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, ValueItem } from '../components/ui.jsx'
-import { ConfirmModal, Toast } from '../components/common.jsx'
+import { ConfirmModal, ProductBrand, Toast } from '../components/common.jsx'
 import { getRecordOwner } from '../lib/records.js'
 import { RECIPIENT_TEXT_MAX, recipientInputError } from '../../server/lib/contact-input.js'
 import { limitInputText } from '../lib/input-limits.js'
@@ -71,17 +70,29 @@ export function WorkspaceApp() {
   const [authUser, setAuthUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authMenuOpen, setAuthMenuOpen] = useState(false)
-  const [messageOpen, setMessageOpen] = useState(false)
+  const [messageOpen, setMessageOpen] = useState(() => new URLSearchParams(window.location.search).get('panel') === 'messages')
   const [messages, setMessages] = useState([])
   const [footerContentKey, setFooterContentKey] = useState('')
   // 未登录传输配额：enabled=true 时展示剩余额度；null 表示已登录或接口不可用。
   const [guestQuota, setGuestQuota] = useState(null)
   const [guestQuotaDialog, setGuestQuotaDialog] = useState(null)
 
+  const changeMessagePanel = (open) => {
+    setMessageOpen(open)
+    const url = new URL(window.location.href)
+    const wasOpen = url.searchParams.get('panel') === 'messages'
+    if (open) url.searchParams.set('panel', 'messages')
+    else url.searchParams.delete('panel')
+    if (`${url.pathname}${url.search}${url.hash}` === `${window.location.pathname}${window.location.search}${window.location.hash}`) return
+    const method = open && !wasOpen ? 'pushState' : 'replaceState'
+    window.history[method](null, '', `${url.pathname}${url.search}${url.hash}`)
+  }
+
   useEffect(() => {
     const syncRoute = () => {
       const nextPath = window.location.pathname
       setRoutePath(nextPath)
+      setMessageOpen(new URLSearchParams(window.location.search).get('panel') === 'messages')
       if (!nextPath.startsWith('/settings')) {
         setActiveView(normalizeMainView(new URLSearchParams(window.location.search).get('view')))
       }
@@ -418,7 +429,7 @@ export function WorkspaceApp() {
       await apiRequest('/api/auth/logout', { method: 'POST' })
       setAuthUser(null)
       setAuthMenuOpen(false)
-      setMessageOpen(false)
+      changeMessagePanel(false)
       setToast('已退出登录')
     } catch (error) {
       setToast(error.message)
@@ -983,43 +994,22 @@ export function WorkspaceApp() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand" onClick={() => navigateMainView('send')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigateMainView('send') } }} role="button" tabIndex={0} aria-label="返回发文件首页">
-          <img className="brand-logo" src={brandLogo} width="480" height="228" alt="鲲穹文件传输" />
-        </div>
+        <ProductBrand />
         <nav className="main-nav" aria-label="主导航">
           <NavItem icon={Send} label="发文件" active={!isSettingsRoute && activeView === 'send'} onClick={() => navigateMainView('send')} />
           <NavItem icon={Inbox} label="收集文件" active={!isSettingsRoute && activeView === 'collect'} onClick={() => navigateMainView('collect')} />
           <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
+          <NavItem icon={Building2} label="会员与团队" active={false} onClick={() => { window.location.href = '/workspace' }} />
         </nav>
         <div className="topbar-actions">
-          {authUser?.organization ? (
-            <button className="team-context-button" onClick={() => { window.location.href = '/team' }} title="打开团队管理">
-              <span className="team-context-icon"><Building2 size={15} /></span>
-              <span className="team-context-copy">
-                <strong>{authUser.organization.name}</strong>
-                <small>{authUser.organization.members?.length || 0} 位成员 · 共享空间</small>
-              </span>
-              <ChevronRight size={14} />
-            </button>
-          ) : authUser?.plan?.team ? (
-            <button className="team-context-button team-context-empty" onClick={() => { window.location.href = '/workspace' }} title="创建团队空间">
-              <span className="team-context-icon"><Building2 size={15} /></span>
-              <span className="team-context-copy">
-                <strong>创建团队空间</strong>
-                <small>团队版权益已开启</small>
-              </span>
-              <ChevronRight size={14} />
-            </button>
-          ) : null}
-          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); setMessageOpen((current) => !current) }} onClose={() => setMessageOpen(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} />
+          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); changeMessagePanel(!messageOpen) }} onClose={() => changeMessagePanel(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} />
           {/* 后台入口不再按账号身份显示（白名单通道已移除，后台只认账号口令）。
               需要直接进后台时访问 /admin，未登录会弹出管理员账号密码弹窗。 */}
-          <button className="merchant-button" onClick={() => { window.location.href = '/workspace' }}><Sparkles size={15} /> 会员与企业版</button>
-          <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); setMessageOpen(false); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onOrders={() => navigateSettingsSection('/settings/orders')} onLogout={logout} />
+          <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); changeMessagePanel(false); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onOrders={() => navigateSettingsSection('/settings/orders')} onLogout={logout} />
         </div>
       </header>
 
-      <main className={`page-content${!isSettingsRoute && activeView === 'collect' ? ' collect-content' : !isSettingsRoute && activeView === 'records' ? ' records-content' : ''}`}>
+      <main className={`page-content${!isSettingsRoute && activeView === 'send' ? ' send-content' : !isSettingsRoute && activeView === 'collect' ? ' collect-content' : !isSettingsRoute && activeView === 'records' ? ' records-content' : ''}`}>
         {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} onOpenWorkspace={() => { window.location.href = '/workspace' }} />}
         {!isSettingsRoute && activeView === 'send' && (
           <SendView
@@ -1047,7 +1037,7 @@ export function WorkspaceApp() {
             onReset={resetSend}
             onCopy={copyValue}
             onCopyQrImage={copyQrImage}
-            onRetrieve={() => setRetrieveOpen(true)}
+            onRetrieve={(code) => { if (code) setRetrievalCode(String(code).toUpperCase()); setRetrieveOpen(true) }}
             guestQuota={guestQuota}
             onLogin={startLogin}
           />
@@ -1074,7 +1064,7 @@ export function WorkspaceApp() {
             onRefreshRecords={refreshRecords}
           />
         )}
-        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} onSaveShareExpiry={saveShareExpiry} onNotify={setToast} />}
+        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onUpload={() => navigateMainView('send')} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} onSaveShareExpiry={saveShareExpiry} onNotify={setToast} />}
       </main>
 
       <footer className="page-footer">
@@ -1137,89 +1127,209 @@ export function GuestQuotaModal({ quota, onClose, onLogin }) {
 }
 
 export function SendView({ uploadLimitBytes = 1.2 * 1024 ** 3, batchLimit = MAX_FILES, user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
+  const [retrieveCode, setRetrieveCode] = useState('')
   const showUploadStatus = ['uploading', 'paused', 'failed', 'finalizing'].includes(uploadState.status)
   const recipientError = recipientInputError(settings.recipients, user)
+  // 队列顺序与 uploadShareInChunks 的 files 顺序一致且串行处理，因此当前文件名
+  // 可以反推出「哪些已完成 / 正在传 / 等待中」；拿不到当前文件时不猜，统一显示等待。
+  const currentFileIndex = uploadState.currentFile ? files.findIndex((file) => file.name === uploadState.currentFile) : -1
+  const completedFileCount = uploadState.status === 'finalizing' ? files.length : Math.max(0, currentFileIndex)
+  const waitingFileCount = Math.max(files.length - completedFileCount - (uploadState.status === 'uploading' || uploadState.status === 'paused' ? 1 : 0), 0)
+  const queueStatusText = uploadState.status === 'paused' ? `已暂停 · ${completedFileCount} 个已完成`
+    : uploadState.status === 'failed' ? `上传已中断 · ${completedFileCount} 个已完成`
+      : uploadState.status === 'finalizing' ? `安全检查中 · ${files.length} 个已上传`
+        : `1 个上传中 · ${completedFileCount} 个已完成${waitingFileCount ? ` · ${waitingFileCount} 个等待中` : ''}`
+  const canRemoveDuringUpload = uploadState.status !== 'finalizing' && uploadState.failurePhase !== 'query'
   return (
-    <>
-      <section className="hero-layout">
-        <div className="transfer-column">
-          <div className="section-intro">
-            <div>
-              <h1>简单两步，<span>把文件交给他。</span></h1>
-              <p className="intro-copy">拖进来，生成链接。临时传输，不占你的云盘。</p>
+    <div className="send-prototype-page">
+      <div className={`send-prototype-inner${showUploadStatus ? ' send-uploading-inner' : ''}`}>
+        {!files.length && !shareResult ? (
+          <>
+            <section className="send-prototype-hero">
+              <div className="send-prototype-hero-copy">
+                <span className="send-prototype-pill"><i />临时传输 · 上传即分享</span>
+                <h1>轻松发送<em>大文件</em></h1>
+                <p>支持多种文件格式，安全快速，随时随地分享</p>
+                <div className="send-prototype-stats">
+                  <div><b>{formatBytes(uploadLimitBytes)}</b><span>单文件上限</span></div>
+                  <div><b>{batchLimit} 个</b><span>单次文件数</span></div>
+                  <div><b>{settings.expiry || '3 天'}</b><span>默认有效期</span></div>
+                </div>
+              </div>
+              <div className="send-prototype-hero-art"><PrototypeAsset name="hero.png" width={400} height={300} alt="" /></div>
+            </section>
+
+            <section className={`upload-panel send-prototype-drop-card ${isDragging ? 'dragging' : ''}`}>
+              <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
+              <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
+              {guestQuota?.enabled && <div className="send-prototype-guest-strip"><span><Gauge size={15} />游客模式 · 本次剩余 <b>{formatBytes(guestQuota.remainingBytes)}</b></span><button type="button" onClick={onLogin}>登录后同步记录与额度 <ChevronRight size={14} /></button></div>}
+              <div className={`send-prototype-dropzone ${isDragging ? 'dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
+                <PrototypeAsset className="send-prototype-cloud" name="ico-cloud.png" width={64} height={54} />
+                <h2>{isDragging ? '松开即可添加文件' : '拖拽文件或文件夹到这里'}</h2>
+                <p className="send-prototype-drop-copy">支持 PDF / Office / 图片 / 视频 / 压缩包，自动分片上传，中断可续传</p>
+                <div className="send-prototype-actions">
+                  <button className="primary-button" type="button" onClick={() => inputRef.current?.click()}><FolderOpen size={17} />选择文件</button>
+                  <button className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} />选择文件夹</button>
+                </div>
+                <div className="send-prototype-retrieve">
+                  <span><KeyRound size={14} />或通过取件码获取文件</span>
+                  <form onSubmit={(event) => { event.preventDefault(); onRetrieve(retrieveCode.trim()) }}>
+                    <input aria-label="取件码" inputMode="text" autoComplete="off" maxLength={6} value={retrieveCode} onChange={(event) => setRetrieveCode(event.target.value.replace(/[^a-z\d]/gi, '').toUpperCase())} placeholder="请输入 4–6 位取件码" />
+                    <button className="primary-button" type="submit" disabled={retrieveCode.trim().length < 4}>查询</button>
+                  </form>
+                  <small>取件码可在分享链接或发送记录中找到</small>
+                </div>
+                <span className="upload-note">当前单文件最大 {formatBytes(uploadLimitBytes)} · 上传后自动生成取件码</span>
+              </div>
+            </section>
+
+            <section className="value-strip send-prototype-values">
+              <ValueItem image="ico-bolt.png" title="高速传输" detail="分片并发，跑满带宽" />
+              <ValueItem image="ico-shield.png" title="安全可靠" detail="传输加密 + 病毒检测" />
+              <ValueItem image="act-share.png" title="多端可用" detail="电脑 / 手机 / 平板" />
+              <ValueItem image="act-upload.png" title="简单易用" detail="链接、二维码、取件码" />
+            </section>
+            <div className="send-prototype-trust"><span><ShieldCheck size={14} />文件仅保留至有效期结束</span><span><LockKeyhole size={14} />支持提取密码</span><span><PrototypeAsset name="ico-scan.png" size={16} />上传前安全检测</span></div>
+          </>
+        ) : showUploadStatus ? (
+          <>
+            <div className="send-page-head">
+              <div className="send-page-head-copy">
+                <div className="send-page-crumb"><a href="/">发文件</a><i>/</i><span>{uploadState.status === 'paused' ? '已暂停' : uploadState.status === 'failed' ? '上传中断' : uploadState.status === 'finalizing' ? '安全检查' : '正在上传'}</span></div>
+                <h1>正在上传 {files.length} 个文件</h1>
+                <p>{uploadState.status === 'paused' ? '上传已暂停，已传分片会保留，可随时继续。' : uploadState.status === 'failed' ? '上传已中断，可重试本次上传或取消后重新选择文件。' : uploadState.status === 'finalizing' ? '文件已传输完成，正在执行安全检查并生成取件信息。' : '上传过程请保持页面打开，中断后可以继续。'}</p>
+              </div>
+              <div className="send-page-head-actions">
+                {uploadState.status === 'uploading' && <button className="secondary-button" type="button" onClick={onPause} disabled={!isUploading}><Pause size={15} />暂停</button>}
+                {uploadState.status === 'paused' && <button className="primary-button" type="button" onClick={onResume}><Play size={15} />继续上传</button>}
+                {uploadState.status === 'failed' && uploadState.failurePhase !== 'threat' && <button className="primary-button" type="button" onClick={onRetry}><RotateCcw size={15} />{uploadState.failurePhase === 'scan' ? '重试安全检查' : uploadState.failurePhase === 'query' ? '查询处理结果' : '重试上传'}</button>}
+                <button className="secondary-button send-cancel-button" type="button" onClick={onReset} disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'}><X size={15} />取消上传</button>
+              </div>
             </div>
-            <button className="retrieve-trigger" onClick={onRetrieve}><KeyRound size={17} /><span>取件码</span><ArrowRight size={15} /></button>
-          </div>
-          <div className={`upload-panel ${isDragging ? 'dragging' : ''} ${files.length || shareResult ? 'has-files' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
-            <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
-            <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
-            {!files.length && !shareResult && (
-              <div className="empty-upload">
-                <div className="upload-artwork" aria-hidden="true">
-                  <img src={heroFolder} width="680" height="500" alt="" draggable={false} />
-                </div>
-                <h2>{isDragging ? '松开即可添加文件' : '把文件拖到这里'}</h2>
-                <p>支持多文件与文件夹，单次最多 {batchLimit} 个文件</p>
-                <div className="upload-choice">
-                  <button className="primary-button" onClick={() => inputRef.current?.click()}><FolderOpen size={17} /> 选择文件</button>
-                  <button className="secondary-button" onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> 选择文件夹</button>
-                </div>
-                <span className="upload-note">当前单文件最大 {formatBytes(uploadLimitBytes)} · 分片续传 · 上传后自动生成取件码</span>
+
+            <UploadProgressPanel progress={uploadProgress} uploadState={uploadState} fileCount={files.length} fileIndex={currentFileIndex + 1} />
+
+            <section className="upload-panel upload-queue-card" aria-label="上传队列">
+              {/* 上传中仍保留文件选择入口（隐藏 input）：与「移除文件」同源，
+                  finalizing 阶段由 addFiles 的守卫拒绝替换正在发布的批次。 */}
+              <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
+              <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
+              <div className="upload-queue-head">
+                <div><h2>队列</h2><span>{files.length} 个文件 · {queueStatusText}</span></div>
+                <button type="button" className="ghost-icon" aria-label="清空文件" title="取消并清空本次上传" disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'} onClick={onReset}><X size={17} /></button>
               </div>
-            )}
-            {files.length > 0 && !shareResult && (
-              <div className="file-queue">
-                <div className="queue-heading">
-                  <div><span className="eyebrow">待发送文件</span><h2>{files.length} 个文件，准备就绪</h2></div>
-                  <button className="ghost-icon" aria-label="清空文件" disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'} onClick={onReset}><X size={17} /></button>
-                </div>
-                <label className="delivery-field">
-                  <span><Mail size={14} /> 定向发送</span>
-                  <input maxLength={RECIPIENT_TEXT_MAX} value={settings.recipients} disabled={isUploading} onChange={(event) => onUpdateSettings({ recipients: limitInputText(event.target.value, RECIPIENT_TEXT_MAX) })} aria-invalid={Boolean(recipientError)} aria-describedby="delivery-recipient-hint" placeholder="输入手机号或邮箱，多个用逗号分隔（可选）" />
-                  <small id="delivery-recipient-hint" className={`contact-input-hint ${recipientError ? 'invalid' : ''}`} aria-live="polite">{recipientError || '可留空；最多 50 个收件人，不能填写自己的手机号或邮箱。'}</small>
-                </label>
-                <div className="file-list">{files.map((file) => <FileRow key={file.id} file={file} onRemove={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query' ? undefined : () => removeFile(file.id)} />)}</div>
-                {guestQuota?.enabled && (
-                  <div className="guest-quota-hint">
-                    <Gauge size={15} />
-                    <span>未登录累计可传 <strong>{formatBytes(guestQuota.limitBytes)}</strong>，本设备已用 {formatBytes(guestQuota.usedBytes)}{guestQuota.reservedBytes ? <>，未完成上传占用 <strong>{formatBytes(guestQuota.reservedBytes)}</strong><button type="button" className="guest-quota-release" onClick={releaseGuestUploads} aria-label="释放未完成上传占用的额度">释放</button></> : null}，剩余 <strong>{formatBytes(guestQuota.remainingBytes)}</strong></span>
-                    <button type="button" onClick={onLogin}><UserPlus size={13} /> 免费注册解锁 20 GB</button>
+              <div className="upload-queue-list">
+                {files.map((file, index) => {
+                  const done = uploadState.status === 'finalizing' || (currentFileIndex > -1 && index < currentFileIndex)
+                  const active = !done && currentFileIndex === index
+                  return <div className={`file-row upload-queue-row${done ? ' is-done' : active ? ' is-active' : ''}`} key={file.id}>
+                    <span className="file-type"><PrototypeFileIcon name={file.name} size={24} /></span>
+                    <div className="file-info">
+                      <strong title={file.name}>{file.name}</strong>
+                      <span>{formatBytes(file.size)} · {done ? '已上传' : active ? `正在上传${uploadState.status === 'paused' ? '（已暂停）' : ''}` : '等待上传'}</span>
+                    </div>
+                    {active && <div className="queue-file-progress" aria-hidden="true"><span style={{ width: `${uploadProgress}%` }} /></div>}
+                    {done && <span className="queue-file-done" title="已上传"><Check size={15} /></span>}
+                    {canRemoveDuringUpload && <button type="button" className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={() => removeFile(file.id)}><X size={16} /></button>}
                   </div>
-                )}
-                {showUploadStatus ? <UploadProgressPanel progress={uploadProgress} uploadState={uploadState} isUploading={isUploading} onPause={onPause} onResume={onResume} onRetry={onRetry} /> : <div className="queue-actions"><button className="secondary-button" onClick={onSettings}><Settings2 size={16} /> 分享设置</button><button className="primary-button" disabled={Boolean(recipientError)} onClick={() => uploadFiles()}><Send size={16} /> 开始上传 <ArrowRight size={15} /></button></div>}
+                })}
               </div>
-            )}
-            {shareResult && <ShareResult result={shareResult} settings={settings} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onReset={onReset} />}
-          </div>
-        </div>
-      </section>
-      <section className="value-strip"><ValueItem icon={LockKeyhole} title="无需注册" detail="即开即用，免登录发送" /><ValueItem icon={Link2} title="多种分享" detail="链接、取件码、二维码" /><ValueItem icon={Clock3} title="到期清理" detail="登录后可在「文件清理」中开启" /><ValueItem icon={FolderOpen} title="文件夹直传" detail="保留目录结构，不必压缩" /></section>
-    </>
+              <div className="upload-settings-line">
+                <span><Mail size={14} />{settings.recipients ? `定向发送：${settings.recipients}` : '公开链接：未填写收件人'}</span>
+                <button type="button" className="secondary-button" onClick={onSettings} disabled={uploadState.status === 'finalizing'} title={uploadState.status === 'finalizing' ? '安全检查阶段不可修改分享设置' : '查看本次上传的分享设置'}><Settings2 size={15} />分享设置</button>
+              </div>
+            </section>
+          </>
+        ) : (
+          <>
+            <div className="send-page-head send-page-head-narrow">
+              <div className="send-page-head-copy">
+                <div className="send-page-crumb"><a href="/">发文件</a><i>/</i><span>{shareResult ? '发送完成' : '已选文件'}</span></div>
+                <h1>{shareResult ? '发送完成' : '已选文件'}</h1>
+                <p>{shareResult ? '分享链接、取件码和二维码已准备好。' : '确认要发送的内容，可继续添加文件或文件夹。'}</p>
+              </div>
+              {!shareResult && <div className="send-page-head-actions"><button className="secondary-button" type="button" onClick={() => inputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件</button><button className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件夹</button></div>}
+            </div>
+            <section className={`upload-panel send-prototype-drop-card send-prototype-queue-card ${isDragging ? 'dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
+              <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
+              <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
+              {files.length > 0 && !shareResult && <div className="file-queue">
+                <div className="queue-heading"><div><span className="eyebrow">待发送文件</span><h2>{files.length} 个文件，准备就绪</h2></div><button className="ghost-icon" aria-label="清空文件" disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'} onClick={onReset}><X size={17} /></button></div>
+                <label className="delivery-field"><span><Mail size={14} />定向发送</span><input maxLength={RECIPIENT_TEXT_MAX} value={settings.recipients} disabled={isUploading} onChange={(event) => onUpdateSettings({ recipients: limitInputText(event.target.value, RECIPIENT_TEXT_MAX) })} aria-invalid={Boolean(recipientError)} aria-describedby="delivery-recipient-hint" placeholder="输入手机号或邮箱，多个用逗号分隔（可选）" /><small id="delivery-recipient-hint" className={`contact-input-hint ${recipientError ? 'invalid' : ''}`} aria-live="polite">{recipientError || '可留空；最多 50 个收件人，不能填写自己的手机号或邮箱。'}</small></label>
+                <div className="file-list">{files.map((file) => <FileRow key={file.id} file={file} onRemove={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query' ? undefined : () => removeFile(file.id)} />)}</div>
+                {guestQuota?.enabled && <div className="guest-quota-hint"><Gauge size={15} /><span>未登录累计可传 <strong>{formatBytes(guestQuota.limitBytes)}</strong>，本设备已用 {formatBytes(guestQuota.usedBytes)}{guestQuota.reservedBytes ? <>，未完成上传占用 <strong>{formatBytes(guestQuota.reservedBytes)}</strong><button type="button" className="guest-quota-release" onClick={releaseGuestUploads} aria-label="释放未完成上传占用的额度">释放</button></> : null}，剩余 <strong>{formatBytes(guestQuota.remainingBytes)}</strong></span><button type="button" onClick={onLogin}><UserPlus size={13} />免费注册</button></div>}
+                <div className="queue-actions"><button className="secondary-button" onClick={onSettings}><Settings2 size={16} />分享设置</button><button className="primary-button" disabled={Boolean(recipientError)} onClick={() => uploadFiles()}><Send size={16} />开始上传<ArrowRight size={15} /></button></div>
+              </div>}
+              {shareResult && <ShareResult result={shareResult} settings={settings} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onReset={onReset} />}
+            </section>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 
-export function UploadProgressPanel({ progress, uploadState, isUploading, onPause, onResume, onRetry }) {
-  const statusText = uploadState.status === 'paused' ? '已暂停' : uploadState.phase || (uploadState.status === 'failed' ? '上传失败' : '正在上传')
-  const checking = uploadState.status === 'finalizing' || Boolean(uploadState.failurePhase)
+export function UploadProgressPanel({ progress, uploadState, fileCount = 0, fileIndex = 0 }) {
+  const failed = uploadState.status === 'failed'
+  const checking = uploadState.status === 'finalizing'
+  const publishing = checking && uploadState.checkStage === 'publishing'
+  const transportDone = checking || ['scan', 'threat', 'query'].includes(uploadState.failurePhase)
+  // 状态文案沿用真实阶段：上传中/已暂停/安全检查/生成取件码，不虚构分片序号。
+  const phasePrefix = String(uploadState.phase || '')
+  const statusText = uploadState.status === 'paused' ? '已暂停'
+    : failed ? (uploadState.phase || '上传中断')
+      : checking ? (publishing ? '安全检查通过，正在生成取件码' : '正在进行安全检查')
+        : phasePrefix.includes('重试') ? '正在重试上传'
+          : phasePrefix.includes('恢复') ? '已恢复上传进度'
+            : phasePrefix.includes('创建') ? '正在创建上传会话'
+              : '上传中'
+  const phaseOneState = transportDone ? 'done' : failed ? 'failed' : 'active'
+  const phaseTwoState = publishing ? 'done' : checking ? 'active' : ['scan', 'threat'].includes(uploadState.failurePhase) ? 'failed' : 'pending'
+  const phaseThreeState = publishing ? 'active' : 'pending'
+  const phaseOneCopy = phaseOneState === 'done' ? `${fileCount || 1} 个文件已全部上传`
+    : phaseOneState === 'failed' ? '上传已中断，可重试本次上传'
+      : uploadState.status === 'paused' ? '已暂停，已传分片会保留'
+        : `正在上传 ${uploadState.currentFile || '文件'}`
+  const phaseTwoCopy = phaseTwoState === 'done' ? '安全检查已通过'
+    : phaseTwoState === 'active' ? (uploadState.checkFileCount > 1 ? `正在检测 ${uploadState.checkFileCount} 个文件` : '正在检测已上传的文件')
+      : phaseTwoState === 'failed' ? '安全检查未通过，已停止发布' : '上传完成后逐文件检测'
+  const phaseThreeCopy = phaseThreeState === 'active' ? '正在生成链接、二维码与取件码' : '完成后生成链接、二维码与取件码'
+  const totalBytes = uploadState.totalBytes || 0
+  const byteRatio = totalBytes ? Math.min(100, Math.round(((uploadState.uploadedBytes || 0) / totalBytes) * 100)) : 0
   return (
-    <div className={`progress-wrap enhanced-progress ${uploadState.status}`}>
-      <div className="progress-label"><span>{statusText}</span><strong>{progress}%</strong></div>
-      <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
+    <div className={`progress-wrap enhanced-progress upload-progress-card ${uploadState.status}`}>
+      <div className="upload-top">
+        <div className="upload-file">
+          <span className="upload-file-icon"><PrototypeFileIcon name={uploadState.currentFile} size={32} /></span>
+          <div className="upload-file-copy">
+            <b title={uploadState.currentFile || undefined}>{uploadState.currentFile || '正在准备上传'}</b>
+            <span>{fileIndex > 0 && fileCount > 0 ? `第 ${fileIndex} / ${fileCount} 个文件 · ` : ''}{formatBytes(totalBytes)} · 已上传 {formatBytes(uploadState.uploadedBytes || 0)}（{byteRatio}%）</span>
+          </div>
+        </div>
+        <div className="progress-label"><span>{statusText}</span><strong>{progress}%</strong></div>
+      </div>
+      <div className="progress-track upload-progress-track" role="progressbar" aria-label="上传进度" aria-valuenow={progress} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${progress}%` }} /></div>
       <div className="upload-metrics">
         <span>已传 {formatBytes(uploadState.uploadedBytes)} / {formatBytes(uploadState.totalBytes)}</span>
-        <span>{checking ? '文件传输已完成' : <>速度 {uploadState.speedBps ? `${formatBytes(uploadState.speedBps)}/s` : '计算中'}</>}</span>
-        <span>{checking ? uploadState.failurePhase === 'threat' ? '已阻止发布' : uploadState.failurePhase === 'scan' ? '安全检查未通过' : uploadState.failurePhase === 'query' ? '处理结果待查询' : uploadState.checkStage === 'publishing' ? '正在完成发布' : '等待安全检查结果' : <>剩余 {formatDuration(uploadState.etaSeconds)}</>}</span>
+        <span>{transportDone ? '文件传输已完成' : failed ? '上传已中断' : <>速度 {uploadState.speedBps ? `${formatBytes(uploadState.speedBps)}/s` : '计算中'}</>}</span>
+        <span>{transportDone ? uploadState.failurePhase === 'threat' ? '已阻止发布' : uploadState.failurePhase === 'scan' ? '安全检查未通过' : uploadState.failurePhase === 'query' ? '处理结果待查询' : publishing ? '正在完成发布' : '等待安全检查结果' : failed ? '可重试或取消本次上传' : uploadState.status === 'paused' ? '已暂停，可继续上传' : <>剩余 {formatDuration(uploadState.etaSeconds)}</>}</span>
       </div>
-      {uploadState.status === 'finalizing' && <SecurityCheckStatus startedAt={uploadState.checkStartedAt} stage={uploadState.checkStage} currentFile={uploadState.currentFile} fileIndex={uploadState.checkFileIndex} fileCount={uploadState.checkFileCount} completedCount={uploadState.checkCompletedCount} activeCount={uploadState.checkActiveCount} connectionMessage={uploadState.connectionMessage} />}
-      {uploadState.currentFile && !checking && <small>当前文件：{uploadState.currentFile}</small>}
-      {uploadState.retryCount > 0 && <small>已自动重试 {uploadState.retryCount} 次</small>}
+
+      <div className="upload-phase-list">
+        <div className={`upload-phase ${phaseOneState}`}><i>{phaseOneState === 'done' ? <Check size={12} /> : phaseOneState === 'active' ? <CloudUpload size={12} /> : '1'}</i><div><b>分片上传</b><small>{phaseOneCopy}</small></div>{phaseOneState === 'active' && <span className="upload-phase-badge">{uploadState.status === 'paused' ? '已暂停' : '进行中'}</span>}</div>
+        <div className={`upload-phase ${phaseTwoState}`}><i>{phaseTwoState === 'done' ? <Check size={12} /> : phaseTwoState === 'active' ? <ShieldCheck size={12} /> : phaseTwoState === 'failed' ? <X size={12} /> : '2'}</i><div><b>安全检查</b><small>{phaseTwoCopy}</small></div>{phaseTwoState === 'active' && <span className="upload-phase-badge">进行中</span>}</div>
+        <div className={`upload-phase ${phaseThreeState}`}><i>{phaseThreeState === 'done' ? <Check size={12} /> : '3'}</i><div><b>生成取件码</b><small>{phaseThreeCopy}</small></div>{phaseThreeState === 'active' && <span className="upload-phase-badge">进行中</span>}</div>
+      </div>
+
+      {checking && <SecurityCheckStatus startedAt={uploadState.checkStartedAt} stage={uploadState.checkStage} currentFile={uploadState.currentFile} fileIndex={uploadState.checkFileIndex} fileCount={uploadState.checkFileCount} completedCount={uploadState.checkCompletedCount} activeCount={uploadState.checkActiveCount} connectionMessage={uploadState.connectionMessage} />}
+      {uploadState.retryCount > 0 && <small className="upload-retry-note">已自动重试 {uploadState.retryCount} 次</small>}
       {uploadState.error && (['threat', 'scan'].includes(uploadState.failurePhase)
         ? <SecurityCheckFailure message={uploadState.error} code={uploadState.errorCode} fileName={uploadState.scanFile} finding={uploadState.scanFinding} />
         : <p className="upload-error">{uploadState.error}</p>)}
-      <div className="upload-control-row">
-        {uploadState.status === 'uploading' && <button className="secondary-button" onClick={onPause} disabled={!isUploading}><Pause size={15} /> 暂停</button>}
-        {uploadState.status === 'paused' && <button className="primary-button" onClick={onResume}><Play size={15} /> 继续上传</button>}
-        {uploadState.status === 'failed' && uploadState.failurePhase !== 'threat' && <button className="primary-button" onClick={onRetry}><RotateCcw size={15} /> {uploadState.failurePhase === 'scan' ? '重试安全检查' : uploadState.failurePhase === 'query' ? '查询处理结果' : '重试上传'}</button>}
+
+      <div className="upload-security-note">
+        <ShieldCheck size={16} />
+        <div><b>安全检查说明</b><span>上传完成后系统会逐个文件检测病毒与敏感内容，通常只需要几秒；命中风险时整批任务会停止并列出涉及文件。</span></div>
       </div>
     </div>
   )
@@ -1227,12 +1337,18 @@ export function UploadProgressPanel({ progress, uploadState, isUploading, onPaus
 
 export function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }) {
   const [qrOpen, setQrOpen] = useState(false)
+  // 下载次数上限来自本次分享的真实配置（null/0 = 不限）。
+  // 这里展示「上限」而不是「剩余」：卡片可能长时间停留，剩余次数会与真实下载进度脱节。
+  const downloadLimit = Number(result.downloadLimit || 0)
   return (
     <>
       <div className="share-result">
         <div className="result-topline">
-          <span className="success-badge"><Check size={14} /> 上传完成</span>
-          <span>{formatExpiry(result.expiresAt)}</span>
+          <span className="success-badge"><PrototypeAsset className="success-badge-image" name="act-success.png" size={22} /> 上传完成</span>
+          <span className="result-topline-meta">
+            <span><Download size={13} /> {downloadLimit > 0 ? `下载次数 最多 ${downloadLimit} 次` : '下载次数 不限'}</span>
+            <span><Clock3 size={13} /> {formatExpiry(result.expiresAt)}</span>
+          </span>
         </div>
         <div className="result-main">
           <div className="result-code">
@@ -1247,12 +1363,25 @@ export function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }
             </button>
           )}
         </div>
-        <div className="share-link">
-          <Link2 size={15} />
-          <span>{result.shareUrl}</span>
-          <button onClick={() => onCopy(result.shareUrl)} aria-label="复制分享链接"><Copy size={15} /></button>
+        <div className="share-link-list">
+          <div className="share-link-item">
+            {/* 两条链接此前只有图标差异，用户分不清该发哪一条，这里明确标注用途。 */}
+            <div className="share-link-label"><Link2 size={13} /><span>公开分享链接</span><small>任何人打开都能取件</small></div>
+            <div className="share-link">
+              <span>{result.shareUrl}</span>
+              <button onClick={() => onCopy(result.shareUrl)} aria-label="复制公开分享链接" title="复制公开分享链接"><Copy size={15} /></button>
+            </div>
+          </div>
+          {result.enterpriseUrl && (
+            <div className="share-link-item">
+              <div className="share-link-label"><Building2 size={13} /><span>团队链接</span><small>带团队标识，打开后可申请加入团队</small></div>
+              <div className="share-link enterprise-link">
+                <span>{result.enterpriseUrl}</span>
+                <button onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制团队链接" title="复制团队链接"><Copy size={15} /></button>
+              </div>
+            </div>
+          )}
         </div>
-        {result.enterpriseUrl && <div className="share-link enterprise-link"><Building2 size={15} /><span>{result.enterpriseUrl}</span><button onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制企业专属链接"><Copy size={15} /></button></div>}
         {result.deliveryRecipients?.length > 0 && <ShareNotificationStatus result={result} />}
         <div className="result-actions">
           <button className="secondary-button" onClick={onReset}><RotateCcw size={15} /> 继续发送</button>
@@ -1320,10 +1449,11 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
 
   return (
     <section className="workspace-page collection-page">
-      <div className="workspace-heading">
-        <div>
-          <h1>让大家把文件交到同一个地方。</h1>
-          <p>创建收集任务，分享链接后，提交者无需注册即可上传。</p>
+      <div className="collect-page-heading">
+        <div className="collect-breadcrumb"><span>首页</span><i>/</i><span>收集文件</span></div>
+        <div className="collect-page-heading-row">
+          <div><h1>创建收集任务</h1><p>生成一个提交链接，向多人收集文件，无需对方注册。</p></div>
+          {collectionRecords.length > 0 && <button className="secondary-button" type="button" onClick={() => document.getElementById('collection-history')?.scrollIntoView({ block: 'start' })}>管理已有收集 <ArrowRight size={14} /></button>}
         </div>
       </div>
       {manageLoading ? (
@@ -1336,22 +1466,23 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
             <>
               <div className="builder-preview">
                 <div className="preview-label">收集任务预览</div>
-                <div className="preview-card">
-                  <span className="preview-icon"><Inbox size={20} /></span>
-                  <strong>{form.title || '未命名任务'}</strong>
-                  <span>{form.description || '请填写收集说明'}</span>
+                <div className="preview-card collection-preview-card">
+                  <div className="collection-preview-title"><span className="preview-icon"><Inbox size={19} /></span><strong>{form.title || '未命名任务'}</strong></div>
+                  <span className="collection-preview-description">{form.description || '请填写收集说明'}</span>
                   <CollectionLimitInfo allowedTypes={form.allowedTypes} maxFileSizeMb={form.maxFileSizeMb} compact />
+                  <div className="collection-preview-drop"><PrototypeAsset name="ico-cloud.png" width={26} height={22} /><span>拖拽文件到这里，或点击选择</span></div>
                   <small>截止 {form.deadline || '未设置'} · 允许匿名提交</small>
                 </div>
               </div>
               <div className="builder-form">
+                <div className="builder-form-heading"><h2>收集任务信息</h2><p>设置收集内容与提交要求</p></div>
                 <label>
                   <span className="builder-label"><span>任务名称</span><small className={form.title.length >= COLLECTION_TITLE_MAX ? 'field-count at-limit' : 'field-count'}>{form.title.length}/{COLLECTION_TITLE_MAX}</small></span>
                   <input value={form.title} onChange={(event) => update('title', event.target.value)} maxLength={COLLECTION_TITLE_MAX} placeholder="例如：9 月产品素材收集" />
                 </label>
                 <label>
                   <span className="builder-label"><span>收集说明</span><small className={form.description.length >= COLLECTION_DESCRIPTION_MAX ? 'field-count at-limit' : 'field-count'}>{form.description.length}/{COLLECTION_DESCRIPTION_MAX}</small></span>
-                  <input value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={COLLECTION_DESCRIPTION_MAX} placeholder="例如：请上传你负责的图片、文档或视频素材" />
+                  <textarea value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={COLLECTION_DESCRIPTION_MAX} placeholder="例如：请上传你负责的图片、文档或视频素材" rows={4} />
                 </label>
                 <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} min={formatDateInput(new Date())} ariaLabel="截止时间" /></label>
                 <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
@@ -1366,7 +1497,7 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
         </div>
       )}
       {!manageData && collectionRecords.length > 0 && (
-        <div className="collection-history">
+          <div className="collection-history" id="collection-history">
           <div className="collection-history-heading">
             <div><p className="eyebrow">本机保存的任务</p><h2>我的收集任务</h2></div>
             <span>{collectionRecords.length} 个任务</span>
@@ -1374,7 +1505,7 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
           <div className="collection-history-list">
             {collectionRecords.slice(0, 6).map((record, index) => (
               <div className="collection-history-row" key={record.id || `${record.name}-${index}`}>
-                <span className="record-icon collect"><Inbox size={17} /></span>
+                <span className="record-icon collect"><PrototypeAsset name="act-clipboard.png" size={24} /></span>
                 <div>
                   <strong>{record.name}</strong>
                   <span>{record.meta}</span>
@@ -1399,7 +1530,7 @@ export function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager
   return (
     <>
       <div className="collection-success">
-        <span className="success-large"><Check size={27} /></span>
+        <PrototypeAsset className="success-large-image" name="act-success.png" width={52} height={52} />
         <p className="eyebrow">收集任务已创建</p>
         <h2>{result.title}</h2>
         <p>分享下面的链接，参与者即可匿名提交文件。</p>
@@ -1499,7 +1630,7 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
                   <button className="submission-delete-button" onClick={() => onDeleteSubmission(data, submission.id)}><Trash2 size={14} /> 删除提交</button>
                 </div>
               </div>
-              <div className="submission-files" role="region" aria-label={`${submission.participantName}的文件列表`} tabIndex={0}>{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><FileText size={15} /><span>{file.name}</span><small>{formatBytes(file.size)}</small>{canPreviewFile(file) && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}<button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><Download size={15} /></button></div>)}</div>
+              <div className="submission-files" role="region" aria-label={`${submission.participantName}的文件列表`} tabIndex={0}>{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><PrototypeFileIcon name={file.name} size={20} fallback={FileText} /><span>{file.name}</span><small>{formatBytes(file.size)}</small>{canPreviewFile(file) && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}<button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><Download size={15} /></button></div>)}</div>
             </div>
           ))}
         </div>

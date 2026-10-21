@@ -19,7 +19,7 @@ import {
   accountUserById, authSessionFromRequest, getOrigin, safeRelativePath
 } from '../services/account.js'
 import {
-  applyCollectionUpdate, collectionZipEntries, ensureCollectionQrDataUrl, managerCollection,
+  applyCollectionUpdate, collectionClosedMeta, collectionZipEntries, ensureCollectionQrDataUrl, managerCollection,
   publicCollection
 } from '../services/collections.js'
 import {
@@ -110,7 +110,12 @@ export function registerCollectionRoutes(app) {
       if (!task) return res.status(404).json({ message: '收集任务不存在' })
       if (!validateEnterpriseSlug(task, req.query.organization)) return res.status(404).json({ message: '企业专属链接无效' })
       const access = validateCollection(task)
-      if (!access.ok) return res.status(access.status).json({ message: access.message })
+      if (!access.ok) {
+        const payload = { message: access.message, code: access.code || '' }
+        // 410 附带脱敏元信息，公开提交页据此渲染「收集已截止」页，而不是一句通用错误。
+        if (access.status === 410) Object.assign(payload, { code: 'collection_closed', collection: collectionClosedMeta(task) })
+        return res.status(access.status).json(payload)
+      }
       if (await ensureCollectionQrDataUrl(task, req)) persistMetadata()
       res.json({ collection: publicCollection(task, req) })
     } catch (error) {

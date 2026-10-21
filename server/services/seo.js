@@ -132,7 +132,7 @@ function siteJsonLd(origin) {
         '@id': `${origin}/#organization`,
         name: SITE_NAME,
         url: `${origin}/`,
-        logo: { '@type': 'ImageObject', url: `${origin}/brand-logo.png` },
+        logo: { '@type': 'ImageObject', url: `${origin}/app-icon.png` },
         description: '鲲穹文件传输是面向个人与团队的在线文件传输服务，支持免登录大文件分享与匿名文件收集。',
       },
       {

@@ -1,14 +1,29 @@
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { canReopenCollection, fileCategoryIcon, isDateInputStillOpen, managedFileItemsFromRecords, matchesManagedFileCategory, matchesManagedFileSearch, matchesRecordDate, matchesRecordScope, matchesRecordStatus, normalizeRecord, recordCopyLabel, recordCopyTarget, recordDetail, recordDisplayName, recordDisplayStatus, recordExpiryLabel, recordIconForScope, recordLink, recordManageUrl, recordOpenLabel, recordScopeLabel, recordStatusGroup, toDateInputValue } from '../lib/records.js'
 import { useEffect, useState } from 'react'
 import { defaultDeadline, formatBytes, formatDate, isClosedStatus } from '../lib/format.js'
-import { CalendarDays, Check, Clock3, Copy, ExternalLink, Eye, FileWarning, HardDrive, History, Link2, MoreHorizontal, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, X } from 'lucide-react'
+import { Archive, ArrowLeft, CalendarDays, Check, Code2, Copy, Download, ExternalLink, Eye, FileQuestion, FileText, Filter, HardDrive, History, Image as ImageIcon, Inbox, Layers3, Link2, MoreHorizontal, Music2, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, Upload, Video, X } from 'lucide-react'
 import { DatePicker, FileFormatBadge, FilePreviewModal, QrPreviewModal, RecordNameText, RecordPreviewChooser, RenameRecordModal } from '../components/ui.jsx'
+import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { useDownloadTask } from '../hooks.js'
 import { FILE_CATEGORY_FILTERS, RECORD_DATE_FILTERS, RECORD_SCOPE_TABS, RECORD_STATUS_FILTERS, RECORD_VIEW_MODES } from '../lib/constants.js'
 import { recordPreviewConfigs } from '../lib/transfer.js'
 import QRCode from 'qrcode'
 import { AdminPagination } from './AdminPage.jsx'
+
+const FILE_CATEGORY_ICONS = {
+  all: Layers3,
+  image: ImageIcon,
+  document: FileText,
+  video: Video,
+  audio: Music2,
+  archive: Archive,
+  code: Code2,
+  collection: Inbox,
+  mixed: Layers3,
+  other: FileQuestion,
+}
 
 export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
   const currentExpiry = toDateInputValue(record?.expiresAt)
@@ -75,8 +90,8 @@ export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
   )
 }
 
-export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, onDelete, onRename, onClear, onRefresh, onOpen, onOpenCollectionManager, onManage, onCloseManaged, onReopenManaged, onSaveShareExpiry, onNotify }) {
-  const [viewMode, setViewMode] = useState('records')
+export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, onDelete, onRename, onClear, onRefresh, onOpen, onOpenCollectionManager, onUpload, onManage, onCloseManaged, onReopenManaged, onSaveShareExpiry, onNotify }) {
+  const [viewMode, setViewMode] = useState(() => new URLSearchParams(window.location.search).get('center') === 'files' ? 'files' : 'records')
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
@@ -85,10 +100,14 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   const [recordQuery, setRecordQuery] = useState('')
   const [fileQuery, setFileQuery] = useState('')
   const [fileCategory, setFileCategory] = useState('all')
+  const [fileFilterOpen, setFileFilterOpen] = useState(false)
   const [expiringOnly, setExpiringOnly] = useState(false)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [openMenu, setOpenMenu] = useState(null)
-  const [menuPlacement, setMenuPlacement] = useState('down')
+  // 行操作菜单改为挂到 body 的 fixed 浮层：表格容器有 overflow 与固定高度，
+  // 原来的 absolute 菜单会被裁掉，用户必须滚动表格才能看到剩余操作。
+  const [menuAnchor, setMenuAnchor] = useState(null)
+  const [menuRecord, setMenuRecord] = useState(null)
   const [renameTarget, setRenameTarget] = useState(null)
   const [shareExpiryTarget, setShareExpiryTarget] = useState(null)
   const [previewItem, setPreviewItem] = useState(null)
@@ -112,13 +131,14 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     && matchesManagedFileCategory(item, fileCategory)
     && (!expiringOnly || item.expiringSoon)
   ))
-  const recordsPageSize = 10
+  const recordsPageSize = 8
+  const filePageSize = 7
   const recordPageCount = Math.max(1, Math.ceil(filteredRecords.length / recordsPageSize))
-  const filePageCount = Math.max(1, Math.ceil(filteredFileItems.length / recordsPageSize))
+  const filePageCount = Math.max(1, Math.ceil(filteredFileItems.length / filePageSize))
   const safeRecordPage = Math.min(recordPage, recordPageCount)
   const safeFilePage = Math.min(filePage, filePageCount)
   const visibleRecords = filteredRecords.slice((safeRecordPage - 1) * recordsPageSize, safeRecordPage * recordsPageSize)
-  const visibleFileItems = filteredFileItems.slice((safeFilePage - 1) * recordsPageSize, safeFilePage * recordsPageSize)
+  const visibleFileItems = filteredFileItems.slice((safeFilePage - 1) * filePageSize, safeFilePage * filePageSize)
   const expiringItems = fileItems.filter((item) => item.expiringSoon)
   const visibleIds = Array.from(new Set((viewMode === 'files' ? visibleFileItems.map((item) => item.record.id) : visibleRecords.map((record) => record.id))))
   const selectedVisibleCount = visibleIds.filter((id) => selectedIds.has(id)).length
@@ -127,11 +147,26 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     acc[tab.key] = tab.key === 'all' ? normalizedRecords.length : normalizedRecords.filter((record) => record.scope === tab.key).length
     return acc
   }, {})
-  const managedFileCount = fileItems.reduce((sum, item) => sum + item.fileCount, 0)
-  const managedTotalSize = fileItems.reduce((sum, item) => sum + item.size, 0)
   const activeScopeTab = RECORD_SCOPE_TABS.find((tab) => tab.key === scopeFilter) || null
   const scopeClearLabel = scopeFilter === 'all' ? '清空全部' : `清空「${activeScopeTab?.label || '本分类'}」`
   const scopeClearDisabled = !(scopeFilter === 'all' ? normalizedRecords.length : recordCounts[scopeFilter])
+  const storageUsedBytes = Math.max(0, Number(user?.capacity?.usedBytes) || 0)
+  const storageTotalBytes = Math.max(0, Number(user?.capacity?.totalBytes || user?.plan?.totalBytes) || 0)
+  const storageUsagePercent = storageTotalBytes ? Math.min(100, storageUsedBytes / storageTotalBytes * 100) : 0
+
+  const changeViewMode = (nextMode) => {
+    setViewMode(nextMode)
+    const url = new URL(window.location.href)
+    if (nextMode === 'files') url.searchParams.set('center', 'files')
+    else url.searchParams.delete('center')
+    window.history.pushState(null, '', `${url.pathname}${url.search}${url.hash}`)
+  }
+
+  useEffect(() => {
+    const syncViewMode = () => setViewMode(new URLSearchParams(window.location.search).get('center') === 'files' ? 'files' : 'records')
+    window.addEventListener('popstate', syncViewMode)
+    return () => window.removeEventListener('popstate', syncViewMode)
+  }, [])
 
   useEffect(() => {
     handleRefresh({ silent: true }).catch(() => {})
@@ -140,7 +175,8 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   useEffect(() => {
     setSelectedIds(new Set())
     setOpenMenu(null)
-    setMenuPlacement('down')
+    setMenuRecord(null)
+    setMenuAnchor(null)
     setRecordPage(1)
     setFilePage(1)
   }, [viewMode, scopeFilter, dateFilter, dateFrom, dateTo, statusFilter, recordQuery, fileQuery, fileCategory, expiringOnly])
@@ -155,10 +191,32 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
 
   useEffect(() => {
     if (!openMenu) return undefined
-    const closeMenu = () => setOpenMenu(null)
-    window.addEventListener('click', closeMenu)
-    return () => window.removeEventListener('click', closeMenu)
+    // 菜单是 fixed 浮层：滚动/缩放后锚点会漂移，直接关掉比留在错误位置更稳妥。
+    // 菜单自身内部的滚动不算（否则用户滚菜单就被关掉）。
+    const close = () => { setOpenMenu(null); setMenuRecord(null); setMenuAnchor(null) }
+    const onScroll = (event) => {
+      if (event.target instanceof Element && event.target.closest('.record-menu')) return
+      close()
+    }
+    const onKey = (event) => { if (event.key === 'Escape') close() }
+    window.addEventListener('click', close)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', close)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [openMenu])
+
+  useEffect(() => {
+    if (!fileFilterOpen) return undefined
+    const closeFilter = () => setFileFilterOpen(false)
+    window.addEventListener('click', closeFilter)
+    return () => window.removeEventListener('click', closeFilter)
+  }, [fileFilterOpen])
 
   const handleRefresh = async (options = {}) => {
     setRefreshing(true)
@@ -169,21 +227,38 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     }
   }
 
-  const toggleMenu = (menuId, event) => {
+  const toggleMenu = (menuId, event, record) => {
     event.stopPropagation()
-    if (openMenu !== menuId) {
-      const rect = event.currentTarget.getBoundingClientRect()
-      const estimatedMenuHeight = 324
-      const spaceBelow = window.innerHeight - rect.bottom
-      const spaceAbove = rect.top
-      setMenuPlacement(spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow ? 'up' : 'down')
+    if (openMenu === menuId) {
+      setOpenMenu(null); setMenuRecord(null); setMenuAnchor(null)
+      return
     }
-    setOpenMenu((current) => (current === menuId ? null : menuId))
+    const rect = event.currentTarget.getBoundingClientRect()
+    const width = 214
+    const margin = 12
+    // 估算菜单高度：条数 × 34 + 上下 padding，用于决定向上还是向下展开。
+    const itemCount = record.scope === 'my_sent' && record.kind === 'share' ? 8 : record.scope === 'my_collections' ? 7 : 4
+    const estimated = itemCount * 34 + 22
+    const spaceBelow = window.innerHeight - rect.bottom - margin
+    const spaceAbove = rect.top - margin
+    const openUp = spaceBelow < estimated && spaceAbove > spaceBelow
+    // 可用高度取展开方向的空间：正常视口下一屏能放下全部操作，不再需要滚动。
+    const available = Math.max(120, Math.min(openUp ? spaceAbove : spaceBelow, window.innerHeight - margin * 2))
+    const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin))
+    setMenuAnchor({
+      left: Math.round(left),
+      width,
+      maxHeight: Math.round(available),
+      top: openUp ? null : Math.round(rect.bottom + 6),
+      bottom: openUp ? Math.round(window.innerHeight - rect.top + 6) : null,
+    })
+    setMenuRecord(record)
+    setOpenMenu(menuId)
   }
 
   const runMenuAction = (action) => (event) => {
     event.stopPropagation()
-    setOpenMenu(null)
+    setOpenMenu(null); setMenuRecord(null); setMenuAnchor(null)
     action()
   }
 
@@ -225,6 +300,24 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     setFileQuery('')
     setFileCategory('all')
     setExpiringOnly(false)
+    setFileFilterOpen(false)
+  }
+
+  const fileCategoryCount = (category) => category === 'all'
+    ? fileItems.length
+    : fileItems.filter((item) => matchesManagedFileCategory(item, category)).length
+
+  const downloadFileItem = (record) => {
+    if (record.scope === 'my_collections' && onOpenCollectionManager) {
+      onOpenCollectionManager(recordManageUrl(record))
+      return
+    }
+    const previews = recordPreviewConfigs(record)
+    if (record.kind === 'share' && record.files?.length === 1 && previews.length === 1) {
+      startRecordPreviewDownload(previews[0].downloadConfig)
+      return
+    }
+    onOpen(record)
   }
 
   const requestRename = (record) => {
@@ -278,7 +371,19 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     const closedShare = record.kind === 'share' && isClosedStatus(record.status)
     const reopenableCollection = canReopenCollection(record)
     return (
-      <div className={`record-menu row-menu ${menuPlacement === 'up' ? 'menu-up' : ''}`} onClick={(event) => event.stopPropagation()}>
+      <div
+        className="record-menu row-menu record-menu-floating"
+        style={menuAnchor ? {
+          left: menuAnchor.left,
+          width: menuAnchor.width,
+          maxHeight: menuAnchor.maxHeight,
+          // 两个方向都要显式覆盖：.row-menu 基础样式带 top，向上展开时若只设 bottom，
+          // top/bottom 同时生效会把浮层压成细条并跑出视口。
+          top: menuAnchor.top !== null ? menuAnchor.top : 'auto',
+          bottom: menuAnchor.bottom !== null ? menuAnchor.bottom : 'auto',
+        } : undefined}
+        onClick={(event) => event.stopPropagation()}
+      >
         {record.scope !== 'my_collections' && (
           <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
         )}
@@ -339,7 +444,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   const recordModeTabs = (
     <div className="records-mode-tabs" role="tablist" aria-label="记录视图">
       {RECORD_VIEW_MODES.map(([key, label]) => (
-        <button key={key} role="tab" aria-selected={viewMode === key} className={viewMode === key ? 'active' : ''} onClick={() => setViewMode(key)}>
+        <button key={key} role="tab" aria-selected={viewMode === key} className={viewMode === key ? 'active' : ''} onClick={() => changeViewMode(key)}>
           <span>{label}</span>
           <strong>{key === 'files' ? fileItems.length : normalizedRecords.length}</strong>
         </button>
@@ -352,10 +457,15 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
       <div className="workspace-heading records-heading">
         <div>
           <h1>{viewMode === 'files' ? '文件管理中心' : '收发记录'}</h1>
-          <p>{viewMode === 'files' ? '管理近期收发的文件、收集任务和提交内容。' : '查看你发送与接收过的文件，可随时复制取件码或重新分享。'}</p>
+          <p>{viewMode === 'files' ? '按类型查看所有发送、接收与收集的文件，快速定位与清理。' : '查看你发送与接收过的文件，可随时复制取件码或重新分享。'}</p>
         </div>
         <div className="records-heading-actions">
-          {recordModeTabs}
+          {viewMode === 'records' ? recordModeTabs : (
+            <>
+              <button type="button" className="secondary-button" onClick={() => changeViewMode('records')}><ArrowLeft size={15} /> 返回收发记录</button>
+              <button type="button" className="primary-button" onClick={onUpload}><Upload size={15} /> 上传文件</button>
+            </>
+          )}
           {viewMode === 'records' && (
             <button type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空记录</button>
           )}
@@ -379,7 +489,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                   {RECORD_STATUS_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
               </label>
-              <label className="record-date-select">
+              <label className="record-date-select record-date-range-select">
                 <select aria-label="日期筛选" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)}>
                   {RECORD_DATE_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
@@ -389,7 +499,8 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                 <input type="search" maxLength={160} value={recordQuery} onChange={(event) => setRecordQuery(event.target.value)} placeholder="搜索文件名或取件码" aria-label="搜索文件名或取件码" />
               </label>
             </div>
-            <div className="records-secondary-row">
+          </div>
+          <div className="records-secondary-row">
               <div className="records-secondary-main">
                 {dateFilter === 'range' && (
                   <div className="record-filter-field record-date-field">
@@ -414,7 +525,6 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                   <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
                 </div>
               </div>
-            </div>
           </div>
 
           <div className="records-table-surface" role="table" aria-label="收发记录列表">
@@ -433,7 +543,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                     <input type="checkbox" checked={selected} onChange={() => toggleRecord(record.id)} />
                   </label>
                   <div className="record-file-cell" role="cell">
-                    <span className={`record-icon ${record.scope}`}><Icon size={17} /></span>
+                    <span className={`record-icon ${record.scope}`}>{['my_collections', 'collect_from_me'].includes(record.scope) ? <PrototypeAsset name="act-clipboard.png" size={26} /> : <PrototypeFileIcon name={recordDisplayName(record)} fallback={Icon} size={24} />}</span>
                     <div className="record-main">
                       <div className="record-title-line">
                         <RecordNameText name={recordDisplayName(record)} />
@@ -453,8 +563,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                     <span className="record-preview-slot">
                       {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
                     </span>
-                    <button className="ghost-icon" aria-label={`更多操作：${recordDisplayName(record)}`} onClick={(event) => toggleMenu(record.id, event)}><MoreHorizontal size={17} /></button>
-                    {openMenu === record.id && renderRecordMenu(record)}
+                    <button className="ghost-icon" aria-label={`更多操作：${recordDisplayName(record)}`} onClick={(event) => toggleMenu(record.id, event, record)}><MoreHorizontal size={17} /></button>
                   </div>
                 </div>
               )
@@ -467,101 +576,81 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
         </>
       ) : (
         <>
-          <div className="file-center-stats">
-            <div><span>管理项目</span><strong>{fileItems.length}</strong></div>
-            <div><span>文件数</span><strong>{managedFileCount}</strong></div>
-            <div><span>总大小</span><strong>{managedTotalSize ? formatBytes(managedTotalSize) : '-'}</strong></div>
-            <div><span>即将过期</span><strong>{expiringItems.length}</strong></div>
-          </div>
+          <div className="files-layout">
+            <aside className="file-cats" aria-label="文件分类与存储">
+              <h2>文件类型</h2>
+              <div className="file-category-list" role="tablist" aria-label="按文件类型筛选">
+                {FILE_CATEGORY_FILTERS.map(([value, label]) => {
+                  const Icon = FILE_CATEGORY_ICONS[value] || FileQuestion
+                  return <button type="button" role="tab" aria-selected={fileCategory === value} className={fileCategory === value ? 'active' : ''} key={value} onClick={() => setFileCategory(value)}><Icon size={15} /><span>{label}</span><em>{fileCategoryCount(value)}</em></button>
+                })}
+              </div>
+              <div className="cat-divider" />
+              <h2>存储</h2>
+              <div className="storage-box">
+                <div className="storage-usage-line"><span>已用 {formatBytes(storageUsedBytes)}</span><small>共 {storageTotalBytes ? formatBytes(storageTotalBytes) : '—'}</small></div>
+                <div className="file-storage-progress" role="progressbar" aria-label="账号存储空间使用情况" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(storageUsagePercent)}><i style={{ width: `${storageUsagePercent}%` }} /></div>
+                <p>{user?.plan?.label ? `${user.plan.label}容量 · 清理过期文件可释放空间` : '登录后可查看账号空间使用情况'}</p>
+              </div>
+            </aside>
 
-          {expiringItems.length > 0 && (
-            <div className="file-expiry-alert">
-              <Clock3 size={18} />
-              <div><strong>{expiringItems.length} 个项目将在 1 天内过期</strong><span>可进入管理设置延期、关闭或清理记录。</span></div>
-              <button className="secondary-button" onClick={() => setExpiringOnly(true)}><FileWarning size={15} /> 查看即将过期</button>
-            </div>
-          )}
-
-          <div className="records-filter-panel file-center-filter">
-            <div className="records-filter-row">
-              <label className="record-filter-field file-search-field">
-                <span>搜索</span>
-                <div className="record-search-box">
-                  <Search size={15} />
-                  <input maxLength={160} value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="文件名 / 取件码 / 提交人" />
+            <section className="file-center-card" aria-label="文件列表">
+              <div className="file-center-card-heading">
+                <div className="file-center-title"><h2>{fileCategory === 'all' ? '全部文件' : FILE_CATEGORY_FILTERS.find(([value]) => value === fileCategory)?.[1]}</h2><span>{filteredFileItems.length}</span></div>
+                <div className="file-center-controls">
+                  <label className="file-center-search"><Search size={14} /><input maxLength={160} value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="搜索文件" aria-label="搜索文件" /></label>
+                  <div className="file-filter-wrap">
+                    <button type="button" className="secondary-button file-filter-button" aria-expanded={fileFilterOpen} onClick={(event) => { event.stopPropagation(); setFileFilterOpen((open) => !open) }}><Filter size={14} /> 筛选</button>
+                    {fileFilterOpen && <div className="file-filter-popover" onClick={(event) => event.stopPropagation()}>
+                      <label><input type="checkbox" checked={expiringOnly} onChange={(event) => setExpiringOnly(event.target.checked)} /><span>只看即将过期</span><em>{expiringItems.length}</em></label>
+                      <button type="button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={14} /> {refreshing ? '刷新中' : '刷新列表'}</button>
+                      <button type="button" onClick={resetFileFilters} disabled={!hasFileFilters}><RotateCcw size={14} /> 重置筛选</button>
+                      <button type="button" className="danger" disabled={!normalizedRecords.length} onClick={() => { setFileFilterOpen(false); onClear(); setSelectedIds(new Set()) }}><Trash2 size={14} /> 清空全部记录</button>
+                    </div>}
+                  </div>
                 </div>
-              </label>
-              <label className="record-filter-field">
-                <span>分类</span>
-                <select value={fileCategory} onChange={(event) => setFileCategory(event.target.value)}>
-                  {FILE_CATEGORY_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </label>
-              <label className="record-toggle-field">
-                <input type="checkbox" checked={expiringOnly} onChange={(event) => setExpiringOnly(event.target.checked)} />
-                <span>只看即将过期</span>
-              </label>
-              <div className="record-filter-actions">
-                <button className="secondary-button filter-reset-button" onClick={resetFileFilters} disabled={!hasFileFilters}><RotateCcw size={15} /> 重置</button>
-                <button className="secondary-button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</button>
               </div>
-            </div>
-            <div className="records-bulk-row">
-              <label className="record-select-all">
-                <input type="checkbox" checked={allVisibleSelected} disabled={!visibleIds.length} onChange={toggleVisibleSelection} />
-                <span>已选 {selectedIds.size} 项 · 本页 {visibleFileItems.length} 项 / 筛选 {filteredFileItems.length} 项</span>
-              </label>
-              <div className="record-bulk-actions">
-                <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
-                <button className="secondary-button" disabled={!normalizedRecords.length} onClick={() => { onClear(); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空全部</button>
-              </div>
-            </div>
-          </div>
 
-          <div className="records-table-surface file-center-table-surface" role="table" aria-label="文件管理列表">
-            <div className="records-table-head file-center-table-head" role="row">
-              <span aria-hidden="true" />
-              {['文件项目', '有效期', '状态', '大小', '操作'].map((label) => <span role="columnheader" key={label}>{label}</span>)}
-            </div>
-          <div className="records-list enhanced-records-list file-center-list" role="rowgroup">
-            {filteredFileItems.length ? visibleFileItems.map((item) => {
-              const record = item.record
-              const Icon = fileCategoryIcon(item.category)
-              const selected = selectedIds.has(record.id)
-              return (
-                <div className={`record-row record-row-enhanced file-center-row ${selected ? 'selected' : ''}`} key={item.id} role="row">
-                  <label className="record-check" role="cell" aria-label={`选择 ${item.name}`}>
-                    <input type="checkbox" checked={selected} onChange={() => toggleRecord(record.id)} />
-                  </label>
-                  <div className="record-file-cell" role="cell">
-                    <span className={`record-icon file-category-${item.category}`}><Icon size={17} /></span>
-                    <div className="record-main">
-                      <div className="record-title-line">
-                        <RecordNameText name={item.name} />
-                        <span className="scope-pill file-format-pill">{item.formatLabel}</span>
-                        <span className="scope-pill muted">{recordScopeLabel(record.scope)}</span>
+              <div className="file-table-scroll" role="table" aria-label="文件管理列表">
+                <div className="file-head" role="row">
+                  <label className="rec-check" role="columnheader" aria-label="选择当前页"><input type="checkbox" checked={allVisibleSelected} disabled={!visibleIds.length} onChange={toggleVisibleSelection} /></label>
+                  {['文件名', '类型', '来源', '大小', '状态', '操作'].map((label) => <span role="columnheader" key={label}>{label}</span>)}
+                </div>
+                <div className="file-center-list" role="rowgroup">
+                  {filteredFileItems.length ? visibleFileItems.map((item) => {
+                    const record = item.record
+                    const Icon = fileCategoryIcon(record.kind === 'collection' ? 'collection' : item.category)
+                    const selected = selectedIds.has(record.id)
+                    const previews = recordPreviewConfigs(record)
+                    return (
+                      <div className={`file-row2 file-center-row ${selected ? 'selected' : ''}`} key={item.id} role="row">
+                        <label className="rec-check" role="cell" aria-label={`选择 ${item.name}`}><input type="checkbox" checked={selected} onChange={() => toggleRecord(record.id)} /></label>
+                        <div className="rec-name" role="cell">
+                          <span className={`record-icon file-category-${item.category}`}>{item.category === 'collection' ? <PrototypeAsset name="act-clipboard.png" size={26} /> : <PrototypeFileIcon name={item.name} fallback={Icon} size={24} />}</span>
+                          <div><RecordNameText name={item.name} /><small>{item.detail}</small></div>
+                        </div>
+                        <span className="file-format-cell">{item.formatLabel}</span>
+                        <span className="file-source-cell">{recordScopeLabel(record.scope)}</span>
+                        <span className="mono rec-size">{item.size ? formatBytes(item.size) : `${item.fileCount || 1} 项`}</span>
+                        <span className="file-status-cell"><span className={`file-status-badge ${item.statusGroup}`}><i />{recordDisplayStatus(record)}</span></span>
+                        <div className="row-acts file-row-actions menu-wrap row-menu-wrap" role="cell">
+                          <button className="icon-act" title="预览" aria-label={`预览：${item.name}`} disabled={!previews.length || (record.scope === 'my_sent' && record.status === '无管理权限')} onClick={() => openRecordPreview(record)}><Eye size={15} /></button>
+                          <button className="icon-act" title="下载" aria-label={`下载：${item.name}`} disabled={previewDownloadBusy} onClick={() => downloadFileItem(record)}><Download size={15} /></button>
+                          <button className="icon-act danger" title="删除" aria-label={`删除：${item.name}`} onClick={() => onDelete(record.id)}><Trash2 size={15} /></button>
+                          <button className="icon-act file-more-button" title="更多操作" aria-label={`更多操作：${item.name}`} onClick={(event) => toggleMenu(item.id, event, record)}><MoreHorizontal size={15} /></button>
+                        </div>
                       </div>
-                      <span>{item.detail}</span>
-                    </div>
-                  </div>
-                  <span className="record-expiry" role="cell">{recordExpiryLabel(record)}</span>
-                  <span className={`record-type ${item.statusGroup}`} role="cell">{recordDisplayStatus(record)}</span>
-                  <span className="record-code" role="cell">{item.size ? formatBytes(item.size) : `${item.fileCount || 1} 项`}</span>
-                  <div className="menu-wrap row-menu-wrap" role="cell">
-                    <span className="record-preview-slot">
-                      {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${item.name}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
-                    </span>
-                    <button className="ghost-icon" aria-label={`更多操作：${item.name}`} onClick={(event) => toggleMenu(item.id, event)}><MoreHorizontal size={17} /></button>
-                    {openMenu === item.id && renderRecordMenu(record)}
-                  </div>
+                    )
+                  }) : <div className="empty-manage records-empty"><HardDrive size={25} /><span>没有符合当前筛选的文件项目</span></div>}
                 </div>
-              )
-            }) : (
-              <div className="empty-manage records-empty"><HardDrive size={25} /><span>没有符合当前筛选的文件项目</span></div>
-            )}
+              </div>
+
+              <div className="file-center-footer">
+                <div><span>共 {filteredFileItems.length} 个文件 · 已选择 {selectedIds.size} 个</span>{selectedIds.size > 0 && <button type="button" className="file-bulk-delete" onClick={deleteSelected}><Trash2 size={14} /> 删除所选</button>}</div>
+                <div className="file-center-pagination"><button type="button" disabled={safeFilePage <= 1} onClick={() => setFilePage(Math.max(1, safeFilePage - 1))}>上一页</button><span>{safeFilePage} / {filePageCount}</span><button type="button" disabled={safeFilePage >= filePageCount} onClick={() => setFilePage(Math.min(filePageCount, safeFilePage + 1))}>下一页</button></div>
+              </div>
+            </section>
           </div>
-          </div>
-          <AdminPagination page={safeFilePage} pageCount={filePageCount} total={filteredFileItems.length} pageSize={recordsPageSize} onPageChange={setFilePage} />
         </>
       )}
       {renameTarget && <RenameRecordModal record={renameTarget} onClose={() => setRenameTarget(null)} onSave={saveRename} />}
@@ -569,6 +658,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
       {previewChoices && <RecordPreviewChooser previews={previewChoices} onClose={() => setPreviewChoices(null)} onSelect={(preview) => setPreviewItem(preview)} />}
       {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startRecordPreviewDownload(config || previewItem.downloadConfig)} downloadDisabled={previewDownloadBusy} />}
       {qrPreview && <QrPreviewModal title={qrPreview.title} detail={qrPreview.detail || '扫码打开提交入口'} qrDataUrl={qrPreview.qrDataUrl} targetUrl={qrPreview.targetUrl} onClose={() => setQrPreview(null)} onCopyImage={() => onCopyQrImage?.(qrPreview.qrDataUrl, qrPreview.targetUrl)} onCopyLink={() => onCopy?.(qrPreview.targetUrl)} />}
+      {openMenu && menuRecord && menuAnchor && createPortal(renderRecordMenu(menuRecord), document.body)}
       <div className="records-footnote"><HardDrive size={16} /> {syncing ? '账号记录同步中...' : user?.id ? '已登录，记录会同步到账号并可跨设备查看。' : '游客记录仅保留在当前设备，登录后可跨设备同步。'}</div>
     </section>
   )

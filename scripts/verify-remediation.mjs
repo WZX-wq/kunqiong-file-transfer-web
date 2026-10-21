@@ -13,8 +13,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-remediation-'))
 const future = new Date(Date.now() + 20 * 86400000).toISOString()
 const users = Object.fromEntries(['owner', 'recipient', 'stranger', 'member', 'logout', 'expired', 'canceled', 'auth', 'retention'].map((id) => [id, { id, username: id, nickname: id, status: 'active', planId: 'free' }]))
-users.member.planId = 'member'
-users.member.planExpiresAt = future
 const sessions = Object.values(users).map((user) => ({ id: user.id + '-session', user, apiWebToken: 'fixture-token-' + user.id, expiresAt: future }))
 fs.copyFileSync(path.join(root, 'server.mjs'), path.join(fixture, 'server.mjs'))
 // 不用 fs.cpSync 复制目录：部分受限执行环境会直接终止使用了递归复制的进程
@@ -96,8 +94,11 @@ const payments = http.createServer(async (req, res) => {
   if (req.url.endsWith('/get_web_member_package_info')) data = { packages: [{ id: 1, name: '会员版', price_yuan: 19, days: 30 }, { id: 2, name: '团队版', price_yuan: 49, days: 90 }, { id: 5, name: '企业版', price_yuan: 159, days: 0 }] }
   else if (req.url.endsWith('/create_web_member_order')) {
     const order_no = 'remote-' + (++remoteSeq)
+    const package_id = Number(params.get('package_id'))
+    const packageInfo = new Map([[1, { price_yuan: 19, days: 30 }], [2, { price_yuan: 49, days: 90 }], [5, { price_yuan: 159, days: 0 }]]).get(package_id)
+    assert.ok(packageInfo, 'Payment fixture receives a configured package')
     remoteOrders.set(order_no, { paid: false, token: req.headers.token })
-    data = { order_no, package_id: Number(params.get('package_id')), pay_type: 1, pay_amount: 19, package_days: 30, code_url: 'weixin://fixture' }
+    data = { order_no, package_id, pay_type: 1, pay_amount: packageInfo.price_yuan, package_days: packageInfo.days, code_url: 'weixin://fixture' }
   } else if (req.url.endsWith('/check_web_member_order_paystatus')) {
     const order = remoteOrders.get(params.get('order_no'))
     assert.ok(order && (order.token === req.headers.token || req.headers.token === order.token.replace('fixture-token-', 'fixture-fresh-')), 'Payment queries use the order owner token')
@@ -249,18 +250,19 @@ try {
   check('取件码查找错误可触发收件账号登录并保留取件码', retrievalUi.includes('try { await onFind() } catch (err)') && retrievalUi.includes("setRequiresLogin(err.code === 'directed_login_required')") && retrievalUi.includes("searchParams.set('retrieve', code.trim().toUpperCase())"))
   const scannerConfig = fs.readFileSync(path.join(root, 'deployment', 'clamd.conf'), 'utf8')
   check('ClamAV uses the real engine cap and explicit scan time budget', /MaxFileSize\s+2147483645/.test(scannerConfig) && /MaxScanSize\s+5G/.test(scannerConfig) && /MaxScanTime\s+600000/.test(scannerConfig))
-  const renew = await api('/api/account/upgrade-orders', { user: 'member', method: 'POST', body: { planId: 'member' } })
-  check('Active same-plan renewal creates order', renew.status === 201)
-  const [pay1, pay2] = await Promise.all([1, 2].map(() => api(`/api/account/upgrade-orders/${renew.data.order.id}/confirm`, { user: 'member', method: 'POST', body: {} })))
+  const purchaseStartedAt = Date.now()
+  const upgrade = await api('/api/account/upgrade-orders', { user: 'member', method: 'POST', body: { planId: 'member' } })
+  check('Eligible account can create an upgrade order', upgrade.status === 201)
+  const [pay1, pay2] = await Promise.all([1, 2].map(() => api(`/api/account/upgrade-orders/${upgrade.data.order.id}/confirm`, { user: 'member', method: 'POST', body: {} })))
   check('Concurrent checkout creates one provider order', pay1.status === 200 && pay2.status === 200 && remoteSeq === 1)
   remoteOrders.get(pay1.data.order.remoteOrderNo).paid = true
   await stop(); await start()
   await delay(1500)
   let workspace = (await api('/api/account/workspace', { user: 'member' })).data
   const expiry = new Date(workspace.planExpiresAt).getTime()
-  check('Startup compensates payment after dialog closure', workspace.orders.some((order) => order.id === renew.data.order.id && order.status === 'paid'))
-  check('Renewal preserves remaining time plus package duration', expiry >= new Date(future).getTime() + 30 * 86400000 - 1000)
-  await Promise.all([1, 2].map(() => api(`/api/account/upgrade-orders/${renew.data.order.id}/pay-status`, { user: 'member', method: 'POST', body: {} })))
+  check('Startup compensates payment after dialog closure', workspace.orders.some((order) => order.id === upgrade.data.order.id && order.status === 'paid'))
+  check('Upgrade applies the purchased package duration', expiry >= purchaseStartedAt + 30 * 86400000 - 1000)
+  await Promise.all([1, 2].map(() => api(`/api/account/upgrade-orders/${upgrade.data.order.id}/pay-status`, { user: 'member', method: 'POST', body: {} })))
   workspace = (await api('/api/account/workspace', { user: 'member' })).data
   check('Repeated payment checks do not extend twice', new Date(workspace.planExpiresAt).getTime() === expiry)
   const pending = {}
@@ -300,8 +302,12 @@ try {
   const loginCookie = callback.headers.getSetCookie().map((item) => item.split(';')[0]).join('; ')
   const freshWorkspace = (await api('/api/account/workspace', { headers: { cookie: loginCookie } })).data
   check('Fresh login clears payment warning and preserves credential privacy', freshWorkspace.plan.id === 'member' && !freshWorkspace.paymentReconciliation?.requiresLogin && !JSON.stringify(freshWorkspace).includes('fixture-fresh'))
-  const staleCreated = await api('/api/account/upgrade-orders', { headers: { cookie: loginCookie }, method: 'POST', body: { planId: 'member' } })
-  await api(`/api/account/upgrade-orders/${staleCreated.data.order.id}/confirm`, { headers: { cookie: loginCookie }, method: 'POST', body: {} })
+  const remoteOrdersBeforeBlockedRenewal = remoteSeq
+  const blockedRenewal = await api('/api/account/upgrade-orders', { headers: { cookie: loginCookie }, method: 'POST', body: { planId: 'member' } })
+  check('Active membership blocks same-tier renewal without creating a provider order', blockedRenewal.status === 409 && remoteSeq === remoteOrdersBeforeBlockedRenewal)
+  const staleCreated = await api('/api/account/upgrade-orders', { headers: { cookie: loginCookie }, method: 'POST', body: { planId: 'team' } })
+  const staleCheckout = await api(`/api/account/upgrade-orders/${staleCreated.data.order.id}/confirm`, { headers: { cookie: loginCookie }, method: 'POST', body: {} })
+  assert.equal(staleCheckout.status, 200)
   await stop()
   const staleOrderMetadata = stored()
   const staleOrder = staleOrderMetadata.upgradeOrders.find((item) => item.id === staleCreated.data.order.id)
@@ -310,12 +316,13 @@ try {
   staleOrder.paymentRequiresLogin = false
   fs.writeFileSync(metadataFile, JSON.stringify(staleOrderMetadata))
   await start()
-  assert.equal((await api('/api/account/upgrade-orders', { headers: { cookie: loginCookie }, method: 'POST', body: { planId: 'member' } })).status, 201)
+  await api(`/api/account/upgrade-orders/${staleCreated.data.order.id}`, { headers: { cookie: loginCookie } })
   const expiredPaymentOrder = stored().upgradeOrders.find((item) => item.id === staleCreated.data.order.id)
   // Payment timeout hides checkout; retain the bounded query credential to reconcile payments at the deadline.
   check('Expired checkout retains its bounded credential for payment reconciliation', expiredPaymentOrder?.status === 'expired' && Boolean(expiredPaymentOrder.paymentQueryCredential) && new Date(expiredPaymentOrder.paymentQueryCredential.expiresAt).getTime() <= new Date(expiredPaymentOrder.createdAt).getTime() + 24 * 60 * 60 * 1000)
   const expiredCheckout = (await api(`/api/account/upgrade-orders/${staleCreated.data.order.id}`, { headers: { cookie: loginCookie } })).data.order
   check('Expired checkout hides payment assets and private reconciliation credentials', expiredCheckout?.status === 'expired' && !expiredCheckout.payment && !JSON.stringify(expiredCheckout).includes('fixture-fresh-auth'))
+  assert.equal((await api('/api/account/upgrade-orders', { headers: { cookie: loginCookie }, method: 'POST', body: { planId: 'team' } })).status, 201)
   const concurrentOrder = (await api('/api/account/upgrade-orders', { user: 'recipient', method: 'POST', body: { planId: 'member' } })).data.order
   const concurrentCheckout = (await api(`/api/account/upgrade-orders/${concurrentOrder.id}/confirm`, { user: 'recipient', method: 'POST', body: {} })).data.order
   remoteOrders.get(concurrentCheckout.remoteOrderNo).paid = true

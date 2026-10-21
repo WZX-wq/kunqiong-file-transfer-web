@@ -264,6 +264,25 @@ app.use('/api', (_req, res) => {
 // SEO 路由必须在静态托管之前注册：public/ 里没有同名文件，靠路由动态生成。
 registerSeoRoutes(app)
 
+// dist 重建窗口（vite build 的 emptyOutDir）里 index.html 会短暂缺失，
+// 此时返回可自愈的提示页，而不是把 ENOENT 交给错误处理变成 404 JSON。
+const UPDATING_HTML = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>正在更新版本 · 鲲穹文件传输</title>
+</head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f4f7fc;color:#172a45;font-family:-apple-system,'Segoe UI','Microsoft YaHei',sans-serif">
+<div style="max-width:400px;padding:34px 30px;text-align:center">
+<h1 style="margin:0 0 10px;font-size:18px;font-weight:700">正在更新版本</h1>
+<p style="margin:0 0 20px;color:#63788f;font-size:13px;line-height:1.8">页面资源正在刷新，通常几秒后恢复。稍等片刻再刷新本页即可。</p>
+<button onclick="location.reload()" style="padding:9px 24px;color:#fff;background:#1f6bff;border:0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">刷新页面</button>
+</div>
+</body>
+</html>`
+
 if (fs.existsSync(distRoot)) {
   app.use(express.static(distRoot, {
     // index:false —— 否则 express.static 会直接吐出未注入 head 的 index.html，绕过下面的路由注入。
@@ -277,13 +296,22 @@ if (fs.existsSync(distRoot)) {
       }
     },
   }))
-  app.get('*', (req, res) => {
+  app.get('*', (req, res, next) => {
     res.setHeader('Cache-Control', 'no-cache')
     // 按路由注入 title / description / canonical / OG / JSON-LD —— SPA 唯一的 SEO 出口。
     const html = renderSpaDocument(distRoot, req)
     if (html) return res.type('html').send(html)
     // 注入失败（dist 未构建或 index.html 的 SEO 标记被改动）时退回原行为，页面照常渲染。
-    res.sendFile(path.join(distRoot, 'index.html'))
+    res.sendFile(path.join(distRoot, 'index.html'), (error) => {
+      if (!error) return
+      if (res.headersSent) return res.end()
+      // 发布窗口兜底：vite build 会先清空 dist，此时 index.html 短暂不存在。
+      // 不要让它冒泡成 404 JSON（浏览器里就是整页白底报错），给一个可自愈的提示页。
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') {
+        return res.status(503).set('Cache-Control', 'no-store').set('Retry-After', '5').type('html').send(UPDATING_HTML)
+      }
+      return next(error)
+    })
   })
 }
 

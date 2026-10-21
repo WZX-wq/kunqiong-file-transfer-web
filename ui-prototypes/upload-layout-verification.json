@@ -1,0 +1,1131 @@
+{
+  "checkedAt": "2026-10-19T16:42:58.260Z",
+  "checks": [
+    {
+      "theme": "a",
+      "state": "send",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 541.09375,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-files",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 688.078125,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-settings",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 688.078125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-uploading",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812194824219,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-scan",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812194824219,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-failed",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812194824219,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-result",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-result-qr",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 543.09375,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-files",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 678.078125,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-settings",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 678.078125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-uploading",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812194824219,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-scan",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-failed",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-result",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-result-qr",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 549.09375,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-files",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 699.078125,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-settings",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 699.078125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-uploading",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812194824219,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-scan",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812805175781,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-failed",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-result",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 522.78125,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-result-qr",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 522.78125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 541.09375,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-files",
+      "requestedWidth": 1440,
+      "viewport": 1425,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 688.078125,
+        "width": 720,
+        "x": 352.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-settings",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 688.078125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-uploading",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812805175781,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-scan",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-failed",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-result",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-result-qr",
+      "requestedWidth": 1440,
+      "viewport": 1440,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 360
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 541.09375,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-files",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 688.078125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-settings",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 688.078125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-uploading",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-scan",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-failed",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812194824219,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-result",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-result-qr",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 543.09375,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-files",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 678.078125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-settings",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 678.078125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-uploading",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812194824219,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-scan",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-failed",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-result",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-result-qr",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 549.09375,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-files",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 699.078125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-settings",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 699.078125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-uploading",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812805175781,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-scan",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-failed",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.7812805175781,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-result",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 522.78125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-result-qr",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 522.78125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 541.09375,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-files",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 688.078125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-settings",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 688.078125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-uploading",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-scan",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-failed",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 490.78125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-result",
+      "requestedWidth": 1024,
+      "viewport": 1009,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 144.5
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-result-qr",
+      "requestedWidth": 1024,
+      "viewport": 1024,
+      "minFont": 13,
+      "overflow": false,
+      "panel": {
+        "height": 525.78125,
+        "width": 720,
+        "x": 152
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": {
+        "height": 484.265625,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-files",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": {
+        "height": 609.390625,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "a",
+      "state": "send-result",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": {
+        "height": 462.46875,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 6,
+      "overflow": false,
+      "panel": {
+        "height": 486.265625,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-files",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 6,
+      "overflow": false,
+      "panel": {
+        "height": 611.390625,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "b",
+      "state": "send-result",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 6,
+      "overflow": false,
+      "panel": {
+        "height": 462.46875,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": {
+        "height": 486.265625,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-files",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": {
+        "height": 639.1875,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "c",
+      "state": "send-result",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": {
+        "height": 462.46875,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": {
+        "height": 484.265625,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-files",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": {
+        "height": 609.390625,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "d",
+      "state": "send-result",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": {
+        "height": 462.46875,
+        "width": 339,
+        "x": 18
+      },
+      "centerOffset": 0
+    },
+    {
+      "theme": "gallery",
+      "state": "index",
+      "requestedWidth": 390,
+      "viewport": 375,
+      "minFont": 7,
+      "overflow": false,
+      "panel": null,
+      "centerOffset": null
+    },
+    {
+      "theme": "a",
+      "state": "collect-submit",
+      "requestedWidth": "default",
+      "viewport": 1265,
+      "minFont": 13,
+      "overflow": false,
+      "panel": null,
+      "centerOffset": null
+    },
+    {
+      "theme": "b",
+      "state": "collect-submit",
+      "requestedWidth": "default",
+      "viewport": 1265,
+      "minFont": 13,
+      "overflow": false,
+      "panel": null,
+      "centerOffset": null
+    },
+    {
+      "theme": "c",
+      "state": "collect-submit",
+      "requestedWidth": "default",
+      "viewport": 1265,
+      "minFont": 13,
+      "overflow": false,
+      "panel": null,
+      "centerOffset": null
+    },
+    {
+      "theme": "d",
+      "state": "collect-submit",
+      "requestedWidth": "default",
+      "viewport": 1265,
+      "minFont": 13,
+      "overflow": false,
+      "panel": null,
+      "centerOffset": null
+    },
+    {
+      "theme": "gallery",
+      "state": "index",
+      "requestedWidth": "default",
+      "viewport": 1265,
+      "minFont": 13,
+      "overflow": false,
+      "panel": null,
+      "centerOffset": null
+    }
+  ],
+  "interaction": "A 示例文件 → 文件队列 → 上传进度 → 安全检查 → 发送结果 → 再发一次 → 取件码页面",
+  "notes": "1440px 与 1024px 各检查四版 8 个发送状态；390px 检查四版发送、队列、结果及总览；默认桌面尺寸抽查四版收集提交及总览"
+}

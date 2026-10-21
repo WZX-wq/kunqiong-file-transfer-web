@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const recordsStyles = (await Promise.all([
   'src/styles/base.css',
   'src/styles/components.css',
+  'src/styles/app-records.css',
 ].map(file => readFile(path.resolve(root, file), 'utf8')))).join('\n')
 const bundle = await build({
   root, configFile: false, logLevel: 'silent',
@@ -87,9 +88,11 @@ try {
   check('Pickup-code search matches the expected record', recordsLayout.document.querySelector('.record-row .record-main').textContent.includes('客户需求.zip'))
   recordsLayout.document.querySelector('.records-mode-tabs [role="tab"]:not(.active)').click()
   await waitFor(() => recordsLayout.document.querySelectorAll('.file-center-row').length === 2, 'File management rows mount')
-  const fileHeadings = [...recordsLayout.document.querySelectorAll('.file-center-table-head [role="columnheader"]')].map(item => item.textContent.trim())
-  check('File management uses aligned table columns and a shared heading-row tab switch', fileHeadings.join('|') === '文件项目|有效期|状态|大小|操作' && recordsLayout.document.querySelector('.records-heading .records-mode-tabs'))
-  check('File-management operations retain a stable slot without preview support', recordsLayout.document.querySelectorAll('.file-center-row .record-preview-slot').length === 2 && recordsLayout.document.querySelectorAll('.file-center-row .record-preview-button').length === 1)
+  const fileHeadings = [...recordsLayout.document.querySelectorAll('.file-head > span[role="columnheader"]')].map(item => item.textContent.trim())
+  check('File center follows the prototype category rail and six-column table', fileHeadings.join('|') === '文件名|类型|来源|大小|状态|操作' && recordsLayout.document.querySelector('.files-layout .file-cats') && recordsLayout.document.querySelector('.file-center-card'))
+  check('File center keeps search, filter, upload, and return actions', !!recordsLayout.document.querySelector('.file-center-search input') && !!recordsLayout.document.querySelector('.file-filter-button') && [...recordsLayout.document.querySelectorAll('.records-heading button')].some(button => button.textContent.includes('上传文件')) && [...recordsLayout.document.querySelectorAll('.records-heading button')].some(button => button.textContent.includes('返回收发记录')))
+  check('File center row actions preserve preview, download, delete, and management menu', recordsLayout.document.querySelectorAll('.file-center-row .file-row-actions .icon-act').length === 8 && recordsLayout.document.querySelectorAll('.file-center-row .file-more-button').length === 2)
+  check('File center URL can restore its current view', new URLSearchParams(recordsLayout.window.location.search).get('center') === 'files')
 } finally { recordsLayout.close() }
 
 const paginationLayout = await fixture(() => ok('{}'))
@@ -104,11 +107,11 @@ try {
     createdAt: `2026-10-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
   }))
   paginationLayout.api.renderRecords(pageRecords)
-  await waitFor(() => paginationLayout.document.querySelectorAll('.record-row').length === 10, 'First records page mounts ten rows')
-  check('Records first page shows ten rows, matching the prototype', paginationLayout.document.querySelector('.admin-pagination span')?.textContent.trim() === '显示 1-10 / 11')
+  await waitFor(() => paginationLayout.document.querySelectorAll('.record-row').length === 8, 'First records page mounts eight rows')
+  check('Records first page follows the prototype eight-row density', paginationLayout.document.querySelector('.admin-pagination span')?.textContent.trim() === '显示 1-8 / 11')
   paginationLayout.document.querySelector('.records-mode-tabs [role="tab"]:not(.active)').click()
-  await waitFor(() => paginationLayout.document.querySelectorAll('.file-center-row').length === 10, 'First file-management page mounts ten rows')
-  check('File management first page also shows ten rows', paginationLayout.document.querySelector('.admin-pagination span')?.textContent.trim() === '显示 1-10 / 11')
+  await waitFor(() => paginationLayout.document.querySelectorAll('.file-center-row').length === 7, 'First file-management page mounts seven rows')
+  check('File management first page follows the prototype seven-row density', paginationLayout.document.querySelector('.file-center-footer')?.textContent.includes('1 / 2'))
 } finally { paginationLayout.close() }
 
 const configs = await fixture(() => ok('{}'))

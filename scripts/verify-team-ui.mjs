@@ -16,8 +16,9 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  const calls=[],errors=[],virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',e=>{if(!/navigation/.test(e.message))errors.push(e)})
  const dom=new JSDOM('<div id="root"></div>',{url:'http://fixture.local'+route,...(navigation.referrer?{referrer:navigation.referrer}:{}),pretendToBeVisual:true,runScripts:'outside-only',virtualConsole})
  const {window}=dom,document=window.document
- if(navigation.includeResourceStyles){const style=document.createElement('style');style.textContent=fs.readFileSync(path.join(root,'src/styles/base.css'),'utf8')+'\n'+fs.readFileSync(path.join(root,'src/styles/components.css'),'utf8');document.head.append(style)}
+ if(navigation.includeResourceStyles){const style=document.createElement('style');style.textContent=['base.css','components.css','app-team.css'].map(file=>fs.readFileSync(path.join(root,'src/styles',file),'utf8')).join('\n');document.head.append(style)}
  if(navigation.previousRoutes?.length){window.history.replaceState(null,'',navigation.previousRoutes[0]);for(const previous of navigation.previousRoutes.slice(1))window.history.pushState(null,'',previous);window.history.pushState(null,'',route)}
+ const copiedTexts=[];Object.defineProperty(window.navigator,'clipboard',{configurable:true,value:{writeText:async value=>copiedTexts.push(String(value))}})
  let roleChangeFailure=false; let currentRole=role,removed=!hasOrganization,name=teamName,hasTeam=hasOrganization,renameFailure=false,resourceDeleted=false,deleteFailure=false,holdDelete=false,releaseDelete=null,resourceUnlocked=false,quotaUsed=false
  const plan={id:'enterprise',label:'企业版',team:true,totalBytes:2048*1024**3,teamSpaceBytes:1024**4,permanent:true,features:[]}
  const members=[{id:'m-owner',userId:'owner',displayName:'所有者',role:'owner',status:'active',usedBytes:0,fileCount:0},{id:'m-member',userId:'member',displayName:'普通成员',role:'member',status:'active',usedBytes:4,fileCount:1}]
@@ -72,7 +73,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  const input=async(element,value)=>{assert.ok(element,'input found');Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new window.Event('input',{bubbles:true}));await delay(30)}
  const file=(name,relativePath=name)=>{const item=new File(['test'],name,{type:'text/plain',lastModified:123});Object.defineProperty(item,'webkitRelativePath',{value:relativePath});return item}
  const choose=async(items,folder=false)=>{const picker=document.querySelector(folder?'input[webkitdirectory]':'input[type="file"]:not([webkitdirectory])');assert.ok(picker,'file picker');Object.defineProperty(picker,'files',{configurable:true,value:items});picker.dispatchEvent(new window.Event('change',{bubbles:true}));await delay(30)}
- return {exhaustDownloads:()=>quotaUsed=true,failNextRoleChange:()=>roleChangeFailure=true,dom,window,document,calls,errors,click,find,input,file,choose,remove:()=>removed=true,failNextRename:()=>renameFailure=true,failNextResourceDelete:()=>deleteFailure=true,holdNextResourceDelete:()=>holdDelete=true,releaseResourceDelete:()=>{holdDelete=false;releaseDelete?.()}}
+ return {exhaustDownloads:()=>quotaUsed=true,failNextRoleChange:()=>roleChangeFailure=true,dom,window,document,calls,errors,copiedTexts,click,find,input,file,choose,remove:()=>removed=true,failNextRename:()=>renameFailure=true,failNextResourceDelete:()=>deleteFailure=true,holdNextResourceDelete:()=>holdDelete=true,releaseResourceDelete:()=>{holdDelete=false;releaseDelete?.()}}
 }
 async function scenario(id,fn){try{await fn();cases.push({id,status:'PASS'})}catch(e){failures.push({id,message:e.message});cases.push({id,status:'FAIL'});console.log('FAIL '+id+' '+e.stack)}}
 await scenario('TEAM-BACK-NAVIGATION', async () => {
@@ -154,7 +155,8 @@ await scenario('TEAM-RESOURCE-DELETE', async () => {
    f.releaseResourceDelete()
    await waitFor(() => !f.document.querySelector('.team-resource-row'), 'deleted row removed')
    await waitFor(() => f.document.body.textContent.includes('文件已删除'), 'delete feedback')
-   check(role + '删除成功刷新列表和用量', f.document.querySelector('.team-capacity-number')?.textContent.includes('0 B') && !f.document.querySelector('.team-resource-row'))
+   const capacityStat=[...f.document.querySelectorAll('.team-kpi')].find(item=>item.textContent.includes('已用容量'))
+   check(role + '删除成功刷新列表和用量', capacityStat?.textContent.includes('0 B') && !f.document.querySelector('.team-resource-row'))
    check(role + '删除无页面运行错误', f.errors.length === 0)
   } finally { f.releaseResourceDelete(); f.dom.window.close() }
  }
@@ -270,7 +272,9 @@ await scenario('TEAM-003',async()=>{
  const f=await mount('/team?tab=resources')
  try{
   check('团队管理页有明确的编辑名称入口',!!f.find('编辑团队名称'))
-  const inviteLink=f.document.querySelector('.team-invite-link-row code').textContent
+  const inviteLink='http://fixture.local/e/team-slug/share/'
+  await f.click('邀请成员')
+  check('团队邀请入口复制当前邀请链接',f.copiedTexts.at(-1)===inviteLink)
   await f.click('编辑团队名称')
   const field=f.document.querySelector('input[aria-label="团队名称"]')
   check('团队管理页名称输入限制80字符',field.maxLength===80)
@@ -280,21 +284,22 @@ await scenario('TEAM-003',async()=>{
   check('团队管理页空白名称禁止保存',f.find('保存团队名称').disabled)
   await f.input(field,'UI改名团队')
   await f.click('保存团队名称')
-  await waitFor(()=>f.document.querySelector('.team-page-heading h1')?.textContent==='UI改名团队','team name shown')
+  await waitFor(()=>f.document.querySelector('.team-page-heading h1')?.textContent.trim()==='UI改名团队','team name shown')
   check('改名只提交一次且参数正确',f.calls.filter(c=>c.url==='/api/account/workspace'&&c.method==='PATCH').length===1&&JSON.parse(f.calls.find(c=>c.method==='PATCH').body).name==='UI改名团队')
-  check('改名后邀请链接稳定',f.document.querySelector('.team-invite-link-row code').textContent===inviteLink)
+  await f.click('邀请成员')
+  check('改名后邀请链接稳定',f.copiedTexts.at(-1)===inviteLink)
   check('改名后保留团队资源栏目',!!f.document.querySelector('.team-resource-table'))
   await f.click('编辑团队名称')
   await f.input(f.document.querySelector('input[aria-label="团队名称"]'),'取消的名称')
   await f.click('取消编辑团队名称')
-  check('取消编辑保持原名且不请求保存',f.document.querySelector('.team-page-heading h1').textContent==='UI改名团队'&&f.calls.filter(c=>c.method==='PATCH').length===1)
+  check('取消编辑保持原名且不请求保存',f.document.querySelector('.team-page-heading h1').textContent.trim()==='UI改名团队'&&f.calls.filter(c=>c.method==='PATCH').length===1)
   await f.click('编辑团队名称')
   await f.input(f.document.querySelector('input[aria-label="团队名称"]'),'重复团队')
   f.failNextRename()
   await f.click('保存团队名称')
   check('服务端拒绝时提示可见并保留输入',f.document.body.textContent.includes('团队名称已存在')&&f.document.querySelector('input[aria-label="团队名称"]').value==='重复团队')
   await f.click('取消编辑团队名称')
-  check('保存失败不改变团队名称和邀请链接',f.document.querySelector('.team-page-heading h1').textContent==='UI改名团队'&&f.document.querySelector('.team-invite-link-row code').textContent===inviteLink)
+  check('保存失败不改变团队名称且邀请入口仍可用',f.document.querySelector('.team-page-heading h1').textContent.trim()==='UI改名团队'&&!!f.find('邀请成员'))
   check('团队改名无运行错误',!f.errors.length)
  }finally{f.dom.window.close()}
  const member=await mount('/team','member')

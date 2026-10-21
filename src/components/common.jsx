@@ -2,10 +2,19 @@
 // 被多个页面共用，抽到这里作为共享层，供各页面子树 import。
 
 import React, { useEffect } from 'react'
-import brandLogo from '../assets/brand-logo-header.webp'
-import { CheckCircle2, ShieldCheck, Trash2, XCircle } from 'lucide-react'
+import { Bell, CheckCircle2, Crown, History, Inbox, Send, ShieldCheck, Trash2, XCircle } from 'lucide-react'
 import { feedbackTone } from '../lib/format.js'
 import { PublicAccountActions } from './account.jsx'
+
+export function ProductBrand({ href = '/', className = '' }) {
+  return (
+    <a className={`product-brand ${className}`.trim()} href={href} aria-label="鲲穹文件传输">
+      <img src="/app-icon.png" alt="" draggable="false" />
+      <span><strong>鲲穹</strong><em>文件传输</em></span>
+    </a>
+  )
+}
+
 export function Toast({ message }) {
   const tone = feedbackTone(message)
   const Icon = tone === 'error' ? XCircle : CheckCircle2
@@ -58,7 +67,30 @@ export function ConfirmModal({ state, onCancel, onConfirm }) {
 }
 
 export function PublicShell({ children, className = '' }) {
-  return <div className={`app-shell public-shell ${className}`}><header className="topbar"><div className="brand"><img className="brand-logo" src={brandLogo} width="480" height="228" alt="鲲穹文件传输" /></div><div className="topbar-actions public-topbar-actions"><span className="public-safe"><ShieldCheck size={15} /> 安全临时空间</span><PublicAccountActions /></div></header><main className="public-page">{children}</main><footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span><div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a></div></footer></div>
+  const path = window.location.pathname
+  const view = new URLSearchParams(window.location.search).get('view')
+  const active = path === '/' ? (view === 'collect' ? 'collect' : view === 'records' ? 'records' : view === 'send' || !view ? 'send' : '')
+    : path.startsWith('/workspace') || path.startsWith('/team') || path.startsWith('/e/') ? 'workspace' : ''
+  const showMessages = !path.startsWith('/admin')
+  return <div className={`app-shell public-shell ${className}`}>
+    <header className="topbar public-topbar">
+      <div className="public-topbar-content">
+        <ProductBrand />
+        <nav className="main-nav public-main-nav" aria-label="主导航">
+          <a className={`nav-item${active === 'send' ? ' active' : ''}`} href="/"><Send size={17} /><span>发文件</span></a>
+          <a className={`nav-item${active === 'collect' ? ' active' : ''}`} href="/?view=collect"><Inbox size={17} /><span>收集文件</span></a>
+          <a className={`nav-item${active === 'records' ? ' active' : ''}`} href="/?view=records"><History size={17} /><span>收发记录</span></a>
+          <a className={`nav-item${active === 'workspace' ? ' active' : ''}`} href="/workspace"><Crown size={17} /><span>会员与团队</span></a>
+        </nav>
+        <div className="topbar-actions public-topbar-actions">
+          {showMessages && <a className="public-message-link" href="/?view=records&panel=messages" aria-label="打开消息中心" title="消息中心"><Bell size={17} /></a>}
+          <PublicAccountActions />
+        </div>
+      </div>
+    </header>
+    <main className="public-page">{children}</main>
+    <footer className="page-footer"><span>鲲穹文件传输 · 临时传输，轻装上阵</span><div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a></div></footer>
+  </div>
 }
 
 export function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }
