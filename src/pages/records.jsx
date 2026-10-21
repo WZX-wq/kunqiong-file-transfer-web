@@ -1,8 +1,8 @@
 import React from 'react'
 import { createPortal } from 'react-dom'
-import { canReopenCollection, fileCategoryIcon, isDateInputStillOpen, managedFileItemsFromRecords, matchesManagedFileCategory, matchesManagedFileSearch, matchesRecordDate, matchesRecordScope, matchesRecordStatus, normalizeRecord, recordCopyLabel, recordCopyTarget, recordDetail, recordDisplayName, recordDisplayStatus, recordExpiryLabel, recordIconForScope, recordLink, recordManageUrl, recordOpenLabel, recordScopeLabel, recordStatusGroup, toDateInputValue } from '../lib/records.js'
+import { canReopenCollection, fileCategoryIcon, isDateInputStillOpen, managedFileItemsFromRecords, matchesManagedFileCategory, matchesManagedFileSearch, matchesRecordDate, matchesRecordScope, matchesRecordStatus, normalizeRecord, recordCopyLabel, recordCopyTarget, recordDetail, recordDisplayName, recordDisplayStatus, recordExpiryLabel, recordIconForScope, recordLink, recordManageUrl, recordOpenLabel, recordScopeLabel, recordStatusGroup, recordStatusTone, recordValidityLabel, toDateInputValue } from '../lib/records.js'
 import { useEffect, useState } from 'react'
-import { defaultDeadline, formatBytes, formatDate, isClosedStatus } from '../lib/format.js'
+import { defaultDeadline, formatBytes, isClosedStatus } from '../lib/format.js'
 import { Archive, ArrowLeft, CalendarDays, Check, Code2, Copy, Download, ExternalLink, Eye, FileQuestion, FileText, Filter, HardDrive, History, Image as ImageIcon, Inbox, Layers3, Link2, MoreHorizontal, Music2, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, Upload, Video, X } from 'lucide-react'
 import { DatePicker, FileFormatBadge, FilePreviewModal, QrPreviewModal, RecordNameText, RecordPreviewChooser, RenameRecordModal } from '../components/ui.jsx'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
@@ -530,7 +530,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
           <div className="records-table-surface" role="table" aria-label="收发记录列表">
             <div className="records-table-head" role="row">
               <span aria-hidden="true" />
-              {['文件名', '方向', '取件码/入口', '大小', '时间', '状态', '操作'].map((label) => <span role="columnheader" key={label}>{label}</span>)}
+              {['文件名', '方向', '取件码/入口', '大小', '有效期', '状态', '操作'].map((label) => <span role="columnheader" key={label}>{label}</span>)}
             </div>
           <div className="records-list enhanced-records-list" role="rowgroup">
             {filteredRecords.length ? visibleRecords.map((record) => {
@@ -557,8 +557,8 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                     <button type="button" role="cell" className="record-code record-submit-button" disabled={!recordLink(record) || !onOpen} aria-label={`${recordOpenLabel(record)}：${recordDisplayName(record)}`} onClick={() => onOpen(record)}><ExternalLink size={14} />{recordOpenLabel(record)}</button>
                   ) : <span className="record-code" role="cell">{record.code || '-'}</span>}
                   <span className="record-size" role="cell">{record.totalSize > 0 ? formatBytes(record.totalSize) : '—'}</span>
-                  <time className="record-time" role="cell" dateTime={record.createdAt}>{formatDate(record.createdAt)}</time>
-                  <span className={`record-type ${statusGroup}`} role="cell">{recordDisplayStatus(record)}</span>
+                  <span className={`record-expiry ${statusGroup}`} role="cell">{recordValidityLabel(record)}</span>
+                  <span className={`record-type ${statusGroup} tone-${recordStatusTone(record)}`} role="cell">{recordDisplayStatus(record)}</span>
                   <div className="menu-wrap row-menu-wrap" role="cell">
                     <span className="record-preview-slot">
                       {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}

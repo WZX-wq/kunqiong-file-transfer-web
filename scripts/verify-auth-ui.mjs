@@ -37,6 +37,7 @@ async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,d
   else if(url==='/api/account/records')data={records:method==='GET'?records(currentUser):JSON.parse(options.body||'{}').records||[]}
   else if(url==='/api/account/messages')data={messages:[],settings:{}}
   else if(url==='/api/account/file-cleanup-settings')data={settings:{enabled:false,days:3}}
+  else if(url==='/api/account/file-cleanup-overview')data={usedBytes:4,totalBytes:1024**3,fileCount:1,shareCount:1,collectionCount:0,activeBytes:4,expiringBytes:0,expiredBytes:0,expiredShareCount:0,expiredCollectionCount:0,expiredFileCount:0,settings:{enabled:false,days:3}}
   else if(url==='/api/account/notification-settings')data={settings:{}}
   else if(url==='/api/account/upgrade-pricing')data={source:'local',pricing:{}}
   else if(url==='/api/account/team/overview')data={organization:{name:'机密团队',members:[]},members:[],memberUsage:[],resources:[],canManage:true}
@@ -123,7 +124,7 @@ await scenario('AUTH-008',async()=>{
   const orderEntry=[...f.document.querySelectorAll('.settings-nav button')].find(button=>button.textContent.trim()==='我的订单')
   check('my orders follows file cleanup in the account sidebar',orderEntry?.previousElementSibling?.textContent.trim()==='文件清理'&&orderEntry.textContent.trim()==='我的订单')
   for(const [label,suffix]of [['账号与安全','security'],['消息通知','notice'],['文件清理','cleanup'],['个人资料','profile']]){
-   await f.click(label);check('route follows '+label,f.window.location.pathname.endsWith('/'+suffix));check('correct settings heading',f.document.querySelector('h1')?.textContent===label)
+   await f.click(label);await waitFor(()=>f.window.location.pathname.endsWith('/'+suffix),'route follows '+label);await waitFor(()=>f.document.querySelector('h1')?.textContent===label,'correct settings heading');check('route follows '+label,f.window.location.pathname.endsWith('/'+suffix));check('correct settings heading',f.document.querySelector('h1')?.textContent===label)
   }
   f.window.history.back();await waitFor(()=>f.window.location.pathname.endsWith('/cleanup'),'back to cleanup');check('back preserves column',f.document.querySelector('h1')?.textContent==='文件清理')
   f.window.history.forward();await waitFor(()=>f.window.location.pathname.endsWith('/profile'),'forward profile');check('forward preserves column',f.document.querySelector('h1')?.textContent==='个人资料')
@@ -157,14 +158,14 @@ await scenario('AUTH-012-short-TTL',async()=>{
  const f=await mount('/settings/profile','alice',{},500);try{check('short TTL initially has session',f.document.body.textContent.includes('alice'));await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'short TTL expires without navigation');check('expiry removes old profile without user action',!f.document.querySelector('.settings-nav'))}finally{f.dom.window.close()}
 })
 await scenario('AUTH-012-401',async()=>{
- const f=await mount();try{f.expire();await f.click('保存昵称');await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'401 clears account');check('mutation 401 removes account data',!f.document.body.textContent.includes('alice'))}finally{f.dom.window.close()}
+ const f=await mount();try{f.expire();await f.click('保存资料');await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'401 clears account');check('mutation 401 removes account data',!f.document.body.textContent.includes('alice'))}finally{f.dom.window.close()}
 })
 await scenario('AUTH-006-HTML-display',async()=>{
  const nickname='<img src=x onerror=alert(1)>'
  const f=await mount('/settings/profile','alice',{},0,nickname);try{check('HTML nickname displayed as text',f.document.body.textContent.includes(nickname));check('nickname does not create active HTML',f.document.querySelectorAll('img[src="x"], [onerror],script').length===0);check('HTML retained literally in input',f.document.querySelector('input[placeholder="请输入昵称"]').value===nickname)}finally{f.dom.window.close()}
 })
 await scenario('AUTH-012-late-response',async()=>{
- const f=await mount();try{f.holdProfile();await f.click('保存昵称');await waitFor(f.profilePending,'profile response held');f.expire();f.window.dispatchEvent(new f.window.Event('focus'));await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'session cleared before response');f.releaseProfile();await delay(80);check('old success response cannot restore expired account',!f.document.body.textContent.includes('alice')&&!f.document.querySelector('.settings-nav'));check('late response has no runtime errors',f.errors.length===0)}finally{f.releaseProfile();f.dom.window.close()}
+ const f=await mount();try{f.holdProfile();await f.click('保存资料');await waitFor(f.profilePending,'profile response held');f.expire();f.window.dispatchEvent(new f.window.Event('focus'));await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'session cleared before response');f.releaseProfile();await delay(80);check('old success response cannot restore expired account',!f.document.body.textContent.includes('alice')&&!f.document.querySelector('.settings-nav'));check('late response has no runtime errors',f.errors.length===0)}finally{f.releaseProfile();f.dom.window.close()}
 })
 await scenario('AUTH-disabled-login-message',async()=>{
  const message='该账号已被后台禁用，暂时无法登录，请联系管理员。'

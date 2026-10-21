@@ -264,3 +264,34 @@
 /* 行操作菜单通过 portal 挂到 body：fixed 定位不受表格 overflow 裁剪，
  * 展开后一次显示全部操作，不需要滚动表格才能看到。 */
 .record-menu-floating { position: fixed; right: auto; z-index: 70; }
+
+/* 头部右侧「视图切换」与「清空记录」必须同高同线。
+ * 1) `.records-mode-tabs` 的 margin-bottom: 12px 是给「标签在上、内容在下」布局留的间距，
+ *    它和清空按钮并排进 .records-heading-actions（align-items: center）后，这段外边距会被
+ *    算进交叉轴尺寸，把标签组整体上抬 6px（实测中心 24.9 vs 30.9）。
+ * 2) 标签组 = 4px 内边距×2 + 35px 按钮 + 1px 边框×2 = 45px，清空按钮只有 38px。
+ * 这里归零外边距，再用 align-self: stretch 让按钮直接铺满该行高度（45px），
+ * 以后改标签组尺寸也不用同步改按钮的固定高度。 */
+.records-page .records-heading-actions .records-mode-tabs { margin-bottom: 0; }
+.records-page .records-heading-actions .records-clear-button { align-self: stretch; }
+
+/* 方向 / 状态 / 有效期 三列对齐原型（records.js · rec-dir + badge）。
+ * 方向：不同方向不同底色（原型 .rec-dir.out/.in/.col/.sub 原值）；
+ * 状态：圆点 + 同色文字（原型 .badge.ok/.warn/.blue/默认灰）；
+ * 有效期：替换原「时间」列，文案由 recordValidityLabel 按真实到期时间算。 */
+.records-page-records .record-direction { justify-self: start; width: max-content; max-width: 100%; padding: 2px 7px; border-radius: 5px; background: #f2f6fc; color: #6b7d94; font-size: 11px; line-height: 1.5; text-align: left; white-space: nowrap; }
+.records-page-records .record-direction.my_sent { background: #eef5ff; color: #2a5ea8; }
+.records-page-records .record-direction.sent_to_me { background: #eefaf4; color: #0d8a56; }
+.records-page-records .record-direction.my_collections { background: #fff8ec; color: #93500a; }
+.records-page-records .record-direction.collect_from_me { background: #f2efff; color: #5b3fd6; }
+
+.records-page-records .record-type { gap: 5px; background: #f2f5f9; color: #6b7d94; font-weight: 600; }
+.records-page-records .record-type::before { content: ''; display: block; flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.records-page-records .record-type.tone-ok { background: #eafaf1; color: #0d8a56; }
+.records-page-records .record-type.tone-warn { background: #fff8ec; color: #b54708; }
+.records-page-records .record-type.tone-blue { background: #eef5ff; color: #0f5bea; }
+.records-page-records .record-type.tone-expired { background: #f2f5f9; color: #6b7d94; }
+
+.records-page-records .record-expiry { color: #7d8ea6; font-size: 12px; text-align: left; white-space: nowrap; }
+.records-page-records .record-expiry.expiring { color: #b54708; }
+.records-page-records .record-expiry.expired { color: #98a5b8; }
