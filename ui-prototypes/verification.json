@@ -1,0 +1,1392 @@
+{
+  "checkedAt": "2026-10-20T01:26:44.063Z",
+  "routes": 230,
+  "pagesPerDesign": 56,
+  "designs": 4,
+  "uniqueLinkTargets": 229,
+  "desktopFontRules": 395,
+  "failures": [],
+  "warnings": [],
+  "summary": [
+    {
+      "route": "/",
+      "heading": "文件传输四种清晰的表达",
+      "links": 5,
+      "dialogs": 0
+    },
+    {
+      "route": "/index.html",
+      "heading": "文件传输四种清晰的表达",
+      "links": 5,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/send.html",
+      "heading": "文件传输 从这里开始",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/send-files.html",
+      "heading": "文件传输 从这里开始",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/send-settings.html",
+      "heading": "文件传输 从这里开始",
+      "links": 20,
+      "dialogs": 1
+    },
+    {
+      "route": "/a/send-uploading.html",
+      "heading": "文件传输 从这里开始",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/send-scan.html",
+      "heading": "文件传输 从这里开始",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/send-failed.html",
+      "heading": "文件传输 从这里开始",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/send-result.html",
+      "heading": "文件传输 从这里开始",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/send-result-qr.html",
+      "heading": "文件传输 从这里开始",
+      "links": 18,
+      "dialogs": 1
+    },
+    {
+      "route": "/a/retrieve.html",
+      "heading": "有取件码 就能取文件",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/retrieve-found.html",
+      "heading": "找到你的文件了",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/share.html",
+      "heading": "有人给你发来了文件",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/share-locked.html",
+      "heading": "有人给你发来了文件",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/share-unavailable.html",
+      "heading": "这个分享暂时不可用",
+      "links": 17,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/share-manage.html",
+      "heading": "管理本次分享",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/file-preview.html",
+      "heading": "品牌视觉规范.pdf",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/guest-quota.html",
+      "heading": "文件传输 从这里开始",
+      "links": 21,
+      "dialogs": 1
+    },
+    {
+      "route": "/a/collect.html",
+      "heading": "让文件 汇集到一处",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/collect-result.html",
+      "heading": "收集任务已创建",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/collect-qr.html",
+      "heading": "收集任务已创建",
+      "links": 19,
+      "dialogs": 1
+    },
+    {
+      "route": "/a/collect-manage.html",
+      "heading": "十月项目资料收集",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/collect-settings.html",
+      "heading": "十月项目资料收集",
+      "links": 21,
+      "dialogs": 1
+    },
+    {
+      "route": "/a/collect-submit.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/collect-submit-anon.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/collect-submitted.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/collect-closed.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/records.html",
+      "heading": "每一次收发 都有记录",
+      "links": 28,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/files.html",
+      "heading": "文件管理",
+      "links": 29,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/messages.html",
+      "heading": "消息中心",
+      "links": 13,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/workspace.html",
+      "heading": "你的空间 一目了然",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/plans.html",
+      "heading": "给每一次交付 合适的空间",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/plan-pay.html",
+      "heading": "确认你的订单",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/plan-paid.html",
+      "heading": "权益已开通",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/team.html",
+      "heading": "产品设计组",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/team-resources.html",
+      "heading": "产品设计组",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/team-members.html",
+      "heading": "产品设计组",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/team-requests.html",
+      "heading": "产品设计组",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/team-member.html",
+      "heading": "产品设计组",
+      "links": 22,
+      "dialogs": 1
+    },
+    {
+      "route": "/a/invite.html",
+      "heading": "一起 把交付做好",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/settings-profile.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/settings-security.html",
+      "heading": "账户设置",
+      "links": 23,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/settings-bind.html",
+      "heading": "账户设置",
+      "links": 24,
+      "dialogs": 1
+    },
+    {
+      "route": "/a/settings-notice.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/settings-cleanup.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/settings-orders.html",
+      "heading": "账户设置",
+      "links": 24,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/order-detail.html",
+      "heading": "账户设置",
+      "links": 26,
+      "dialogs": 1
+    },
+    {
+      "route": "/a/login.html",
+      "heading": "连接你的鲲穹账号",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/admin-login.html",
+      "heading": "管理员登录",
+      "links": 13,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/admin-dashboard.html",
+      "heading": "系统管理",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/admin-resources.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/admin-users.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/admin-logs.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/admin-config.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/help.html",
+      "heading": "帮助中心",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/terms.html",
+      "heading": "服务协议",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/privacy.html",
+      "heading": "隐私政策",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/email.html",
+      "heading": "文件分享通知",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/a/pages.html",
+      "heading": "钴蓝传输 · 完整页面目录",
+      "links": 74,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/send.html",
+      "heading": "添加文件 开始传输",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/send-files.html",
+      "heading": "添加文件 开始传输",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/send-settings.html",
+      "heading": "添加文件 开始传输",
+      "links": 20,
+      "dialogs": 1
+    },
+    {
+      "route": "/b/send-uploading.html",
+      "heading": "添加文件 开始传输",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/send-scan.html",
+      "heading": "添加文件 开始传输",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/send-failed.html",
+      "heading": "添加文件 开始传输",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/send-result.html",
+      "heading": "添加文件 开始传输",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/send-result-qr.html",
+      "heading": "添加文件 开始传输",
+      "links": 18,
+      "dialogs": 1
+    },
+    {
+      "route": "/b/retrieve.html",
+      "heading": "有取件码 就能取文件",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/retrieve-found.html",
+      "heading": "找到你的文件了",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/share.html",
+      "heading": "有人给你发来了文件",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/share-locked.html",
+      "heading": "有人给你发来了文件",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/share-unavailable.html",
+      "heading": "这个分享暂时不可用",
+      "links": 17,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/share-manage.html",
+      "heading": "管理本次分享",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/file-preview.html",
+      "heading": "品牌视觉规范.pdf",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/guest-quota.html",
+      "heading": "添加文件 开始传输",
+      "links": 21,
+      "dialogs": 1
+    },
+    {
+      "route": "/b/collect.html",
+      "heading": "让文件 汇集到一处",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/collect-result.html",
+      "heading": "收集任务已创建",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/collect-qr.html",
+      "heading": "收集任务已创建",
+      "links": 19,
+      "dialogs": 1
+    },
+    {
+      "route": "/b/collect-manage.html",
+      "heading": "十月项目资料收集",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/collect-settings.html",
+      "heading": "十月项目资料收集",
+      "links": 21,
+      "dialogs": 1
+    },
+    {
+      "route": "/b/collect-submit.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/collect-submit-anon.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/collect-submitted.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/collect-closed.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/records.html",
+      "heading": "每一次收发 都有记录",
+      "links": 28,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/files.html",
+      "heading": "文件管理",
+      "links": 29,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/messages.html",
+      "heading": "消息中心",
+      "links": 13,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/workspace.html",
+      "heading": "你的空间 一目了然",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/plans.html",
+      "heading": "给每一次交付 合适的空间",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/plan-pay.html",
+      "heading": "确认你的订单",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/plan-paid.html",
+      "heading": "权益已开通",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/team.html",
+      "heading": "产品设计组",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/team-resources.html",
+      "heading": "产品设计组",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/team-members.html",
+      "heading": "产品设计组",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/team-requests.html",
+      "heading": "产品设计组",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/team-member.html",
+      "heading": "产品设计组",
+      "links": 22,
+      "dialogs": 1
+    },
+    {
+      "route": "/b/invite.html",
+      "heading": "一起 把交付做好",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/settings-profile.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/settings-security.html",
+      "heading": "账户设置",
+      "links": 23,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/settings-bind.html",
+      "heading": "账户设置",
+      "links": 24,
+      "dialogs": 1
+    },
+    {
+      "route": "/b/settings-notice.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/settings-cleanup.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/settings-orders.html",
+      "heading": "账户设置",
+      "links": 24,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/order-detail.html",
+      "heading": "账户设置",
+      "links": 26,
+      "dialogs": 1
+    },
+    {
+      "route": "/b/login.html",
+      "heading": "连接你的鲲穹账号",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/admin-login.html",
+      "heading": "管理员登录",
+      "links": 13,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/admin-dashboard.html",
+      "heading": "系统管理",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/admin-resources.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/admin-users.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/admin-logs.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/admin-config.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/help.html",
+      "heading": "帮助中心",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/terms.html",
+      "heading": "服务协议",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/privacy.html",
+      "heading": "隐私政策",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/email.html",
+      "heading": "文件分享通知",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/b/pages.html",
+      "heading": "石墨控制台 · 完整页面目录",
+      "links": 74,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/send.html",
+      "heading": "让文件 自在传递",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/send-files.html",
+      "heading": "让文件 自在传递",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/send-settings.html",
+      "heading": "让文件 自在传递",
+      "links": 20,
+      "dialogs": 1
+    },
+    {
+      "route": "/c/send-uploading.html",
+      "heading": "让文件 自在传递",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/send-scan.html",
+      "heading": "让文件 自在传递",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/send-failed.html",
+      "heading": "让文件 自在传递",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/send-result.html",
+      "heading": "让文件 自在传递",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/send-result-qr.html",
+      "heading": "让文件 自在传递",
+      "links": 18,
+      "dialogs": 1
+    },
+    {
+      "route": "/c/retrieve.html",
+      "heading": "有取件码 就能取文件",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/retrieve-found.html",
+      "heading": "找到你的文件了",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/share.html",
+      "heading": "有人给你发来了文件",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/share-locked.html",
+      "heading": "有人给你发来了文件",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/share-unavailable.html",
+      "heading": "这个分享暂时不可用",
+      "links": 17,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/share-manage.html",
+      "heading": "管理本次分享",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/file-preview.html",
+      "heading": "品牌视觉规范.pdf",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/guest-quota.html",
+      "heading": "让文件 自在传递",
+      "links": 21,
+      "dialogs": 1
+    },
+    {
+      "route": "/c/collect.html",
+      "heading": "让文件 汇集到一处",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/collect-result.html",
+      "heading": "收集任务已创建",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/collect-qr.html",
+      "heading": "收集任务已创建",
+      "links": 19,
+      "dialogs": 1
+    },
+    {
+      "route": "/c/collect-manage.html",
+      "heading": "十月项目资料收集",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/collect-settings.html",
+      "heading": "十月项目资料收集",
+      "links": 21,
+      "dialogs": 1
+    },
+    {
+      "route": "/c/collect-submit.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/collect-submit-anon.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/collect-submitted.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/collect-closed.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/records.html",
+      "heading": "每一次收发 都有记录",
+      "links": 28,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/files.html",
+      "heading": "文件管理",
+      "links": 29,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/messages.html",
+      "heading": "消息中心",
+      "links": 13,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/workspace.html",
+      "heading": "你的空间 一目了然",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/plans.html",
+      "heading": "给每一次交付 合适的空间",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/plan-pay.html",
+      "heading": "确认你的订单",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/plan-paid.html",
+      "heading": "权益已开通",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/team.html",
+      "heading": "产品设计组",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/team-resources.html",
+      "heading": "产品设计组",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/team-members.html",
+      "heading": "产品设计组",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/team-requests.html",
+      "heading": "产品设计组",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/team-member.html",
+      "heading": "产品设计组",
+      "links": 22,
+      "dialogs": 1
+    },
+    {
+      "route": "/c/invite.html",
+      "heading": "一起 把交付做好",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/settings-profile.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/settings-security.html",
+      "heading": "账户设置",
+      "links": 23,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/settings-bind.html",
+      "heading": "账户设置",
+      "links": 24,
+      "dialogs": 1
+    },
+    {
+      "route": "/c/settings-notice.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/settings-cleanup.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/settings-orders.html",
+      "heading": "账户设置",
+      "links": 24,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/order-detail.html",
+      "heading": "账户设置",
+      "links": 26,
+      "dialogs": 1
+    },
+    {
+      "route": "/c/login.html",
+      "heading": "连接你的鲲穹账号",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/admin-login.html",
+      "heading": "管理员登录",
+      "links": 13,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/admin-dashboard.html",
+      "heading": "系统管理",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/admin-resources.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/admin-users.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/admin-logs.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/admin-config.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/help.html",
+      "heading": "帮助中心",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/terms.html",
+      "heading": "服务协议",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/privacy.html",
+      "heading": "隐私政策",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/email.html",
+      "heading": "文件分享通知",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/c/pages.html",
+      "heading": "纸白松绿 · 完整页面目录",
+      "links": 74,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/send.html",
+      "heading": "文件交付 从这里开始",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/send-files.html",
+      "heading": "文件交付 从这里开始",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/send-settings.html",
+      "heading": "文件交付 从这里开始",
+      "links": 20,
+      "dialogs": 1
+    },
+    {
+      "route": "/d/send-uploading.html",
+      "heading": "文件交付 从这里开始",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/send-scan.html",
+      "heading": "文件交付 从这里开始",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/send-failed.html",
+      "heading": "文件交付 从这里开始",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/send-result.html",
+      "heading": "文件交付 从这里开始",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/send-result-qr.html",
+      "heading": "文件交付 从这里开始",
+      "links": 18,
+      "dialogs": 1
+    },
+    {
+      "route": "/d/retrieve.html",
+      "heading": "有取件码 就能取文件",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/retrieve-found.html",
+      "heading": "找到你的文件了",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/share.html",
+      "heading": "有人给你发来了文件",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/share-locked.html",
+      "heading": "有人给你发来了文件",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/share-unavailable.html",
+      "heading": "这个分享暂时不可用",
+      "links": 17,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/share-manage.html",
+      "heading": "管理本次分享",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/file-preview.html",
+      "heading": "品牌视觉规范.pdf",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/guest-quota.html",
+      "heading": "文件交付 从这里开始",
+      "links": 21,
+      "dialogs": 1
+    },
+    {
+      "route": "/d/collect.html",
+      "heading": "让文件 汇集到一处",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/collect-result.html",
+      "heading": "收集任务已创建",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/collect-qr.html",
+      "heading": "收集任务已创建",
+      "links": 19,
+      "dialogs": 1
+    },
+    {
+      "route": "/d/collect-manage.html",
+      "heading": "十月项目资料收集",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/collect-settings.html",
+      "heading": "十月项目资料收集",
+      "links": 21,
+      "dialogs": 1
+    },
+    {
+      "route": "/d/collect-submit.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/collect-submit-anon.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/collect-submitted.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/collect-closed.html",
+      "heading": "十月项目资料收集",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/records.html",
+      "heading": "每一次收发 都有记录",
+      "links": 28,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/files.html",
+      "heading": "文件管理",
+      "links": 29,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/messages.html",
+      "heading": "消息中心",
+      "links": 13,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/workspace.html",
+      "heading": "你的空间 一目了然",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/plans.html",
+      "heading": "给每一次交付 合适的空间",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/plan-pay.html",
+      "heading": "确认你的订单",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/plan-paid.html",
+      "heading": "权益已开通",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/team.html",
+      "heading": "产品设计组",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/team-resources.html",
+      "heading": "产品设计组",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/team-members.html",
+      "heading": "产品设计组",
+      "links": 21,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/team-requests.html",
+      "heading": "产品设计组",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/team-member.html",
+      "heading": "产品设计组",
+      "links": 22,
+      "dialogs": 1
+    },
+    {
+      "route": "/d/invite.html",
+      "heading": "一起 把交付做好",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/settings-profile.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/settings-security.html",
+      "heading": "账户设置",
+      "links": 23,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/settings-bind.html",
+      "heading": "账户设置",
+      "links": 24,
+      "dialogs": 1
+    },
+    {
+      "route": "/d/settings-notice.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/settings-cleanup.html",
+      "heading": "账户设置",
+      "links": 20,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/settings-orders.html",
+      "heading": "账户设置",
+      "links": 24,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/order-detail.html",
+      "heading": "账户设置",
+      "links": 26,
+      "dialogs": 1
+    },
+    {
+      "route": "/d/login.html",
+      "heading": "连接你的鲲穹账号",
+      "links": 14,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/admin-login.html",
+      "heading": "管理员登录",
+      "links": 13,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/admin-dashboard.html",
+      "heading": "系统管理",
+      "links": 19,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/admin-resources.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/admin-users.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/admin-logs.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/admin-config.html",
+      "heading": "系统管理",
+      "links": 18,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/help.html",
+      "heading": "帮助中心",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/terms.html",
+      "heading": "服务协议",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/privacy.html",
+      "heading": "隐私政策",
+      "links": 16,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/email.html",
+      "heading": "文件分享通知",
+      "links": 15,
+      "dialogs": 0
+    },
+    {
+      "route": "/d/pages.html",
+      "heading": "工业信号 · 完整页面目录",
+      "links": 74,
+      "dialogs": 0
+    }
+  ]
+}

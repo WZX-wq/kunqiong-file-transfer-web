@@ -1,8 +1,260 @@
 /* 原型视觉共享组件层
  * 来源：kunqiong-full 原型 theme.css 与 pages.css 的徽标、提示条、状态卡、统计条。
  * 只放跨面复用的组件规则；页面级样式放各业务域文件 app-*.css。
- * 设计 token 沿用 base.css/components.css 的变量，蓝色强调由 components.css 的 :root 覆盖提供。
+ * 色彩 token 来自仓库 prototype/assets/proto.css 的最终收敛方案。
  */
+
+:root {
+  color-scheme: light;
+  font-family: 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+  color: #0A1B33;
+  background: #fff;
+  --ink: #0A1B33;
+  --ink-2: #22334D;
+  --muted: #4B5F79;
+  --ink-4: #7A8DA6;
+  --line: #DCE6F5;
+  --line-strong: #C6D5EB;
+  --paper: #fff;
+  --soft: #F4F8FF;
+  --accent: #1677FF;
+  --accent-dark: #0B5AD9;
+  --accent-pale: #E7F0FF;
+  --cyan: #5B9BFF;
+  --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --shadow: 0 2px 10px -4px rgba(10, 27, 51, .12), 0 1px 2px rgba(10, 27, 51, .04);
+  --green: #0E9F6E;
+  --green-bg: #EAF7F1;
+  --amber: #9B6300;
+  --amber-bg: #FBF3E4;
+  --red: #C0392B;
+  --red-bg: #FBECEA;
+  --m-1: 120ms;
+  --m-2: 200ms;
+  --m-3: 320ms;
+  --m-4: 460ms;
+  --e-out: cubic-bezier(.16, 1, .3, 1);
+  --e-in: cubic-bezier(.55, 0, .75, .1);
+  --e-soft: cubic-bezier(.22, .61, .36, 1);
+}
+
+body { background: #EDF2FA; }
+.app-shell { background: #fff; }
+.app-shell .topbar {
+  height: 64px;
+  min-height: 64px;
+  padding-right: max(32px, calc((100vw - 1200px) / 2));
+  padding-left: max(32px, calc((100vw - 1200px) / 2));
+  gap: 32px;
+  background: #fff;
+  border-bottom-color: var(--line);
+}
+.app-shell.public-shell .topbar { padding-right: 48px; padding-left: 48px; gap: 24px; }
+.app-shell .public-topbar-actions { margin-left: auto; }
+.app-shell .main-nav { gap: 2px; }
+.app-shell .nav-item { padding-right: 14px; padding-left: 14px; }
+.app-shell .nav-item.active::after { right: 14px; left: 14px; height: 2px; border-radius: 1px; }
+.product-brand {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 9px;
+  color: #102b52;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.product-brand img {
+  display: block;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  object-fit: contain;
+  border-radius: 8px;
+  transition: transform .18s ease;
+}
+.product-brand span {
+  color: transparent;
+  background: linear-gradient(110deg, #103c7c 0%, #1757b8 48%, #2c80f5 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .45);
+  transition: filter .18s ease;
+}
+.product-brand:hover img { transform: scale(1.04); }
+.product-brand:hover span { filter: brightness(1.12); }
+.product-brand:focus-visible { outline: 2px solid #3782ef; outline-offset: 4px; border-radius: 4px; }
+.public-topbar-content { display: flex; width: 100%; height: 100%; min-width: 0; align-items: center; gap: 24px; }
+.public-topbar-content .main-nav { min-width: 0; }
+.public-topbar-actions { flex: none; }
+.topbar > .main-nav { min-width: 0; }
+.topbar > .topbar-actions { flex: none; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline-color: rgba(22, 119, 255, .28);
+}
+.success-badge,
+.success-large,
+.success-icon { color: var(--green); }
+.team-capacity-number strong { color: var(--accent-dark); }
+.tag--ok { color: var(--green); background: var(--green-bg); border-color: #CBE7DD; }
+.tag--wait { color: var(--amber); background: var(--amber-bg); border-color: #E2E9F2; }
+.bar--ok > i { background: var(--green); }
+.success-badge-image { display: block; width: 22px; height: 22px; object-fit: contain; }
+.download-progress-title { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.download-progress-title img { display: block; width: 22px; height: 22px; object-fit: contain; }
+.success-large-image { display: block; }
+.qr-modal-eyebrow { display: inline-flex; align-items: center; gap: 6px; }
+.qr-modal-eyebrow img { display: block; flex: none; object-fit: contain; }
+
+@media (max-width: 900px) {
+  .app-shell .product-brand { gap: 7px; }
+  .app-shell .product-brand img { width: 30px; height: 30px; }
+  .app-shell .product-brand span { font-size: 14px; }
+  .app-shell .topbar > .main-nav { gap: 0; }
+  .app-shell .topbar > .main-nav .nav-item { padding-right: 8px; padding-left: 8px; }
+  .app-shell.public-shell .topbar { padding-right: 24px; padding-left: 24px; gap: 14px; }
+  .public-topbar-content { gap: 14px; }
+}
+
+@media (max-width: 760px) {
+  .app-shell .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 36px 34px;
+    height: 100px;
+    min-height: 100px;
+    align-content: center;
+    gap: 0 8px;
+    padding: 8px 14px;
+  }
+  .app-shell.public-shell .topbar { display: block; height: 100px; min-height: 100px; padding: 8px 14px; }
+  .app-shell .public-topbar-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 36px 34px;
+    gap: 0 8px;
+  }
+  .app-shell .product-brand { grid-column: 1; grid-row: 1; gap: 7px; }
+  .app-shell .product-brand img { width: 28px; height: 28px; }
+  .app-shell .product-brand span { font-size: 13px; }
+  .app-shell .topbar > .main-nav,
+  .app-shell .public-topbar-content > .main-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    align-self: stretch;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .app-shell .main-nav::-webkit-scrollbar { display: none; }
+  .app-shell .topbar > .main-nav .nav-item,
+  .app-shell .public-topbar-content > .main-nav .nav-item {
+    height: 34px;
+    flex: 0 0 auto;
+    gap: 0;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+  .app-shell .main-nav .nav-item svg { display: none; }
+  .app-shell .nav-item.active::after { right: 12px; left: 12px; }
+  .app-shell .topbar > .topbar-actions,
+  .app-shell .public-topbar-content > .topbar-actions {
+    grid-column: 2;
+    grid-row: 1;
+    margin-left: 0;
+    justify-self: end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-brand img, .product-brand span { transition: none; }
+  .product-brand:hover img { transform: none; }
+}
+
+.app-shell .team-context-button {
+  color: #4B5F79;
+  background: #F4F8FF;
+  border-color: #DCE6F5;
+}
+.app-shell .team-context-button:hover { color: #0B5AD9; background: #E7F0FF; border-color: #C6D5EB; }
+.app-shell .team-context-button > svg { color: #7A8DA6; }
+.app-shell .team-context-icon { color: #1677FF; background: #E7F0FF; }
+.app-shell .team-context-copy strong { color: #22334D; }
+.app-shell .login-button.signed-in { color: #0B5AD9; background: #F4F8FF; border-color: #DCE6F5; }
+.app-shell .login-button.signed-in:hover { background: #E7F0FF; border-color: #C6D5EB; }
+.app-shell .login-button svg:first-child { color: #1677FF; }
+.app-shell .user-avatar,
+.app-shell .workspace-member-avatar { background: linear-gradient(135deg, #1677FF, #5B9BFF); }
+.app-shell .message-trigger { color: #4B5F79; }
+.app-shell .message-trigger:hover,
+.app-shell .message-trigger.active { color: #0B5AD9; background: #E7F0FF; }
+.app-shell .message-mark-all { color: #0B5AD9; background: #F4F8FF; border-color: #DCE6F5; }
+.app-shell .message-mark-all:hover:not(:disabled) { background: #E7F0FF; border-color: #C6D5EB; }
+.app-shell .message-item-icon { color: #0B5AD9; background: #E7F0FF; }
+.app-shell .message-item-content strong { color: #22334D; }
+.app-shell .message-item-content span.expanded { color: #4B5F79; }
+.app-shell .message-empty svg { color: #1677FF; }
+.app-shell .message-empty strong { color: #22334D; }
+.app-shell .collection-note { color: #4B5F79; background: #F4F8FF; border-color: #DCE6F5; }
+.app-shell .submission-account-badge { color: #0B5AD9; background: #E7F0FF; border-color: #C6D5EB; }
+.app-shell .public-safe { color: #4B5F79; }
+.app-shell .workspace-entry-button { color: #0B5AD9; background: #F4F8FF; border-color: #DCE6F5; }
+.app-shell .workspace-entry-button:hover { color: #0B5AD9; background: #E7F0FF; border-color: #C6D5EB; }
+.app-shell .workspace-link-row code,
+.app-shell .admin-resource-id { color: #2458AA; background: #F4F8FF; border-color: #DCE6F5; }
+.app-shell .workspace-side-card > span { color: #4B5F79; background: #F4F8FF; border-color: #DCE6F5; }
+.app-shell .share-link,
+.app-shell .collection-share,
+.app-shell .qr-preview-link { color: #2458AA; background: #F4F8FF; border-color: #DCE6F5; }
+.app-shell .result-code strong { color: #0A1B33; font-family: var(--mono); }
+.app-shell .share-link,
+.app-shell .collection-share,
+.app-shell .qr-preview-link,
+.app-shell .workspace-link-row code,
+.app-shell .admin-resource-id,
+.app-shell .record-code,
+.app-shell .code-input { font-family: var(--mono); }
+.app-shell .settings-user-card,
+.app-shell .settings-nav,
+.app-shell .settings-panel,
+.app-shell .records-list,
+.app-shell .collection-history-list { border-color: #DCE6F5; }
+.app-shell .settings-row-label strong,
+.app-shell .settings-info-row strong,
+.app-shell .settings-panel-header h1 { color: #0A1B33; }
+.app-shell .settings-info-row span,
+.app-shell .settings-user-card > span,
+.app-shell .settings-action-row small { color: #4B5F79; }
+
+button,
+a[role="button"] {
+  transition: color 160ms cubic-bezier(.2, .65, .3, 1),
+    background-color 160ms cubic-bezier(.2, .65, .3, 1),
+    border-color 160ms cubic-bezier(.2, .65, .3, 1),
+    box-shadow 160ms cubic-bezier(.2, .65, .3, 1),
+    transform 160ms cubic-bezier(.2, .65, .3, 1);
+}
+button:active:not(:disabled),
+a[role="button"]:active { transform: scale(.985); }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell button,
+  .app-shell a[role="button"],
+  .admin-login button { transition: none; }
+  .app-shell button:active:not(:disabled),
+  .app-shell a[role="button"]:active,
+  .admin-login button:active:not(:disabled) { transform: none; }
+  .app-shell .team-context-button,
+  .app-shell .login-button.signed-in,
+  .app-shell .message-trigger,
+  .app-shell .message-mark-all { transition: none; }
+}
+
 .proto-badge {
   display: inline-flex;
   align-items: center;
@@ -43,6 +295,7 @@
 .proto-banner.danger { background: #fef3f2; border-color: #fbdcd9; color: #b42318; }
 
 .proto-state-card {
+  width: 100%;
   max-width: 480px;
   margin: 20px auto 0;
   background: #fff;
@@ -159,4 +412,140 @@
 
 @media (prefers-reduced-motion: reduce) {
   .proto-table-row, .proto-icon-act { transition: none; }
+}
+
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('../assets/prototype-icons/dm-sans-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('../assets/prototype-icons/dm-sans-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+:root { font-family: 'DM Sans', 'Noto Sans SC', 'Microsoft YaHei', sans-serif; color: #101c2e; --ink: #101c2e; --ink-2: #3f5069; --muted: #64748b; --ink-4: #8b9bb2; --line: #e8f0fb; --line-strong: #dbe7f7; --soft: #eef5ff; --accent: #1f6bff; --accent-dark: #0f5bea; --accent-pale: #e4efff; --cyan: #4a94ff; --mono: 'DM Sans', ui-monospace, 'Cascadia Mono', Consolas, monospace; --shadow: 0 16px 40px -28px rgba(24, 72, 160, .45); }
+body { background: #f7fbfe; font-family: 'DM Sans', 'Noto Sans SC', 'Microsoft YaHei', sans-serif; }
+.app-shell:not(.public-shell) .topbar { height: 66px; min-height: 66px; padding-right: max(24px, calc((100vw - 1180px) / 2)); padding-left: max(24px, calc((100vw - 1180px) / 2)); gap: 20px; background: rgba(255, 255, 255, .96); border-bottom-color: #ebf2fc; }
+.app-shell:not(.public-shell) .main-nav { gap: 2px; }
+.app-shell:not(.public-shell) .nav-item { height: 66px; padding: 0 14px; color: #4a5a72; }
+.app-shell:not(.public-shell) .nav-item:hover { color: #1f6bff; background: transparent; }
+.app-shell:not(.public-shell) .nav-item.active { color: #1f6bff; }
+.app-shell:not(.public-shell) .nav-item.active::after { right: 14px; left: 14px; bottom: 0; height: 3px; border-radius: 3px 3px 0 0; background: #1f6bff; }
+.app-shell:not(.public-shell) .topbar-actions { gap: 8px; }
+@media (max-width: 650px) {
+  .app-shell:not(.public-shell) .topbar { height: 60px; min-height: 60px; padding-right: 14px; padding-left: 14px; gap: 10px; }
+  .app-shell:not(.public-shell) .nav-item { height: 60px; padding-right: 8px; padding-left: 8px; font-size: 13px; }
+  .app-shell:not(.public-shell) .nav-item.active::after { right: 8px; left: 8px; }
+}
+
+/* 顶部栏统一收敛：工作台和会员中心使用同一对齐基线，选中态只保留文字/图标颜色。 */
+.app-shell .topbar,
+.app-shell.public-shell .topbar,
+.app-shell:not(.public-shell) .topbar {
+  height: 66px;
+  min-height: 66px;
+  padding-right: 48px;
+  padding-left: 48px;
+  gap: 24px;
+}
+.app-shell .product-brand { gap: 11px; }
+.app-shell .product-brand img { width: 44px; height: 44px; border-radius: 10px; }
+.app-shell .product-brand span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: #102b52;
+  background: none;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-shadow: none;
+}
+.app-shell .product-brand span strong { color: #102b52; font-size: 21px; font-weight: 800; }
+.app-shell .product-brand span em { color: #2369c9; font-size: 19px; font-style: normal; font-weight: 650; }
+.app-shell .nav-item,
+.app-shell .nav-item:visited { text-decoration: none; }
+.app-shell .nav-item.active::after,
+.app-shell:not(.public-shell) .nav-item.active::after { display: none; content: none; }
+.app-shell .nav-item.active { color: #1f6bff; }
+.app-shell .nav-item:hover { background: #f4f8ff; }
+
+@media (max-width: 900px) {
+  .app-shell .topbar,
+  .app-shell.public-shell .topbar,
+  .app-shell:not(.public-shell) .topbar { padding-right: 24px; padding-left: 24px; gap: 16px; }
+  .app-shell .product-brand img { width: 40px; height: 40px; }
+  .app-shell .product-brand span { font-size: 18px; }
+  .app-shell .product-brand span strong { font-size: 19px; }
+  .app-shell .product-brand span em { font-size: 17px; }
+}
+
+@media (max-width: 760px) {
+  .app-shell .topbar,
+  .app-shell.public-shell .topbar,
+  .app-shell:not(.public-shell) .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 42px 34px;
+    height: 100px;
+    min-height: 100px;
+    align-content: center;
+    gap: 0 8px;
+    padding: 8px 14px;
+  }
+  .app-shell .public-topbar-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 42px 34px;
+    gap: 0 8px;
+  }
+  .app-shell .product-brand { grid-column: 1; grid-row: 1; gap: 8px; }
+  .app-shell .product-brand img { width: 36px; height: 36px; border-radius: 8px; }
+  .app-shell .product-brand span { font-size: 16px; }
+  .app-shell .product-brand span strong { font-size: 17px; }
+  .app-shell .product-brand span em { font-size: 15px; }
+  .app-shell .topbar > .main-nav,
+  .app-shell .public-topbar-content > .main-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    align-self: stretch;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .app-shell .topbar > .main-nav::-webkit-scrollbar,
+  .app-shell .public-topbar-content > .main-nav::-webkit-scrollbar { display: none; }
+  .app-shell .topbar > .main-nav .nav-item,
+  .app-shell .public-topbar-content > .main-nav .nav-item {
+    height: 34px;
+    flex: 0 0 auto;
+    gap: 0;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+  .app-shell .main-nav .nav-item svg { display: none; }
+  .app-shell .topbar > .topbar-actions,
+  .app-shell .public-topbar-content > .topbar-actions {
+    grid-column: 2;
+    grid-row: 1;
+    margin-left: 0;
+    justify-self: end;
+  }
+}
+
+@media (max-width: 400px) {
+  .app-shell .topbar,
+  .app-shell.public-shell .topbar,
+  .app-shell:not(.public-shell) .topbar { padding-right: 12px; padding-left: 12px; }
+  .app-shell .topbar > .main-nav .nav-item,
+  .app-shell .public-topbar-content > .main-nav .nav-item { padding-right: 10px; padding-left: 10px; }
 }

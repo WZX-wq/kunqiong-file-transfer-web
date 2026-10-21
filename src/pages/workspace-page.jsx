@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRemotePlanPricing } from '../hooks.js'
 import { apiRequest, copyTextToClipboard, mergePlanPricing, upgradeApiRequest } from '../lib/api.js'
 import { ConfirmModal, FeedbackMessage, PublicShell } from '../components/common.jsx'
-import { ArrowLeft, BadgeCheck, BarChart3, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, Link2, PencilLine, RefreshCw, RotateCcw, ScanLine, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, History, Info, Link2, PencilLine, RefreshCw, RotateCcw, ScanLine, ShieldCheck, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
 import { feedbackTone, formatBytes, formatDate, formatPlanPrice } from '../lib/format.js'
 import { PlanSpaceSummary } from '../components/ui.jsx'
 import { PlanCarousel } from '../components/plan-carousel.jsx'
@@ -24,6 +24,9 @@ export function WorkspacePage() {
   const [saving, setSaving] = useState(false)
   const [selectedPlanId, setSelectedPlanId] = useState('')
   const [upgradeOpen, setUpgradeOpen] = useState(false)
+  // 团队共享容量：个人接口只返回个人用量，团队卡片的「已用 / 共享额度」
+  // 来自既有团队概览接口；取不到时降级为成员数与额度展示，不编造数字。
+  const [teamUsage, setTeamUsage] = useState(null)
   const loadRunning = useRef(null)
   const workspacePlanId = useRef(null)
   const mounted = useRef(false)
@@ -52,7 +55,15 @@ export function WorkspacePage() {
             setUser(auth.user || null)
             setWorkspace(data)
             setError('')
-            if (!auth.user) { setUpgradeOpen(false); return }
+            if (!auth.user) { setUpgradeOpen(false); setTeamUsage(null); return }
+            // 团队共享用量单独取；失败时保持空值，卡片降级显示额度与成员数。
+            if (data?.organization?.id && data?.teamEntitlement?.canUseTeamSpace) {
+              apiRequest('/api/account/team/overview', { signal })
+                .then((overview) => { if (mounted.current && !signal.aborted) setTeamUsage(overview?.capacity || null) })
+                .catch(() => { if (mounted.current && !signal.aborted) setTeamUsage(null) })
+            } else {
+              setTeamUsage(null)
+            }
           } catch (err) {
             if (!mounted.current || signal.aborted) return
             if (err.status === 401) {
@@ -176,15 +187,24 @@ export function WorkspacePage() {
   const canManageTeam = Boolean(workspace?.canManage)
   const members = organization?.members || []
   const ownerMember = members.find((member) => member.role === 'owner') || members[0] || null
+  const activeMembers = members.filter((member) => member.status === 'active')
+  const pendingMemberCount = members.filter((member) => member.status === 'invited' || member.status === 'requested').length
   // 当前空间用量只跟随账号实际权益，套餐比较选择不改变已购额度。
   const currentTotalBytes = Number(capacity.totalBytes ?? plan.totalBytes ?? 0)
   const ratio = currentTotalBytes ? Math.min(100, Math.round((capacity.usedBytes / currentTotalBytes) * 100)) : 0
+  const teamUsedBytes = Number(teamUsage?.usedBytes || 0)
+  const teamUsedRatio = teamSpaceBytes ? Math.min(100, Math.round((teamUsedBytes / teamSpaceBytes) * 100)) : 0
+  const shareBytes = Number(capacity.shareBytes || 0)
+  const collectionBytes = Number(capacity.collectionBytes || 0)
+  const shareRatio = currentTotalBytes ? Math.min(100, (shareBytes / currentTotalBytes) * 100) : 0
+  const collectionRatio = currentTotalBytes ? Math.min(100, (collectionBytes / currentTotalBytes) * 100) : 0
   const isSelectablePlan = (item) => item.id !== 'free' && accountPlanRank(item.id) > accountPlanRank(plan.id)
   const hasMaximumPersonalEntitlement = plans.length > 0 && !plans.some(item => accountPlanRank(item.id) > accountPlanRank(plan.id))
   const defaultSelectedPlan = plans.find(isSelectablePlan) || plan
   const selectedPlan = plans.find((item) => item.id === selectedPlanId && isSelectablePlan(item)) || defaultSelectedPlan
   const currentPlanLabel = plan.label || '基础版'
   const planValidity = plan.id === 'free' ? '长期免费' : plan.permanent ? '永久有效' : workspace?.planExpiresAt ? `有效至 ${formatDate(workspace.planExpiresAt)}` : '长期有效'
+  const planCatalogView = new URLSearchParams(window.location.search).get('view') === 'plans'
   // 团队邀请入口：走企业专属路径，访客打开后登录即可在页面底部直接申请入团。
   const enterpriseInviteLink = organization ? `${window.location.origin}/e/${organization.slug}/share/` : ''
   const copyEnterpriseLink = async () => {
@@ -197,103 +217,233 @@ export function WorkspacePage() {
       setError('当前浏览器不支持自动复制，请手动选中链接复制')
     }
   }
+  if (planCatalogView) return (
+    <PublicShell className="workspace-shell">
+      {(message || error) && <div className="workspace-toast"><FeedbackMessage message={message || error} tone={error ? 'error' : feedbackTone(message)} /></div>}
+      <PlanCatalogPage
+        plans={plans}
+        currentPlan={plan}
+        selectedPlanId={selectedPlan.id}
+        isSelectablePlan={isSelectablePlan}
+        onBack={() => { window.location.href = '/workspace' }}
+        onUpgrade={(planId) => { setSelectedPlanId(planId); setUpgradeOpen(true) }}
+      />
+      {upgradeOpen && <UpgradeModal workspace={workspace} initialPlanId={selectedPlan.id} onClose={() => setUpgradeOpen(false)} onRefresh={load} onNotify={(text, tone) => { if (tone === 'error') setError(text); else setMessage(text) }} />}
+    </PublicShell>
+  )
   return (
     <PublicShell className="workspace-shell">
       <section className="workspace-page workspace-overview-page">
         {(message || error) && <div className="workspace-toast"><FeedbackMessage message={message || error} tone={error ? 'error' : feedbackTone(message)} /></div>}
-      <div className="workspace-grid">
-            <div className="public-card workspace-hero">
-              <div><p className="eyebrow">会员与企业版</p><h1>{currentPlanLabel}空间</h1><p>存储空间、保存策略、团队协作能力均由账号权益统一管控，升级后立即生效。</p></div>
-              <div className="orders-workspace-links"><a className="secondary-button" href="/settings/orders"><Wallet size={15} /> 我的订单</a><a className="secondary-button workspace-back-button" href="/"><ArrowLeft size={15} /> 返回首页</a></div>
-            </div>
-            <div className="public-card workspace-section workspace-benefits-card">
-              <div className="workspace-section-heading"><div><p className="eyebrow">当前套餐</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div></div>
-              <div className="workspace-capacity"><div><span>已使用空间 · {currentPlanLabel}</span><strong>{formatBytes(capacity.usedBytes || 0)} / {formatBytes(currentTotalBytes)}</strong></div><div className="capacity-bar" title={`已使用 ${ratio}%`} role="progressbar" aria-valuenow={ratio} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${ratio}%` }} /></div><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务 · {capacity.fileCount || 0} 个文件</small></div>
-              <div className="workspace-plan-attributes" aria-label="套餐与团队权益">
-                <span className={plan.permanent ? 'is-on' : 'is-muted'}>{plan.permanent ? <Check size={14} /> : <Clock3 size={14} />} {plan.permanent ? '文件永久保存' : '文件临时保存'}</span>
-                <span className={hasTeamPlan || canUseTeamSpace ? 'is-on' : 'is-muted'}>{hasTeamPlan || canUseTeamSpace ? <Check size={14} /> : <X size={14} />} {teamRole === 'member' && !hasTeamPlan ? `共享团队空间${teamSpaceBytes ? ` · ${formatBytes(teamSpaceBytes)}` : ''}` : hasTeamPlan || canUseTeamSpace ? '团队协作已开通' : '团队协作未开通'}</span>
+
+        <header className="workspace-page-head">
+          <div className="workspace-page-head-copy">
+            <div className="workspace-plan-breadcrumb"><a href="/">首页</a><span>/</span><strong>会员与团队</strong></div>
+            <h1>会员与团队空间</h1>
+            <p>存储空间、保存策略与团队协作能力由账号权益统一管控。</p>
+          </div>
+          <div className="workspace-page-head-actions">
+            <a className="secondary-button" href="/settings/orders"><Wallet size={14} /> 我的订单</a>
+            <a className="primary-button" href="/workspace?view=plans"><Crown size={14} /> {hasMaximumPersonalEntitlement ? '查看套餐权益' : '升级套餐'}</a>
+          </div>
+        </header>
+
+        <div className="workspace-grid">
+          <div className="public-card workspace-plan-hero">
+            <div className="workspace-plan-hero-copy">
+              <span className="ph-badge"><Crown size={14} /> {currentPlanLabel}</span>
+              <h2>{formatBytes(currentTotalBytes)} 空间，套餐权益一处管理</h2>
+              <p>{planValidity} · {formatPlanPrice(planDisplay)} · 容量、上传上限与协作权益按当前账号配置执行。</p>
+              <div className="ph-actions">
+                <button type="button" className="primary-button" onClick={() => setUpgradeOpen(true)}>{plan.id === 'enterprise' ? <BadgeCheck size={15} /> : <Zap size={15} />} {plan.id === 'enterprise' ? '查看已购权益' : hasMaximumTeamEntitlement ? '对比可购套餐' : '升级或续费'}</button>
+                <a className="secondary-button workspace-back-button" href="/"><ArrowLeft size={14} /> 返回首页</a>
               </div>
-              {hasMaximumPersonalEntitlement && <div className="upgrade-maximum-notice workspace-team-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong></div></div>}
-              <PlanCarousel className="plan-comparison">
-                {plans.map((item) => {
-                  const PlanIcon = accountPlanIcon(item.id)
-                  const isCurrentPlan = item.id === plan.id
-                  const isIncludedPlan = accountPlanRank(item.id) < accountPlanRank(plan.id) || (isCurrentPlan && plan.permanent)
-                  const isTeamEntitlementPlan = item.team && teamEntitlement.teamPlanId && accountPlanRank(item.id) <= accountPlanRank(teamEntitlement.teamPlanId)
-                  const isSelectable = isSelectablePlan(item)
-                  const isSelected = item.id === selectedPlan.id
-                  return <button type="button" data-plan-id={item.id} className={`${isCurrentPlan ? 'current ' : ''}${isSelected ? 'selected' : ''}`} key={item.id} onClick={() => isSelectable && setSelectedPlanId(item.id)} disabled={!isSelectable} aria-pressed={isSelected}>
-                    <em className="plan-current-tag">{isCurrentPlan ? '当前套餐' : isIncludedPlan ? '已包含' : isTeamEntitlementPlan ? '团队已拥有' : item.team ? '团队推荐' : ''}</em>
-                    <span className="plan-title-line"><PlanIcon size={15} /><strong>{item.label}</strong></span>
-                    <PlanSpaceSummary plan={item} compact />
-                    <small className="plan-price-summary">{formatPlanPrice(item)}</small>
-                  </button>
-                })}
-              </PlanCarousel>
-              {pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}
-              {workspace?.paymentReconciliation?.requiresLogin && <div className="workspace-payment-warning" role="status">支付订单需要重新登录核对状态。<button type="button" className="team-manage-link" onClick={login}><UserRound size={14} /> 重新登录</button></div>}
-              <div className="workspace-benefits-cta"><span>{selectedPlan.id === plan.id ? '当前个人套餐' : `个人套餐已选：${selectedPlan.label}`}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}>{plan.id === 'enterprise' ? <BadgeCheck size={15} /> : <Zap size={15} />} {plan.id === 'enterprise' ? '查看已购权益' : hasMaximumTeamEntitlement ? '个人套餐对比' : '套餐对比与升级'}</button></div>
             </div>
-            <div className="workspace-lower-row">
-            <div className="public-card workspace-section workspace-team-card">
-              <div className="workspace-section-heading">
-                <div className="workspace-team-heading">
-                  <p className="eyebrow">团队空间</p>
-                  {organization?.ownerUserId === user.id && editingTeamName ? (
-                    <form className="workspace-name-form" onSubmit={saveWorkspaceName}>
-                      <input value={workspaceName} onChange={(event) => setWorkspaceName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} autoFocus aria-label="团队名称" />
-                      <button type="submit" className="ghost-icon" disabled={saving || !workspaceName.trim()} aria-label="保存团队名称" title="保存团队名称"><Check size={16} /></button>
-                      <button type="button" className="ghost-icon" disabled={saving} onClick={() => { setWorkspaceName(organization.name); setEditingTeamName(false) }} aria-label="取消编辑团队名称" title="取消编辑"><X size={16} /></button>
-                    </form>
-                  ) : (
-                    <div className="workspace-name-line">
-                      <h2><Users size={18} /> {organization?.name || '创建团队空间'}</h2>
-                      {organization?.ownerUserId === user.id && canManageTeam && <button type="button" className="ghost-icon" onClick={() => setEditingTeamName(true)} aria-label="编辑团队名称" title="编辑团队名称"><PencilLine size={15} /></button>}
-                    </div>
-                  )}
-                </div>
+            <div className="workspace-plan-hero-side">
+              <div className="ph-stat"><span>已用容量</span><b>{formatBytes(capacity.usedBytes || 0)} <small>/ {formatBytes(currentTotalBytes)}</small></b><div className="progress sm" role="progressbar" aria-label="个人空间使用率" aria-valuenow={ratio} aria-valuemin="0" aria-valuemax="100"><i style={{ width: `${ratio}%` }} /></div></div>
+              <div className="ph-stat workspace-activity-stat"><span>文件与任务</span><b>{capacity.fileCount || 0} 个文件</b><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务</small></div>
+            </div>
+            <div className="workspace-plan-metrics">
+              <div><span><HardDrive size={13} /> 单文件上限</span><b>{formatBytes(plan.singleFileLimitBytes || 0)}</b></div>
+              <div><span><Users size={13} /> 收集参与人数</span><b>{plan.collectionParticipantLimit ? `${plan.collectionParticipantLimit} 人` : '不限'}</b></div>
+              <div><span><Clock3 size={13} /> 同时进行任务</span><b>{plan.activeCollectionLimit ? `${plan.activeCollectionLimit} 个` : '不限'}</b></div>
+              <div><span><Building2 size={13} /> 团队空间</span><b>{(teamSpaceBytes || plan.teamSpaceBytes) ? formatBytes(teamSpaceBytes || plan.teamSpaceBytes) : '未开通'}</b></div>
+            </div>
+          </div>
+
+          <div className="public-card workspace-benefits-card">
+            <div className="workspace-section-heading"><div><p className="eyebrow">当前套餐</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div><a className="text-btn" href="/workspace?view=plans">权益对比 <ChevronRight size={13} /></a></div>
+            <div className="workspace-benefits-grid">{(plan.features || []).map((feature, index) => { const FeatureIcon = [Zap, ShieldCheck, Clock3, Users, ScanLine, History][index % 6]; return <div className="workspace-benefit-item" key={`${plan.id}-${feature}`}><span><FeatureIcon size={16} /></span><strong>{feature}</strong></div> })}</div>
+            <div className="workspace-plan-attributes" aria-label="套餐与团队权益">
+              <span className={plan.permanent ? 'is-on' : 'is-muted'}>{plan.permanent ? <Check size={14} /> : <Clock3 size={14} />} {plan.permanent ? '文件永久保存' : '文件临时保存'}</span>
+              <span className={hasTeamPlan || canUseTeamSpace ? 'is-on' : 'is-muted'}>{hasTeamPlan || canUseTeamSpace ? <Check size={14} /> : <X size={14} />} {teamRole === 'member' && !hasTeamPlan ? `共享团队空间${teamSpaceBytes ? ` · ${formatBytes(teamSpaceBytes)}` : ''}` : hasTeamPlan || canUseTeamSpace ? '团队协作已开通' : '团队协作未开通'}</span>
+            </div>
+            <div className="workspace-plan-note" role="note">
+              <Info size={15} />
+              <div>{plan.id === 'free' ? '免费版容量与上传上限固定，升级后按新套餐额度立即生效。' : `${currentPlanLabel}${planValidity === '永久有效' ? '永久有效' : planValidity}；套餐到期后按免费版额度重新计算容量。`}</div>
+            </div>
+            {hasMaximumPersonalEntitlement && <div className="upgrade-maximum-notice workspace-team-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong></div></div>}
+            {pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}
+            {workspace?.paymentReconciliation?.requiresLogin && <div className="workspace-payment-warning" role="status">支付订单需要重新登录核对状态。<button type="button" className="team-manage-link" onClick={login}><UserRound size={14} /> 重新登录</button></div>}
+            <div className="workspace-benefits-cta"><span>{hasMaximumTeamEntitlement ? '团队空间已拥有最高等级权益' : '套餐升级与支付'}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}>{plan.id === 'enterprise' ? <BadgeCheck size={15} /> : <Zap size={15} />} {plan.id === 'enterprise' ? '查看已购权益' : hasMaximumTeamEntitlement ? '个人套餐对比' : '立即升级'}</button></div>
+          </div>
+
+          <aside className="workspace-side-col">
+            <div className="public-card workspace-side-card workspace-team-card">
+              <div className="workspace-side-card-head">
+                <h3>团队空间</h3>
                 {organization
                   ? <span className="workspace-status">{teamRole === 'owner' ? '团队所有者' : teamRole === 'admin' ? '团队管理员' : '团队成员'}</span>
                   : <span className="workspace-status muted team-required-tag" title={canManageTeam ? '当前权益可以创建团队空间。' : '该功能需要升级团队版权限才可解锁。'}>{canManageTeam ? '可创建' : '需团队版'}</span>}
               </div>
+
+              <div className="workspace-side-card-body">
               {!organization ? (
                 hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
               ) : (
                 <>
-                  {!canUseTeamSpace && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
-                  {teamRole === 'member' && canUseTeamSpace && <div className="workspace-share-notice"><Users size={18} /><div><strong>你已加入「{organization.name}」，正在共享团队空间</strong><span>团队空间的容量由团队所有者提供，你个人的空间与权益保持不变。</span></div></div>}
-                  <div className="workspace-team-body">
-                    <div className="workspace-team-block">
-                      {ownerMember && <div className="workspace-owner-summary"><span className="workspace-member-avatar">{(ownerMember.displayName || '团').slice(0, 1)}</span><div><strong>{ownerMember.displayName || ownerMember.email || ownerMember.phone || '团队所有者'}</strong><span>{ownerMember.email || ownerMember.phone || ownerMember.userId || '当前账号'} · 所有者</span></div><span className="workspace-member-state active">所有者</span></div>}
-                    </div>
-                    <div className="workspace-team-block">
-                      {canManageTeam ? (
-                        <>
-                          <p className="workspace-block-label"><Link2 size={14} /> 管理邀请链接</p>
-                          <p className="workspace-block-hint">把链接发给同事，对方登录后即可申请加入，申请会出现在团队空间里由你审批。</p>
-                          <div className="workspace-invite-link-row">
-                            <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
-                            <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={14} /> 复制</button>
-                          </div>
-                        </>
+                  <div className="team-mini">
+                    <span className="team-logo"><Building2 size={18} /></span>
+                    <div className="workspace-team-mini-copy">
+                      {organization.ownerUserId === user.id && editingTeamName ? (
+                        <form className="workspace-name-form" onSubmit={saveWorkspaceName}>
+                          <input value={workspaceName} onChange={(event) => setWorkspaceName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} autoFocus aria-label="团队名称" />
+                          <button type="submit" className="ghost-icon" disabled={saving || !workspaceName.trim()} aria-label="保存团队名称" title="保存团队名称"><Check size={16} /></button>
+                          <button type="button" className="ghost-icon" disabled={saving} onClick={() => { setWorkspaceName(organization.name); setEditingTeamName(false) }} aria-label="取消编辑团队名称" title="取消编辑"><X size={16} /></button>
+                        </form>
                       ) : (
-                        <div className="workspace-invite-notice" role="note"><Link2 size={15} /><span>邀请链接由团队所有者或管理员管理，如需邀请同事请联系他们。</span></div>
+                        <div className="workspace-name-line">
+                          <b>{organization.name}</b>
+                          {organization.ownerUserId === user.id && canManageTeam && <button type="button" className="ghost-icon" onClick={() => setEditingTeamName(true)} aria-label="编辑团队名称" title="编辑团队名称"><PencilLine size={14} /></button>}
+                        </div>
                       )}
+                      <small>{ownerMember ? `所有者 ${ownerMember.displayName || ownerMember.email || '当前账号'}` : '团队共享空间'}{organization.createdAt ? ` · 创建于 ${new Date(organization.createdAt).toISOString().slice(0, 10)}` : ''}</small>
                     </div>
                   </div>
-                  <div className="workspace-team-foot">
-                    <span>查看团队成员、入团申请和使用情况</span>
-                    {canUseTeamSpace ? <button type="button" className="team-manage-link" onClick={() => { window.location.href = '/team' }}><BarChart3 size={14} /> 查看团队成员与使用情况 <ChevronRight size={14} /></button> : <button type="button" className="team-manage-link" onClick={() => setUpgradeOpen(true)}><Zap size={14} /> 购买团队套餐 <ChevronRight size={14} /></button>}
+
+                  <div className="cap-row">
+                    <span>{teamUsage ? <>团队已用 <b>{formatBytes(teamUsedBytes)}</b> / {formatBytes(teamSpaceBytes)}</> : <>成员 <b>{activeMembers.length}</b> 人 · 团队容量 {teamSpaceBytes ? formatBytes(teamSpaceBytes) : '未开通'}</>}</span>
+                    <span className="pct">{teamUsage ? `${teamUsedRatio}%` : pendingMemberCount ? `${pendingMemberCount} 位待加入` : ''}</span>
+                  </div>
+                  {teamUsage && <div className="progress sm" role="progressbar" aria-label="团队空间使用率" aria-valuenow={teamUsedRatio} aria-valuemin="0" aria-valuemax="100"><i style={{ width: `${teamUsedRatio}%` }} /></div>}
+
+                  {!canUseTeamSpace && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
+
+                  {canManageTeam ? (
+                    <div className="workspace-invite-mini">
+                      <span className="workspace-block-label"><Link2 size={13} /> 邀请链接</span>
+                      <div className="workspace-invite-link-row">
+                        <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
+                        <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={13} /> 复制</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="workspace-invite-notice" role="note"><Link2 size={14} /><span>邀请链接由团队所有者或管理员管理。</span></div>
+                  )}
+
+                  <div className="side-foot">
+                    <div className="team-avatars" aria-hidden="true">
+                      {activeMembers.slice(0, 4).map((member) => <span className="avatar sm" key={member.id}>{(member.displayName || '团').slice(0, 1)}</span>)}
+                      {activeMembers.length > 4 && <span className="avatar sm more">+{activeMembers.length - 4}</span>}
+                    </div>
+                    {canUseTeamSpace
+                      ? <button type="button" className="team-manage-link" title="查看团队成员、入团申请和使用情况" onClick={() => { window.location.href = '/team' }}>团队管理 <ChevronRight size={13} /></button>
+                      : <button type="button" className="team-manage-link" onClick={() => setUpgradeOpen(true)}>购买团队套餐 <ChevronRight size={13} /></button>}
                   </div>
                 </>
               )}
+              </div>
             </div>
+
+            <div className="public-card workspace-side-card workspace-storage-card">
+              <div className="workspace-side-card-head"><h3>存储用量</h3><a className="text-btn" href="/settings/cleanup">清理空间 <ChevronRight size={13} /></a></div>
+              <div className="workspace-side-card-body">
+              <div className="usage-total"><b>{formatBytes(capacity.usedBytes || 0)}</b><span>/ {formatBytes(currentTotalBytes)}</span><em>{ratio > 0 && ratio < 1 ? '<1%' : `${ratio}%`}</em></div>
+              <div className="usage-bar" role="progressbar" aria-label="个人空间使用率" aria-valuenow={ratio} aria-valuemin="0" aria-valuemax="100">
+                <i style={{ width: `${shareRatio}%`, background: '#1f6bff' }} />
+                <i style={{ width: `${collectionRatio}%`, background: '#4f95ff' }} />
+              </div>
+              <div className="usage-legend">
+                <span><i style={{ background: '#1f6bff' }} />分享文件<b>{formatBytes(shareBytes)}</b></span>
+                <span><i style={{ background: '#4f95ff' }} />收集任务<b>{formatBytes(collectionBytes)}</b></span>
+                <span><i style={{ background: '#8fc0ff' }} />文件数量<b>{capacity.fileCount || 0} 个</b></span>
+                <span><i style={{ background: '#c3d8f8' }} />剩余可用<b>{formatBytes(capacity.remainingBytes || 0)}</b></span>
+              </div>
+              </div>
             </div>
+          </aside>
         </div>
       </section>
       {upgradeOpen && <UpgradeModal workspace={workspace} initialPlanId={selectedPlan.id} onClose={() => setUpgradeOpen(false)} onRefresh={load} onNotify={(text, tone) => { if (tone === 'error') setError(text); else setMessage(text) }} />}
     </PublicShell>
   )
+}
+
+function PlanCatalogPage({ plans, currentPlan, selectedPlanId, isSelectablePlan, onBack, onUpgrade }) {
+  const sortedPlans = [...plans].sort((a, b) => accountPlanRank(a.id) - accountPlanRank(b.id))
+  const comparisonRows = [
+    ['个人空间', (plan) => formatBytes(plan.totalBytes)],
+    ['团队空间', (plan) => plan.teamSpaceBytes ? formatBytes(plan.teamSpaceBytes) : '—'],
+    ['单文件上限', (plan) => formatBytes(plan.singleFileLimitBytes)],
+    ['收集参与人数', (plan) => plan.collectionParticipantLimit ? `${plan.collectionParticipantLimit} 人` : '不限'],
+    ['进行中的收集任务', (plan) => plan.activeCollectionLimit ? `${plan.activeCollectionLimit} 个` : '不限'],
+    ['权益有效期', (plan) => plan.id === 'free' ? '长期免费' : plan.permanent ? '永久' : plan.validityDays ? `${plan.validityDays} 天` : '按套餐配置'],
+  ]
+
+  return <section className="plan-catalog-page">
+    <div className="plan-catalog-heading">
+      <div>
+        <div className="plan-catalog-breadcrumb"><a href="/">首页</a><span>/</span><a href="/workspace">会员与团队</a><span>/</span><strong>套餐</strong></div>
+        <h1>选择适合你的套餐</h1>
+        <p>套餐权益与价格以当前账号可购买配置为准，选择后通过现有订单流程完成升级。</p>
+      </div>
+      <button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回会员空间</button>
+    </div>
+
+    <div className="plan-catalog-grid">
+      {sortedPlans.map((item) => {
+        const selectable = isSelectablePlan(item)
+        const isCurrent = item.id === currentPlan.id
+        const Icon = accountPlanIcon(item.id)
+        return <article className={`plan-catalog-card${item.id === 'member' ? ' featured' : ''}${selectedPlanId === item.id ? ' selected' : ''}${isCurrent ? ' current' : ''}`} key={item.id}>
+          {item.id === 'member' && <span className="plan-catalog-flag">个人常用</span>}
+          <div className="plan-catalog-card-heading">
+            <span className="plan-catalog-icon"><Icon size={18} /></span>
+            <div><h2>{item.label}</h2><p>{item.tagline || '按当前套餐配置提供权益'}</p></div>
+          </div>
+          <div className="plan-catalog-price"><strong>{item.id === 'free' || Number(item.monthlyPrice) === 0 ? '¥0' : Number.isFinite(Number(item.monthlyPrice)) ? `¥${(Number(item.monthlyPrice) / 100).toFixed(2)}` : '价格以主站为准'}</strong><span>{item.id === 'free' ? '/ 长期' : item.permanent ? '/ 永久' : item.validityDays ? `/ ${item.validityDays} 天` : ''}</span></div>
+          <p className="plan-catalog-price-note">{formatPlanPrice(item)}</p>
+          <PlanSpaceSummary plan={item} compact />
+          <ul className="plan-catalog-features">
+            {(item.features || []).map((feature) => <li key={feature}><Check size={14} /> <span>{feature}</span></li>)}
+          </ul>
+          <button type="button" className={selectable ? 'primary-button' : 'secondary-button'} disabled={!selectable} aria-pressed={selectedPlanId === item.id} onClick={() => selectable && onUpgrade(item.id)}>
+            {isCurrent ? '当前套餐' : selectable ? (selectedPlanId === item.id ? '立即升级' : '选择并升级') : '已包含'}
+          </button>
+        </article>
+      })}
+    </div>
+
+    <section className="plan-catalog-comparison public-card" aria-labelledby="plan-comparison-title">
+      <div className="plan-catalog-section-heading"><div><p className="eyebrow">套餐权益</p><h2 id="plan-comparison-title">权益对比</h2></div><span>配置随账号和服务端规则更新</span></div>
+      <div className="plan-catalog-table-wrap"><table><thead><tr><th scope="col">权益</th>{sortedPlans.map((item) => <th className={item.id === currentPlan.id ? 'current' : ''} scope="col" key={item.id}>{item.label}{item.id === currentPlan.id ? <small>当前</small> : null}</th>)}</tr></thead>
+        <tbody>{comparisonRows.map(([label, value]) => <tr key={label}><th scope="row">{label}</th>{sortedPlans.map((item) => <td className={item.id === currentPlan.id ? 'current' : ''} key={item.id}>{value(item)}</td>)}</tr>)}
+          <tr><th scope="row">文件保存</th>{sortedPlans.map((item) => <td className={item.id === currentPlan.id ? 'current' : ''} key={item.id}>{item.permanent ? '永久保存' : '按文件期限'}</td>)}</tr>
+          <tr><th scope="row">团队协作</th>{sortedPlans.map((item) => <td className={item.id === currentPlan.id ? 'current' : ''} key={item.id}>{item.team ? '支持' : '—'}</td>)}</tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section className="plan-catalog-faq" aria-labelledby="plan-faq-title">
+      <div className="plan-catalog-section-heading"><div><p className="eyebrow">帮助</p><h2 id="plan-faq-title">常见问题</h2></div></div>
+      <div className="plan-catalog-faq-grid">
+        <article><h3>升级后权益何时生效？</h3><p>支付通道确认成功后，系统会同步套餐权益；也可以在会员空间查看最新状态。</p></article>
+        <article><h3>套餐价格和期限如何确定？</h3><p>价格从现有套餐服务读取，权益期限按当前服务端套餐配置执行。</p></article>
+        <article><h3>个人空间和团队空间如何计算？</h3><p>个人用量与团队共享用量分别统计，加入团队不会改变个人套餐。</p></article>
+        <article><h3>支付中的订单在哪里查看？</h3><p>待支付订单可从会员空间继续查看，并使用原有支付状态核对流程。</p></article>
+      </div>
+    </section>
+  </section>
 }
 
 export const accountPlanRank = (planId) => ACCOUNT_PLAN_RANK[planId] ?? 0

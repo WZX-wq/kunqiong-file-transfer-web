@@ -204,6 +204,9 @@ export async function apiRequest(url, options = {}) {
     const error = new Error(data.message || ([502, 504].includes(response.status) ? '服务连接暂时中断，请稍后重试' : '请求失败'))
     error.status = response.status
     error.code = data.code || ''
+    // 410 时服务端会附带脱敏的分享/收集元信息，用于渲染已过期/已截止状态页。
+    error.shareMeta = data.share || null
+    error.collectionMeta = data.collection || null
     error.guestQuota = data.guestQuota || null
     error.scanLimit = data.scanLimit || ''
     error.scanFile = data.scanFile || ''

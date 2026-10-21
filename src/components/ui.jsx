@@ -1,7 +1,7 @@
 import { collectionSizeOptions } from '../lib/plan-limits.js'
 export { UserAvatar, userAvatarSource, displayUserInitial, displayUserSubtitle } from './account.jsx'
 import React from 'react'
-import { PrototypeFileIcon } from './prototype-asset.jsx'
+import { PrototypeAsset, PrototypeFileIcon } from './prototype-asset.jsx'
 import { sanitizeOfficeHtml } from '../office-html.js'
 import { readTextPreview } from '../lib/text-preview.js'
 import { Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, Eye, FileText, Link2, PencilLine, RefreshCw, RotateCcw, UserPlus, UserRound, X } from 'lucide-react'
@@ -17,7 +17,7 @@ import { limitInputText } from '../lib/input-limits.js'
 
 export function DownloadProgressPanel({ task, onRetry }) {
   if (!task || task.status === 'idle') return null
-  if (task.status === 'handed_off') return <div className="progress-wrap download-progress"><div className="progress-label"><span>已交给浏览器下载</span><Download size={16} /></div>{task.filename && <small>{task.filename}</small>}</div>
+  if (task.status === 'handed_off') return <div className="progress-wrap download-progress"><div className="progress-label"><span className="download-progress-title"><PrototypeAsset name="act-download.png" size={22} />已交给浏览器下载</span><Download size={16} /></div>{task.filename && <small>{task.filename}</small>}</div>
   const busy = ['preparing', 'downloading', 'saving'].includes(task.status)
   const statusText = task.needsPassword ? '需要提取密码' : downloadStatusText(task)
   const remainingText = task.status === 'complete' ? '已完成' : formatDuration(task.etaSeconds)
@@ -25,7 +25,7 @@ export function DownloadProgressPanel({ task, onRetry }) {
   const trackWidth = task.totalBytes || task.status === 'complete' ? progress : busy ? 18 : 0
   return (
     <div className={`progress-wrap enhanced-progress download-progress ${task.status}`}>
-      <div className="progress-label"><span>{statusText}</span><strong>{task.totalBytes ? `${progress}%` : formatBytes(task.loadedBytes)}</strong></div>
+      <div className="progress-label"><span className="download-progress-title"><PrototypeAsset name="act-download.png" size={22} />{statusText}</span><strong>{task.totalBytes ? `${progress}%` : formatBytes(task.loadedBytes)}</strong></div>
       <div className="progress-track"><span style={{ width: `${trackWidth}%` }} /></div>
       <div className="upload-metrics">
         <span>已下 {formatBytes(task.loadedBytes)}{task.totalBytes ? ` / ${formatBytes(task.totalBytes)}` : ''}</span>
@@ -70,7 +70,7 @@ export function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, o
       <div className="modal qr-modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
         <button type="button" className="ghost-icon modal-close" aria-label="关闭二维码预览" title="关闭二维码预览" onClick={onClose}><X size={18} /></button>
         <div className="qr-modal-body">
-          <p className="eyebrow">二维码预览</p>
+          <p className="eyebrow qr-modal-eyebrow"><PrototypeAsset name="ico-scan.png" size={18} />二维码预览</p>
           <h2>{title}</h2>
           <p>{detail}</p>
           <img className="qr-preview-image" src={qrDataUrl} alt={title} />
@@ -859,7 +859,7 @@ export function FileFormatBadge({ file, record, label = '' }) {
   return text ? <span className="file-format-badge">{text}</span> : null
 }
 
-export function ValueItem({ icon: Icon, title, detail }) { return <div className="value-item"><span className="value-icon"><Icon size={18} /></span><div><strong>{title}</strong><span>{detail}</span></div></div> }
+export function ValueItem({ icon: Icon, image, title, detail }) { return <div className="value-item"><span className="value-icon">{image ? <PrototypeAsset name={image} width={28} height={28} /> : <Icon size={18} />}</span><div><strong>{title}</strong><span>{detail}</span></div></div> }
 
 export function FileRow({ file, onRemove, onPreview, onDownload, downloadDisabled = false, showPath = false }) {
   const Icon = fileIcon(file.name)

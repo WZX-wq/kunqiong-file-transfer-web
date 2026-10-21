@@ -78,6 +78,7 @@ trigger.click()
 await waitFor(() => document.querySelector('.message-center'), 'Message center opens')
 await waitFor(() => document.querySelectorAll('.message-item').length === 2, 'Two messages render')
 check('消息中心打开且渲染两条消息', document.querySelectorAll('.message-item').length === 2)
+check('消息中心打开状态写入URL', new URLSearchParams(window.location.search).get('panel') === 'messages')
 
 // 1) 取件码操作行
 const chip = [...document.querySelectorAll('.message-code-chip')].find((b) => b.textContent.includes('NXKTSS'))
@@ -99,6 +100,10 @@ delBtn.click()
 await waitFor(() => deleteCalls.length > 0, 'Delete request sent')
 check('删除请求携带 keepalive（页面卸载不中断）', deleteCalls[0].keepalive === true)
 await waitFor(() => document.querySelectorAll('.message-item').length === 1, 'Message removed from list')
+
+document.body.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+await waitFor(() => !document.querySelector('.message-center'), 'Message center closes on outside click')
+check('关闭消息中心后清除URL状态，刷新不会重新打开', new URLSearchParams(window.location.search).get('panel') !== 'messages')
 
 check('无 jsdom 运行时错误', jsErrors.length === 0)
 dom.window.close()

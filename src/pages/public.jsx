@@ -3,7 +3,9 @@ import { SecurityCheckFailure, SecurityCheckStatus } from '../components/securit
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState } from '../lib/api.js'
 import { ConfirmModal, FeedbackMessage, LoadingBlock, PublicShell, StateBlock } from '../components/common.jsx'
-import { ArrowLeft, Building2, CalendarDays, Clock3, Download, Eye, FileText, FolderOpen, Inbox, KeyRound, Link2, Pause, Play, QrCode, RefreshCw, Settings2, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Building2, CalendarDays, Clock3, Copy, Download, Eye, FileText, FolderOpen, Inbox, Info, KeyRound, Link2, Lock, Pause, Play, QrCode, RefreshCw, Settings2, ShieldCheck, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
+import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
+import { ProtoStateCard, ProtoBadge, ProtoBanner } from '../components/prototype-ui.jsx'
 import { CollectionLimitInfo, DownloadProgressPanel, FileFormatBadge, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, TeamJoinRequestCard, UserAvatar, toFileItems } from '../components/ui.jsx'
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canReopenCollection, collectionFileAccept, collectionStatusText, createCollectionRecord, createShareRecord, isAllowedCollectionFile, saveAuthoritativeLocalRecord, savePublicRecord, shareStatusText } from '../lib/records.js'
@@ -43,20 +45,134 @@ export function TeamInvitePage({ slug }) {
   )
 }
 
+// 分享已过期：对齐原型 share.js · share-expired（灰钟图标 + 三项元信息 + 两个出口）。
+// 元信息来自服务端 410 的脱敏字段，不做任何猜测；分享人沿用分享页固定的品牌称谓。
+function ShareExpiredCard({ info }) {
+  return (
+    <ProtoStateCard
+      icon={Clock3}
+      tone="gray"
+      title="这个分享已过期"
+      detail={<>文件保留期已结束，内容已进入清理流程，无法继续下载。<br />如需再次获取，请联系发送人重新分享。</>}
+      actions={<>
+        <a className="secondary-button" href="/?view=send">输入其他取件码</a>
+        <a className="primary-button" href="/">我也要发文件</a>
+      </>}
+    >
+      <div className="expired-meta">
+        <div><span>分享人</span><b>鲲穹文件传输</b></div>
+        <div><span>过期时间</span><b>{info.expiresAt ? formatDate(info.expiresAt) : '—'}</b></div>
+        <div><span>文件</span><b>{info.fileCount || 0} 个{info.totalSize ? ` · ${formatBytes(info.totalSize)}` : ''}</b></div>
+      </div>
+    </ProtoStateCard>
+  )
+}
+
+// 分享已关闭：对齐原型 share.js · share-closed（灰锁 + 说明 + 提示条 + 两个出口）。
+// 关闭不会删除云端文件，提示条把「可重新开启」这条真实能力讲清楚，避免接收方误以为文件被删。
+function ShareClosedCard() {
+  return (
+    <ProtoStateCard
+      icon={Lock}
+      tone="gray"
+      title="分享已被关闭"
+      detail={<>发送人已停止此分享，链接与取件码都无法继续访问。<br />如果你是接收方，请联系发送人重新分享。</>}
+      actions={<>
+        <a className="secondary-button" href="/?view=send">输入其他取件码</a>
+        <a className="primary-button" href="/">返回首页</a>
+      </>}
+    >
+      <div className="closed-notice">
+        <ProtoBanner tone="info" icon={Info}>关闭分享不会删除云端文件，发送人仍可在「收发记录」中重新开启或再次分享。</ProtoBanner>
+      </div>
+    </ProtoStateCard>
+  )
+}
+
+// 正在下载文件：对齐原型 share.js · download-progress 的版式（hero + 发送人条 + 文件卡）。
+// 产品把传输交给浏览器下载管理器，前端拿不到字节级进度，因此这里只呈现真实状态：
+// 准备中/下载中/失败，以及文件清单；不编造百分比、速度和“暂停”（浏览器下载无法由页面暂停）。
+function ShareDownloadingPage({ share, task, onBack, onRetry }) {
+  const files = share.files || []
+  const totalSize = files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
+  const allApproved = files.length > 0 && files.every((file) => file.reviewStatus === 'approved')
+  const archive = files.length > 1
+  const failed = task.status === 'failed'
+  const activeName = task.filename || (archive ? '鲲穹文件包.zip' : files[0]?.name) || '下载文件'
+  const statusText = failed ? '下载失败' : task.status === 'preparing' ? '准备下载' : '下载中'
+  return (
+    <div className="share-main download-page">
+      <header className="share-hero">
+        <span className="eyebrow">鲲穹临时分享</span>
+        <h1>正在下载文件</h1>
+        <p>下载已交给浏览器，进度和保存位置请在浏览器下载列表中查看。</p>
+      </header>
+      <div className="sender download-sender">
+        <span className="avatar"><PrototypeAsset name="ico-user.png" size={28} /></span>
+        <div className="who"><b>鲲穹文件传输</b><small>临时分享 · {formatDate(share.createdAt)}</small></div>
+        {allApproved && <ProtoBadge tone="blue" dot={false}><ShieldCheck size={12} /> 安全检测通过</ProtoBadge>}
+      </div>
+      <div className="public-card share-card download-card">
+        <div className="card-bd">
+          <div className="pkg-head">
+            <div><h3>{files.length} 个文件</h3><p className="tiny">共 {formatBytes(totalSize)} · {share.requiresPassword ? '受提取密码保护' : '无需登录'}</p></div>
+            <ProtoBadge tone={failed ? 'danger' : 'blue'}>{statusText}</ProtoBadge>
+          </div>
+          {failed ? <DownloadProgressPanel task={task} onRetry={onRetry} /> : (
+            <>
+              <div className="download-task">
+                <div className="download-task-head">
+                  <Download size={16} />
+                  <b title={activeName}>{activeName}</b>
+                  <span>{files.length} 个文件 · {formatBytes(totalSize)}</span>
+                </div>
+                <div className="download-track" role="progressbar" aria-label="浏览器正在下载，具体进度见浏览器下载列表"><span /></div>
+                <p className="download-task-note">{task.status === 'preparing' ? '正在准备下载链接，浏览器随后会提示保存位置。' : '浏览器已接管本次下载。若没有看到保存提示，请检查浏览器的下载列表或拦截提示。'}</p>
+              </div>
+              <div className="download-file-list">
+                {files.map((file, index) => (
+                  <div className="download-file-row" key={file.relativePath || `${file.name}-${index}`}>
+                    <span className="download-file-icon"><PrototypeFileIcon name={file.name} fallback={FileText} size={24} /></span>
+                    <div className="download-file-copy"><strong title={file.name}>{file.name}</strong><small>{formatBytes(file.size)}</small></div>
+                    <span className="download-file-state">{archive ? '已包含' : '浏览器下载中'}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          <div className="download-actions">
+            <button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回文件列表</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function SharePage({ token, enterpriseSlug = '' }) {
   const [data, setData] = useState(null)
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [goneInfo, setGoneInfo] = useState(null)
   const [actionError, setActionError] = useState('')
   const [requiresLogin, setRequiresLogin] = useState(false)
+  const [qrOpen, setQrOpen] = useState(false)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
+  // 下载任务的独立页面（对齐原型 share.js · download-progress）：点击下载后进入，
+  // 返回文件列表时关闭；任务状态本身仍由 useDownloadTask 持有。
+  const [downloadPageOpen, setDownloadPageOpen] = useState(false)
   useEffect(() => {
     const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
     apiRequest(`/api/shares/token/${token}${query}`).then((result) => {
       setData(result)
       savePublicRecord(createShareRecord(result.share, 'sent_to_me'))
-    }).catch((err) => { setError(err.message); setRequiresLogin(err.code === 'directed_login_required') })
+    }).catch((err) => {
+      setError(err.message)
+      setRequiresLogin(err.code === 'directed_login_required')
+      // 已过期 / 已关闭走原型里的专用状态页；次数用尽等仍用通用不可用页。
+      if (err.status === 410 && ['expired', 'closed'].includes(err.shareMeta?.state)) setGoneInfo(err.shareMeta)
+    })
   }, [token, enterpriseSlug])
   const findShare = async () => {
     try {
@@ -66,39 +182,85 @@ export function SharePage({ token, enterpriseSlug = '' }) {
       savePublicRecord(createShareRecord(result.share, 'sent_to_me'))
     } catch (err) { setActionError(err.message) }
   }
+  if (goneInfo?.state === 'expired') return <PublicShell><ShareExpiredCard info={goneInfo} /></PublicShell>
+  if (goneInfo?.state === 'closed') return <PublicShell><ShareClosedCard /></PublicShell>
   if (error) return <PublicShell><StateBlock title="这个分享暂时不可用" detail={error} />{requiresLogin && <button className="primary-button" onClick={() => { window.location.href = `/api/auth/login?return_to=${encodeURIComponent(window.location.href)}` }}><UserRound size={16} /> 使用收件账号登录</button>}</PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   const share = data.share
-  const downloadAll = () => startDownload(createShareDownloadConfig(share, { password }))
-  const downloadFile = (file, fileIndex) => startDownload(createShareFileDownloadConfig(share, file, fileIndex, { password }))
+  const beginDownload = (config) => {
+    setDownloadPageOpen(true)
+    return startDownload(config)
+  }
+  const downloadAll = () => beginDownload(createShareDownloadConfig(share, { password }))
+  const downloadFile = (file, fileIndex) => beginDownload(createShareFileDownloadConfig(share, file, fileIndex, { password }))
   const previewFile = (file, fileIndex) => setPreviewItem(createShareFilePreviewConfig(share, file, fileIndex, { password }))
+  if (downloadPageOpen) return (
+    <PublicShell>
+      <ShareDownloadingPage share={share} task={downloadTask} onBack={() => setDownloadPageOpen(false)} onRetry={retryDownload} />
+    </PublicShell>
+  )
+  const copyShareQr = async () => {
+    try {
+      await copyImageToClipboard(share.qrDataUrl)
+      setActionError('')
+    } catch {
+      try {
+        await copyTextToClipboard(share.shareUrl)
+        setActionError('当前浏览器不支持直接复制图片，已复制分享链接')
+      } catch {
+        setActionError('当前浏览器不支持自动复制，请手动复制分享链接')
+      }
+    }
+  }
+  const totalSize = (share.files || []).reduce((sum, file) => sum + (Number(file.size) || 0), 0)
   return (
     <PublicShell>
-      <div className="public-card share-public-card">
-        <span className="public-icon"><Download size={24} /></span>
-        <p className="eyebrow">鲲穹临时分享</p>
-        <h1>有人给你发来了文件</h1>
+      <div className="share-main">
+        <header className="share-hero">
+          <span className="eyebrow">鲲穹临时分享</span>
+          <h1>有人给你发来了文件</h1>
+          <p>分享有效期：{formatExpiry(share.expiresAt)}，请及时下载保存。</p>
+        </header>
         {data.requiresPassword && !share.files?.length ? (
-          <>
-            <p className="public-copy">此分享受提取密码保护，验证密码后即可查看文件内容。</p>
-            <div className="public-password">
+          <div className="public-card password-card share-locked-card">
+            <PrototypeAsset className="big-ico-image" name="ico-lock.png" width={70} height={70} />
+            <h2>此分享已加密</h2>
+            <p>请输入发送人提供的提取密码，验证后即可查看文件。</p>
+            <form className="public-password" onSubmit={(event) => { event.preventDefault(); findShare() }}>
               <input maxLength={128} type="password" value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} placeholder="请输入提取密码，最多 128 个字符" />
-              <button className="primary-button" onClick={findShare}><KeyRound size={15} /> 验证密码</button>
-            </div>
+              <button className="primary-button" type="submit" disabled={!password}><KeyRound size={15} /> 验证密码</button>
+            </form>
             <small>{password.length}/128</small>
-          </>
+            {actionError && <FeedbackMessage message={actionError} tone="error" />}
+          </div>
         ) : (
           <>
-            <p className="public-copy">{share.files?.length || 0} 个文件 · {formatBytes((share.files || []).reduce((sum, file) => sum + (Number(file.size) || 0), 0))} · {formatExpiry(share.expiresAt)}</p>
-            <div className="public-files">
-              {(share.files || []).map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={downloadBusy} />)}
+            <div className="sender">
+              <span className="avatar"><PrototypeAsset name="ico-user.png" size={28} /></span>
+              <div className="who"><b>鲲穹文件传输</b><small>临时分享 · {formatDate(share.createdAt)}</small></div>
             </div>
-            <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy || !(share.files || []).length}><Download size={17} /> {(share.files || []).length > 1 ? '下载全部文件' : '下载文件'}</button>
-            <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+            <div className="public-card share-card share-public-card">
+              <div className="card-bd">
+                <div className="pkg-head">
+                  <div><h3>{share.files?.length || 0} 个文件</h3><p className="tiny">共 {formatBytes(totalSize)} · 上传于 {formatDate(share.createdAt)}</p></div>
+                  <span className={`badge ${share.status === 'active' ? 'ok' : 'warn'}`}><i />{share.downloadLimit ? `剩余 ${share.remainingDownloads ?? 0} 次下载` : formatExpiry(share.expiresAt)}</span>
+                </div>
+                <div className="public-files share-file-list">
+                  {(share.files || []).map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={downloadBusy} />)}
+                </div>
+                <div className="share-actions">
+                  <button className="primary-button" onClick={downloadAll} disabled={downloadBusy || !(share.files || []).length}><Download size={17} /> {(share.files || []).length > 1 ? `全部下载（${formatBytes(totalSize)}）` : '下载文件'}</button>
+                  <button className="secondary-button" onClick={() => setQrOpen(true)} disabled={!share.qrDataUrl}><QrCode size={16} /> 二维码</button>
+                </div>
+                <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+              </div>
+            </div>
+            <p className="share-note"><PrototypeAsset name="ico-lock.png" size={18} /> 文件仅用于本次分享，到期后自动清理 · 由鲲穹文件传输提供</p>
           </>
         )}
-        {actionError && <FeedbackMessage message={actionError} tone="error" />}
+        {actionError && !data.requiresPassword && <FeedbackMessage message={actionError} tone="error" />}
         {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
+        {qrOpen && <QrPreviewModal title="扫码在手机上下载" detail="扫码后可直接预览并下载；如设置了密码，需先输入。" qrDataUrl={share.qrDataUrl} targetUrl={share.shareUrl} onClose={() => setQrOpen(false)} onCopyImage={copyShareQr} onCopyLink={() => copyTextToClipboard(share.shareUrl)} />}
       </div>
       <TeamJoinRequestCard enterpriseSlug={enterpriseSlug} />
     </PublicShell>
@@ -108,7 +270,10 @@ export function SharePage({ token, enterpriseSlug = '' }) {
 export function ShareManagePage({ token }) {
   const [share, setShare] = useState(null)
   const [error, setError] = useState('')
+  const [actionMessage, setActionMessage] = useState('')
+  const [actionTone, setActionTone] = useState('success')
   const [editing, setEditing] = useState(false)
+  const [qrOpen, setQrOpen] = useState(false)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
@@ -175,35 +340,145 @@ export function ShareManagePage({ token }) {
   const manageTarget = { kind: 'share', record: createShareRecord(share, 'my_sent'), data: share }
   const downloadFile = (file, fileIndex) => startDownload(createShareFileDownloadConfig(share, file, fileIndex))
   const previewFile = (file, fileIndex) => setPreviewItem(createShareFilePreviewConfig(share, file, fileIndex))
+  const copyShareUrl = async () => {
+    try {
+      await copyTextToClipboard(share.shareUrl)
+      setActionMessage('分享链接已复制')
+      setActionTone('success')
+      return true
+    } catch {
+      setActionMessage('当前浏览器不支持自动复制，请手动选中分享链接复制')
+      setActionTone('error')
+      return false
+    }
+  }
+  const copyShareQr = async () => {
+    try {
+      await copyImageToClipboard(share.qrDataUrl)
+      setActionMessage('二维码图片已复制')
+      setActionTone('success')
+    } catch {
+      const copied = await copyShareUrl()
+      if (copied) setActionMessage('当前浏览器不支持直接复制图片，已复制分享链接')
+    }
+  }
 
   return (
     <PublicShell>
-      <div className="public-card manage-card">
-        <a className="secondary-button manage-back-link" href={share.enterpriseUrl ? '/team?tab=resources' : '/?view=records'}><ArrowLeft size={16} aria-hidden="true" />{share.enterpriseUrl ? '返回团队资源' : '返回收发记录'}</a>
-        <p className="eyebrow">分享管理</p>
-        <div className="manage-title-row">
-          <h1>{share.files?.[0]?.name || '文件分享'}</h1>
-          <div className="manage-title-actions">
-            <button className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 编辑分享</button>
+      <div className="share-manage-page">
+        <header className="share-manage-heading">
+          <div>
+            <a className="manage-back-link" href={share.enterpriseUrl ? '/team?tab=resources' : '/?view=records'}><ArrowLeft size={15} />{share.enterpriseUrl ? '返回团队资源' : '返回收发记录'}</a>
+            <p className="eyebrow">分享管理</p>
+            <h1>{share.files?.[0]?.name || '文件分享'} <span className={`badge ${isActive ? 'ok' : 'warn'}`}><i />{shareStatusText(share.status)}</span></h1>
+            <p>创建于 {formatDate(share.createdAt)} · 管理链接含访问凭证，请勿公开转发</p>
           </div>
+          <div className="share-manage-actions">
+            <button className="secondary-button" onClick={copyShareUrl}><Link2 size={15} /> 复制链接</button>
+            <button className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 分享设置</button>
+          </div>
+        </header>
+        {actionMessage && <FeedbackMessage message={actionMessage} tone={actionTone} />}
+        <div className="manage-stats">
+          <div><span>下载次数</span><b>{share.downloadCount || 0}</b><small>{share.downloadLimit ? `上限 ${share.downloadLimit} 次` : '不限次数'}</small></div>
+          <div><span>剩余下载</span><b>{share.remainingDownloads ?? '不限'}</b><small>{share.downloadLimit ? '达到上限后链接失效' : '下载不设次数限制'}</small></div>
+          <div><span>剩余有效期</span><b>{formatExpiry(share.expiresAt)}</b><small>{share.expiresAt ? `到期 ${formatDate(share.expiresAt)}` : '长期有效'}</small></div>
+          <div><span>文件大小</span><b>{formatBytes(totalSize)}</b><small>{fileCount} 个文件</small></div>
         </div>
-        <p className="public-copy">{fileCount ? `${fileCount} 个文件 · ${formatBytes(totalSize)} · 状态：${shareStatusText(share.status)}` : `文件已清理 · 状态：${shareStatusText(share.status)}`}</p>
-        <div className="manage-list">
-          {fileCount ? share.files.map((file) => (
-            <div className="manage-submission" key={file.relativePath}>
-              <div><strong>{file.name}</strong><span>{file.relativePath} · {formatBytes(file.size)}</span></div>
-              <div className="manage-file-actions">{canPreviewFile(file) && <button className="ghost-icon" type="button" onClick={() => previewFile(file, share.files.indexOf(file))} disabled={!isActive} aria-label={`预览 ${file.name}`} title="预览文件"><Eye size={15} /></button>}<button className="ghost-icon" type="button" onClick={() => downloadFile(file, share.files.indexOf(file))} disabled={!isActive || downloadBusy} aria-label={`下载 ${file.name}`} title="下载文件"><Download size={15} /></button></div>
-            </div>
-          )) : (
-            <div className="empty-manage"><FileText size={25} /><span>分享文件已关闭或清理</span></div>
-          )}
+        <div className="manage-grid share-manage-grid">
+          <div className="share-manage-main">
+            <section className="public-card share-manage-files">
+              <div className="manage-panel-heading"><h2>文件列表</h2><span>支持在线预览的文件可直接打开</span></div>
+              <div className="manage-file-list">
+                {fileCount ? share.files.map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={!isActive || downloadBusy} />) : <div className="empty-manage"><FileText size={25} /><span>分享文件已关闭或清理</span></div>}
+              </div>
+            </section>
+            <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+          </div>
+          <aside className="share-manage-aside">
+            <section className="public-card share-info-card">
+              <div className="manage-panel-heading"><h2>分享信息</h2></div>
+              <dl className="sum-list"><div><dt>取件码</dt><dd className="mono">{share.code}</dd></div><div><dt>提取密码</dt><dd>{share.requiresPassword ? '已启用' : '未启用'}</dd></div><div><dt>下载限制</dt><dd>{share.downloadLimit ? `${share.downloadLimit} 次` : '不限次数'}</dd></div><div><dt>已下载</dt><dd>{share.downloadCount || 0} 次</dd></div><div><dt>到期时间</dt><dd>{share.expiresAt ? formatDate(share.expiresAt) : '长期有效'}</dd></div></dl>
+              {share.qrDataUrl && <button type="button" className="manage-qr-button" onClick={() => setQrOpen(true)} aria-label="放大分享二维码"><img src={share.qrDataUrl} alt="分享二维码" /><span>扫码取件 · 放大二维码</span></button>}
+            </section>
+            <section className="danger-zone"><h2>关闭分享</h2><p>关闭后链接和取件码立即失效，已下载文件不受影响。</p>{isActive ? <button className="secondary-button danger-lite" onClick={closeShare}><X size={15} /> 立即关闭</button> : <button className="secondary-button" onClick={() => reopenShare({})}><RefreshCw size={15} /> 重新开启</button>}</section>
+          </aside>
         </div>
       </div>
-      <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
       {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       {editing && <ManageItemModal target={manageTarget} onClose={() => setEditing(false)} onSave={saveShareSettings} onCloseTask={async () => { const closed = await closeShare(); if (closed) setEditing(false); return closed }} onReopenTask={async (payload) => { const reopened = await reopenShare(payload); if (reopened) setEditing(false); return reopened }} />}
+      {qrOpen && <QrPreviewModal title="分享二维码" detail={`取件码 ${share.code}`} qrDataUrl={share.qrDataUrl} targetUrl={share.shareUrl} onClose={() => setQrOpen(false)} onCopyImage={copyShareQr} onCopyLink={copyShareUrl} />}
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
+  )
+}
+
+// 提交成功：对齐原型 collect.js · collect-submitted（绿勾 + 回执 + 复制/再提交）。
+// 编号、文件数、时间、账号都来自服务端返回的真实 submission，不拼演示数据。
+function CollectionSubmittedPage({ collection, submission, onAgain }) {
+  const [copied, setCopied] = useState(false)
+  const files = submission.files || []
+  const totalBytes = files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
+  const account = submission.submitter?.email || submission.submitter?.phone || submission.submitter?.displayName || ''
+  const submittedAt = formatDate(submission.submittedAt)
+  useEffect(() => {
+    if (!copied) return undefined
+    const timer = setTimeout(() => setCopied(false), 2000)
+    return () => clearTimeout(timer)
+  }, [copied])
+  const copyReceipt = async () => {
+    const lines = [
+      `提交编号：${submission.id || '—'}`,
+      `收集任务：${collection.title}`,
+      `提交文件：${files.length} 个 · ${formatBytes(totalBytes)}`,
+      `提交时间：${submittedAt}`,
+      `关联账号：${account || '匿名提交'}`,
+    ]
+    try {
+      await copyTextToClipboard(lines.join('\n'))
+      setCopied(true)
+    } catch { /* 剪贴板不可用时保持原按钮文案，用户可手动复制 */ }
+  }
+  return (
+    <div className="public-card collection-state-card">
+      <PrototypeAsset className="collect-success-badge" name="act-success.png" size={64} />
+      <h2>文件提交成功</h2>
+      <p>收集人「{collection.ownerName || '收集人'}」已收到你的文件，无需重复提交。<br />如需补充材料，可在截止前再次提交。</p>
+      <div className="collect-receipt">
+        <div><span>提交编号</span><b>{submission.id || '—'}</b></div>
+        <div><span>提交文件</span><b>{files.length} 个 · {formatBytes(totalBytes)}</b></div>
+        <div><span>提交时间</span><b>{submittedAt}</b></div>
+        <div><span>关联账号</span><b>{account || '匿名提交'}</b></div>
+      </div>
+      <div className="collect-state-actions">
+        <button type="button" className="secondary-button" onClick={copyReceipt}><Copy size={15} /> {copied ? '已复制回执' : '复制回执'}</button>
+        <button type="button" className="primary-button" onClick={onAgain}>再提交一份</button>
+      </div>
+      <p className="collect-state-note">提交已记录，文件已完成安全检查。如需补充材料，请在截止前再次提交。</p>
+    </div>
+  )
+}
+
+// 收集已截止/已关闭：对齐原型 collect.js · collect-closed（灰钟 + 三项元信息 + 首页/登录）。
+function CollectionClosedPage({ info, signedIn }) {
+  const expired = info.state === 'expired'
+  const deadlineText = info.deadline ? formatDate(info.deadline) : '未设置截止时间'
+  const loginHref = `/api/auth/login?return_to=${encodeURIComponent('/?view=records')}`
+  return (
+    <div className="public-card collection-state-card is-closed">
+      <div className="collect-state-icon"><Clock3 size={27} /></div>
+      <h2>{expired ? '收集已截止' : '收集已关闭'}</h2>
+      <p>「{info.title || '收集任务'}」已于 {deadlineText} 停止收集。<br />如果你仍需要提交材料，请联系收集人重新开启。</p>
+      <div className="expired-meta">
+        <div><span>收集人</span><b>{info.ownerName || '收集人'}</b></div>
+        <div><span>已收到</span><b>{info.participantCount || 0} 位提交</b></div>
+        <div><span>截止时间</span><b>{deadlineText}</b></div>
+      </div>
+      <div className="collect-state-actions">
+        <a className="secondary-button" href="/">返回首页</a>
+        <a className="primary-button" href={signedIn ? '/?view=records' : loginHref}>{signedIn ? '查看我的提交' : '登录查看我的提交'}</a>
+      </div>
+    </div>
   )
 }
 
@@ -224,6 +499,8 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const [scanFailure, setScanFailure] = useState(null)
   const [completionPending, setCompletionPending] = useState(false)
   const [pendingUpload, setPendingUpload] = useState(null)
+  const [closedInfo, setClosedInfo] = useState(null)
+  const [submissionInfo, setSubmissionInfo] = useState(null)
   const [message, setMessage] = useState('')
   // 登录后提交：提交者身份由账号决定，不需要也不能手填；
   // 未登录时保留手填入口（匿名提交仍然可用）。
@@ -236,7 +513,11 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     apiRequest(`/api/collections/${token}${query}`).then((data) => {
       setCollection(data.collection)
       savePublicRecord(createCollectionRecord(data.collection, 'collect_from_me'))
-    }).catch((err) => setMessage(err.message))
+    }).catch((err) => {
+      // 410 走原型里的「收集已截止」页；其余错误仍是通用不可用页。
+      if (err.status === 410 && err.collectionMeta) setClosedInfo(err.collectionMeta)
+      setMessage(err.message)
+    })
     apiRequest('/api/auth/me').then(({ user: current }) => {
       setUser(current || null)
       if (current) setName((existing) => existing.trim() ? existing : (current.nickname || current.username || ''))
@@ -398,8 +679,10 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     }).then((result) => {
       if (submitRunRef.current !== submitRun) return
       const submittedAt = result.submission?.submittedAt || new Date().toISOString()
-      savePublicRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt, files: result.submission?.files || files }))
-      setMessage('提交成功，感谢你的文件')
+      const submittedFiles = result.submission?.files || files
+      savePublicRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt, files: submittedFiles }))
+      setSubmissionInfo({ submission: { ...result.submission, submittedAt, files: submittedFiles } })
+      setMessage('')
       setFiles([])
       setPendingUpload(null)
       setUploadPhase('idle')
@@ -424,17 +707,27 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       }
     })
   }
+  if (closedInfo) return <PublicShell className="collection-submit-shell"><CollectionClosedPage info={closedInfo} signedIn={signedIn} /></PublicShell>
+  if (collection && submissionInfo) return (
+    <PublicShell className="collection-submit-shell">
+      <CollectionSubmittedPage collection={collection} submission={submissionInfo.submission} onAgain={() => { setSubmissionInfo(null); setMessage('') }} />
+    </PublicShell>
+  )
   return (
     <PublicShell className="collection-submit-shell">
       <div className="public-card collection-submit-card">
-        <span className="public-icon"><Inbox size={24} /></span>
         {collection ? (
           <>
-            <p className="eyebrow">文件收集</p>
-            <h1>{collection.title}</h1>
-            <p className="public-copy">{collection.description}</p>
-            <div className="deadline-line"><Clock3 size={15} /> 截止 {formatDate(collection.deadline)}</div>
-            <CollectionLimitInfo allowedTypes={collection.allowedTypes} maxFileSizeMb={collection.maxFileSizeMb} />
+            <header className="collection-submit-hero">
+              <p className="eyebrow">文件收集</p>
+              <h1>{collection.title}</h1>
+              {collection.description && <p className="public-copy">{collection.description}</p>}
+              <div className="collection-submit-meta">
+                <div className="deadline-line"><Clock3 size={15} /> 截止 {formatDate(collection.deadline)}</div>
+                <CollectionLimitInfo allowedTypes={collection.allowedTypes} maxFileSizeMb={collection.maxFileSizeMb} compact />
+              </div>
+            </header>
+            <div className="collection-submit-body">
             {authChecked && (
               signedIn ? (
                 <div className="collection-identity signed-in">
@@ -448,7 +741,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                 </div>
               ) : (
                 <div className="collection-identity anonymous">
-                  <span className="collection-identity-avatar"><UserRound size={17} /></span>
+                  <span className="collection-identity-avatar"><PrototypeAsset name="ico-user.png" size={22} /></span>
                   <div className="collection-identity-copy">
                     <small>提交人</small>
                     <strong>当前未登录</strong>
@@ -469,7 +762,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
             <input ref={inputRef} type="file" multiple hidden disabled={submitting || completionPending} accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
             <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden disabled={submitting || completionPending} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
             <div className="public-drop collection-file-picker">
-              <UploadCloud size={24} />
+              <PrototypeAsset className="collection-drop-image" name="ico-cloud.png" width={58} height={48} />
               <strong>{files.length ? '继续添加文件或文件夹' : '选择要提交的文件或文件夹'}</strong>
               <span>支持追加选择，保留文件夹目录 · 单次最多 {MAX_FILES} 个文件</span>
               <div className="collection-picker-buttons">
@@ -491,9 +784,13 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
               {pendingUpload && !submitting && !completionPending && <button className="secondary-button wide" onClick={abandonUpload}><X size={16} /> 放弃本次上传</button>}
               <button className="primary-button wide" onClick={submit} disabled={submitting || uploadPhase === 'blocked' || !files.length || Boolean(selectionError) || !resumeMatches}>{pendingUpload ? <Play size={17} /> : <UploadCloud size={17} />} {submitting ? uploadPhase === 'finalizing' ? '正在完成提交...' : '提交中...' : uploadPhase === 'blocked' ? '风险文件已阻止' : completionPending ? '查询处理结果' : uploadPhase === 'scan-failed' ? '重试安全检查' : pendingUpload ? '继续上传' : '提交文件'}</button>
             </div>
+            </div>
           </>
         ) : (
-          <StateBlock title="无法打开收集任务" detail={message || '正在加载任务'} />
+          <>
+            <span className="public-icon"><Inbox size={24} /></span>
+            <StateBlock title="无法打开收集任务" detail={message || '正在加载任务'} />
+          </>
         )}
       </div>
       <TeamJoinRequestCard enterpriseSlug={enterpriseSlug} />
@@ -506,6 +803,7 @@ export function CollectionManagePage({ token }) {
   const [error, setError] = useState('')
   // destroyed 状态已移除：销毁收集任务在记录页完成（DELETE 后管理页 GET 会 404，走 error 分支）
   const [editing, setEditing] = useState(false)
+  const [submissionPage, setSubmissionPage] = useState(1)
   const [actionError, setActionError] = useState('')
   const [actionMessage, setActionMessage] = useState('')
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
@@ -616,53 +914,169 @@ export function CollectionManagePage({ token }) {
   if (error) return <PublicShell><StateBlock title="管理链接不可用" detail={error} /></PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   const isActive = data.status === 'active'
+  const submissions = data.submissions || []
+  const totalFileCount = submissions.reduce((sum, submission) => sum + (submission.files?.length || 0), 0)
+  const usedBytes = Number(data.usedBytes) || 0
+  const totalBytes = submissions.reduce((sum, submission) => sum + submission.files.reduce((n, file) => n + (Number(file.size) || 0), 0), 0)
+  const allFiles = submissions.flatMap((submission) => submission.files || [])
+  const allApproved = allFiles.length > 0 && allFiles.every((file) => file.reviewStatus === 'approved')
+  const capacityBytes = Number(data.capacityBytes) || 0
+  const capacityPercent = capacityBytes ? Math.min(100, (usedBytes / capacityBytes) * 100) : 0
+  const capacityText = capacityBytes
+    ? `占收集额度 ${capacityPercent > 0 && capacityPercent < 0.1 ? '<0.1' : capacityPercent.toFixed(1).replace(/\.0$/, '')}%`
+    : '已收文件占用'
+  const typesText = (data.allowedTypes || []).length ? data.allowedTypes.join(' / ') : '全部格式'
+  const sizeText = data.maxFileSizeMb ? `${Math.round(data.maxFileSizeMb)} MB` : '按套餐上限'
+  const deadlineText = data.deadline ? formatDate(data.deadline) : '未设置截止时间'
+  const remainingText = (() => {
+    if (!isActive) return collectionStatusText(data.status, data.deadline)
+    if (!data.deadline) return '不限时'
+    const diff = new Date(data.deadline).getTime() - Date.now()
+    if (diff <= 0) return '已截止'
+    const days = Math.floor(diff / 86400000)
+    const hours = Math.floor((diff % 86400000) / 3600000)
+    if (days > 0) return `${days} 天 ${hours} 时`
+    const minutes = Math.max(1, Math.floor((diff % 3600000) / 60000))
+    return hours > 0 ? `${hours} 小时 ${minutes} 分` : `${minutes} 分`
+  })()
+  const pageSize = 6
+  const pageCount = Math.max(1, Math.ceil(submissions.length / pageSize))
+  const safePage = Math.min(submissionPage, pageCount)
+  const pageSubmissions = submissions.slice((safePage - 1) * pageSize, safePage * pageSize)
+  // 导出清单是客户端根据真实提交生成 CSV，不额外请求服务端。
+  const exportSubmissionsCsv = () => {
+    const rows = [['提交人', '提交账号', '提交时间', '文件数', '文件总大小', '文件名', '文件大小']]
+    for (const submission of submissions) {
+      const size = submission.files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
+      for (const file of submission.files) {
+        rows.push([submission.participantName, submission.submitter?.displayName || '', formatDate(submission.submittedAt), submission.files.length, formatBytes(size), file.name, formatBytes(file.size)])
+      }
+    }
+    const csv = '\ufeff' + rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${String(data.title || '收集清单').replace(/[\\/:*?"<>|]/g, '_')}.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    setActionMessage('已导出提交清单')
+  }
   const manageTarget = { kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data }
   return (
     <PublicShell>
-      <div className="public-card manage-card">
-        <p className="eyebrow">收集任务管理</p>
-        <div className="manage-title-row">
-          <h1>{data.title}</h1>
-          <div className="manage-title-actions">
-            <button className="secondary-button" disabled={!data.publicUrl} onClick={() => copyPublicValue(data.publicUrl)}><Link2 size={15} /> 复制提交链接</button>
-            <button className="secondary-button" disabled={!data.qrDataUrl} onClick={() => setQrOpen(true)}><QrCode size={15} /> 查看二维码</button>
-            <button className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 编辑任务</button>
-            {isActive ? (
-              <button className="secondary-button danger-lite" onClick={closeTask}><X size={15} /> 关闭收集任务</button>
-            ) : canReopenCollection(data) ? (
-              <button className="secondary-button" onClick={() => reopenTask()}><RefreshCw size={15} /> 重新开启任务</button>
-            ) : (
-              <button className="secondary-button" onClick={() => setEditing(true)}><CalendarDays size={15} /> 延长后开启</button>
-            )}
+      <div className="cm-page">
+        <div className="cm-crumb"><a href="/?view=collect">收集文件</a><i>/</i><span>收集管理</span></div>
+        <div className="cm-head">
+          <div className="cm-head-copy">
+            <h1>{data.title}<ProtoBadge tone={isActive ? 'ok' : 'warn'}>{collectionStatusText(data.status, data.deadline)}</ProtoBadge></h1>
+            <p>截止 {deadlineText} · 无需登录 · {typesText} ≤ {sizeText}</p>
+          </div>
+          <div className="cm-head-actions">
+            <button type="button" className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 收集设置</button>
+            <button type="button" className="secondary-button" disabled={!data.publicUrl} onClick={() => copyPublicValue(data.publicUrl)}><Link2 size={15} /> 提交链接</button>
           </div>
         </div>
-        <p className="public-copy">{data.submissions.length} 份提交 · 状态：{collectionStatusText(data.status, data.deadline)}</p>
         {actionMessage && <FeedbackMessage message={actionMessage} tone="success" />}
         {actionError && <FeedbackMessage message={actionError} tone="error" />}
-        <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
-        {data.submissions.length > 0 && <button className="primary-button wide collection-download-all" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
-        <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
-        <div className="manage-list collection-manage-list" role="region" aria-label="已收提交列表" tabIndex={0}>
-          {data.submissions.length ? data.submissions.map((submission) => (
-            <div className="manage-submission" key={submission.id}>
-              <div>
-                <div className="collection-submission-who">
-                  <strong>{submission.participantName}</strong>
-                  {submission.submitter
-                    ? <span className="submission-account-badge" title={`鲲穹账号：${submission.submitter.displayName || submission.submitter.id}`}><UserRound size={12} /> 账号提交</span>
-                    : <span className="submission-anon-badge">匿名提交</span>}
+        <div className="cm-stats">
+          <div className="cm-stat"><span>提交人数</span><b>{data.participantCount ?? submissions.length}</b><small>{submissions.length} 份提交</small></div>
+          <div className="cm-stat"><span>收到文件</span><b>{totalFileCount}</b><small>{allFiles.length ? (allApproved ? '全部通过安全检查' : '含未完成安全检查的文件') : '暂无文件'}</small></div>
+          <div className="cm-stat"><span>已用容量</span><b>{formatBytes(usedBytes)}</b><small>{capacityText}</small></div>
+          <div className="cm-stat"><span>{isActive ? '剩余时间' : '任务状态'}</span><b>{remainingText}</b><small>{deadlineText} 截止</small></div>
+        </div>
+        <div className="cm-grid">
+          <section className="cm-main" aria-label="已收提交">
+            <div className="cm-card">
+              <div className="cm-card-head">
+                <h2>已收提交</h2>
+                <div className="cm-card-actions">
+                  <button type="button" className="secondary-button" disabled={!submissions.length || downloadBusy} onClick={downloadAll}><Download size={14} /> 全部下载</button>
+                  <button type="button" className="secondary-button" disabled={!submissions.length} onClick={exportSubmissionsCsv}><FileText size={14} /> 导出清单</button>
                 </div>
-                <span>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件</span>
-                <div className="manage-file-names" role="region" aria-label={`${submission.participantName}的文件列表`} tabIndex={0}>{submission.files.map((file, fileIndex) => <span className="manage-file-chip" key={`${submission.id}-${file.relativePath}`}>{canPreviewFile(file) && <button className="manage-file-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={13} /></button>}<button onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><FileText size={13} /> <FileFormatBadge file={file} /> {file.name}</button></span>)}</div>
               </div>
-              <div className="manage-submission-actions">
-                <button className="secondary-button" onClick={() => downloadSubmissionItem(submission)} disabled={downloadBusy}><Download size={15} /> 下载</button>
-                <button className="secondary-button danger-lite" onClick={() => deleteSubmission(submission.id)}><Trash2 size={15} /> 删除提交</button>
+              <div className="cm-card-body">
+                <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+                {pageSubmissions.length ? pageSubmissions.map((submission) => {
+                  const submissionSize = submission.files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
+                  return (
+                    <article className="cm-submission" key={submission.id}>
+                      <div className="cm-sub-head">
+                        <span className="cm-avatar">{(submission.participantName || '匿').slice(0, 1)}</span>
+                        <div className="cm-sub-copy">
+                          <b>
+                            {submission.participantName || '匿名提交'}
+                            {submission.submitter
+                              ? <em className="cm-account-tag"><UserRound size={11} /> 账号提交</em>
+                              : <em className="cm-anon-tag">匿名提交</em>}
+                          </b>
+                          <small>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件 · {formatBytes(submissionSize)}</small>
+                        </div>
+                        <button type="button" className="secondary-button" disabled={downloadBusy} onClick={() => downloadSubmissionItem(submission)}><Download size={14} /> 下载全部</button>
+                        <button type="button" className="ghost-icon cm-delete" title="删除提交" aria-label={`删除 ${submission.participantName || '匿名'} 的提交`} onClick={() => deleteSubmission(submission.id)}><Trash2 size={15} /></button>
+                      </div>
+                      <div className="cm-files">
+                        {submission.files.map((file, fileIndex) => (
+                          <div className="cm-file-row" key={`${submission.id}-${file.relativePath || file.name}`}>
+                            <PrototypeFileIcon name={file.name} fallback={FileText} size={20} />
+                            <span title={file.name}>{file.name}</span>
+                            <small>{formatBytes(file.size)}</small>
+                            {canPreviewFile(file) && <button type="button" className="ghost-icon" aria-label={`预览 ${file.name}`} title="预览" onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  )
+                }) : (
+                  <div className="cm-empty"><Inbox size={25} /><span>暂时还没有人提交文件</span></div>
+                )}
+              </div>
+              <div className="cm-card-foot">
+                <span>共 {data.participantCount ?? submissions.length} 位提交人 · {totalFileCount} 个文件 · {formatBytes(usedBytes || totalBytes)}</span>
+                {pageCount > 1 && (
+                  <div className="cm-pager">
+                    <button type="button" className="secondary-button" disabled={safePage <= 1} onClick={() => setSubmissionPage(Math.max(1, safePage - 1))}>上一页</button>
+                    <span>{safePage} / {pageCount}</span>
+                    <button type="button" className="secondary-button" disabled={safePage >= pageCount} onClick={() => setSubmissionPage(Math.min(pageCount, safePage + 1))}>下一页</button>
+                  </div>
+                )}
               </div>
             </div>
-          )) : (
-            <div className="empty-manage"><Inbox size={25} /><span>暂时还没有人提交文件</span></div>
-          )}
+          </section>
+          <aside className="cm-aside">
+            <div className="cm-card cm-info-card">
+              <div className="cm-card-head"><h2>任务信息</h2></div>
+              <div className="cm-card-body">
+                <dl className="cm-sum">
+                  <div><dt>提交链接</dt><dd className="cm-link" title={data.publicUrl}>{data.publicUrl}</dd></div>
+                  <div><dt>截止时间</dt><dd>{deadlineText}</dd></div>
+                  <div><dt>允许类型</dt><dd>{typesText}</dd></div>
+                  <div><dt>单文件上限</dt><dd>{sizeText}</dd></div>
+                  <div><dt>提交人身份</dt><dd>无需登录 · 支持匿名提交</dd></div>
+                </dl>
+                {data.qrDataUrl && <img className="cm-qr" src={data.qrDataUrl} alt="收集任务二维码" />}
+                <p className="cm-qr-note">扫码提交材料</p>
+              </div>
+            </div>
+            {isActive ? (
+              <div className="cm-danger">
+                <h3><AlertTriangle size={15} /> 关闭收集</h3>
+                <p>关闭后提交链接立即失效，已收到的文件仍会保留。</p>
+                <button type="button" className="cm-danger-button" onClick={closeTask}>立即关闭</button>
+              </div>
+            ) : (
+              <div className="cm-closed-card">
+                <h3><Clock3 size={15} /> 任务{collectionStatusText(data.status, data.deadline)}</h3>
+                <p>提交链接当前不可用；已收到的文件仍保留在上方，可随时下载。</p>
+                {canReopenCollection(data) ? (
+                  <button type="button" className="secondary-button" onClick={() => reopenTask()}><RefreshCw size={15} /> 重新开启任务</button>
+                ) : (
+                  <button type="button" className="secondary-button" onClick={() => setEditing(true)}><CalendarDays size={15} /> 延长后开启</button>
+                )}
+              </div>
+            )}
+          </aside>
         </div>
         {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
       </div>

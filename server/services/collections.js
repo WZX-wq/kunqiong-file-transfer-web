@@ -15,7 +15,7 @@ import {
   httpError
 } from '../lib/http.js'
 import {
-  authSessionFromRequest, currentCollectionStatus, fileListSize, getOrigin
+  accountUserById, authSessionFromRequest, currentCollectionStatus, displayAccountName, fileListSize, getOrigin
 } from '../services/account.js'
 import {
   collectionCapacityBytes, enterpriseOrganizationForUser, collectionTypesInput,
@@ -25,6 +25,25 @@ import { integerInput, objectInput, textInput } from '../lib/input-validation.js
 import path from 'node:path'
 import QRCode from 'qrcode'
 
+// 收集人展示名：公开提交页要写「收集人「xxx」已收到」，只暴露昵称/用户名，不暴露邮箱手机号。
+export function collectionOwnerName(task = {}) {
+  const owner = task.ownerUserId ? accountUserById(task.ownerUserId) : null
+  return owner ? displayAccountName(owner) : '收集人'
+}
+
+// 410（已关闭/已截止）时给公开提交页的脱敏元信息：标题、截止时间、参与人数、收集人展示名。
+export function collectionClosedMeta(task = {}) {
+  const status = currentCollectionStatus(task)
+  const deadlinePassed = Boolean(task.deadline && new Date(task.deadline).getTime() <= Date.now())
+  return {
+    state: status === 'expired' || deadlinePassed ? 'expired' : 'closed',
+    title: task.title || '',
+    deadline: task.deadline || '',
+    participantCount: collectionParticipantCount(task),
+    ownerName: collectionOwnerName(task),
+  }
+}
+
 export function publicCollection(task, req, includeManage = false) {
   const organization = task.ownerUserId ? enterpriseOrganizationForUser(task.ownerUserId) : null
   const status = currentCollectionStatus(task)
@@ -33,6 +52,7 @@ export function publicCollection(task, req, includeManage = false) {
     token: task.token,
     title: task.title,
     description: task.description,
+    ownerName: collectionOwnerName(task),
     deadline: task.deadline,
     allowedTypes: task.allowedTypes,
     maxFileSizeMb: Math.min(collectionFileLimitBytes(task), includeManage ? Infinity : personalEntitlements(authSessionFromRequest(req)?.user?.id).singleFileLimitBytes) / 1024 ** 2,

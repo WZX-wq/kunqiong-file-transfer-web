@@ -5,6 +5,7 @@ import { SETTINGS_NAV_ITEMS } from '../lib/constants.js'
 import { bindAccountTarget, normalizeFileCleanupSettings, normalizeNoticeSettings, requestAccountBindCode, saveCloudFileCleanupSettings, saveCloudNoticeSettings } from '../lib/records.js'
 import { ArrowLeft, BadgeCheck, Building2, Check, CheckCircle2, ChevronRight, HardDrive, ImageIcon, KeyRound, RotateCcw, Save, Send, ShieldCheck, Trash2, UserRound, Users, X } from 'lucide-react'
 import { UserAvatar, displayUserSubtitle } from '../components/ui.jsx'
+import { PrototypeAsset } from '../components/prototype-asset.jsx'
 import { displayUserName, formatBytes, formatDate, formatPlanPrice, maskPhone, planDaysRemaining } from '../lib/format.js'
 import { useRemotePlanPricing } from '../hooks.js'
 import { mergePlanPricing } from '../lib/api.js'
@@ -200,7 +201,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
             <>
               <SettingsPanelHeader eyebrow="账户设置" title="文件清理" detail="控制已过期文件是否自动删除，清理后才会释放账号容量。" onBack={onBack} />
               <div className="settings-notice-group file-cleanup-settings">
-                <h2><Trash2 size={16} /> 过期文件自动清理</h2>
+                <h2><PrototypeAsset className="settings-prototype-heading-icon" name="act-trash.png" size={22} /> 过期文件自动清理</h2>
                 <NoticeToggle
                   label="自动删除过期文件"
                   detail="关闭后文件不会自动删除，但会继续占用空间；开启后按下方规则清理。"

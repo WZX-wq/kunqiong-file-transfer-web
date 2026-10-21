@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>鲲穹文件传输 · 视觉方向与 Token 系统</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0A1B33;--ink-2:#22334D;--ink-3:#4B5F79;--ink-4:#7A8DA6;
+  --blue:#1677FF;--blue-700:#0B5AD9;--blue-100:#E7F0FF;--blue-50:#F4F8FF;
+  --cyan:#0FBED2;--line:#DCE6F5;--line-2:#C6D5EB;
+  --green:#0E9F6E;--amber:#9B6300;--red:#C0392B;
+  --sans:"Inter","PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:#fff;color:var(--ink);font-family:var(--sans);font-size:15px;line-height:26px;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4,p,ul,ol,dl,dd,dt,figure{margin:0}
+ul,ol{padding:0;list-style:none}
+a{color:inherit}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.wrap{width:1120px;max-width:calc(100% - 64px);margin:0 auto}
+
+/* 顶栏 */
+.head{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.92);backdrop-filter:saturate(1.2) blur(6px);border-bottom:1px solid var(--line)}
+.head__in{height:66px;display:flex;align-items:center;gap:28px}
+.brand{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:600;letter-spacing:-.015em;text-decoration:none}
+.brand small{font-size:13px;color:var(--ink-4);font-weight:400;letter-spacing:.08em;margin-left:1px}
+.head nav{margin-left:auto;display:flex;gap:24px;font-size:13px}
+.head nav a{color:var(--ink-3);text-decoration:none}
+.head nav a:hover{color:var(--blue-700)}
+.head .btn{height:32px;font-size:13px;padding:0 13px}
+
+/* 通用 */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:38px;padding:0 16px;border-radius:8px;border:1px solid var(--line-2);background:#fff;color:var(--ink-2);font-size:13.5px;font-weight:500;text-decoration:none;font-family:inherit;cursor:pointer}
+.btn--primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn--sm{height:30px;padding:0 11px;font-size:13px;border-radius:6px}
+.tag{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 7px;border-radius:4px;font-size:13px;font-weight:500;background:var(--blue-50);color:var(--blue-700);border:1px solid var(--line);line-height:1}
+.tag--ok{background:#EAF7F1;color:#0A7350;border-color:#CDE7DB}
+.tag--live{background:#E8FAFC;color:#076C79;border-color:#C8EDF2}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+
+/* Hero */
+.hero{padding:72px 0 56px;border-bottom:1px solid var(--line)}
+.hero__grid{display:grid;grid-template-columns:1fr 396px;gap:64px;align-items:center}
+.kicker{font-size:13px;color:var(--ink-4);letter-spacing:.02em;display:flex;gap:10px;align-items:center}
+.kicker b{color:var(--blue-700);font-weight:500}
+.hero h1{font-size:44px;line-height:56px;font-weight:600;letter-spacing:-.03em;margin-top:16px}
+.hero p{font-size:15.5px;line-height:27px;color:var(--ink-3);margin-top:18px;max-width:520px}
+.hero p b{color:var(--ink);font-weight:600}
+.meta{display:flex;gap:28px;margin-top:28px;font-size:13px;color:var(--ink-4)}
+.meta span b{display:block;color:var(--ink);font-size:13px;font-weight:500;margin-bottom:1px}
+
+/* 票根 */
+.ticket{border:1px solid var(--line-2);border-radius:8px;background:#fff;box-shadow:0 2px 4px rgba(10,27,51,.04),0 24px 48px -30px rgba(10,27,51,.28);overflow:hidden}
+.ticket__main{padding:22px 24px 20px}
+.ticket__cut{position:relative;border-top:1px dashed var(--line-2)}
+.ticket__cut::before,.ticket__cut::after{content:"";position:absolute;top:-9px;width:16px;height:16px;border-radius:50%;background:#fff;border:1px solid var(--line-2)}
+.ticket__cut::before{left:-9px}.ticket__cut::after{right:-9px}
+.ticket__foot{padding:12px 24px;display:flex;align-items:center;justify-content:space-between;background:#FCFDFF;font-size:13px;color:var(--ink-3)}
+.code{font-family:var(--mono);font-size:34px;line-height:42px;letter-spacing:.15em;font-weight:500}
+.label{font-size:13px;color:var(--ink-3)}
+
+/* 章节 */
+.sec{padding:56px 0;border-bottom:1px solid var(--line)}
+.sec__hd{display:grid;grid-template-columns:220px 1fr;gap:48px;margin-bottom:32px}
+.sec__hd h2{font-size:24px;line-height:34px;font-weight:600;letter-spacing:-.015em}
+.sec__hd .note{font-size:13.5px;line-height:24px;color:var(--ink-3);margin-top:8px;max-width:640px}
+.sec__label{font-size:13px;color:var(--ink-4);padding-top:6px}
+.sec__label .mono{color:var(--blue-700)}
+
+/* 主张 */
+.thesis{display:grid;grid-template-columns:1fr 1fr;gap:40px}
+.thesis p{font-size:14.5px;line-height:26px;color:var(--ink-3)}
+.thesis p + p{margin-top:14px}
+.thesis strong{color:var(--ink);font-weight:600}
+.pull{border-left:2px solid var(--blue);padding:4px 0 4px 18px;font-size:16px;line-height:28px;color:var(--ink);font-weight:500}
+
+/* 色板 */
+.swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.sw{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
+.sw__chip{height:96px;position:relative}
+.sw__bd{padding:12px 14px 14px}
+.sw__name{font-size:13px;font-weight:600;display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.sw__name code{font-family:var(--mono);font-size:13px;color:var(--ink-3);font-weight:400;letter-spacing:.02em}
+.sw__use{font-size:13px;line-height:18px;color:var(--ink-4);margin-top:4px}
+.ratio{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--ink-4);margin-top:7px;font-family:var(--mono)}
+
+/* 字体 */
+.typerow{display:grid;grid-template-columns:220px 1fr;gap:48px;padding:22px 0;border-top:1px solid var(--line)}
+.typerow:first-of-type{border-top:0;padding-top:0}
+.spec{font-size:13px;color:var(--ink-4);line-height:22px}
+.spec b{display:block;font-size:13px;color:var(--ink);font-weight:600;margin-bottom:4px}
+.spec .mono{color:var(--ink-3)}
+.sample{font-size:34px;line-height:46px;letter-spacing:-.02em;font-weight:600}
+.sample--body{font-size:15px;line-height:27px;font-weight:400;letter-spacing:0;color:var(--ink-3);max-width:560px}
+.sample--mono{font-family:var(--mono);font-size:22px;letter-spacing:.12em}
+
+table.spec-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+table.spec-table th{text-align:left;font-size:13px;font-weight:500;color:var(--ink-4);padding:9px 12px;border-bottom:1px solid var(--line);background:var(--blue-50)}
+table.spec-table td{padding:10px 12px;border-bottom:1px solid var(--line);color:var(--ink-2);font-size:13px}
+table.spec-table td.mono{color:var(--ink-3)}
+table.spec-table tr:last-child td{border-bottom:0}
+
+/* 版式 */
+.grid-demo{display:grid;grid-template-columns:1fr 1fr;gap:36px;align-items:start}
+pre.wire{font-family:var(--mono);font-size:13px;line-height:18px;color:var(--ink-3);background:var(--blue-50);border:1px solid var(--line);border-radius:8px;padding:18px;overflow:auto;margin:0}
+.scale{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1px solid var(--line);border-radius:6px;padding:8px 11px;font-size:13px;color:var(--ink-3);background:#fff}
+.chip b{color:var(--ink);font-weight:600;font-family:var(--mono);font-size:13px}
+.radii{display:flex;gap:14px;margin-top:6px}
+.radii div{width:96px;height:72px;border:1px solid var(--line-2);background:var(--blue-50);display:flex;align-items:flex-end;justify-content:center;text-align:center;font-size:13px;color:var(--ink-4);padding-bottom:6px;line-height:16px}
+.sh{height:64px;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--ink-4);border:1px solid #EDF3FB}
+
+/* 组件展台 */
+.demo{border:1px solid var(--line);border-radius:8px;padding:20px;background:#fff}
+.demo h4{font-size:13px;color:var(--ink-4);font-weight:500;margin-bottom:14px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.demo-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.input{height:38px;border:1px solid var(--line-2);border-radius:8px;display:flex;align-items:center;padding:0 12px;font-size:13px;color:var(--ink);background:#fff;gap:8px}
+.input.focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(22,119,255,.12)}
+.bar{height:6px;border-radius:3px;background:#E7EFFA;overflow:hidden;width:220px}
+.bar i{display:block;height:100%;background:var(--blue);border-radius:3px}
+.bar.live i{background:linear-gradient(90deg,var(--blue),var(--cyan))}
+.sw2{width:38px;height:21px;border-radius:11px;background:var(--blue);position:relative}
+.sw2::after{content:"";position:absolute;top:2px;right:2px;width:17px;height:17px;border-radius:50%;background:#fff}
+.ftype{width:30px;height:36px;border-radius:4px;display:inline-flex;align-items:flex-end;justify-content:center;font-family:var(--mono);font-size:13px;padding-bottom:5px;border:1px solid;line-height:1}
+
+
+/* 线框 */
+.wf{border:1px solid var(--line);border-radius:8px;background:#fff;overflow:hidden;font-size:13px;color:var(--ink-4);box-shadow:0 1px 2px rgba(10,27,51,.04)}
+.wf__top{height:34px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 12px;background:var(--blue-50);color:var(--ink-3)}
+.wf__top span{font-family:var(--mono);font-size:13px;letter-spacing:.02em}
+.wf__top i{font-style:normal;font-size:13px;color:var(--ink-4)}
+.wf__body{padding:12px 12px 12px}
+.wf__hd{display:flex;justify-content:space-between;align-items:baseline;padding:0 2px 9px;border-bottom:1px dashed var(--line-2);margin-bottom:10px}
+.wf__hd b{font-size:13px;color:var(--ink);font-weight:600}
+.wf__hd i{font-style:normal;font-size:13px;color:var(--ink-4)}
+.wf__panel{border:1px solid var(--line-2);border-radius:4px;overflow:hidden}
+.wf__line{height:27px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink-4)}
+.wf__line:last-child{border-bottom:0}
+.wf__line span{font-family:var(--mono);font-size:13px;letter-spacing:.02em}
+.wf__line i{font-style:normal;font-size:13px;color:#9EB0C6}
+.wf__line--tb{height:30px;background:#FCFDFF}
+.wf__line--th{height:24px;background:var(--blue-50);color:var(--ink-3)}
+.wf__line--pg{height:30px;background:#FCFDFF}
+.sk{display:block;height:6px;border-radius:3px;background:#E8EFFA}
+.tdot{width:22px;height:8px;border-radius:4px;background:#EAF7F1;display:block}
+.wf__foot{display:flex;justify-content:space-between;padding:8px 2px 0;font-family:var(--mono);font-size:13px;color:#9EB0C6}
+
+/* 自检 */
+.checklist{border-top:1px solid var(--line)}
+.check{display:grid;grid-template-columns:200px 1fr;gap:32px;padding:20px 0;border-bottom:1px solid var(--line)}
+.check dt{font-size:13px;color:var(--ink-4);line-height:24px}
+.check dd{font-size:14px;line-height:25px;color:var(--ink-2)}
+.check dd b{color:var(--ink);font-weight:600}
+.check dd span{color:var(--ink-3)}
+.notes{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:28px}
+.notes h4{font-size:13px;font-weight:600;margin-bottom:6px}
+.notes p{font-size:13px;line-height:21px;color:var(--ink-3)}
+
+/* 页脚 */
+.foot{padding:40px 0 56px;display:flex;align-items:flex-start;justify-content:space-between;gap:32px;flex-wrap:wrap}
+.foot p{font-size:13px;color:var(--ink-4);line-height:21px}
+.foot .btn{height:34px;font-size:13px}
+
+@media (max-width:980px){
+  .hero__grid,.thesis,.grid-demo,.demo-grid{grid-template-columns:1fr;gap:28px}
+  .sec__hd{grid-template-columns:1fr;gap:10px}
+  .swatches{grid-template-columns:1fr 1fr}
+  .typerow,.check{grid-template-columns:1fr;gap:10px}
+  .notes{grid-template-columns:1fr}
+  .hero h1{font-size:34px;line-height:44px}
+  .head nav{display:none}
+  .wrap{max-width:calc(100% - 40px)}
+}
+@media (max-width:620px){
+  .swatches{grid-template-columns:1fr}
+  .hero{padding:44px 0 40px}
+  .sec{padding:40px 0}
+  .sample--mono{font-size:16px;letter-spacing:.06em;white-space:normal;overflow-wrap:anywhere}
+  .sample{font-size:27px;line-height:38px}
+  .demo .row[style*="grid"]{grid-template-columns:1fr!important}
+  .meta{gap:16px;flex-wrap:wrap}
+  .head__in{gap:12px}
+  .foot{flex-direction:column;gap:16px}
+}
+.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.table-wrap table{min-width:560px}
+</style>
+</head>
+<body>
+
+<header class="head">
+  <div class="wrap head__in">
+    <a class="brand" href="index.html">
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8.4" fill="#1677FF"/><g fill="#fff"><circle cx="11.5" cy="19" r="4.6"/><circle cx="17.8" cy="16.8" r="5.6"/><circle cx="22.1" cy="19.4" r="3.8"/><rect x="10.6" y="18" width="12.8" height="5" rx="2.5"/></g><g fill="none" stroke="#1677FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16.7 21.8V13.4"/><path d="M13.4 16.7 16.7 13.4l3.3 3.3"/></g></svg>
+      鲲穹<small>文件传输</small>
+    </a>
+    <nav>
+      <a href="#thesis">主张</a>
+      <a href="#color">颜色</a>
+      <a href="#type">字体</a>
+      <a href="#layout">版式</a>
+      <a href="#components">组件</a>
+      <a href="#detail">细节</a>
+      <a href="#review">自检</a>
+    </nav>
+    <a class="btn btn--primary" href="index.html">查看 36 屏原型</a>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap hero__grid">
+      <div>
+        <div class="kicker"><b>视觉方向 v2</b><span>2026-10-19</span><span>桌面端 1440 × 1024</span></div>
+        <h1>把传输做成<br>一张可核对的凭证。</h1>
+        <p>鲲穹卖的不是“云盘”，是一次可以核对、可以追溯的交付：<b>谁发的、几个文件、多大、什么时候过期、扫描过没有。</b>这些字段决定了整套视觉——发丝级的分隔线、等宽的数字、可读的表格，以及一张真正像取件单的票根。</p>
+        <div class="meta">
+          <span><b>36 屏</b>高保真原型</span>
+          <span><b>6 组</b>核心流程</span>
+          <span><b>1 处</b>刻意用力</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="ticket" style="box-shadow:7px 7px 0 -1px #F2F7FF,7px 7px 0 0 #D9E6F7">
+          <div class="ticket__main">
+            <div class="row" style="justify-content:space-between;font-family:var(--mono);font-size:13px;color:var(--ink-4);letter-spacing:.06em">
+              <span>TRANSFER RECEIPT</span><span>NO. 2026-1019-4837</span>
+            </div>
+            <div class="row" style="justify-content:space-between;margin-top:14px">
+              <span class="label">取件码 / Pickup</span>
+              <span class="tag tag--ok"><i class="dot"></i>扫描通过</span>
+            </div>
+            <div class="code" style="margin-top:8px">483 917</div>
+            <div class="label" style="margin-top:6px;color:var(--ink-4)">设计交付_2026Q3 · 3 个文件 · 248.6 MB</div>
+          </div>
+          <div class="ticket__cut"></div>
+          <div class="ticket__foot" style="align-items:flex-end">
+            <div>
+              <div style="font-family:var(--mono);font-size:13px;color:var(--ink-4);letter-spacing:.06em">LINK / 分享链接</div>
+              <div class="mono" style="font-size:13px;color:var(--ink-2);margin-top:3px">kunqiong.cn/s/7Kd2mQ</div>
+            </div>
+            <div style="width:112px;height:24px;background:repeating-linear-gradient(90deg,#061529 0 2px,transparent 2px 4px,#061529 4px 5px,transparent 5px 8px,#061529 8px 10px,transparent 10px 13px)" aria-hidden="true"></div>
+          </div>
+        </div>
+        <p style="font-size:13px;line-height:19px;color:var(--ink-4);margin-top:12px">取件码是全站唯一使用等宽字的正文内容——它不是装饰，是用户要念给对方听的一串数字。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="thesis">
+    <div class="wrap">
+      <div class="sec__hd">
+        <div class="sec__label">主题与主张</div>
+        <div>
+          <h2>先定主题，再定长相</h2>
+          <p class="note">brief 已经锁死了“现代企业级、可靠、安全、克制的蓝色科技感”。真正要决定的是：这份克制落在什么形状上。我们选择落在“凭证”上，而不是通用 SaaS 的圆角卡片套件上。</p>
+        </div>
+      </div>
+
+      <div class="thesis">
+        <div>
+          <p class="pull">行业是文件传输，产品真正的对象却是取件码、有效期、扫描状态和传输记录——这些都属于票据，不属于内容。</p>
+          <p>所以界面借用了运单与对账单的语言：<strong>一条贯穿的发丝线代替卡片堆叠</strong>，数据右对齐、数字用等宽、状态用极小的彩色圆点。整页只有一个元素被允许“重”：那张带虚线与半圆缺口的取件码票根。</p>
+        </div>
+        <div>
+          <p><strong>受众</strong>：企业里负责把文件交出去的人——行政、法务、设计交付、研发发包。他们要的是“发完就能交代”，不是“好看的网盘”。</p>
+          <p><strong>首要任务</strong>：30 秒内完成一次传输，并拿到可以口头或截图传达的取件码。</p>
+          <p><strong>唯一的冒险</strong>：把首屏最大的一块面积给拖拽区，而不是给营销文案；首页没有产品截图堆叠，只有一条“两步”的说明和三个不打包票的功能句。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="color">
+    <div class="wrap">
+      <div class="sec__hd">
+        <div class="sec__label">颜色 · <span class="mono">6 tokens</span></div>
+        <div>
+          <h2>一种蓝，三种灰，一条线</h2>
+          <p class="note">电光蓝只在“可执行”和“正在进行”的地方出现：主按钮、进度、当前选项。青蓝是唯一的状态高光，且只给安全扫描——让“检查中”成为全站唯一会动的颜色。</p>
+        </div>
+      </div>
+
+      <div class="swatches">
+        <div class="sw">
+          <div class="sw__chip" style="background:#1677FF"></div>
+          <div class="sw__bd">
+            <div class="sw__name">电光蓝 <code>#1677FF</code></div>
+            <div class="sw__use">主按钮、进度条、当前选项、关键链接。白字对比 4.1:1，仅用于 ≥14px 半粗与图形。</div>
+            <div class="ratio">↑ 主色</div>
+          </div>
+        </div>
+        <div class="sw">
+          <div class="sw__chip" style="background:#0B5AD9"></div>
+          <div class="sw__bd">
+            <div class="sw__name">深蓝 <code>#0B5AD9</code></div>
+            <div class="sw__use">小字号蓝色文本与按下态。白底对比 6.0:1，满足 AA。</div>
+            <div class="ratio">AA 6.0:1</div>
+          </div>
+        </div>
+        <div class="sw">
+          <div class="sw__chip" style="background:#0FBED2"></div>
+          <div class="sw__bd">
+            <div class="sw__name">青蓝 <code>#0FBED2</code></div>
+            <div class="sw__use">只用于“安全检查中”的进度与呼吸点。全站不超过 3 处同时出现。</div>
+            <div class="ratio">状态高光</div>
+          </div>
+        </div>
+        <div class="sw">
+          <div class="sw__chip" style="background:#0A1B33"></div>
+          <div class="sw__bd">
+            <div class="sw__name">深海军蓝 <code>#0A1B33</code></div>
+            <div class="sw__use">标题与关键数字、运营后台侧栏。白底对比 15.8:1。</div>
+            <div class="ratio">AA 15.8:1</div>
+          </div>
+        </div>
+        <div class="sw">
+          <div class="sw__chip" style="background:#F4F8FF;border-bottom:1px solid #DCE6F5"></div>
+          <div class="sw__bd">
+            <div class="sw__name">浅蓝底 <code>#F4F8FF</code></div>
+            <div class="sw__use">页面底、表头、拖拽区、说明块。与白卡片形成 1 级层次，不靠阴影。</div>
+            <div class="ratio">surface</div>
+          </div>
+        </div>
+        <div class="sw">
+          <div class="sw__chip" style="background:#DCE6F5"></div>
+          <div class="sw__bd">
+            <div class="sw__name">灰蓝线 <code>#DCE6F5</code></div>
+            <div class="sw__use">1px 分隔线、表格行线、卡片描边。整站的结构都由它建立。</div>
+            <div class="ratio">1px hairline</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notes">
+        <div><h4>辅助色只做语义</h4><p>成功 <span class="mono">#0E9F6E</span>、提醒 <span class="mono">#9B6300</span>、危险 <span class="mono">#C0392B</span>。只出现在状态标签与错误行，面积不超过一屏的 2%。</p></div>
+        <div><h4>不用渐变做装饰</h4><p>唯一的渐变是进度条由蓝到青，用来表达“正在推进”。没有光球、没有网格渐变背景，登录页的网格是 1px 线不是光。</p></div>
+        <div><h4>阴影只有三级</h4><p>卡片 <span class="mono">0 1px 2px</span>、浮层 <span class="mono">0 24px 56px −28px</span>、弹窗再深一档。层级靠线和底，不靠阴影堆叠。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="type">
+    <div class="wrap">
+      <div class="sec__hd">
+        <div class="sec__label">字体 · <span class="mono">2 families</span></div>
+        <div>
+          <h2>中文用系统字，数字用等宽</h2>
+          <p class="note">中文界面里再引入一套显示字，多数时候只是增加加载风险。因此正文与标题共用系统黑体（PingFang SC / 微软雅黑），字重与字距建立层级；等宽字只承担“要被核对的东西”：取件码、订单号、容量、IP。</p>
+        </div>
+      </div>
+
+      <div class="typerow">
+        <div class="spec"><b>系统黑体 / Inter</b>标题与正文<br><span class="mono">PingFang SC · Microsoft YaHei · Inter</span><br>字距 −0.025em → 0</div>
+        <div>
+          <div class="sample">简单两步，把文件交给他</div>
+          <div class="sample sample--body" style="margin-top:6px">拖进文件，拿到 6 位取件码。对方在任何设备打开鲲穹，输入数字就能取走，不用装软件，也不用注册。</div>
+        </div>
+      </div>
+
+      <div class="typerow">
+        <div class="spec"><b>等宽 / IBM Plex Mono</b>仅数据<br><span class="mono">400 / 500 · tabular-nums</span><br>字距 .10–.15em 仅用于取件码</div>
+        <div>
+          <div class="sample sample--mono">483 917 · KQ20261019143208 · 12.4 GB</div>
+          <p class="sample--body" style="margin-top:6px">等宽在这里是功能：取件码分组为 3 + 3，念出来有节奏；订单号、IP、容量右对齐后可以逐位比对。</p>
+        </div>
+      </div>
+
+      <div class="table-wrap"><table class="spec-table">
+        <thead><tr><th style="width:150px">层级</th><th style="width:150px">字号 / 行高</th><th style="width:110px">字重</th><th style="width:110px">字距</th><th>用途</th></tr></thead>
+        <tbody>
+          <tr><td>Display</td><td class="mono">46 / 58</td><td>600</td><td class="mono">−0.03em</td><td>首页主标题，一行只放 8–10 个汉字</td></tr>
+          <tr><td>H1</td><td class="mono">28 / 38</td><td>600</td><td class="mono">−0.015em</td><td>页面标题，同屏只出现一次</td></tr>
+          <tr><td>H2</td><td class="mono">22 / 30</td><td>600</td><td class="mono">−0.01em</td><td>面板标题、弹窗标题、分享名称</td></tr>
+          <tr><td>H3</td><td class="mono">16 / 24</td><td>600</td><td class="mono">0</td><td>区块标题、提示卡标题</td></tr>
+          <tr><td>Body</td><td class="mono">14 / 22</td><td>400</td><td class="mono">0</td><td>界面正文与表格</td></tr>
+          <tr><td>Small</td><td class="mono">13 / 20</td><td>400</td><td class="mono">0</td><td>说明、辅助信息、表单提示、表头、时间戳 —— 全站下限</td></tr>
+          <tr><td>Code</td><td class="mono">34 / 42</td><td>500</td><td class="mono">.15em</td><td>取件码，全站最大的一处等宽</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note" style="margin-top:14px">桌面端最小字号 13px。原先的 11.5 / 12.5 两档并入 <span class="mono">Small</span>，层级改由颜色（<span class="mono">--ink-3 / --ink-4</span>）与字重区分——缩小字号换来的密度，不值得用可读性去换。</p>
+    </div>
+  </section>
+
+  <section class="sec" id="layout">
+    <div class="wrap">
+      <div class="sec__hd">
+        <div class="sec__label">版式 · <span class="mono">12 col / 24 gutter</span></div>
+        <div>
+          <h2>左对齐的账本，而不是居中的海报</h2>
+          <p class="note">所有业务信息左对齐，只有登录、密码、邀请这类“只做一件事”的页面居中。内容宽度 1200，外层留白 120；表头 42，行高 56，让一屏刚好放下 7–8 条记录。</p>
+        </div>
+      </div>
+
+      <div class="grid-demo">
+        <div>
+<div class="wf" role="img" aria-label="后台列表页骨架线框">
+          <div class="wf__top"><span>顶栏 64</span><i>品牌 · 导航 · 用户入口</i></div>
+          <div class="wf__body">
+            <div class="wf__hd"><b>H1 28 / 38</b><i>副标题 13 / 20</i></div>
+            <div class="wf__panel">
+              <div class="wf__line wf__line--tb"><span>工具条 56</span><i>搜索 · 状态 · 日期</i></div>
+              <div class="wf__line wf__line--th"><span>表头 42</span><i>文件名 · 状态 · 有效期 · 操作</i></div>
+              <div class="wf__line"><span class="sk" style="width:34%"></span><span class="tdot"></span></div>
+              <div class="wf__line"><span class="sk" style="width:28%"></span><span class="tdot"></span></div>
+              <div class="wf__line"><span class="sk" style="width:31%"></span><span class="tdot"></span></div>
+              <div class="wf__line wf__line--pg"><span>分页 48</span><i>共 348 条</i></div>
+            </div>
+            <div class="wf__foot"><span>内容 1200</span><span>外留白 120</span></div>
+          </div>
+        </div>
+          <p style="font-size:13px;line-height:19px;color:var(--ink-4);margin-top:10px">后台列表页的骨架：标题—工具条—表头—行—分页，全部由 1px 线切开，没有卡片套卡片。</p>
+        </div>
+
+        <div>
+          <div style="font-size:13px;color:var(--ink-4);margin-bottom:10px">间距刻度（4 的倍数）</div>
+          <div class="scale">
+            <span class="chip"><b>4</b> 图标内间隙</span>
+            <span class="chip"><b>8</b> 标签与文字</span>
+            <span class="chip"><b>12</b> 表单项</span>
+            <span class="chip"><b>16</b> 面板内边距</span>
+            <span class="chip"><b>20</b> 区块间距</span>
+            <span class="chip"><b>28</b> 页面顶部</span>
+            <span class="chip"><b>32</b> 章节间距</span>
+            <span class="chip"><b>48</b> 大区块</span>
+          </div>
+
+          <div style="font-size:13px;color:var(--ink-4);margin:22px 0 10px">圆角：只用 4 与 8</div>
+          <div class="radii">
+            <div style="border-radius:4px">4 · 标签</div>
+            <div style="border-radius:8px">8 · 全部容器</div>
+          </div>
+          <p style="font-size:13px;line-height:19px;color:var(--ink-4);margin-top:8px">按钮、输入框、卡片、弹窗统一 8px。没有 16px 以上的“大圆角”，也不用胶囊形按钮。</p>
+
+          <div style="font-size:13px;color:var(--ink-4);margin:22px 0 10px">阴影：三级，够用就停</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+            <div class="sh" style="box-shadow:0 1px 2px rgba(10,27,51,.05)">卡片</div>
+            <div class="sh" style="box-shadow:0 2px 10px -4px rgba(10,27,51,.12)">浮层/菜单</div>
+            <div class="sh" style="box-shadow:0 24px 56px -28px rgba(10,27,51,.32)">弹窗</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="components">
+    <div class="wrap">
+      <div class="sec__hd">
+        <div class="sec__label">组件 · <span class="mono">8 specimens</span></div>
+        <div>
+          <h2>按钮说什么，提示就说什么</h2>
+          <p class="note">“选择文件”之后不会出现“提交成功”，而是“文件已发出”；“保存设置”之后是“已保存”。组件的气质也一致：36px 高的按钮、1px 描边、没有图标堆叠。</p>
+        </div>
+      </div>
+
+      <div class="demo-grid">
+        <div class="demo">
+          <h4>按钮：一个主操作，其余退后</h4>
+          <div class="row">
+            <button class="btn btn--primary">选择文件</button>
+            <button class="btn">选择文件夹</button>
+            <button class="btn" style="border-color:transparent;color:var(--ink-3)">清空列表</button>
+            <button class="btn btn--sm">小尺寸</button>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button class="btn" style="color:var(--red);border-color:#EFD2CE">关闭分享</button>
+            <button class="btn" disabled style="opacity:.45;cursor:not-allowed">不可用</button>
+            <span class="tag">进行中</span><span class="tag tag--ok"><i class="dot"></i>已完成</span><span class="tag tag--live"><i class="dot"></i>扫描中</span>
+          </div>
+        </div>
+
+        <div class="demo">
+          <h4>输入：聚焦只有一层光圈</h4>
+          <div class="row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="input">liming@studio.cn</div>
+            <div class="input focus">2026 校招作品集</div>
+            <div class="input" style="color:var(--ink-4)">普通输入框</div>
+            <div class="input" style="justify-content:space-between"><span>7 天</span><span style="color:var(--ink-4)">▾</span></div>
+          </div>
+        </div>
+
+        <div class="demo">
+          <h4>取件码票根：全站唯一“重”的元素</h4>
+          <div class="ticket" style="box-shadow:none">
+            <div class="ticket__main" style="padding:16px 18px">
+              <span class="label">取件码</span>
+              <div class="code" style="font-size:28px;line-height:36px">483 917</div>
+            </div>
+            <div class="ticket__cut"></div>
+            <div class="ticket__foot" style="padding:9px 18px"><span>10 月 26 日 18:00 到期</span><span class="mono">3 个文件</span></div>
+          </div>
+        </div>
+
+        <div class="demo">
+          <h4>进度与状态：青蓝只给扫描</h4>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div class="row"><div class="bar"><i style="width:62%"></i></div><span style="font-size:13px;color:var(--ink-4)">上传中 62%</span></div>
+            <div class="row"><div class="bar live"><i style="width:100%"></i></div><span class="tag tag--live"><i class="dot"></i>安全检查中</span></div>
+            <div class="row"><div class="bar"><i style="width:100%;background:var(--green)"></i></div><span class="tag tag--ok"><i class="dot"></i>已完成</span></div>
+            <div class="row"><div class="bar"><i style="width:18%;background:var(--red)"></i></div><span class="tag" style="background:#FBECEA;color:#AF3226;border-color:#F0D2CD"><i class="dot"></i>上传失败</span></div>
+          </div>
+        </div>
+
+        <div class="demo">
+          <h4>文件类型：靠色相区分，不靠插画</h4>
+          <div class="row" style="gap:12px">
+            <span class="ftype" style="background:#FBEDEB;border-color:#F0D3CE;color:#B23A2B">PDF</span>
+            <span class="ftype" style="background:#EAF1FE;border-color:#D3E2FA;color:#1256C4">DOCX</span>
+            <span class="ftype" style="background:#E9F6EF;border-color:#CFE9DB;color:#0A7048">XLSX</span>
+            <span class="ftype" style="background:#FBF3E4;border-color:#EFDFC0;color:#8A5B00">ZIP</span>
+            <span class="ftype" style="background:#EFF1FB;border-color:#DDE1F4;color:#3B4A9C">MP4</span>
+            <span class="ftype" style="background:#F5F1E9;border-color:#E7DFCF;color:#7A5B1E">FIG</span>
+          </div>
+          <p style="font-size:13px;line-height:19px;color:var(--ink-4);margin-top:12px">30×36 的小纸片，右下角压一行扩展名。列表里它比任何图标都更容易扫读。</p>
+        </div>
+
+        <div class="demo">
+          <h4>开关与选项：蓝色=当前</h4>
+          <div class="row" style="gap:18px">
+            <span class="sw2"></span>
+            <span style="width:36px;height:21px;border-radius:11px;background:#D5E0F0;position:relative"><i style="position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff"></i></span>
+            <span style="display:inline-flex;align-items:center;gap:7px;font-size:13px"><span style="width:16px;height:16px;border-radius:50%;border:5px solid var(--blue);display:inline-block"></span>限制次数</span>
+            <span style="display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-4)"><span style="width:16px;height:16px;border-radius:50%;border:1px solid var(--line-2);display:inline-block"></span>不限</span>
+          </div>
+          <p style="font-size:13px;line-height:19px;color:var(--ink-4);margin-top:14px">表单分组用 1px 线，不用嵌套卡片；单选用“实心环”，避免再出现一种选中色。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="detail">
+    <div class="wrap">
+      <div class="sec__hd">
+        <div class="sec__label">细节层 · <span class="mono">v2</span></div>
+        <div>
+          <h2>把“克制”做成有工艺的克制</h2>
+          <p class="note">第一版解决了“不花哨”，第二版解决“不寡淡”。方法不是加装饰，而是把文件传输真正会用到的东西做成视觉资产：单据、条码、行号、刻度和角标。它们都能被核对，所以经得起看第二眼。</p>
+        </div>
+      </div>
+
+      <div class="demo-grid">
+        <div class="demo">
+          <h4>01 · 单据纸：偏移纸边 + 骑缝线 + 条码</h4>
+          <div style="border:1px solid #C6D6EB;border-radius:8px;background:#fff;box-shadow:7px 7px 0 -1px #F2F7FF,7px 7px 0 0 #D9E6F7;padding:14px 18px 12px">
+            <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:13px;color:var(--ink-4);letter-spacing:.06em">
+              <span>TRANSFER RECEIPT</span><span>NO. 2026-1019-4837</span>
+            </div>
+            <div style="font-family:var(--mono);font-size:36px;line-height:44px;letter-spacing:.1em;margin-top:8px;color:var(--ink)">483 917</div>
+            <div style="border-top:1px dashed #C9D9F0;margin:12px -18px 0;height:0"></div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:10px">
+              <div style="font-family:var(--mono);font-size:13px;color:var(--ink-4)">EXPIRES 10-26 18:00</div>
+              <div style="width:128px;height:24px;background:repeating-linear-gradient(90deg,#061529 0 2px,transparent 2px 4px,#061529 4px 5px,transparent 5px 8px,#061529 8px 10px,transparent 10px 13px)"></div>
+            </div>
+          </div>
+          <p style="font-size:13px;line-height:20px;color:var(--ink-4);margin-top:14px">7px 的纸边阴影代替投影；虚线两侧各留半圆缺口；条码不是插画，是这段文案的“物证”。</p>
+        </div>
+
+        <div class="demo">
+          <h4>02 · 数字带：一条刻度，不切卡片</h4>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid #061529;border-bottom:1px solid #E7EEF8">
+            <div style="padding:10px 12px 12px;border-right:1px solid #E7EEF8">
+              <div style="font-family:var(--mono);font-size:13px;color:var(--ink-4)">今日上传</div>
+              <div style="font-size:24px;font-weight:600;letter-spacing:-.03em;margin-top:4px">8.4<span style="font-size:13px;font-weight:400;color:var(--ink-4);margin-left:3px">TB</span></div>
+              <svg width="76" height="14" viewBox="0 0 76 14" fill="none" style="margin-top:4px"><path d="M2 11L14 9L26 10L38 6L50 7L62 3L74 2" stroke="#1677FF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div style="padding:10px 12px 12px;border-right:1px solid #E7EEF8">
+              <div style="font-family:var(--mono);font-size:13px;color:var(--ink-4)">用户数</div>
+              <div style="font-size:24px;font-weight:600;letter-spacing:-.03em;margin-top:4px">12,486</div>
+              <svg width="76" height="14" viewBox="0 0 76 14" fill="none" style="margin-top:4px"><path d="M2 10L14 9L26 11L38 7L50 6L62 6L74 4" stroke="#9EBBDF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div style="padding:10px 12px 12px">
+              <div style="font-family:var(--mono);font-size:13px;color:var(--ink-4)">活跃资源</div>
+              <div style="font-size:24px;font-weight:600;letter-spacing:-.03em;margin-top:4px">3,842</div>
+              <svg width="76" height="14" viewBox="0 0 76 14" fill="none" style="margin-top:4px"><path d="M2 8L14 7L26 9L38 5L50 6L62 4L74 3" stroke="#9EBBDF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+          </div>
+          <p style="font-size:13px;line-height:20px;color:var(--ink-4);margin-top:14px">顶部深线收口，底部浅线结束；数字 29px，标签 13px 等宽，迷你趋势线只给方向，不给坐标。</p>
+        </div>
+
+        <div class="demo">
+          <h4>03 · 收件口：角标 + 虚线分隔</h4>
+          <div style="position:relative;border:1px solid #C6D7EC;border-radius:8px;background:#fff;padding:14px;display:flex;align-items:center;gap:12px">
+            <i style="position:absolute;left:-1px;top:-1px;width:9px;height:9px;border-left:1px solid #93ADC9;border-top:1px solid #93ADC9"></i>
+            <i style="position:absolute;right:-1px;top:-1px;width:9px;height:9px;border-right:1px solid #93ADC9;border-top:1px solid #93ADC9"></i>
+            <i style="position:absolute;left:-1px;bottom:-1px;width:9px;height:9px;border-left:1px solid #93ADC9;border-bottom:1px solid #93ADC9"></i>
+            <i style="position:absolute;right:-1px;bottom:-1px;width:9px;height:9px;border-right:1px solid #93ADC9;border-bottom:1px solid #93ADC9"></i>
+            <span style="width:36px;height:36px;border:1px dashed #B7CEEA;border-radius:4px;background:#F6FAFF;display:inline-flex;align-items:center;justify-content:center;color:#1677FF">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 16V5"/><path d="M7.5 9.5 12 5l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+            </span>
+            <div style="flex:1">
+              <div style="font-size:14px;font-weight:600;color:var(--ink)">把文件拖到这里</div>
+              <div style="font-size:13px;color:var(--ink-4);margin-top:2px">单个最大 10 GB · 支持断点续传</div>
+            </div>
+            <button class="btn btn--primary btn--sm" style="height:32px">选择文件</button>
+          </div>
+          <p style="font-size:13px;line-height:20px;color:var(--ink-4);margin-top:14px">4 个 9px 角标把“画板”变成“对位框”；实线外框 + 虚线图标，比整块虚线更安静。</p>
+        </div>
+
+        <div class="demo">
+          <h4>04 · 图纸底 + 等宽注脚</h4>
+          <div style="background:#FAFCFF;background-image:linear-gradient(rgba(10,27,51,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(10,27,51,.05) 1px,transparent 1px);background-size:26px 26px;border:1px solid #E7EEF8;padding:16px 18px">
+            <div style="display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:13px;letter-spacing:.14em;color:var(--ink-4);text-transform:uppercase">
+              <span style="width:22px;height:1px;background:#1677FF"></span>03 — Handoff complete
+            </div>
+            <div style="font-size:26px;font-weight:600;letter-spacing:-.03em;margin-top:10px;color:var(--ink)">文件已发出。</div>
+            <div style="display:flex;justify-content:space-between;margin-top:16px;font-family:var(--mono);font-size:13px;color:var(--ink-4)">
+              <span>2026-10-19 · 14:32:08 CST</span><span>SCAN PASSED · 3/3</span>
+            </div>
+          </div>
+          <p style="font-size:13px;line-height:20px;color:var(--ink-4);margin-top:14px">26px 网格只负责“背景有坐标”，白色径向渐变把内容区提亮；英文注脚只做元数据，不抢标题。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="review">
+    <div class="wrap">
+      <div class="sec__hd">
+        <div class="sec__label">对照 brief 的自检</div>
+        <div>
+          <h2>改掉的六个默认项</h2>
+          <p class="note">brief 已经指定了蓝色科技感，这是必须照做的部分。它没有指定的地方——结构、字体、卡片形态、首屏构图——才是需要判断的地方。下面六条，是第一版与第二版各自推翻的东西。</p>
+        </div>
+      </div>
+
+      <dl class="checklist">
+        <div class="check">
+          <dt>默认项 1<br>四张等宽套餐卡片</dt>
+          <dd><b>改成一张对比表，当前列用浅蓝底。</b><span> 套餐的本质是逐项比较，卡片会强迫用户横向记忆。表格让“保存时效/容量/协作”一行行对齐，也顺手解决了卡片套卡片的观感。</span></dd>
+        </div>
+        <div class="check">
+          <dt>默认项 2<br>大标题 + 三张 KPI 卡</dt>
+          <dd><b>改成一条用竖线切开的数字带。</b><span> 文件管理、团队空间、后台看板都只需要一行安静的数字。v2 把数字放大到 29px 并加了一条 16px 的迷你趋势线，但仍然不切成卡片：一条深线在上，一条浅线在下，中间用 1px 竖线分栏。</span></dd>
+        </div>
+        <div class="check">
+          <dt>默认项 3<br>装饰性的 01/02/03 与大写小标签</dt>
+          <dd><b>编号只给真实的序列。</b><span> 取件单号、清单行号、进度步骤、后台审计条目——这些编号能被核对，所以保留。v2 的英文注脚只出现在单据抬头与字段名（如 <span class="mono">PICKUP CODE</span>），从不替代中文标题，也不做“全大写 + 字距”的装饰。</span></dd>
+        </div>
+        <div class="check">
+          <dt>默认项 4<br>玻璃拟态 / 渐变光球</dt>
+          <dd><b>用 26px 的 1px 网格与角标做“技术感”。</b><span> 首页、分享页、密码页的底纹像坐标纸；收件口四角各有一个 9px 的对位角标。它们比任何光效都更接近“可核对”的气质，也不会在截图里糊成一片。</span></dd>
+        </div>
+        <div class="check">
+          <dt>默认项 5<br>圆角卡片当骨架</dt>
+          <dd><b>改成硬收口线 + 单据纸。</b><span> 页面标题下方是一条 1px 深海军蓝线，表格表头也是深线收口；面板之间靠 1px 灰蓝线分区，不靠投影。整页只有取件票根允许“重”：7px 偏移纸边、虚线骑缝、半圆缺口、条码与印章。</span></dd>
+        </div>
+        <div class="check">
+          <dt>默认项 6<br>首屏 = 大标题 + 插画 + 三张功能卡</dt>
+          <dd><b>改成三段短句 + 一张真实单据 + 一条收件口。</b><span> “拖进来。报个码。对方就能取。”三行说完产品；右侧直接给出用户最终会拿到的那张单据，连条码和核验时间一起画出来；下方才是横向的收件口与三条编号说明。首屏没有一张装饰性插画。</span></dd>
+        </div>
+      </dl>
+
+      <div class="notes">
+        <div><h4>无障碍基线</h4><p>正文对比度 ≥ 6:1；蓝色小字统一用 <span class="mono">#0B5AD9</span>；所有可聚焦元素有 2px 蓝色外描边；<span class="mono">prefers-reduced-motion</span> 下关闭扫描与进度动效；状态不只靠颜色，同时给圆点与文案。</p></div>
+        <div><h4>响应式</h4><p>这 36 屏是固定 1440×1024 的设计稿，不是响应式页面。Token 本身按 4 的倍数与相对字号组织，落到移动端时：内容宽度 100%−32，表格改卡片行，侧栏改底部标签栏。</p></div>
+        <div><h4>动效</h4><p>只有三处：进度条推进、扫描呼吸点、弹窗出现。没有逐段入场，也没有给每张卡片加 hover 抬升。</p></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  <div>
+    <p>鲲穹文件传输 · 视觉方向 v2 · 2026-10-19<br>配套交付：36 屏高保真原型（1440 × 1024），位于本目录 index.html。</p>
+  </div>
+  <a class="btn" href="index.html">打开原型 →</a>
+</footer>
+
+</body>
+</html>

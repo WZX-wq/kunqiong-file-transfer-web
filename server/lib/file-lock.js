@@ -21,6 +21,10 @@ const STALE_LOCK_MS = 15 * 1000
 const sweptLockPaths = new Set()
 
 export function withFileLock(lockPath, task, timeout = 2000) {
+  // 单进程本地开发可显式关闭跨进程锁：部分 Windows 环境（安全软件 / 受限目录）会拒绝
+  // 删除锁文件，导致写盘一直等到超时、所有写请求 503。只有显式设置该环境变量才生效，
+  // 生产环境（多进程/MySQL）不要设置。
+  if (process.env.KUNQIONG_DISABLE_FILE_LOCK === '1') return task()
   const token = crypto.randomUUID()
   const candidate = `${lockPath}.${process.pid}.${token}.owner`
   fs.writeFileSync(candidate, JSON.stringify({ pid: process.pid, token }), { flag:'wx', mode:0o600 })
@@ -59,13 +63,17 @@ export function durableWrite(filename, data) {
 // ——既不删除也不报错，异步 fs.rm 和 unlinkSync 都正常。锁释放依赖这个动作，静默失败
 // 会让锁永远释放不掉，服务随即被自己的锁卡死（所有 /api/* 返回 503）。
 // ENOENT（已不存在）视为成功。
-export function removeFile(filename, attempts = 3) {
+//
+// 重试窗口放宽到 ~160ms：Windows Defender/索引服务会对「刚创建的文件」短暂持有句柄，
+// 立刻 unlink 会拿到 EPERM/EBUSY。原先 3×2ms 的重试经常赶不上句柄释放，表现为
+// 每次写盘都要等 2s 锁超时（请求 4~5s），并留下看似泄漏的锁。
+export function removeFile(filename, attempts = 8) {
   for (let attempt = 0; attempt < attempts; attempt++) {
     try { fs.unlinkSync(filename); return true }
     catch (error) {
       if (error.code === 'ENOENT') return true
       if (attempt === attempts - 1) return false
-      sleep(2)
+      sleep(20)
     }
   }
   return false

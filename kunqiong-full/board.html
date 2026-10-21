@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>鲲穹文件传输 · 全量页面总览</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#f4f8fd;color:#101c2e;font-family:"Noto Sans SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  a{text-decoration:none;color:inherit}
+  .board-top{background:
+      radial-gradient(800px 320px at 88% -20%, #d9eaff 0%, rgba(217,234,255,0) 60%),
+      linear-gradient(120deg,#eaf4ff 0%,#f7fbff 60%,#ffffff 100%);
+    border-bottom:1px solid #e2eefc;padding:34px 0 28px}
+  .board-wrap{width:min(1400px,calc(100% - 56px));margin:0 auto}
+  .brand{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:700;color:#0d1b2e}
+  .brand img{width:32px;height:32px;object-fit:contain}
+  .board-head{display:flex;align-items:flex-end;justify-content:space-between;gap:28px;margin-top:26px}
+  .board-head h1{font-size:38px;line-height:1.18;letter-spacing:-1.1px;font-weight:800;margin:0}
+  .board-head h1 em{font-style:normal;background:linear-gradient(135deg,#4a94ff,#0f5bea);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .board-head p{font-size:14px;color:#65758e;margin:10px 0 0;max-width:640px;line-height:1.7}
+  .board-stats{display:flex;gap:26px;margin-top:18px}
+  .board-stats div{display:flex;align-items:baseline;gap:5px}
+  .board-stats b{font-size:21px;letter-spacing:-.4px}
+  .board-stats span{font-size:12px;color:#8496ad}
+  .board-actions{display:flex;gap:10px;flex:none}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:42px;padding:0 18px;border-radius:10px;font-size:13.6px;font-weight:500;background:#fff;border:1px solid #d7e5fb;color:#2a5ea8}
+  .btn.primary{background:linear-gradient(180deg,#3a86ff,#1667f0);border-color:#1667f0;color:#fff;box-shadow:0 10px 22px -14px rgba(22,103,240,.9)}
+  .board-nav{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.92);backdrop-filter:blur(14px);border-bottom:1px solid #e8f0fb}
+  .board-nav .in{width:min(1400px,calc(100% - 56px));margin:0 auto;display:flex;gap:4px;overflow:auto;padding:8px 0}
+  .board-nav a{padding:7px 11px;border-radius:8px;font-size:12.4px;color:#5b6d86;white-space:nowrap}
+  .board-nav a:hover{background:#eef5ff;color:#1f6bff}
+  .board{width:min(1400px,calc(100% - 56px));margin:0 auto;padding:26px 0 70px}
+  .board-group{margin-bottom:34px;scroll-margin-top:64px}
+  .group-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .group-head h2{font-size:16px;font-weight:700;letter-spacing:-.2px;margin:0}
+  .group-head>span{font-size:11.4px;color:#8496ad;background:#fff;border:1px solid #e7effb;padding:2px 7px;border-radius:99px}
+  .group-head>a{margin-left:auto;font-size:12.2px;color:#5b87c9}
+  .group-head>a:hover{color:#1f6bff}
+  .board-grid{display:grid;grid-template-columns:repeat(auto-fill,320px);gap:16px}
+  .thumb{display:block;background:#fff;border:1px solid #e4eefb;border-radius:13px;overflow:hidden;box-shadow:0 14px 34px -28px rgba(20,60,140,.45);transition:.18s}
+  .thumb:hover{transform:translateY(-2px);border-color:#bcd7fb;box-shadow:0 20px 42px -26px rgba(20,60,140,.55)}
+  .thumb-frame{width:320px;height:215px;overflow:hidden;background:#f7fbfe;position:relative}
+  .thumb-frame iframe{width:1280px;height:860px;border:0;transform:scale(.25);transform-origin:top left;pointer-events:none}
+  .thumb-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border-top:1px solid #f2f7fd}
+  .thumb-meta b{font-size:12.3px;font-weight:600;color:#26374f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .thumb-meta span{font-size:10.4px;letter-spacing:.1em;color:#a9b7c9;text-transform:uppercase;flex:none}
+  .board-foot{border-top:1px solid #e8f0fb;background:#fff;padding:22px 0}
+  .board-foot .in{width:min(1400px,calc(100% - 56px));margin:0 auto;display:flex;justify-content:space-between;gap:16px;font-size:12px;color:#93a3b9;flex-wrap:wrap}
+  @media(max-width:760px){
+    .board-head{flex-direction:column;align-items:flex-start}
+    .board-head h1{font-size:27px}
+    .board-actions{flex-wrap:wrap}
+    .board-grid{justify-content:center}
+  }
+</style>
+</head>
+<body>
+<header class="board-top"><div class="board-wrap">
+  <div class="brand"><img src="assets/icons/ico-cloud.png" alt=""/><span>鲲穹文件传输</span></div>
+  <div class="board-head">
+    <div><h1>全量页面原型 <em>58 屏</em></h1>
+      <p>覆盖发文件、取件、分享管理、文件收集、记录与消息、账户设置、会员团队、运营后台与帮助规则。缩略图为实时渲染，点击任意一屏进入可交互原型。</p>
+      <div class="board-stats"><div><b>58</b><span>个页面与状态</span></div><div><b>8</b><span>个业务模块</span></div><div><b>1</b><span>套统一视觉</span></div></div>
+    </div>
+    <div class="board-actions"><a class="btn" href="prototype.html#/send-home" target="_blank">打开可交互原型 ↗</a><a class="btn primary" href="prototype.html?embed=1&amp;static=1#/send-home" target="_blank">从首页开始</a></div>
+  </div>
+</div></header>
+<nav class="board-nav"><div class="in"><a href="#g-send">01 发送与取件</a><a href="#g-share">02 接收与分享管理</a><a href="#g-collect">03 文件收集</a><a href="#g-records">04 记录与消息</a><a href="#g-account">05 账户与设置</a><a href="#g-space">06 会员与团队</a><a href="#g-admin">07 运营后台</a><a href="#g-help">08 帮助与规则</a></div></nav>
+<main class="board">
+  <section class="board-group" id="g-send">
+    <div class="group-head"><h2>01 · 发送与取件</h2><span>8 屏</span><a href="prototype.html#/send-home" target="_blank" rel="noopener">从第一屏进入 ↗</a></div>
+    <div class="board-grid">
+      <a class="thumb" href="prototype.html#/send-home" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/send-home" loading="lazy" title="发送首页"></iframe></div>
+        <div class="thumb-meta"><b>01 发送首页</b><span>send</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/send-selected" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/send-selected" loading="lazy" title="已选文件"></iframe></div>
+        <div class="thumb-meta"><b>02 已选文件</b><span>send</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/send-settings" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/send-settings" loading="lazy" title="发送设置"></iframe></div>
+        <div class="thumb-meta"><b>03 发送设置</b><span>send</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/send-uploading" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/send-uploading" loading="lazy" title="上传中"></iframe></div>
+        <div class="thumb-meta"><b>04 上传中</b><span>send</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/send-success" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/send-success" loading="lazy" title="发送成功"></iframe></div>
+        <div class="thumb-meta"><b>05 发送成功</b><span>send</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/send-qr" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/send-qr" loading="lazy" title="二维码取件"></iframe></div>
+        <div class="thumb-meta"><b>06 二维码取件</b><span>send</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/send-resume" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/send-resume" loading="lazy" title="断点续传"></iframe></div>
+        <div class="thumb-meta"><b>07 断点续传</b><span>send</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/retrieve" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/retrieve" loading="lazy" title="取件码取文件"></iframe></div>
+        <div class="thumb-meta"><b>08 取件码取文件</b><span>send</span></div>
+      </a>
+    </div>
+  </section>
+  <section class="board-group" id="g-share">
+    <div class="group-head"><h2>02 · 接收与分享管理</h2><span>8 屏</span><a href="prototype.html#/share-public" target="_blank" rel="noopener">从第一屏进入 ↗</a></div>
+    <div class="board-grid">
+      <a class="thumb" href="prototype.html#/share-public" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/share-public" loading="lazy" title="分享接收页"></iframe></div>
+        <div class="thumb-meta"><b>09 分享接收页</b><span>share</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/share-locked" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/share-locked" loading="lazy" title="提取密码"></iframe></div>
+        <div class="thumb-meta"><b>10 提取密码</b><span>share</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/share-expired" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/share-expired" loading="lazy" title="分享已过期"></iframe></div>
+        <div class="thumb-meta"><b>11 分享已过期</b><span>share</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/share-manage" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/share-manage" loading="lazy" title="分享管理"></iframe></div>
+        <div class="thumb-meta"><b>12 分享管理</b><span>share</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/share-manage-settings" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/share-manage-settings" loading="lazy" title="分享设置"></iframe></div>
+        <div class="thumb-meta"><b>13 分享设置</b><span>share</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/file-preview" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/file-preview" loading="lazy" title="文件在线预览"></iframe></div>
+        <div class="thumb-meta"><b>14 文件在线预览</b><span>share</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/download-progress" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/download-progress" loading="lazy" title="下载进行中"></iframe></div>
+        <div class="thumb-meta"><b>15 下载进行中</b><span>share</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/share-closed" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/share-closed" loading="lazy" title="分享已关闭"></iframe></div>
+        <div class="thumb-meta"><b>16 分享已关闭</b><span>share</span></div>
+      </a>
+    </div>
+  </section>
+  <section class="board-group" id="g-collect">
+    <div class="group-head"><h2>03 · 文件收集</h2><span>8 屏</span><a href="prototype.html#/collect-create" target="_blank" rel="noopener">从第一屏进入 ↗</a></div>
+    <div class="board-grid">
+      <a class="thumb" href="prototype.html#/collect-create" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/collect-create" loading="lazy" title="创建收集任务"></iframe></div>
+        <div class="thumb-meta"><b>17 创建收集任务</b><span>collect</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/collect-created" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/collect-created" loading="lazy" title="收集任务已创建"></iframe></div>
+        <div class="thumb-meta"><b>18 收集任务已创建</b><span>collect</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/collect-manage" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/collect-manage" loading="lazy" title="收集管理"></iframe></div>
+        <div class="thumb-meta"><b>19 收集管理</b><span>collect</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/collect-settings" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/collect-settings" loading="lazy" title="收集设置"></iframe></div>
+        <div class="thumb-meta"><b>20 收集设置</b><span>collect</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/collect-submit" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/collect-submit" loading="lazy" title="提交文件（需登录）"></iframe></div>
+        <div class="thumb-meta"><b>21 提交文件（需登录）</b><span>collect</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/collect-submit-anon" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/collect-submit-anon" loading="lazy" title="提交文件（匿名）"></iframe></div>
+        <div class="thumb-meta"><b>22 提交文件（匿名）</b><span>collect</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/collect-submitted" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/collect-submitted" loading="lazy" title="提交成功"></iframe></div>
+        <div class="thumb-meta"><b>23 提交成功</b><span>collect</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/collect-closed" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/collect-closed" loading="lazy" title="收集已截止"></iframe></div>
+        <div class="thumb-meta"><b>24 收集已截止</b><span>collect</span></div>
+      </a>
+    </div>
+  </section>
+  <section class="board-group" id="g-records">
+    <div class="group-head"><h2>04 · 记录与消息</h2><span>6 屏</span><a href="prototype.html#/records" target="_blank" rel="noopener">从第一屏进入 ↗</a></div>
+    <div class="board-grid">
+      <a class="thumb" href="prototype.html#/records" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/records" loading="lazy" title="收发记录"></iframe></div>
+        <div class="thumb-meta"><b>25 收发记录</b><span>records</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/records-sent" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/records-sent" loading="lazy" title="我发送的"></iframe></div>
+        <div class="thumb-meta"><b>26 我发送的</b><span>records</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/records-received" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/records-received" loading="lazy" title="发给我的"></iframe></div>
+        <div class="thumb-meta"><b>27 发给我的</b><span>records</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/records-files" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/records-files" loading="lazy" title="文件管理中心"></iframe></div>
+        <div class="thumb-meta"><b>28 文件管理中心</b><span>records</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/record-detail" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/record-detail" loading="lazy" title="记录详情"></iframe></div>
+        <div class="thumb-meta"><b>29 记录详情</b><span>records</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/messages" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/messages" loading="lazy" title="消息中心"></iframe></div>
+        <div class="thumb-meta"><b>30 消息中心</b><span>records</span></div>
+      </a>
+    </div>
+  </section>
+  <section class="board-group" id="g-account">
+    <div class="group-head"><h2>05 · 账户与设置</h2><span>7 屏</span><a href="prototype.html#/login" target="_blank" rel="noopener">从第一屏进入 ↗</a></div>
+    <div class="board-grid">
+      <a class="thumb" href="prototype.html#/login" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/login" loading="lazy" title="登录"></iframe></div>
+        <div class="thumb-meta"><b>31 登录</b><span>account</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/settings-profile" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/settings-profile" loading="lazy" title="个人资料"></iframe></div>
+        <div class="thumb-meta"><b>32 个人资料</b><span>account</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/settings-security" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/settings-security" loading="lazy" title="账号与安全"></iframe></div>
+        <div class="thumb-meta"><b>33 账号与安全</b><span>account</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/settings-notice" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/settings-notice" loading="lazy" title="消息通知"></iframe></div>
+        <div class="thumb-meta"><b>34 消息通知</b><span>account</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/settings-cleanup" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/settings-cleanup" loading="lazy" title="文件清理"></iframe></div>
+        <div class="thumb-meta"><b>35 文件清理</b><span>account</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/settings-orders" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/settings-orders" loading="lazy" title="我的订单"></iframe></div>
+        <div class="thumb-meta"><b>36 我的订单</b><span>account</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/order-detail" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/order-detail" loading="lazy" title="订单详情"></iframe></div>
+        <div class="thumb-meta"><b>37 订单详情</b><span>account</span></div>
+      </a>
+    </div>
+  </section>
+  <section class="board-group" id="g-space">
+    <div class="group-head"><h2>06 · 会员与团队</h2><span>10 屏</span><a href="prototype.html#/workspace" target="_blank" rel="noopener">从第一屏进入 ↗</a></div>
+    <div class="board-grid">
+      <a class="thumb" href="prototype.html#/workspace" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/workspace" loading="lazy" title="会员与团队空间"></iframe></div>
+        <div class="thumb-meta"><b>38 会员与团队空间</b><span>space</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/plan" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/plan" loading="lazy" title="会员套餐"></iframe></div>
+        <div class="thumb-meta"><b>39 会员套餐</b><span>space</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/plan-pay" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/plan-pay" loading="lazy" title="支付升级"></iframe></div>
+        <div class="thumb-meta"><b>40 支付升级</b><span>space</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/workspace-team" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/workspace-team" loading="lazy" title="团队空间"></iframe></div>
+        <div class="thumb-meta"><b>41 团队空间</b><span>space</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/team-overview" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/team-overview" loading="lazy" title="团队管理"></iframe></div>
+        <div class="thumb-meta"><b>42 团队管理</b><span>space</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/team-members" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/team-members" loading="lazy" title="成员观察"></iframe></div>
+        <div class="thumb-meta"><b>43 成员观察</b><span>space</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/team-resources" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/team-resources" loading="lazy" title="团队资源"></iframe></div>
+        <div class="thumb-meta"><b>44 团队资源</b><span>space</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/team-permissions" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/team-permissions" loading="lazy" title="团队成员"></iframe></div>
+        <div class="thumb-meta"><b>45 团队成员</b><span>space</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/team-requests" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/team-requests" loading="lazy" title="入团申请"></iframe></div>
+        <div class="thumb-meta"><b>46 入团申请</b><span>space</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/invite" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/invite" loading="lazy" title="团队邀请"></iframe></div>
+        <div class="thumb-meta"><b>47 团队邀请</b><span>space</span></div>
+      </a>
+    </div>
+  </section>
+  <section class="board-group" id="g-admin">
+    <div class="group-head"><h2>07 · 运营后台</h2><span>6 屏</span><a href="prototype.html#/admin-login" target="_blank" rel="noopener">从第一屏进入 ↗</a></div>
+    <div class="board-grid">
+      <a class="thumb" href="prototype.html#/admin-login" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/admin-login" loading="lazy" title="管理员登录"></iframe></div>
+        <div class="thumb-meta"><b>48 管理员登录</b><span>admin</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/admin-dashboard" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/admin-dashboard" loading="lazy" title="数据看板"></iframe></div>
+        <div class="thumb-meta"><b>49 数据看板</b><span>admin</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/admin-resources" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/admin-resources" loading="lazy" title="资源管理"></iframe></div>
+        <div class="thumb-meta"><b>50 资源管理</b><span>admin</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/admin-users" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/admin-users" loading="lazy" title="用户管理"></iframe></div>
+        <div class="thumb-meta"><b>51 用户管理</b><span>admin</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/admin-logs" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/admin-logs" loading="lazy" title="安全日志"></iframe></div>
+        <div class="thumb-meta"><b>52 安全日志</b><span>admin</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/admin-config" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/admin-config" loading="lazy" title="系统配置"></iframe></div>
+        <div class="thumb-meta"><b>53 系统配置</b><span>admin</span></div>
+      </a>
+    </div>
+  </section>
+  <section class="board-group" id="g-help">
+    <div class="group-head"><h2>08 · 帮助与规则</h2><span>5 屏</span><a href="prototype.html#/help" target="_blank" rel="noopener">从第一屏进入 ↗</a></div>
+    <div class="board-grid">
+      <a class="thumb" href="prototype.html#/help" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/help" loading="lazy" title="帮助中心"></iframe></div>
+        <div class="thumb-meta"><b>54 帮助中心</b><span>help</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/terms" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/terms" loading="lazy" title="服务协议"></iframe></div>
+        <div class="thumb-meta"><b>55 服务协议</b><span>help</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/privacy" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/privacy" loading="lazy" title="隐私政策"></iframe></div>
+        <div class="thumb-meta"><b>56 隐私政策</b><span>help</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/guest-quota" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/guest-quota" loading="lazy" title="游客额度"></iframe></div>
+        <div class="thumb-meta"><b>57 游客额度</b><span>help</span></div>
+      </a>
+      <a class="thumb" href="prototype.html#/email" target="_blank" rel="noopener">
+        <div class="thumb-frame"><iframe src="prototype.html?embed=1&amp;static=1#/email" loading="lazy" title="通知邮件"></iframe></div>
+        <div class="thumb-meta"><b>58 通知邮件</b><span>help</span></div>
+      </a>
+    </div>
+  </section>
+</main>
+<footer class="board-foot"><div class="in"><span>鲲穹文件传输 · 全量页面原型 · 2026-10-20</span><span>蓝色视觉方向 · 桌面 1440px · 真实交互</span></div></footer>
+</body>
+</html>

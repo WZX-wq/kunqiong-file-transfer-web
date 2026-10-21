@@ -81,7 +81,7 @@ async function mount({ server, storage = {}, guest = false } = {}) {
     abort() { if (!this.done) { this.done = true; this.aborted = true; this.onabort?.() } }
   }
   window.eval(code)
-  await waitFor(() => document.querySelector('.empty-upload') && !document.querySelector('.auth-loading'), 'Send page mounts')
+  await waitFor(() => document.querySelector('.send-prototype-dropzone') && !document.querySelector('.auth-loading'), 'Send page mounts')
   const button = label => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === label || b.getAttribute('aria-label') === label)
   const click = async label => { const b = button(label); assert.ok(b && !b.disabled, 'Enabled button: ' + label); b.click(); await delay(30) }
   const choose = async items => {
