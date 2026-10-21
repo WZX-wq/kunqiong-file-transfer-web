@@ -28,9 +28,9 @@ import {
 import {
   accountMessagesForUser, accountNotificationSettingsForUser, accountRecordsForUser,
   accountUserById, alignReturnUrlWithAuthHost, appendAuthResult, authRedirectUri,
-  authSessionFromRequest, boundMethodForTargetType, cleanupOAuthStates, clearAuthCookie,
+  authSessionFromRequest, boundMethodForTargetType, cleanupExpiredFilesForOwner, cleanupOAuthStates, clearAuthCookie,
   createVerificationCode, discardVerificationCode, assertContactAvailable,
-  getEmailTransporter, isOAuthConfigured, isTencentSmsConfigured, mailErrorReason,
+  getEmailTransporter, fileCleanupOverviewForOwner, isOAuthConfigured, isTencentSmsConfigured, mailErrorReason,
   mergeAccountRecords, pruneOrphanRecordEntries, publicAccountUser,
   purgeOwnedStaleResource, readCookie, removeAuthSession, requireAuthSession, safeReturnUrl,
   sendTencentSmsCode, syncAccountUserSessions, syncOrganizationMemberProfile,
@@ -129,6 +129,24 @@ export function registerAccountRoutes(app) {
     const session = authSessionFromRequest(req)
     if (!session) return res.status(401).json({ message: '请先登录' })
     res.json({ settings: normalizeFileCleanupSettings(accountUserById(session.user.id)?.fileCleanup || session.user.fileCleanup) })
+  })
+
+  // 清理页「存储与清理」卡：有效 / 即将过期 / 已过期待清理 三段真实容量。
+  app.get('/api/account/file-cleanup-overview', (req, res) => {
+    const session = authSessionFromRequest(req)
+    if (!session) return res.status(401).json({ message: '请先登录' })
+    const ownerKey = accountRecordOwnerKey(session.user.id) || session.user.id
+    res.json(fileCleanupOverviewForOwner(ownerKey))
+  })
+
+  // 「立即清理」：按当前账号自己的清理开关手动执行一次（过期即清，不等宽限期），返回真实释放量。
+  app.post('/api/account/file-cleanup/run', (req, res) => {
+    const session = authSessionFromRequest(req)
+    if (!session) return res.status(401).json({ message: '请先登录' })
+    const ownerKey = accountRecordOwnerKey(session.user.id) || session.user.id
+    const result = cleanupExpiredFilesForOwner(ownerKey)
+    if (!result.skipped) persistMetadata()
+    res.json(result)
   })
 
   app.put('/api/account/file-cleanup-settings', updateFileCleanupSettings)

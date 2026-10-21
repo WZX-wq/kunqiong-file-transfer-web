@@ -532,7 +532,21 @@ export function registerWorkspaceRoutes(app) {
     }
     const session = authSessionFromRequest(req)
     const viewer = session?.user || null
-    const payload = { available: false, organizationName: organization.name }
+    // 邀请落地页需要的团队公开信息：所有者称谓、成员规模、共享空间。
+    // 头像只给首字符（成员头像在原型里就是单字徽标），不暴露完整成员名单。
+    const plan = accountEffectivePlanForUser(organization.ownerUserId)
+    const activeMembers = organization.members.filter((member) => member.status === 'active')
+    const owner = accountUserById(organization.ownerUserId)
+    const payload = {
+      available: false,
+      organizationName: organization.name,
+      ownerName: owner?.displayName || owner?.username || '团队所有者',
+      memberCount: activeMembers.length,
+      memberInitials: activeMembers.slice(0, 4).map((member) => (member.displayName || '成').slice(0, 1)),
+      teamSpaceBytes: plan.team ? Number(plan.teamSpaceBytes || 0) : 0,
+      planLabel: plan.label || '团队版',
+      createdAt: organization.createdAt || null,
+    }
     if (!viewer) return res.json({ ...payload, reason: 'anonymous' })
     if (viewer.id === organization.ownerUserId) return res.json({ ...payload, reason: 'owner' })
     const currentOrganization = accountOrganizationForUser(viewer.id)

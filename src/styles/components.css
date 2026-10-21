@@ -1421,7 +1421,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .collection-page .builder-form { gap: 12px; padding: 4px; }
 .collection-page .builder-form label { gap: 5px; }
 .collection-page .collection-history { margin-top: 16px; }
-.team-page .team-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 10px; }
+/* KPI 与原型 .team-kpis 一致保持 4 列（此前 3 列会把第 4 张卡挤到第二行）。 */
+.team-page .team-kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 10px; }
 .team-page .team-overview-grid { margin-bottom: 8px; }
 .team-page .team-panel.team-capacity-panel { padding: 14px 18px; }
 .team-page .team-capacity-panel .team-panel-heading { align-items: center; margin-bottom: 6px; }

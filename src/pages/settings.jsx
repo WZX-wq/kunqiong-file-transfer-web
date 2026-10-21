@@ -3,14 +3,90 @@ import React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { SETTINGS_NAV_ITEMS } from '../lib/constants.js'
 import { bindAccountTarget, normalizeFileCleanupSettings, normalizeNoticeSettings, requestAccountBindCode, saveCloudFileCleanupSettings, saveCloudNoticeSettings } from '../lib/records.js'
-import { ArrowLeft, BadgeCheck, Building2, Check, CheckCircle2, ChevronRight, HardDrive, ImageIcon, KeyRound, RotateCcw, Save, Send, ShieldCheck, Trash2, UserRound, Users, X } from 'lucide-react'
-import { UserAvatar, displayUserSubtitle } from '../components/ui.jsx'
+import { ArrowLeft, AlertTriangle, BadgeCheck, Check, ChevronRight, Crown, HardDrive, ImageIcon, KeyRound, RotateCcw, Send, ShieldCheck, Trash2, UserRound, X } from 'lucide-react'
+import { UserAvatar } from '../components/ui.jsx'
 import { PrototypeAsset } from '../components/prototype-asset.jsx'
-import { displayUserName, formatBytes, formatDate, formatPlanPrice, maskPhone, planDaysRemaining } from '../lib/format.js'
-import { useRemotePlanPricing } from '../hooks.js'
-import { mergePlanPricing } from '../lib/api.js'
+import { displayUserName, formatBytes, formatDateInput, maskPhone } from '../lib/format.js'
 import { contactInputError, EMAIL_MAX_LENGTH, normalizePhoneContact, PHONE_LENGTH } from '../../server/lib/contact-input.js'
 import { OrdersPanel } from './orders.jsx'
+import { apiRequest } from '../lib/api.js'
+
+// 清理页顶部「存储与清理」卡（对齐原型 settings-cleanup 的存储卡）：
+// 三段容量全部来自 /api/account/file-cleanup-overview 的真实统计，
+// 「立即清理」走 /api/account/file-cleanup/run，按当前账号自己的清理规则执行。
+function CleanupStorageCard({ user }) {
+  const [overview, setOverview] = useState(null)
+  const [running, setRunning] = useState(false)
+  const [feedback, setFeedback] = useState(null)
+  const load = () => apiRequest('/api/account/file-cleanup-overview').then((data) => setOverview(data)).catch(() => {})
+  useEffect(() => { load() }, [])
+  const runNow = async () => {
+    if (running) return
+    setRunning(true)
+    setFeedback(null)
+    try {
+      const result = await apiRequest('/api/account/file-cleanup/run', { method: 'POST', body: JSON.stringify({}) })
+      if (result.skipped) {
+        setFeedback({ tone: 'info', text: '自动清理未开启，请先开启上方开关后再立即清理。' })
+      } else {
+        setFeedback({ tone: 'success', text: result.files > 0 ? `已清理 ${result.shares} 个分享与 ${result.collections} 个收集任务（共 ${result.files} 个文件），释放 ${formatBytes(result.freedBytes)}。` : '没有满足清理条件的过期文件，无需清理。' })
+      }
+      load()
+    } catch (err) {
+      setFeedback({ tone: 'error', text: err.message || '清理失败，请稍后再试' })
+    } finally {
+      setRunning(false)
+    }
+  }
+  if (!overview) return <div className="cleanup-storage-card is-loading"><span className="loading-dot" /> 正在读取容量使用…</div>
+  const total = Math.max(0, Number(overview.totalBytes) || 0)
+  const pct = (bytes) => total > 0 ? Math.min(100, (bytes / total) * 100) : 0
+  const expired = Math.max(0, Number(overview.expiredBytes) || 0)
+  const planLabel = user?.plan?.label || '当前套餐'
+  const expiredParts = []
+  if (overview.expiredShareCount > 0) expiredParts.push(`${overview.expiredShareCount} 个分享`)
+  if (overview.expiredCollectionCount > 0) expiredParts.push(`${overview.expiredCollectionCount} 个收集任务`)
+  const expiredDetail = expiredParts.length ? `（${expiredParts.join(' · ')}）` : ''
+  return (
+    <div className="cleanup-storage-card">
+      <div className="cleanup-storage-head">
+        <h2><HardDrive size={18} /> 存储与清理</h2>
+        <span className="cleanup-plan-chip">{planLabel} {formatBytes(total)}</span>
+      </div>
+      <div className="cleanup-storage-body">
+        <div className="cleanup-storage-line"><span>存储空间</span><em>已用 {total > 0 ? Math.round((overview.usedBytes / total) * 100) : 0}%</em></div>
+        <div className="cleanup-storage-total"><b>{formatBytes(overview.usedBytes)}</b><small>/ {formatBytes(total)}</small></div>
+        <div className="cleanup-storage-bar" role="img" aria-label={`有效文件 ${formatBytes(overview.activeBytes)}，即将过期 ${formatBytes(overview.expiringBytes)}，已过期待清理 ${formatBytes(expired)}`}>
+          <i style={{ width: `${pct(overview.activeBytes)}%`, background: '#1f6bff' }} />
+          <i style={{ width: `${pct(overview.expiringBytes)}%`, background: '#7fb0f5' }} />
+          <i style={{ width: `${pct(expired)}%`, background: '#d8e4f5' }} />
+        </div>
+        <div className="cleanup-storage-legend">
+          <span><i style={{ background: '#1f6bff' }} />有效文件<b>{formatBytes(overview.activeBytes)}</b></span>
+          <span><i style={{ background: '#7fb0f5' }} />即将过期<b>{formatBytes(overview.expiringBytes)}</b></span>
+          <span><i style={{ background: '#d8e4f5' }} />已过期待清理<b>{formatBytes(expired)}</b></span>
+        </div>
+        <div className={`cleanup-storage-action ${expired > 0 ? 'has-expired' : ''}`}>
+          <AlertTriangle size={16} />
+          <span>{expired > 0 ? `已过期文件仍占用容量，清理后才会释放${expiredDetail}。` : '当前没有已过期占用容量的文件。'}</span>
+          <button type="button" className="primary-button" onClick={runNow} disabled={running || !overview.settings.enabled} title={overview.settings.enabled ? '' : '请先开启自动清理开关'}>
+            <Trash2 size={14} /> {running ? '清理中…' : '立即清理'}
+          </button>
+        </div>
+        {feedback && <p className={`cleanup-storage-feedback is-${feedback.tone}`}>{feedback.text}</p>}
+      </div>
+    </div>
+  )
+}
+
+// 页面头：标题与说明随分区切换（对齐原型 settingsLayout 的 title / sub）。
+const SECTION_HEADINGS = {
+  profile: { title: '个人资料', detail: '管理在鲲穹文件传输中展示的账户信息。' },
+  security: { title: '账号与安全', detail: '查看当前登录账户和会话安全状态。' },
+  notice: { title: '消息通知', detail: '选择你希望收到的账户和文件动态提醒，修改会自动保存。' },
+  cleanup: { title: '文件清理', detail: '控制已过期文件是否自动删除，清理后才会释放账号容量。' },
+  orders: { title: '我的订单', detail: '查询会员套餐订单和支付状态。' },
+}
 
 export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack, onSaveProfile, onUpdateUser, onNavigateSection, onOpenWorkspace }) {
   const [nickname, setNickname] = useState('')
@@ -109,64 +185,121 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
     )
   }
 
+  const heading = SECTION_HEADINGS[section] || SECTION_HEADINGS.profile
+  const plan = user.plan || {}
+  const capacity = user.capacity || {}
+  const planExpiry = user.planExpiresAt ? formatDateInput(new Date(user.planExpiresAt)) : ''
+  // 侧边栏副标题对齐原型「会员版 · 至 2027-06-18」：只展示套餐与到期日。
+  const planLine = `${
+    plan.id === 'free' ? '免费版' : plan.permanent ? `${plan.label || '会员版'} · 永久有效` : plan.label || '会员版'
+  }${!plan.permanent && planExpiry ? ` · 至 ${planExpiry}` : ''}`
+  const usedBytes = Number(capacity.usedBytes || 0)
+  const totalBytes = Number(capacity.totalBytes || 0)
+  const resetProfileForm = () => {
+    setNickname(user.nickname || user.username || '')
+    setProfileError('')
+    setAvatarError('')
+  }
+
   return (
     <section className="settings-page">
+      <header className="settings-page-head">
+        <div className="settings-page-title">
+          <div className="settings-crumb"><a href="/">首页</a><i>/</i><span>账户设置</span></div>
+          <h1>{heading.title}</h1>
+          <p>{heading.detail}</p>
+        </div>
+        {section === 'profile' && <div className="settings-page-actions"><button className="secondary-button" onClick={onOpenWorkspace}><Crown size={15} /> 会员权益</button></div>}
+      </header>
       <div className="settings-layout">
         <aside className="settings-sidebar">
-          <div className="settings-user-card">
+          <div className="settings-identity">
             <UserAvatar user={user} />
-            <strong>{displayUserName(user)}</strong>
-            <span>{displayUserSubtitle(user)}</span>
-            <div className="settings-account-line"><CheckCircle2 size={14} /> 鲲穹账号已连接</div>
+            <div>
+              <strong>{displayUserName(user)}</strong>
+              <span>{planLine}</span>
+            </div>
           </div>
           <nav className="settings-nav" aria-label="账户设置">
             {SETTINGS_NAV_ITEMS.map(({ key, label, icon: Icon, path }) => (
               <button key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => { if (section !== key) onNavigateSection?.(path) }}>
-                <Icon size={17} />
+                <Icon size={16} />
                 <span>{label}</span>
-                <ChevronRight size={15} />
               </button>
             ))}
           </nav>
+          <div className="settings-sidebar-foot">
+            <button onClick={onOpenWorkspace}><Crown size={16} /> 会员与团队空间</button>
+            <button onClick={onBack}><ArrowLeft size={16} /> 返回发文件</button>
+          </div>
         </aside>
 
-        <div className="settings-panel">
-          {section === 'orders' && <><SettingsPanelHeader eyebrow="账户设置" title="我的订单" detail="查询会员套餐订单和支付状态。" onBack={onBack} /><OrdersPanel user={user} onLogin={onLogin} /></>}
+        <div className={`settings-panel${section === 'profile' ? ' settings-panel-bare' : ''}`}>
+          {section === 'orders' && <OrdersPanel user={user} onLogin={onLogin} />}
           {section === 'profile' && (
             <>
-              <SettingsPanelHeader eyebrow="账户设置" title="个人资料" detail="管理在鲲穹文件传输中展示的账户信息。" onBack={onBack} />
-              <div className="settings-form">
-                <div className="settings-profile-row">
-                  <div className="settings-row-label"><strong>头像</strong><span>上传后仅在当前鲲穹账户中使用</span></div>
-                  <div className="settings-avatar-actions">
-                    <UserAvatar user={user} overrideSrc={avatarPreview} />
-                    <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={saveAvatarFile} />
-                    <button className="settings-row-action" onClick={() => avatarInputRef.current?.click()} disabled={savingAvatar}>{savingAvatar ? '保存中' : <><ImageIcon size={14} /> 上传头像</>}</button>
+              <div className="settings-card">
+                <div className="settings-profile-head">
+                  <UserAvatar user={user} overrideSrc={avatarPreview} />
+                  <div className="settings-profile-id">
+                    <strong>{displayUserName(user)}</strong>
+                    <span>账号 ID：{user.id || user.username}</span>
+                  </div>
+                  <div className="settings-profile-actions">
+                    <button className="secondary-button" onClick={() => avatarInputRef.current?.click()} disabled={savingAvatar}><ImageIcon size={14} /> {savingAvatar ? '保存中' : '更换头像'}</button>
+                    <button className="secondary-button" onClick={restoreProviderAvatar} disabled={savingAvatar || user.avatarSource !== 'custom'}><RotateCcw size={14} /> 恢复默认</button>
+                  </div>
+                  <div className="settings-plan-chip">
+                    <Crown size={14} />
+                    <strong>{plan.label || '免费版'}</strong>
+                    <small>{plan.permanent ? '永久有效' : planExpiry ? `${planExpiry} 到期` : '长期有效'}</small>
                   </div>
                 </div>
-                {avatarError && <p className="settings-form-error">{avatarError}</p>}
-                <div className="settings-avatar-note"><span>未上传时默认显示鲲穹账号的登录头像。</span>{user.avatarSource === 'custom' && <button className="settings-row-action" onClick={restoreProviderAvatar} disabled={savingAvatar}><RotateCcw size={14} /> 恢复登录头像</button>}</div>
-                <form className="settings-profile-edit" onSubmit={saveNickname}>
-                  <label className="settings-input-field">
-                    <span>昵称</span>
-                    <input value={nickname} maxLength={40} onChange={(event) => setNickname(event.target.value)} placeholder="请输入昵称" />
-                  </label>
-                  <button className="primary-button" type="submit" disabled={savingProfile || !nickname.trim()}>{savingProfile ? '保存中' : <><Save size={15} /> 保存昵称</>}</button>
+                <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={saveAvatarFile} />
+
+                <form className="settings-profile-form" onSubmit={saveNickname}>
+                  <div className="settings-form-row">
+                    <label htmlFor="settings-nickname">昵称</label>
+                    <div className="settings-form-body">
+                      <div className="settings-field"><input id="settings-nickname" value={nickname} maxLength={40} onChange={(event) => setNickname(event.target.value)} placeholder="请输入昵称" /></div>
+                      <p className="settings-form-hint">最多 40 个字符，显示在分享页与团队列表</p>
+                    </div>
+                  </div>
+                  <div className="settings-form-row">
+                    <label htmlFor="settings-email">邮箱</label>
+                    <div className="settings-form-body">
+                      <div className="settings-field"><input id="settings-email" value={user.email || ''} readOnly placeholder="未绑定邮箱" /></div>
+                      <p className="settings-form-hint">用于接收取件通知与安全提醒</p>
+                    </div>
+                  </div>
+                  <div className="settings-form-row">
+                    <label htmlFor="settings-phone">手机号</label>
+                    <div className="settings-form-body is-inline">
+                      <div className="settings-field"><input id="settings-phone" value={user.phone ? maskPhone(user.phone) : ''} readOnly placeholder="未绑定手机号" /></div>
+                      <span className={`settings-bind-badge ${user.phone ? 'is-bound' : ''}`}><i />{user.phone ? '已绑定' : '未绑定'}</span>
+                      <button type="button" className="secondary-button" onClick={() => setBindingType('phone')}>{user.phone ? '更换' : '绑定'}</button>
+                      <p className="settings-form-hint">用于登录与安全验证</p>
+                    </div>
+                  </div>
+                  {(profileError || avatarError) && <p className="settings-form-error">{profileError || avatarError}</p>}
+                  <div className="settings-form-foot">
+                    <button type="button" className="secondary-button" onClick={resetProfileForm}>取消</button>
+                    <button type="submit" className="primary-button" disabled={savingProfile || !nickname.trim()}>{savingProfile ? '保存中' : '保存资料'}</button>
+                  </div>
                 </form>
-                {profileError && <p className="settings-form-error">{profileError}</p>}
-                <SettingsInfoRow label="登录账号" value={user.username || user.id || '未设置'} />
-                <SettingsInfoRow label="邮箱" value={user.email || '未绑定'} />
-                <SettingsInfoRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定'} />
-                <AccountCapacityCard user={user} />
-                <button className="workspace-entry-button" onClick={onOpenWorkspace}><Building2 size={15} /> 查看会员与团队空间 <ChevronRight size={15} /></button>
-                <AccountBenefits benefits={user.benefits?.filter((benefit) => benefit.label !== '账号容量' && !(user.teamEntitlement?.organizationName && benefit.label === '团队空间'))} />
+              </div>
+
+              <div className="settings-stat-strip">
+                <div><span>已用容量</span><b>{formatBytes(usedBytes)}</b><small>/ {totalBytes ? formatBytes(totalBytes) : '不限'}</small></div>
+                <div><span>分享任务</span><b>{capacity.shareCount || 0} 个</b><small>共 {formatBytes(capacity.shareBytes || 0)}</small></div>
+                <div><span>收集任务</span><b>{capacity.collectionCount || 0} 个</b><small>{capacity.fileCount || 0} 个文件</small></div>
+                <button type="button" className="settings-stat-link" onClick={() => onNavigateSection?.('/settings/cleanup')}>容量明细 <ChevronRight size={13} /></button>
               </div>
             </>
           )}
 
           {section === 'security' && (
             <>
-              <SettingsPanelHeader eyebrow="账户设置" title="账号与安全" detail="查看当前登录账户和会话安全状态。" onBack={onBack} />
               <div className="settings-list">
                 <SettingsActionRow label="鲲穹账号" value={user.username || user.id || '未设置'} detail={user.id ? `账号 ID：${user.id}` : ''} />
                 <SettingsActionRow label="手机号" value={user.phone ? maskPhone(user.phone) : '未绑定手机号'} action={user.phone ? '更换绑定' : '绑定手机号'} onAction={() => setBindingType('phone')} />
@@ -179,7 +312,6 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
 
           {section === 'notice' && (
             <>
-              <SettingsPanelHeader eyebrow="账户设置" title="消息通知" detail="选择你希望收到的账户和文件动态提醒，修改会自动保存。" onBack={onBack} />
               <div className="settings-notice-group">
                 <h2>通知方式</h2>
                 <NoticeToggle label="站内消息" detail="在鲲穹页面内显示处理结果和状态提醒" checked={noticeSettings.inApp} onChange={() => updateNoticeSetting('inApp')} />
@@ -199,7 +331,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
 
           {section === 'cleanup' && (
             <>
-              <SettingsPanelHeader eyebrow="账户设置" title="文件清理" detail="控制已过期文件是否自动删除，清理后才会释放账号容量。" onBack={onBack} />
+              <CleanupStorageCard user={user} />
               <div className="settings-notice-group file-cleanup-settings">
                 <h2><PrototypeAsset className="settings-prototype-heading-icon" name="act-trash.png" size={22} /> 过期文件自动清理</h2>
                 <NoticeToggle
@@ -233,63 +365,6 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
         />
       )}
     </section>
-  )
-}
-
-export function SettingsPanelHeader({ eyebrow, title, detail, onBack }) {
-  return <div className="settings-panel-header"><div className="settings-panel-header-top"><p className="eyebrow">{eyebrow}</p><button className="settings-back-button" onClick={onBack}><ArrowLeft size={15} /> 返回</button></div><h1>{title}</h1><p>{detail}</p></div>
-}
-
-export function SettingsInfoRow({ label, value }) {
-  return <div className="settings-info-row"><strong>{label}</strong><span>{value}</span></div>
-}
-
-export function AccountCapacityCard({ user }) {
-  // 设置页套餐价与升级弹窗/工作台同源（远端主站实价），拉不到时回落本地配置价
-  const remotePricing = useRemotePlanPricing(user?.id)
-  const capacity = user?.capacity || {}
-  const plan = user?.plan || {}
-  const planDisplay = mergePlanPricing(plan, remotePricing)
-  const usedBytes = Number(capacity.usedBytes || 0)
-  const totalBytes = Number(capacity.totalBytes || 0)
-  const ratio = totalBytes ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0
-  const validity = plan.id === 'free' ? '长期免费' : plan.permanent ? '永久有效' : user.planExpiresAt ? `有效至 ${formatDate(user.planExpiresAt)} · 剩余${planDaysRemaining(user.planExpiresAt)}天` : '长期有效'
-  return (
-    <div className="account-capacity-card">
-      <div>
-        <span>账号容量 · {plan.label || '基础版'}</span>
-        <strong>{usedBytes ? formatBytes(usedBytes) : '0 KB'} / {totalBytes ? formatBytes(totalBytes) : '不限容量'}</strong>
-      </div>
-      <div className="capacity-bar" aria-label={`容量已使用 ${ratio}%`}><span style={{ width: `${ratio}%` }} /></div>
-      <div className="capacity-meta">
-        <span>{capacity.shareCount || 0} 个分享</span>
-        <span>{capacity.collectionCount || 0} 个收集任务</span>
-        <span>{capacity.fileCount || 0} 个文件</span>
-      </div>
-      <div className="account-plan-meta"><strong>{plan.label || '基础版'}</strong><span>{validity}</span><span>{formatPlanPrice(planDisplay)}</span></div>
-      {user?.teamEntitlement?.organizationName && (
-        <p className="account-team-hint">
-          <Users size={13} />
-          {user.teamEntitlement.role === 'owner'
-            ? `你是「${user.teamEntitlement.organizationName}」的所有者，团队使用${user.teamEntitlement.teamPlanLabel || '团队套餐'}，团队总容量 ${formatBytes(user.teamEntitlement.teamSpaceBytes || 0)}；上方是你的个人套餐容量`
-            : `已加入「${user.teamEntitlement.organizationName}」，共享${user.teamEntitlement.teamPlanLabel || '团队套餐'}团队空间 ${formatBytes(user.teamEntitlement.teamSpaceBytes || 0)}；上方是你的个人套餐容量`}
-        </p>
-      )}
-    </div>
-  )
-}
-
-export function AccountBenefits({ benefits = [] }) {
-  if (!benefits.length) return null
-  return (
-    <div className="account-benefits">
-      {benefits.map((benefit) => (
-        <div className={benefit.enabled ? '' : 'disabled'} key={benefit.label}>
-          <CheckCircle2 size={15} />
-          <span><strong>{benefit.label}</strong><small>{benefit.detail}</small></span>
-        </div>
-      ))}
-    </div>
   )
 }
 

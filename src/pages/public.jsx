@@ -3,7 +3,7 @@ import { SecurityCheckFailure, SecurityCheckStatus } from '../components/securit
 import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState } from '../lib/api.js'
 import { ConfirmModal, FeedbackMessage, LoadingBlock, PublicShell, StateBlock } from '../components/common.jsx'
-import { AlertTriangle, ArrowLeft, Building2, CalendarDays, Clock3, Copy, Download, Eye, FileText, FolderOpen, Inbox, Info, KeyRound, Link2, Lock, Pause, Play, QrCode, RefreshCw, Settings2, ShieldCheck, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Building2, CalendarDays, CheckCircle2, Clock3, Copy, Download, Eye, FileText, FolderOpen, Inbox, Info, KeyRound, Link2, Lock, Pause, Play, QrCode, RefreshCw, Settings2, ShieldCheck, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { ProtoStateCard, ProtoBadge, ProtoBanner } from '../components/prototype-ui.jsx'
 import { CollectionLimitInfo, DownloadProgressPanel, FileFormatBadge, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, TeamJoinRequestCard, UserAvatar, toFileItems } from '../components/ui.jsx'
@@ -32,16 +32,106 @@ export function TeamInvitePage({ slug }) {
   return (
     <PublicShell>
       <section className="team-invite-page">
-        <div className="team-invite-hero">
-          <span className="team-invite-hero-icon">{invalid ? <Building2 size={26} /> : <Users size={26} />}</span>
-          <p className="eyebrow">团队空间邀请</p>
-          <h1>{invalid ? '这个邀请链接已失效' : '你收到一个团队空间邀请'}</h1>
-          <p>{invalid ? '该团队不存在或已解散，请联系邀请你的人重新获取链接。' : '登录鲲穹账号后即可申请加入，申请会提交给团队所有者审批。'}</p>
-        </div>
+        {invalid && (
+          <div className="team-invite-hero">
+            <span className="team-invite-hero-icon"><Building2 size={26} /></span>
+            <p className="eyebrow">团队空间邀请</p>
+            <h1>这个邀请链接已失效</h1>
+            <p>该团队不存在或已解散，请联系邀请你的人重新获取链接。</p>
+          </div>
+        )}
         {probe?.reason === 'error' && <><FeedbackMessage message={probe.message} tone="error" /><button className="secondary-button" onClick={() => setProbeVersion(value => value + 1)}>重新加载</button></>}
-        {!invalid && probe?.reason !== 'error' && <TeamJoinRequestCard enterpriseSlug={slug} />}
+        {!invalid && probe?.reason !== 'error' && probe && <TeamInviteLandingCard slug={slug} probe={probe} />}
       </section>
     </PublicShell>
+  )
+}
+
+// 团队邀请落地卡：对齐原型 space.js · invite（logo + 徽标 + 团队信息盒 + 权益清单 + 主按钮 + 底部出口）。
+// 团队数据全部来自探测接口的真实字段；未覆盖的状态（已是成员 / 冷却中…）按钮置灰并给出原因。
+function TeamInviteLandingCard({ slug, probe }) {
+  const [submitting, setSubmitting] = useState(false)
+  const [feedback, setFeedback] = useState('')
+  const [state, setState] = useState(probe)
+  useEffect(() => { setState(probe) }, [probe])
+  const teamName = state.organizationName || '该团队'
+  const spaceLabel = state.teamSpaceBytes ? formatBytes(state.teamSpaceBytes) : ''
+  const login = () => {
+    const returnTo = `${window.location.origin}/e/${encodeURIComponent(slug)}`
+    window.location.href = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`
+  }
+  const submit = async () => {
+    if (submitting) return
+    setSubmitting(true)
+    setFeedback('')
+    try {
+      const result = await apiRequest(`/api/organizations/${encodeURIComponent(slug)}/join-request`, { method: 'POST', body: JSON.stringify({}) })
+      setState((current) => ({ ...current, available: false, reason: 'pending', requestedAt: result.requestedAt || new Date().toISOString() }))
+    } catch (err) {
+      setFeedback(err.message || '申请提交失败，请稍后再试')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  const actions = {
+    anonymous: { label: '登录后申请加入', onClick: login },
+    eligible: { label: '接受邀请并加入', onClick: submit },
+    invited: { label: '到消息中心接受邀请', href: '/workspace' },
+    pending: { label: '申请已提交，等待审批', disabled: true },
+    member: { label: '你已是团队成员', disabled: true },
+    owner: { label: '你是该团队的所有者', disabled: true },
+    other_team: { label: '你已加入其他团队空间', disabled: true },
+    cooldown: { label: '暂时无法申请', disabled: true },
+  }
+  const action = actions[state.reason] || { label: '申请加入团队', disabled: true }
+  const cooldownHours = state.cooldownUntil ? Math.max(1, Math.ceil((new Date(state.cooldownUntil).getTime() - Date.now()) / 3600000)) : 0
+  const statusText = {
+    anonymous: '登录鲲穹账号后，即可向团队所有者申请加入。',
+    pending: '申请已提交，等待团队所有者同意或拒绝。',
+    invited: '你已收到该团队的邀请，请到消息中心选择接受或拒绝。',
+    member: '你已经是该团队成员。',
+    owner: '你是该团队的所有者。',
+    other_team: '你已加入其他团队空间，无法重复加入。',
+    cooldown: cooldownHours ? `上次申请未通过，请 ${cooldownHours} 小时后再试。` : '',
+  }[state.reason] || ''
+  const initials = Array.isArray(state.memberInitials) ? state.memberInitials.slice(0, 4) : []
+  const moreCount = Math.max(0, Number(state.memberCount) || 0) - initials.length
+  return (
+    <div className="invite-card public-card">
+      <div className="invite-top">
+        <span className="team-invite-hero-icon"><Building2 size={24} /></span>
+        <span className="badge blue"><i />团队空间邀请</span>
+      </div>
+      <h1>你收到一个团队空间邀请</h1>
+      <p className="invite-sub">{state.ownerName || '团队所有者'} 邀请你加入「{teamName}」，一起共享文件与收集任务。</p>
+      <div className="invite-team">
+        <div className="invite-team-line">
+          <div><b>{teamName}</b><small>{state.memberCount || 0} 位成员 · {state.planLabel || '团队版'}</small></div>
+          {spaceLabel && <span className="badge">{spaceLabel} 共享空间</span>}
+        </div>
+        {initials.length > 0 && (
+          <div className="team-avatars invite-avatars">
+            {initials.map((ch, index) => <span className="avatar sm" key={`${ch}-${index}`}>{ch}</span>)}
+            {moreCount > 0 && <span className="avatar sm more">+{moreCount}</span>}
+          </div>
+        )}
+      </div>
+      <ul className="invite-benefits">
+        <li><CheckCircle2 size={16} /><div><b>{spaceLabel ? `共享 ${spaceLabel} 团队空间` : '共享团队空间'}</b><small>团队文件独立于个人容量</small></div></li>
+        <li><CheckCircle2 size={16} /><div><b>访问团队专属资源</b><small>团队共享的文件与交付内容</small></div></li>
+        <li><CheckCircle2 size={16} /><div><b>参与团队收集任务</b><small>统一提交与归档</small></div></li>
+      </ul>
+      {feedback && <FeedbackMessage message={feedback} tone="error" />}
+      {action.href
+        ? <a className="primary-button invite-cta" href={action.href}>{action.label}</a>
+        : <button className="primary-button invite-cta" onClick={action.onClick} disabled={action.disabled || submitting}>{submitting ? '提交中…' : action.label}</button>}
+      <p className="tiny center invite-note">加入需要登录鲲穹账号 · 管理员审批后生效</p>
+      {(statusText || state.requestedAt) && <p className="invite-status">{statusText}{state.requestedAt && statusText ? ' · ' : ''}{state.requestedAt ? `申请于 ${formatDate(state.requestedAt)} 提交` : ''}</p>}
+      <div className="invite-foot">
+        <span>{state.createdAt ? `团队创建于 ${formatDate(state.createdAt)}` : '鲲穹文件传输 · 团队空间'}</span>
+        <a href="/">暂不加入</a>
+      </div>
+    </div>
   )
 }
 

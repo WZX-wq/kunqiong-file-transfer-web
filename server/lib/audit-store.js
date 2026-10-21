@@ -3,6 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { removeFile } from './file-lock.js'
 
 function mergeAuditEntries(logs, normalize, limit) {
   const byId = new Map()
@@ -132,6 +133,10 @@ export class LocalAuditStore {
   }
 
   locked(task) {
+    // 本地单进程开发可复用 file-lock 的开关关掉跨进程锁：本方法全同步、Node 单线程，
+    // 同进程内不会真并发；而部分 Windows 环境（安全软件 / 受限目录）拒绝删除锁文件，
+    // 会让这里每次都等到 5s 超时。生产多进程 / MySQL 部署不要设置该变量。
+    if (process.env.KUNQIONG_DISABLE_FILE_LOCK === '1') return task()
     const deadline = Date.now() + 5000
     const candidate = this.lockPath + '.' + process.pid + '.' + this.tag + '.owner'
     fs.writeFileSync(candidate, JSON.stringify({ pid: process.pid, token: this.tag }), { mode: 0o600 })
@@ -146,12 +151,24 @@ export class LocalAuditStore {
           if (error.code !== 'EEXIST') throw error
           let owner
           try { owner = JSON.parse(fs.readFileSync(this.lockPath, 'utf8')) } catch {}
+          // 属主是本进程：本次尚未获得锁，而 locked() 全同步且不可重入，所以它必然是
+          // 释放失败（unlink 被拒）留下的自锁。不回收就只能一路等到超时——历史故障：
+          // 每个请求都为此空转 5s 的 Atomics.wait，把事件循环堵死，登录 / 回调全部卡住。
+          if (Number.isSafeInteger(owner?.pid) && owner.pid === process.pid) {
+            // 属主是本进程 → 这是上次释放失败留下的自锁（locked() 全同步、不可重入，
+            // 同进程内不会真有第二个持有者）。token 一致就直接认领执行，避免为了删一个
+            // 删不掉的文件反复空转；token 不一致（pid 被复用的旧实例）则先尝试清理。
+            if (owner.token === this.tag) { acquired = true; continue }
+            if (removeFile(this.lockPath)) continue
+            // 自锁删不掉（安全软件 / 受限目录）：立刻报错，别把事件循环空转 5s。
+            throw Object.assign(new Error('审计日志写入锁无法释放，请检查目录权限或设置 KUNQIONG_DISABLE_FILE_LOCK=1'), { status: 503, code: 'AUDIT_LOCK_STUCK' })
+          }
           if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) {
             try { process.kill(owner.pid, 0) } catch (probe) {
               if (probe.code === 'ESRCH') {
                 try {
                   const current = JSON.parse(fs.readFileSync(this.lockPath, 'utf8'))
-                  if (current.pid === owner.pid && current.token === owner.token) fs.unlinkSync(this.lockPath)
+                  if (current.pid === owner.pid && current.token === owner.token) removeFile(this.lockPath)
                 } catch {}
                 continue
               }
@@ -163,8 +180,10 @@ export class LocalAuditStore {
       }
       return task()
     } finally {
-      if (acquired) fs.unlinkSync(this.lockPath)
-      fs.unlinkSync(candidate)
+      // 释放失败绝不能抛：它会盖掉任务本身的异常，还会把锁连同候选文件一起泄漏给下一个
+      // 写者。removeFile 内部已做 8×20ms 重试并吞掉 EPERM/EBUSY，最差由自锁回收兜底。
+      if (acquired) removeFile(this.lockPath)
+      removeFile(candidate)
     }
   }
 

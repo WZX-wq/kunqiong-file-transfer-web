@@ -817,6 +817,42 @@ export function recordExpiryLabel(record) {
   return `${record.kind === 'collection' ? '截止' : '到期'} ${formatShortDate(deadline)}`
 }
 
+// 「有效期」列的展示值：对齐原型（剩余 N 天 / MM-DD 截止 / MM-DD 过期 / 永久有效），
+// 全部由真实 expiresAt / deadline + 当前时间算出，不引入原型里的演示状态。
+export function recordValidityLabel(record) {
+  const deadline = record.expiresAt || record.deadline
+  if (!deadline) return record.kind === 'share' ? '永久有效' : '未设置截止'
+  const time = new Date(deadline).getTime()
+  if (!Number.isFinite(time)) return '—'
+  const day = formatMonthDay(deadline)
+  if (isRecordExpired(record)) return isClosedStatus(record.status) ? `${day} 关闭` : `${day} 过期`
+  // 收集任务有明确截止：直接给日期，和原型 `10-30 截止` 一致。
+  if (record.kind === 'collection') return `${day} 截止`
+  const remaining = time - Date.now()
+  // 先四舍五入到小时再换算天：`expiresAt = now + 2 天` 时剩余的毫秒已经略少于 48h，
+  // 直接按天取整会显示成「剩余 1 天」。同理 23.5 小时会归到「剩余 1 天」而不是 24 小时。
+  const hours = Math.max(1, Math.round(remaining / 3600000))
+  if (hours < 24) return `剩余 ${hours} 小时`
+  return `剩余 ${Math.round(hours / 24)} 天`
+}
+
+// 状态色调：只映射产品真实存在的状态，配色沿用原型 badge（ok/warn/blue/灰）。
+export function recordStatusTone(record) {
+  const group = recordStatusGroup(record)
+  if (group === 'expired') return 'expired'
+  if (group === 'expiring') return 'warn'
+  const label = recordDisplayStatus(record)
+  if (label === '已提交') return 'blue'
+  if (label === '待提交') return 'warn'
+  return 'ok'
+}
+
+function formatMonthDay(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
 export function fileFormatLabel(file = {}, record = null) {
   const extension = fileExtension(file.name || file.relativePath || recordDisplayName(record || {}))
   if (extension) return extension.toUpperCase()

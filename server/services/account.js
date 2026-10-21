@@ -663,6 +663,103 @@ export function cleanupUserExpiredFiles(now = Date.now()) {
   return changed
 }
 
+// 「即将过期」的统计口径复用全局 EXPIRING_SOON_MS（24 小时内到期），
+// 与收发记录里「即将过期」状态保持同一把尺子。
+export function fileCleanupOverviewForOwner(ownerKey, now = Date.now()) {
+  const capacity = accountUsageForUser(ownerKey)
+  const buckets = { activeBytes: 0, expiringBytes: 0, expiredBytes: 0 }
+  let expiredShareCount = 0
+  let expiredCollectionCount = 0
+  let expiredFileCount = 0
+  for (const share of metadata.shares) {
+    if (share.teamResource || share.cleanedAt || share.ownerUserId !== ownerKey || !share.files?.length) continue
+    const size = fileListSize(share.files)
+    const expiresAt = share.expiresAt ? new Date(share.expiresAt).getTime() : Number.NaN
+    if (Number.isFinite(expiresAt) && expiresAt <= now) {
+      buckets.expiredBytes += size
+      expiredShareCount += 1
+      expiredFileCount += share.files.length
+    } else if (Number.isFinite(expiresAt) && expiresAt <= now + EXPIRING_SOON_MS) {
+      buckets.expiringBytes += size
+    } else {
+      buckets.activeBytes += size
+    }
+  }
+  for (const task of metadata.collections) {
+    if (task.cleanedAt || task.ownerUserId !== ownerKey) continue
+    const deadline = task.deadline ? new Date(task.deadline).getTime() : Number.NaN
+    if (Number.isFinite(deadline) && deadline <= now) {
+      if ((task.submissions || []).some((submission) => submission.files?.length)) expiredCollectionCount += 1
+    }
+    for (const submission of task.submissions || []) {
+      if (!submission.files?.length) continue
+      const size = fileListSize(submission.files)
+      if (Number.isFinite(deadline) && deadline <= now) {
+        buckets.expiredBytes += size
+        expiredFileCount += submission.files.length
+      } else if (Number.isFinite(deadline) && deadline <= now + EXPIRING_SOON_MS) {
+        buckets.expiringBytes += size
+      } else {
+        buckets.activeBytes += size
+      }
+    }
+  }
+  const owner = accountUserById(ownerKey)
+  return {
+    usedBytes: capacity.usedBytes,
+    totalBytes: capacity.totalBytes,
+    fileCount: capacity.fileCount,
+    shareCount: capacity.shareCount,
+    collectionCount: capacity.collectionCount,
+    ...buckets,
+    expiredShareCount,
+    expiredCollectionCount,
+    expiredFileCount,
+    settings: normalizeFileCleanupSettings(owner?.fileCleanup),
+  }
+}
+
+// 「立即清理」：只清理当前账号、且尊重它自己的清理开关（未开启时明确跳过，
+// 绝不偷偷删文件）。与自动清理不同：宽限期（过期后 N 天）只约束定时自动删除，
+// 给用户留反悔缓冲；用户显式点击「立即清理」时按卡片口径「过期即清」，
+// 保证按钮行为与「已过期待清理」展示的数字一致。
+export function cleanupExpiredFilesForOwner(ownerKey, now = Date.now()) {
+  const owner = accountUserById(ownerKey)
+  const settings = normalizeFileCleanupSettings(owner?.fileCleanup)
+  if (!settings.enabled) return { skipped: true, freedBytes: 0, shares: 0, collections: 0, files: 0, settings }
+  const before = accountUsageForUser(ownerKey)
+  let shares = 0
+  let collections = 0
+  let files = 0
+  for (const share of metadata.shares) {
+    if (share.teamResource || share.cleanedAt || share.ownerUserId !== ownerKey || !share.expiresAt || !share.files?.length) continue
+    const expiresAt = new Date(share.expiresAt).getTime()
+    if (!Number.isFinite(expiresAt) || expiresAt > now) continue
+    files += share.files.length
+    shares += 1
+    removeDirectory(path.join(filesRoot, share.id))
+    share.files = []
+    share.cleanedAt = new Date(now).toISOString()
+    share.status = 'closed'
+    share.closeReason = 'manual_cleanup'
+  }
+  for (const task of metadata.collections) {
+    if (task.cleanedAt || task.ownerUserId !== ownerKey || !task.deadline || !task.submissions?.some((submission) => submission.files?.length)) continue
+    const deadline = new Date(task.deadline).getTime()
+    if (!Number.isFinite(deadline) || deadline > now) continue
+    for (const submission of task.submissions) {
+      if (!submission.files?.length) continue
+      files += submission.files.length
+      removeDirectory(path.join(collectionsRoot, task.id, submission.id))
+      submission.files = []
+    }
+    task.cleanedAt = new Date(now).toISOString()
+    collections += 1
+  }
+  const after = accountUsageForUser(ownerKey)
+  return { skipped: false, freedBytes: Math.max(0, before.usedBytes - after.usedBytes), shares, collections, files, settings }
+}
+
 export function currentShareStatus(share = {}, now = Date.now()) {
   if (share.status === 'closed' || share.status === 'expired') return 'closed'
   if (share.expiresAt && new Date(share.expiresAt).getTime() <= now) {

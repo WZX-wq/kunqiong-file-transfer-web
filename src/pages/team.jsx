@@ -552,7 +552,7 @@ export function TeamPage() {
             </form>
             {teamNameError && <FeedbackMessage message={teamNameError} tone="error" />}
           </> : <div className="team-heading-title"><h1><Building2 size={24} /> {organization.name}</h1><span className="team-plan-tag">{teamPlanLabel}</span></div>}
-          <p>统一查看成员使用量、团队资源和空间状态。</p>
+          <p>所有者 {members.find((member) => member.role === 'owner')?.displayName || '团队所有者'} · {members.filter((member) => member.status === 'active').length} 位成员{organization.createdAt ? ` · 创建于 ${formatDate(organization.createdAt)}` : ''}</p>
         </div>
         <div className="team-page-actions">
           <a className="secondary-button" href="/workspace"><ArrowLeft size={14} /> 返回会员空间</a>
