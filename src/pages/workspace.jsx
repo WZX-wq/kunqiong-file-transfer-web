@@ -72,6 +72,7 @@ export function WorkspaceApp() {
   const [recordsSyncing, setRecordsSyncing] = useState(false)
   const [runtimeConfig, setRuntimeConfig] = useState(null)
   const uploadLimitBytes = runtimeConfig?.upload?.singleFileLimitBytes || 1.2 * 1024 ** 3
+  const maxSupportedFileSizeBytes = runtimeConfig?.maxSupportedFileSizeBytes
   const batchLimit = runtimeConfig?.maxBatchFiles || MAX_FILES
   const [authUser, setAuthUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
@@ -307,7 +308,12 @@ export function WorkspaceApp() {
     if (!nextFiles.length) return
     const invalid = nextFiles.find((item) => item.size > uploadLimitBytes)
     if (invalid) {
-      setToast(`${invalid.name} 超过当前单文件上限 ${formatBytes(uploadLimitBytes)}`)
+      const limitMessage = invalid.size > maxSupportedFileSizeBytes
+        ? `超过系统最高支持的单文件大小 ${formatBytes(maxSupportedFileSizeBytes)}`
+        : authUser
+          ? `超过当前账号单文件上限 ${formatBytes(uploadLimitBytes)}，请前往会员与团队查看更高上传额度`
+          : `超过游客单文件上限 ${formatBytes(uploadLimitBytes)}，请登录后选择支持该文件大小的套餐`
+      setToast(`${invalid.name} ${limitMessage}`)
       return
     }
     cancelSendUpload()
@@ -995,7 +1001,7 @@ export function WorkspaceApp() {
         {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} onOpenWorkspace={() => { window.location.href = '/workspace' }} />}
         {!isSettingsRoute && activeView === 'send' && (
           <SendView
-            uploadLimitBytes={uploadLimitBytes}
+            maxSupportedFileSizeBytes={maxSupportedFileSizeBytes}
             batchLimit={batchLimit}
             user={authUser}
             files={files}
@@ -1108,7 +1114,7 @@ export function GuestQuotaModal({ quota, onClose, onLogin }) {
   )
 }
 
-export function SendView({ uploadLimitBytes = 1.2 * 1024 ** 3, batchLimit = MAX_FILES, user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
+export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
   const [retrieveCode, setRetrieveCode] = useState('')
   const showUploadStatus = ['uploading', 'paused', 'failed', 'finalizing'].includes(uploadState.status)
   const recipientError = recipientInputError(settings.recipients, user)
@@ -1133,7 +1139,7 @@ export function SendView({ uploadLimitBytes = 1.2 * 1024 ** 3, batchLimit = MAX_
                 <h1>轻松发送<em>大文件</em></h1>
                 <p>支持多种文件格式，安全快速，随时随地分享</p>
                 <div className="send-prototype-stats">
-                  <div><b>{formatBytes(uploadLimitBytes)}</b><span>单文件上限</span></div>
+                  <div><b>{maxSupportedFileSizeBytes ? formatBytes(maxSupportedFileSizeBytes) : '—'}</b><span>单文件最高支持</span></div>
                   <div><b>{batchLimit} 个</b><span>单次文件数</span></div>
                   <div><b>{settings.expiry || '3 天'}</b><span>默认有效期</span></div>
                 </div>
@@ -1161,7 +1167,7 @@ export function SendView({ uploadLimitBytes = 1.2 * 1024 ** 3, batchLimit = MAX_
                   </form>
                   <small>取件码可在分享链接或发送记录中找到</small>
                 </div>
-                <span className="upload-note">当前单文件最大 {formatBytes(uploadLimitBytes)} · 上传后自动生成取件码</span>
+                <span className="upload-note">上传后自动生成链接、二维码和取件码</span>
               </div>
             </section>
 
@@ -1177,7 +1183,6 @@ export function SendView({ uploadLimitBytes = 1.2 * 1024 ** 3, batchLimit = MAX_
           <>
             <div className="send-page-head">
               <div className="send-page-head-copy">
-                <div className="send-page-crumb"><a href="/">发文件</a><i>/</i><span>{uploadState.status === 'paused' ? '已暂停' : uploadState.status === 'failed' ? '上传中断' : uploadState.status === 'finalizing' ? '安全检查' : '正在上传'}</span></div>
                 <h1>正在上传 {files.length} 个文件</h1>
                 <p>{uploadState.status === 'paused' ? '上传已暂停，已传分片会保留，可随时继续。' : uploadState.status === 'failed' ? '上传已中断，可重试本次上传或取消后重新选择文件。' : uploadState.status === 'finalizing' ? '文件已传输完成，正在执行安全检查并生成取件信息。' : '上传过程请保持页面打开，中断后可以继续。'}</p>
               </div>
@@ -1226,7 +1231,6 @@ export function SendView({ uploadLimitBytes = 1.2 * 1024 ** 3, batchLimit = MAX_
           <>
             <div className="send-page-head send-page-head-narrow">
               <div className="send-page-head-copy">
-                <div className="send-page-crumb"><a href="/">发文件</a><i>/</i><span>{shareResult ? '发送完成' : '已选文件'}</span></div>
                 <h1>{shareResult ? '发送完成' : '已选文件'}</h1>
                 <p>{shareResult ? '分享链接、取件码和二维码已准备好。' : '确认要发送的内容，可继续添加文件或文件夹。'}</p>
               </div>
@@ -1432,7 +1436,6 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
   return (
     <section className="workspace-page collection-page">
       <div className="collect-page-heading">
-        <div className="collect-breadcrumb"><span>首页</span><i>/</i><span>收集文件</span></div>
         <div className="collect-page-heading-row">
           <div><h1>创建收集任务</h1><p>生成一个提交链接，向多人收集文件，无需对方注册。</p></div>
           {collectionRecords.length > 0 && <button className="secondary-button" type="button" onClick={() => document.getElementById('collection-history')?.scrollIntoView({ block: 'start' })}>管理已有收集 <ArrowRight size={14} /></button>}

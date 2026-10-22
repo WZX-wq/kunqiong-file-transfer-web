@@ -237,7 +237,6 @@ export function WorkspacePage() {
 
         <header className="workspace-page-head">
           <div className="workspace-page-head-copy">
-            <div className="workspace-plan-breadcrumb"><a href="/">首页</a><span>/</span><strong>会员与团队</strong></div>
             <h1>会员与团队空间</h1>
             <p>存储空间、保存策略与团队协作能力由账号权益统一管控。</p>
           </div>
@@ -394,7 +393,6 @@ function PlanCatalogPage({ plans, currentPlan, selectedPlanId, isSelectablePlan,
   return <section className="plan-catalog-page">
     <div className="plan-catalog-heading">
       <div>
-        <div className="plan-catalog-breadcrumb"><a href="/">首页</a><span>/</span><a href="/workspace">会员与团队</a><span>/</span><strong>套餐</strong></div>
         <h1>选择适合你的套餐</h1>
         <p>套餐权益与价格以当前账号可购买配置为准，选择后通过现有订单流程完成升级。</p>
       </div>

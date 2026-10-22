@@ -1,0 +1,160 @@
+/* 保留原生 select 的表单、键盘和辅助技术行为，统一单选控件与展开菜单。 */
+select:not([multiple]):not([size]) {
+  color: #26354a;
+  background-color: #fff;
+  border-color: #dce5f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+select:not([multiple]):not([size]):hover:not(:disabled) {
+  background-color: #f8fbff;
+  border-color: #9cb9e5;
+}
+
+select:not([multiple]):not([size]):focus-visible {
+  border-color: #5088e8;
+  outline: 2px solid transparent;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 12%);
+}
+
+select:not([multiple]):not([size]):disabled {
+  color: #8893a3;
+  background-color: #f4f6f9;
+  border-color: #e4e9f0;
+  cursor: not-allowed;
+}
+
+/* 不支持可定制 select 的浏览器继续使用系统菜单，不改变选择行为。 */
+@supports (appearance: base-select) and selector(select::picker(select)) {
+  select:not([multiple]):not([size]),
+  select:not([multiple]):not([size])::picker(select) {
+    appearance: base-select;
+  }
+
+  select:not([multiple]):not([size]) {
+    align-items: center;
+    gap: 12px;
+  }
+
+  select:not([multiple]):not([size]):open {
+    background-color: #fff;
+    border-color: #5088e8;
+    box-shadow: 0 0 0 3px rgb(37 99 235 / 12%);
+  }
+
+  select:not([multiple]):not([size])::picker-icon {
+    content: '';
+    flex: none;
+    width: 6px;
+    height: 6px;
+    margin-inline: auto 3px;
+    color: #75849a;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+    transition: color 150ms ease, transform 150ms ease;
+  }
+
+  select:not([multiple]):not([size]):open::picker-icon {
+    color: #2563eb;
+    transform: translateY(2px) rotate(225deg);
+  }
+
+  select:not([multiple]):not([size])::picker(select) {
+    box-sizing: border-box;
+    min-inline-size: anchor-size(width);
+    max-inline-size: calc(100dvw - 24px);
+    max-block-size: min(300px, 50dvh);
+    margin-block: 6px;
+    padding: 5px;
+    overflow: auto;
+    color: #26354a;
+    background: #fff;
+    border: 1px solid #dce5f0;
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgb(30 58 100 / 13%), 0 2px 6px rgb(30 58 100 / 5%);
+    scrollbar-width: thin;
+    scrollbar-color: #c6d3e4 transparent;
+    opacity: 0;
+    translate: 0 -4px;
+    transition: opacity 140ms ease, translate 140ms ease,
+      display 140ms allow-discrete, overlay 140ms allow-discrete;
+  }
+
+  select:not([multiple]):not([size])::picker(select):popover-open {
+    opacity: 1;
+    translate: 0 0;
+  }
+
+  @starting-style {
+    select:not([multiple]):not([size])::picker(select):popover-open {
+      opacity: 0;
+      translate: 0 -4px;
+    }
+  }
+
+  select:not([multiple]):not([size]) option {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-block-size: 36px;
+    padding: 8px 10px;
+    color: #26354a;
+    background: #fff;
+    border-radius: 7px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.5;
+    cursor: pointer;
+    outline: 1px solid transparent;
+    outline-offset: -2px;
+    transition: color 120ms ease, background-color 120ms ease;
+  }
+
+  select:not([multiple]):not([size]) option:is(:hover, :focus-visible) {
+    color: #1d4ed8;
+    background: #f0f5fd;
+  }
+
+  select:not([multiple]):not([size]) option:checked {
+    color: #1d4ed8;
+    background: #eaf2ff;
+    font-weight: 600;
+  }
+
+  select:not([multiple]):not([size]) option::checkmark {
+    content: '';
+    order: 1;
+    flex: none;
+    width: 5px;
+    height: 9px;
+    margin-inline-start: auto;
+    margin-inline-end: 3px;
+    color: #2563eb;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-1px) rotate(45deg);
+  }
+
+  select:not([multiple]):not([size]) option:disabled {
+    color: #9aa4b3;
+    background: #f7f8fa;
+    cursor: not-allowed;
+  }
+
+  select:not([multiple]):not([size]) option:disabled::checkmark {
+    color: #9aa4b3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  select:not([multiple]):not([size]),
+  select:not([multiple]):not([size])::picker-icon,
+  select:not([multiple]):not([size])::picker(select),
+  select:not([multiple]):not([size]) option {
+    transition: none;
+  }
+}

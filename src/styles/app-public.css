@@ -344,11 +344,7 @@
 
 /* 收集管理页（对齐原型 collect.js · collect-manage） */
 .cm-page { width: min(1120px, calc(100% - 48px)); margin: 26px auto 52px; animation: prototype-page-enter .24s ease-out both; }
-.cm-crumb { display: flex; align-items: center; gap: 7px; color: #8796aa; font-size: 12px; }
-.cm-crumb a { color: #6b7d94; }
-.cm-crumb a:hover { color: #1f6bff; }
-.cm-crumb i { color: #b3c0d1; font-style: normal; }
-.cm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin: 10px 0 18px; }
+.cm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin: 0 0 18px; }
 .cm-head-copy { min-width: 0; }
 .cm-head h1 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: #172a45; font-size: 24px; font-weight: 750; letter-spacing: -.3px; line-height: 1.3; overflow-wrap: anywhere; }
 .cm-head p { margin-top: 6px; color: #6b7d94; font-size: 13px; }

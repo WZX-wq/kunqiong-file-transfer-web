@@ -82,16 +82,12 @@
 }
 
 /* 个人中心按原型还原（account.js · settings-profile / settingsLayout）。
- * 结构：页头（面包屑 + 标题 + 说明 + 会员权益）→ 左栏单卡（身份 + 导航 + 两个出口）→
+ * 结构：页头（标题 + 说明 + 会员权益）→ 左栏单卡（身份 + 导航 + 两个出口）→
  * 右栏「资料卡」+「统计条」。产品原有的权益清单、独立容量卡、返回工作台按钮不再重复展示。 */
 .settings-page .settings-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 16px; }
-.settings-crumb { display: flex; align-items: center; gap: 7px; color: #98a5b8; font-size: 12px; }
-.settings-crumb a { color: #7e8ea6; }
-.settings-crumb a:hover { color: #1f6bff; }
-.settings-crumb i { color: #c3ccda; font-style: normal; }
-.settings-page-title h1 { margin: 6px 0 0; color: #101c2e; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+.settings-page-title h1 { margin: 0; color: #101c2e; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
 .settings-page-title p { margin: 8px 0 0; color: #64748b; font-size: 13px; line-height: 1.6; }
-.settings-page-actions { flex: none; padding-top: 20px; }
+.settings-page-actions { flex: none; }
 .settings-page-actions .secondary-button { min-height: 34px; padding: 0 13px; font-size: 12.5px; }
 
 /* 左栏：一张卡承载身份、导航与出口 */

@@ -1020,7 +1020,6 @@ export function CollectionManagePage({ token }) {
     <PublicShell>
       {toast && <Toast {...toast} />}
       <div className="cm-page">
-        <div className="cm-crumb"><a href="/?view=collect">收集文件</a><i>/</i><span>收集管理</span></div>
         <div className="cm-head">
           <div className="cm-head-copy">
             <h1>{data.title}<ProtoBadge tone={isActive ? 'ok' : 'warn'}>{collectionStatusText(data.status, data.deadline)}</ProtoBadge></h1>

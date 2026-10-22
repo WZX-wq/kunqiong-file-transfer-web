@@ -191,8 +191,12 @@
   background: #fff;
   border: 1px solid #d7e5fb;
   border-radius: 8px;
-  font-family: var(--mono);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: normal;
 }
+.send-prototype-retrieve input::placeholder { color: #7d8ea6; opacity: 1; font: inherit; letter-spacing: normal; }
 .send-prototype-retrieve input:focus { border-color: #79a4ed; outline: 3px solid rgba(31, 107, 255, .13); }
 .send-prototype-retrieve form button { min-width: 75px; min-height: 38px; padding: 0 16px; border-radius: 8px; }
 .send-prototype-retrieve small { grid-column: 1 / -1; color: #8b9bb2; font-size: 12px; }
@@ -255,9 +259,7 @@
 
 .workspace-page.collection-page { width: min(1060px, 100%); margin: 20px auto 24px; }
 .collect-page-heading { margin-bottom: 16px; }
-.collect-breadcrumb { display: flex; align-items: center; gap: 8px; color: #8496ad; font-size: 12px; }
-.collect-breadcrumb i { color: #b1bfd0; font-style: normal; }
-.collect-page-heading-row { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-top: 5px; }
+.collect-page-heading-row { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
 .collect-page-heading h1 { color: #101c2e; font-size: 24px; font-weight: 700; line-height: 1.3; }
 .collect-page-heading p { margin-top: 5px; color: #7d8ea6; font-size: 13px; line-height: 1.6; }
 .collect-page-heading-row > .secondary-button { flex: none; min-height: 34px; padding: 0 12px; }
@@ -443,9 +445,6 @@
 /* 已选文件/发送完成态：标题栏与下方 960px 队列卡同宽居中，避免标题比卡片宽出一截。 */
 .send-page-head.send-page-head-narrow { width: min(960px, 100%); margin: 0 auto 14px; }
 .send-page-head-copy { min-width: 0; }
-.send-page-crumb { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-bottom: 9px; color: #a3b1c4; font-size: 12.4px; }
-.send-page-crumb a:hover { color: #1f6bff; }
-.send-page-crumb i { color: #c9d5e5; font-style: normal; }
 .send-page-head h1 { margin: 0; color: #101c2e; font-size: 23px; font-weight: 750; letter-spacing: -.3px; line-height: 1.3; overflow-wrap: anywhere; }
 .send-page-head-copy > p { margin: 5px 0 0; color: #7d8ea6; font-size: 13.2px; line-height: 1.6; }
 .send-page-head-actions { display: flex; flex: none; gap: 9px; }
