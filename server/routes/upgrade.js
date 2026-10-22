@@ -23,7 +23,7 @@ import {
 
 import {
   accountUserById, accountWorkspacePayload,
-  acquireUpgradeLock, createWebMemberPaymentOrder, ensurePaymentAssets, expirePendingUpgradeOrders, findUpgradeOrder,
+  acquireUpgradeLock, canDeleteUpgradeOrder, createWebMemberPaymentOrder, ensurePaymentAssets, expirePendingUpgradeOrders, findUpgradeOrder,
   paymentAmountCents, publicPaymentPayload, reconcileUpgradeOrder, reconcileUserUpgradeOrders,
   remoteUpgradePricing, requireAuthSession, resolveWebMemberPackage,
   retainPaymentQueryCredential, upgradeOrderSummary, upgradeOrdersForUser, upgradePurchaseRestriction
@@ -152,6 +152,25 @@ export function registerUpgradeRoutes(app) {
       res.json({ order: upgradeOrderSummary(order), orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
     } catch {
       res.status(500).json({ message: '取消订单失败，请稍后重试' })
+    } finally { release?.() }
+  })
+  app.delete('/api/account/upgrade-orders/:orderId', async (req, res) => {
+    let release
+    try {
+      const session = requireAuthSession(req, res)
+      if (!session) return
+      const order = findUpgradeOrder(req.params.orderId, session.user.id)
+      if (!order) return res.status(404).json({ message: '升级订单不存在' })
+      release = await acquireUpgradeLock(order.id)
+      expirePendingUpgradeOrders([order])
+      if (!canDeleteUpgradeOrder(order)) return res.status(409).json({ message: '当前订单不可删除', order: upgradeOrderSummary(order) })
+      const index = metadata.upgradeOrders.indexOf(order)
+      if (index < 0) return res.status(404).json({ message: '升级订单不存在' })
+      metadata.upgradeOrders.splice(index, 1)
+      persistMetadata()
+      res.json({ message: '订单已删除', order: upgradeOrderSummary(order), orders: upgradeOrdersForUser(session.user.id).slice(0, 20).map(upgradeOrderSummary) })
+    } catch {
+      res.status(500).json({ message: '删除订单失败，请稍后重试' })
     } finally { release?.() }
   })
   app.post('/api/account/upgrade-orders/:orderId/confirm', async (req, res) => {

@@ -34,7 +34,7 @@ app.post('/__fixture', async (req,res)=>{
 `
 fs.writeFileSync(path.join(fixture,'server.mjs'),fs.readFileSync(path.join(root,'server.mjs'),'utf8').replace('registerWorkspaceRoutes(app)',control+'\nregisterWorkspaceRoutes(app)'))
 const now=new Date().toISOString(),future=new Date(Date.now()+20*86400000).toISOString()
-const ids=['ttl','ttl-slow','pricing','wechat','alipay','renew','concurrent','status','restart','cancel','expire','invalid','free','member','team','enterprise','managed','stranger','date-sql','date-iso','date-offset','date-retry','history','repair-one','repair-two','repair-expired','repair-unpaid','repair-admin','repair-disabled','repair-enterprise','repair-retained','repair-live']
+const ids=['ttl','ttl-slow','pricing','wechat','alipay','renew','concurrent','status','restart','cancel','expire','invalid','free','member','team','enterprise','managed','stranger','date-sql','date-iso','date-offset','date-retry','history','repair-one','repair-two','repair-expired','repair-unpaid','repair-admin','repair-disabled','repair-enterprise','repair-retained','repair-live','delete','delete-paid']
 const users=Object.fromEntries(ids.map(id=>[id,{id,username:id,nickname:id,planId:['member','team','enterprise'].includes(id)?id:'free',status:'active',planExpiresAt:id==='enterprise'?null:future}]))
 users.renew.planId='member'; users.expire.planId='team'
 fs.mkdirSync(path.join(fixture,'storage'),{recursive:true})
@@ -61,6 +61,7 @@ async function create(user,planId='member'){const r=await api('/api/account/upgr
 const confirm=(user,o,payType=1)=>api('/api/account/upgrade-orders/'+o.id+'/confirm',{user,method:'POST',body:{payType}})
 const status=(user,o)=>api('/api/account/upgrade-orders/'+o.id+'/pay-status',{user,method:'POST'})
 const cancel=(user,o)=>api('/api/account/upgrade-orders/'+o.id+'/cancel',{user,method:'POST'})
+const deleteOrder=(user,o)=>api('/api/account/upgrade-orders/'+o.id,{user,method:'DELETE'})
 async function login(){const r=await api('/api/admin/login',{method:'POST',body:{username:'fixture-admin',password:'secret_fixture_password'}});assert.equal(r.status,200);cookie=r.headers.get('set-cookie').split(';')[0];return r}
 try{
  await start({KUNQIONG_WEB_MEMBER_PACKAGE_MEMBER_ID:'9'})
@@ -130,6 +131,21 @@ try{
    check('异步支付期间套餐升档也不返回支付码',delayed.status===409&&!delayed.data.payment&&!delayed.data.order?.payment)
    check('异步拦截保留远端单用于对账',!!stored().upgradeOrders.find(o=>o.id===racing.id).remoteOrderNo)
   } finally {holdCreate=false;createRelease?.();await cancel('renew',racing)}
+ })
+ await group('PAY-DELETE',async()=>{
+  const canceled=await create('delete'); await cancel('delete',canceled)
+  check('已取消且无支付平台单号允许删除', (await deleteOrder('delete',canceled)).status===200&&!stored().upgradeOrders.some(order=>order.id===canceled.id))
+  const linked=await create('delete'); await confirm('delete',linked); await cancel('delete',linked)
+  check('已取消但有支付平台单号禁止删除',(await deleteOrder('delete',linked)).status===409&&stored().upgradeOrders.some(order=>order.id===linked.id))
+  const expired=await create('delete')
+  await ctl({orderPatch:{id:expired.id,patch:{status:'expired',remoteOrderNo:''}}})
+  check('已过期且无支付平台单号允许删除',(await deleteOrder('delete',expired)).status===200&&!stored().upgradeOrders.some(order=>order.id===expired.id))
+  const pending=await create('delete')
+  check('待支付订单禁止删除',(await deleteOrder('delete',pending)).status===409&&stored().upgradeOrders.some(order=>order.id===pending.id))
+  check('其他用户不能删除此订单',(await deleteOrder('stranger',pending)).status===404&&stored().upgradeOrders.some(order=>order.id===pending.id))
+  check('未登录用户不能删除订单',(await api('/api/account/upgrade-orders/'+pending.id,{method:'DELETE'})).status===401)
+  const paid=await create('delete-paid'); const checkout=await confirm('delete-paid',paid); orders.get(checkout.data.order.remoteOrderNo).paid=true; await status('delete-paid',paid)
+  check('已支付订单禁止删除',(await deleteOrder('delete-paid',paid)).status===409&&stored().upgradeOrders.some(order=>order.id===paid.id))
  })
  await group('PAY-004',async()=>{const o=await create('concurrent','team');const before=seq;const results=await Promise.all([confirm('concurrent',o),confirm('concurrent',o)]);check('并发确认一个远端订单',results.every(r=>r.status===200)&&seq===before+1);orders.get(results[0].data.order.remoteOrderNo).paid=true;await Promise.all([status('concurrent',o),status('concurrent',o)]);const expiry=stored().users.concurrent.planExpiresAt;await status('concurrent',o);check('权益只开通一次',stored().users.concurrent.planExpiresAt===expiry&&stored().messages.concurrent.filter(m=>m.eventType==='membershipActivated').length===1)})
  await group('PAY-005',async()=>{const o=await create('status','year');const r=await confirm('status',o);check('未支付不授予权益',(await status('status',o)).data.order.status==='pending_payment'&&stored().users.status.planId==='free');remoteError=true;const err=await status('status',o);check('异常不成功且错误脱敏',err.status>=400&&!JSON.stringify(err.data).includes('secret_fixture_password')&&stored().users.status.planId==='free');remoteError=false;orders.get(r.data.order.remoteOrderNo).paid=true;const done=await status('status',o);check('已支付年卡按期限开通',done.data.order.status==='paid'&&stored().users.status.planId==='year'&&Math.round((new Date(stored().users.status.planExpiresAt)-Date.now())/86400000)===365)})

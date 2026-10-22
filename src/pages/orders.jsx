@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowLeft, ArrowRight, Copy, CreditCard, FileSearch, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Copy, CreditCard, FileSearch, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { UpgradeModal } from './workspace-page.jsx'
-import { apiRequest, copyTextToClipboard } from '../lib/api.js'
+import { apiRequest } from '../lib/api.js'
+import { copyTextWithFeedback } from '../lib/clipboard-feedback.js'
+import { useToast } from '../hooks.js'
+import { Toast } from '../components/common.jsx'
 import { formatDate } from '../lib/format.js'
 
 const ORDER_STATUSES = [
@@ -50,7 +53,7 @@ function OrderStatus({ status }) {
   return <span className={`orders-status ${tone}`}><i aria-hidden="true" />{ORDER_STATUS_LABELS[status] || status || '未知'}</span>
 }
 
-function OrderDetail({ order, busy, loading, notice, error, confirmCancel, onClose, onCopy, onCheck, onContinue, onCancel, onAskCancel, onDismissCancel, onRetry, onLogin }) {
+function OrderDetail({ order, busy, loading, notice, error, confirmCancel, confirmDelete, onClose, onCopy, onCheck, onContinue, onCancel, onAskCancel, onDismissCancel, onDelete, onAskDelete, onDismissDelete, onRetry, onLogin }) {
   const dialog = useRef(null)
   useEffect(() => {
     const previousFocus = document.activeElement
@@ -71,6 +74,7 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, onClo
 
   const hasProviderOrder = Boolean(order.remoteOrderNo)
   const canCheck = hasProviderOrder && ['pending_payment', 'canceled', 'expired'].includes(order.status)
+  const canDelete = !hasProviderOrder && ['canceled', 'expired'].includes(order.status)
   const actionsDisabled = busy || loading || Boolean(onRetry)
   // Settings panels contain paint/layout; dialogs must escape that clipping boundary.
   return createPortal(
@@ -93,6 +97,7 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, onClo
             <div><dt>支付确认时间</dt><dd>{order.paidAt ? dateLabel(order.paidAt) : '—'}</dd></div>
             <div><dt>本单有效期</dt><dd>{(order.permanent ?? (order.planId === 'enterprise' && !order.remoteExpireAt)) && order.status === 'paid' ? '永久有效' : dateLabel(order.remoteExpireAt)}</dd></div>
           </dl>
+          {hasProviderOrder && ['canceled', 'expired'].includes(order.status) && <p className="orders-inline-note">该订单已生成支付平台订单号，为便于后续核对，不能删除。</p>}
           {order.status === 'paid' && <p className="orders-validity-note">本单有效期为历史支付记录，<a href="/workspace">查看当前会员权益</a>。</p>}
           {order.retired ? <p className="orders-inline-note">该套餐已下架，不能继续支付或重新下单。已购权益保留；如已付款，可核对原单支付状态。</p> : order.canPurchase === false && ['pending_payment', 'expired'].includes(order.status) ? <p className="orders-inline-note">{order.purchaseBlockedReason}。如已付款，可核对原单支付状态。</p> : order.status === 'expired' && <p className="orders-inline-note">支付已超时，请重新创建订单支付。如已付款，可核对原单支付状态。</p>}
           {order.paymentRequiresLogin && <div className="orders-inline-note" role="status">此支付单需要重新登录后核对。<button type="button" className="orders-text-action" onClick={onLogin}>重新登录</button></div>}
@@ -103,12 +108,18 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, onClo
               <strong>确认取消订单？</strong><span>取消后此订单将无法继续支付。</span>
               <div><button type="button" className="secondary-button" onClick={onDismissCancel} disabled={busy}>暂不取消</button><button type="button" className="danger-button" onClick={onCancel} disabled={busy}>{busy ? '处理中…' : '确认取消'}</button></div>
             </div>
+          ) : confirmDelete ? (
+            <div className="orders-cancel-confirm orders-delete-confirm" role="alertdialog" aria-label="确认删除订单">
+              <strong>确认删除订单？</strong><span>删除后订单记录将从订单中心移除，且无法恢复。</span>
+              <div><button type="button" className="secondary-button" onClick={onDismissDelete} disabled={busy}>暂不删除</button><button type="button" className="danger-button" onClick={onDelete} disabled={busy}>{busy ? '处理中…' : '确认删除'}</button></div>
+            </div>
           ) : (
             <div className="orders-dialog-actions">
               {!order.retired && order.canPurchase !== false && order.status === 'pending_payment' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 继续支付</button>}
               {!order.retired && order.canPurchase !== false && order.status === 'expired' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 重新下单</button>}
               {canCheck && <button type="button" className="secondary-button" onClick={onCheck} disabled={actionsDisabled}><RefreshCw size={15} className={busy ? 'is-spinning' : ''} /> {busy ? '正在核对…' : '核对支付状态'}</button>}
               {order.status === 'pending_payment' && <button type="button" className="orders-text-action" onClick={onAskCancel} disabled={actionsDisabled}>取消订单</button>}
+              {canDelete && <button type="button" className="orders-text-action orders-delete-action" aria-label="删除订单" onClick={onAskDelete} disabled={actionsDisabled}><Trash2 size={14} /> 删除订单</button>}
             </div>
           )}
         </div>
@@ -131,8 +142,9 @@ export function OrdersPanel({ user, onLogin }) {
   const [detailLoadFailed, setDetailLoadFailed] = useState(false)
   const [detailNotice, setDetailNotice] = useState('')
   const [confirmCancel, setConfirmCancel] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [upgradeOrder, setUpgradeOrder] = useState(null)
-  const [copyNotice, setCopyNotice] = useState('')
+  const { toast, notify } = useToast()
   const requestId = useRef(0)
   const detailRequestId = useRef(0)
   const actionRunning = useRef(false)
@@ -207,7 +219,7 @@ export function OrdersPanel({ user, onLogin }) {
     setDetailLoadFailed(false)
     setDetailLoading(true)
     setDetailNotice('')
-    setConfirmCancel(false)
+    setConfirmCancel(false); setConfirmDelete(false)
     const id = ++detailRequestId.current
     try {
       const data = await apiRequest(`/api/account/upgrade-orders/${encodeURIComponent(order.id)}`)
@@ -221,11 +233,8 @@ export function OrdersPanel({ user, onLogin }) {
     }
   }
 
-  const closeDetail = () => { detailRequestId.current++; setDetail(null); setConfirmCancel(false); setDetailError(''); setDetailNotice('') }
-  const copyOrder = async value => {
-    try { await copyTextToClipboard(value); setCopyNotice('订单号已复制'); window.setTimeout(() => setCopyNotice(''), 1800) }
-    catch { setCopyNotice('复制失败，请手动选择订单号'); window.setTimeout(() => setCopyNotice(''), 2200) }
-  }
+  const closeDetail = () => { detailRequestId.current++; setDetail(null); setConfirmCancel(false); setConfirmDelete(false); setDetailError(''); setDetailNotice('') }
+  const copyOrder = value => copyTextWithFeedback(value, notify, '订单号已复制')
 
   const checkPayment = async () => {
     if (!detail || actionRunning.current) return
@@ -254,6 +263,21 @@ export function OrdersPanel({ user, onLogin }) {
       fetchOrders(undefined, { quiet: true })
     } catch (err) { if (id === detailRequestId.current) { if (err.status === 401) clearSession(); else setDetailError(err.message || '取消订单失败') } }
     finally { actionRunning.current = false; setDetailBusy(false) }
+  }
+
+  const deleteOrder = async () => {
+    if (!detail || actionRunning.current) return
+    const id = detailRequestId.current
+    actionRunning.current = true
+    setDetailBusy(true); setDetailError('')
+    try {
+      const data = await apiRequest(`/api/account/upgrade-orders/${encodeURIComponent(detail.id)}`, { method: 'DELETE' })
+      if (id === detailRequestId.current) closeDetail()
+      notify(data.message || '订单已删除', 'success')
+      fetchOrders(undefined, { quiet: true })
+    } catch (err) {
+      if (id === detailRequestId.current) { if (err.status === 401) clearSession(); else setDetailError(err.message || '删除订单失败') }
+    } finally { actionRunning.current = false; setDetailBusy(false) }
   }
 
   const startLogin = () => {
@@ -295,9 +319,9 @@ export function OrdersPanel({ user, onLogin }) {
           ) : <section className="orders-state orders-empty"><span className="orders-state-icon"><FileSearch size={23} /></span><h2>{query.q ? '没有找到匹配订单' : '暂无订单'}</h2><p>{query.q ? '请检查订单号，或清空搜索条件。' : '创建会员套餐订单后，会显示在这里。'}</p>{query.q && <button type="button" className="secondary-button" aria-label="清空搜索" onClick={() => changeQuery({ ...query, q: '', page: 1 })}>清空搜索</button>}</section>}
         </>
       )}
-      {copyNotice && <div className="orders-toast" role="status">{copyNotice}</div>}
-      {detail && <OrderDetail order={detail} busy={detailBusy} loading={detailLoading} notice={detailNotice} error={detailError} confirmCancel={confirmCancel} onClose={closeDetail} onCopy={copyOrder} onCheck={checkPayment} onContinue={() => { setUpgradeOrder(detail); closeDetail() }} onAskCancel={() => setConfirmCancel(true)} onDismissCancel={() => setConfirmCancel(false)} onCancel={cancelOrder} onRetry={detailLoadFailed ? () => openDetail(detail) : null} onLogin={startLogin} />}
-      {upgradeOrder && paymentWorkspace && <UpgradeModal workspace={paymentWorkspace} initialOrder={upgradeOrder} onClose={() => { setUpgradeOrder(null); fetchOrders(undefined, { quiet: true }) }} onRefresh={() => fetchOrders(undefined, { quiet: true })} onNotify={message => setCopyNotice(message)} requireCancelConfirmation />}
+      {toast && <Toast {...toast} />}
+      {detail && <OrderDetail order={detail} busy={detailBusy} loading={detailLoading} notice={detailNotice} error={detailError} confirmCancel={confirmCancel} confirmDelete={confirmDelete} onClose={closeDetail} onCopy={copyOrder} onCheck={checkPayment} onContinue={() => { setUpgradeOrder(detail); closeDetail() }} onAskCancel={() => setConfirmCancel(true)} onDismissCancel={() => setConfirmCancel(false)} onCancel={cancelOrder} onAskDelete={() => setConfirmDelete(true)} onDismissDelete={() => setConfirmDelete(false)} onDelete={deleteOrder} onRetry={detailLoadFailed ? () => openDetail(detail) : null} onLogin={startLogin} />}
+      {upgradeOrder && paymentWorkspace && <UpgradeModal workspace={paymentWorkspace} initialOrder={upgradeOrder} onClose={() => { setUpgradeOrder(null); fetchOrders(undefined, { quiet: true }) }} onRefresh={() => fetchOrders(undefined, { quiet: true })} onNotify={notify} requireCancelConfirmation />}
     </section>
   )
 }

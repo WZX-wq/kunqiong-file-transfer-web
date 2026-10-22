@@ -1,9 +1,25 @@
 // 由 main.jsx 抽取（2026-10-09）
 //
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createDownloadState, downloadBinaryWithProgress, isDownloadBusy, upgradeApiRequest,
 } from './lib/api.js'
+
+export function useToast() {
+  const [toast, setToast] = useState(null)
+  const sequence = useRef(0)
+  const notify = useCallback((message, tone) => {
+    setToast(message ? { message, tone, id: ++sequence.current } : null)
+  }, [])
+
+  useEffect(() => {
+    if (!toast) return undefined
+    const timer = window.setTimeout(() => setToast(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [toast])
+
+  return { toast, notify }
+}
 
 export function useConfirmDialog() {
   const [confirmState, setConfirmState] = useState(null)

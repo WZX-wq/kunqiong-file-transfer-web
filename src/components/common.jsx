@@ -2,6 +2,7 @@
 // 被多个页面共用，抽到这里作为共享层，供各页面子树 import。
 
 import React, { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Bell, CheckCircle2, Crown, History, Inbox, Send, ShieldCheck, Trash2, XCircle } from 'lucide-react'
 import { feedbackTone } from '../lib/format.js'
 import { PublicAccountActions } from './account.jsx'
@@ -15,14 +16,13 @@ export function ProductBrand({ href = '/', className = '' }) {
   )
 }
 
-export function Toast({ message }) {
-  const tone = feedbackTone(message)
+export function Toast({ message, tone = feedbackTone(message), id }) {
   const Icon = tone === 'error' ? XCircle : CheckCircle2
-  return (
-    <div className={`toast ${tone}`} role={tone === 'error' ? 'alert' : 'status'} aria-live={tone === 'error' ? 'assertive' : 'polite'}>
+  return createPortal(
+    <div key={id} className={`toast ${tone}`} role={tone === 'error' ? 'alert' : 'status'} aria-live={tone === 'error' ? 'assertive' : 'polite'} aria-atomic="true" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
       <span className="toast-icon"><Icon size={18} /></span>
       <span>{message}</span>
-    </div>
+    </div>, document.body
   )
 }
 

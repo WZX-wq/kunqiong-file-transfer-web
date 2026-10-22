@@ -77,7 +77,7 @@ export function registerUploadRoutes(app) {
     if (!ownerSession?.user?.id) return res.status(401).json({ message: '请先登录后上传到团队空间' })
     teamOrganization = accountOrganizationForUser(ownerSession.user.id)
     if (!teamOrganization) return res.status(404).json({ message: '你尚未加入团队空间' })
-    if (!accountOrganizationPlanForUser(ownerSession.user.id, teamOrganization).team) return res.status(403).json({ message: '管理员已调整当前套餐，请购买团队套餐后使用团队功能' })
+    if (!accountOrganizationPlanForUser(ownerSession.user.id, teamOrganization).team) return res.status(403).json({ message: '该团队套餐已过期或未开通，所有成员暂时无法使用团队空间，请联系团队所有者续费或恢复套餐' })
     if (!teamOrganization.members.some((member) => member.userId === ownerSession.user.id && member.status === 'active')) {
       return res.status(403).json({ message: '当前成员状态不能上传到团队空间' })
     }

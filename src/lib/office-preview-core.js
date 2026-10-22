@@ -142,7 +142,20 @@ function validateImageDimensions(bytes, name) {
       if ([192, 193, 194, 195, 197, 198, 199, 201, 202, 203, 205, 206, 207].includes(marker)) { height = view.getUint16(offset + 5); width = view.getUint16(offset + 7); break }
       offset += length + 2
     }
-  } else throw limitError('文档包含暂不支持安全预览的图片格式')
+  } else if (/\.bmp$/i.test(name) && bytes.length >= 26 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    width = view.getInt32(18, true); height = Math.abs(view.getInt32(22, true))
+  } else if (/\.webp$/i.test(name) && bytes.length >= 30 && String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) === 'RIFF' && String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]) === 'WEBP') {
+    const chunk = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15])
+    if (chunk === 'VP8 ') { width = view.getUint16(26, true) & 0x3fff; height = view.getUint16(28, true) & 0x3fff }
+    else if (chunk === 'VP8L' && bytes[20] === 0x2f) { const bits = view.getUint32(21, true); width = (bits & 0x3fff) + 1; height = ((bits >> 14) & 0x3fff) + 1 }
+    else if (chunk === 'VP8X') { width = (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16)) + 1; height = (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16)) + 1 }
+  } else if (/\.ico$/i.test(name) && bytes.length >= 8 && bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 1 && bytes[3] === 0) {
+    width = bytes[6] || 256; height = bytes[7] || 256
+  } else {
+    // EMF/WMF/TIFF/AVIF 等：浏览器不渲染、也无法在此安全测量尺寸的格式，
+    // 跳过该图片而不是让整份文档预览失败。体积仍受 maxEntryBytes / maxHtmlBytes 约束。
+    return 0
+  }
   if (!width || !height || width > 8192 || height > 8192 || width * height > OFFICE_PREVIEW_LIMITS.maxImagePixels) throw limitError('文档内图片尺寸超过预览上限')
   return width * height
 }

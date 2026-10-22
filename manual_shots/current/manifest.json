@@ -1,0 +1,521 @@
+{
+  "version": "2026-10-22.2",
+  "screenshots": [
+    {
+      "name": "home",
+      "file": "home.png",
+      "sha256": "24fc3821ab2dca54febeaef31cc8fa5a8ca644c3330339485c3b8e6948247279",
+      "width": 1897,
+      "height": 923,
+      "url": "http://127.0.0.1:8118/",
+      "labels": [
+        "轻松发送大文件",
+        "选择文件夹",
+        "取件码",
+        "查询"
+      ]
+    },
+    {
+      "name": "account-menu",
+      "file": "account-menu.png",
+      "sha256": "15b134fe29322ec15bee8d2c115a1cf752a023c26dda8d3f8053f6e0a97c80da",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/",
+      "labels": [
+        "账户设置",
+        "我的订单",
+        "退出登录"
+      ]
+    },
+    {
+      "name": "upload-queue",
+      "file": "upload-queue.png",
+      "sha256": "f9bc13df9db96ba5c68400d09cebe7125f64a1c76526d46dbe2c387edc9afe7d",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/",
+      "labels": [
+        "已选文件",
+        "添加文件夹",
+        "定向发送",
+        "开始上传"
+      ]
+    },
+    {
+      "name": "upload-settings",
+      "file": "upload-settings.png",
+      "sha256": "b56e19bc84e52bbdfd4021464bb69b117a3d80884b23b151bfc90f325a72c8fa",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/",
+      "labels": [
+        "让文件按你的规则消失",
+        "分享有效期",
+        "取件码长度",
+        "保存设置"
+      ]
+    },
+    {
+      "name": "send-result",
+      "file": "send-result.png",
+      "sha256": "fffe8d2023ba565b4cd07aa7ab54dd9b37540b49ba9ae510300c9e9658b349f5",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/",
+      "labels": [
+        "发送完成",
+        "公开分享链接",
+        "继续发送",
+        "分享信息"
+      ]
+    },
+    {
+      "name": "share-qr",
+      "file": "share-qr.png",
+      "sha256": "80994d1ea4a498e00f62882b575bf945b213e0c38f1fc4adcde995222b8f6b5b",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/",
+      "labels": [
+        "dialog \"分享二维码\"",
+        "复制链接",
+        "复制图片"
+      ]
+    },
+    {
+      "name": "share-password",
+      "file": "share-password.png",
+      "sha256": "23ff7ce93b90d9824c305cebdec6655db2f5d1caea49c8c08c55b5d21487e2c4",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/share/7eb85f0f52",
+      "labels": [
+        "此分享已加密",
+        "验证密码"
+      ]
+    },
+    {
+      "name": "share-receive",
+      "file": "share-receive.png",
+      "sha256": "94a0f8877a90720b4eea3fb03d8dfd649a920c181618c55e78189b122c2d5e78",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/share/afacde3b53",
+      "labels": [
+        "有人给你发来了文件",
+        "预览 项目计划.txt",
+        "全部下载"
+      ]
+    },
+    {
+      "name": "share-manage",
+      "file": "share-manage.png",
+      "sha256": "702381b764b9e435fd0f47dcb91853d7f1eddbe27eeb65b379c5bcae05fec5b8",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/share/manage/989692578190e83e9a",
+      "labels": [
+        "分享管理",
+        "分享设置",
+        "文件列表",
+        "立即关闭"
+      ]
+    },
+    {
+      "name": "share-settings",
+      "file": "share-settings.png",
+      "sha256": "742842ea56eaffbd1cc0c544828051fff88ed8a2107a8766e1d5d3ea8cfbfc3f",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/share/manage/989692578190e83e9a",
+      "labels": [
+        "管理分享设置",
+        "下载次数",
+        "提取密码",
+        "保存设置"
+      ]
+    },
+    {
+      "name": "collection-create",
+      "file": "collection-create.png",
+      "sha256": "7a89b4ecc8416e22ca9c9c1c9087116168ac3fe95911fdca1816c8a815329084",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/?view=collect",
+      "labels": [
+        "创建收集任务",
+        "任务名称",
+        "收集说明",
+        "单文件大小限制"
+      ]
+    },
+    {
+      "name": "collection-result",
+      "file": "collection-result.png",
+      "sha256": "148568a3ba7303e2d7a3942b310f84e5f355727f5acec04f7b6721f0a4084c25",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/?view=collect",
+      "labels": [
+        "收集任务已创建",
+        "复制普通收集链接",
+        "查看已收文件",
+        "复制管理链接"
+      ]
+    },
+    {
+      "name": "collection-submit",
+      "file": "collection-submit.png",
+      "sha256": "9e2c60d2f74bb0d652b42fab3ba74c0adec897b12a0257247c53f6bc2f5eb410",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/collect/6366909e98",
+      "labels": [
+        "活动素材收集",
+        "改用其他名称",
+        "提交文件"
+      ]
+    },
+    {
+      "name": "collection-anonymous",
+      "file": "collection-anonymous.png",
+      "sha256": "e83ead708fc1bdfaa1a1e0a6cf3bf0c69475cfaf52f07a7b5bcd711ce8fdddb7",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/collect/6366909e98",
+      "labels": [
+        "当前未登录",
+        "提交人名称",
+        "登录后提交"
+      ]
+    },
+    {
+      "name": "collection-receipt",
+      "file": "collection-receipt.png",
+      "sha256": "034a09ec5f1fcbcd326eca792a8fb9296927ab21ed43aae5690e531bd81bc1b4",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/collect/6366909e98",
+      "labels": [
+        "文件提交成功",
+        "提交编号",
+        "复制回执",
+        "再提交一份"
+      ]
+    },
+    {
+      "name": "collection-manage",
+      "file": "collection-manage.png",
+      "sha256": "c8b00400badcf710f7656f188a82d7134aa8cbb722a91505aeb866d194778947",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/collect/manage/25a86c5c2a17f55ab7",
+      "labels": [
+        "已收提交",
+        "全部下载",
+        "导出清单",
+        "匿名提交"
+      ]
+    },
+    {
+      "name": "collection-settings",
+      "file": "collection-settings.png",
+      "sha256": "94eadee6923621306edbec310800730110b2cddf98fd393ed4901dcb7e040161",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/collect/manage/25a86c5c2a17f55ab7",
+      "labels": [
+        "管理收集设置",
+        "收集任务截止日期",
+        "单文件大小限制",
+        "保存设置"
+      ]
+    },
+    {
+      "name": "records",
+      "file": "records.png",
+      "sha256": "584dbca2eb48fc819e93efe436b2b0fa0b77e13ca4e4f7b16c5ba22c5412e776",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/?view=records",
+      "labels": [
+        "我发送的",
+        "发给我的",
+        "我收集的",
+        "向我收集的"
+      ]
+    },
+    {
+      "name": "record-actions",
+      "file": "record-actions.png",
+      "sha256": "3b8444aeaed21237858352fcc2d4b50a9d1287828e0bd80b4b88891105042189",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/?view=records",
+      "labels": [
+        "查看已收文件",
+        "复制提交链接",
+        "管理收集设置",
+        "删除记录"
+      ]
+    },
+    {
+      "name": "file-management",
+      "file": "file-management.png",
+      "sha256": "1d5427f59d4fc7c33f9b576d7e82ca4e7f58cbf2b61316694e29d3c91ad4b29c",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/?view=records&center=files",
+      "labels": [
+        "文件管理中心",
+        "全部类型",
+        "搜索文件",
+        "上传文件"
+      ]
+    },
+    {
+      "name": "message-center",
+      "file": "message-center.png",
+      "sha256": "2cd34445c3b2aed295c0731424485998b93d595078967f30342a0687cbfe5942",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/?panel=messages",
+      "labels": [
+        "消息中心",
+        "全部已读",
+        "清除全部"
+      ]
+    },
+    {
+      "name": "notifications",
+      "file": "notifications.png",
+      "sha256": "4ff3ec828495207ff9bd91add28a7e189c172b6030ba54fdaf170ea14e10237c",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/settings/notice",
+      "labels": [
+        "通知方式",
+        "文件与任务动态",
+        "邮件提醒"
+      ]
+    },
+    {
+      "name": "profile",
+      "file": "profile.png",
+      "sha256": "8dbd6d65e0b4ffd7624a61b9bb94ce1363d84253e97f4bfa43f87c0c2ab7f112",
+      "width": 1912,
+      "height": 901,
+      "url": "http://127.0.0.1:8118/settings",
+      "labels": [
+        "个人资料",
+        "恢复默认",
+        "保存资料",
+        "容量明细"
+      ]
+    },
+    {
+      "name": "security",
+      "file": "security.png",
+      "sha256": "5fc9c0070a1c61293b084d5ce548f27023864ecaa6e6487bab4f3d0086217af4",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/settings/security",
+      "labels": [
+        "账号与安全",
+        "绑定手机号",
+        "更换绑定",
+        "退出登录"
+      ]
+    },
+    {
+      "name": "cleanup",
+      "file": "cleanup.png",
+      "sha256": "f53238f3e59f279924e90ffc20f06612ae11cdf5d5054403f124c97b3023640d",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/settings/cleanup",
+      "labels": [
+        "存储与清理",
+        "过期文件自动清理",
+        "立即清理",
+        "开启自动删除过期文件"
+      ]
+    },
+    {
+      "name": "membership",
+      "file": "membership.png",
+      "sha256": "cc7ef37155da1c05721caa4faac31b209fedb9a602483d3a23026ef77ea0989a",
+      "width": 1882,
+      "height": 1046,
+      "url": "http://127.0.0.1:8119/workspace",
+      "labels": [
+        "会员与团队空间",
+        "我的订单",
+        "升级或续费",
+        "团队管理"
+      ]
+    },
+    {
+      "name": "team-plan-unavailable",
+      "file": "team-plan-unavailable.png",
+      "sha256": "478adf18be9fc28e0ac92dedded43afa29c32e0f41077197304e49585613f50d",
+      "width": 1600,
+      "height": 1000,
+      "url": "http://127.0.0.1:8120/workspace",
+      "labels": [
+        "团队套餐暂不可用",
+        "联系团队所有者",
+        "所有成员会自动恢复访问"
+      ]
+    },
+    {
+      "name": "plans",
+      "file": "plans.png",
+      "sha256": "b4ca2e6649d4fca0c053523fe920f59392bd2de1d28580f299fed5c744ce5585",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/workspace?view=plans",
+      "labels": [
+        "基础版",
+        "月卡会员",
+        "团队季卡",
+        "半年卡",
+        "年卡"
+      ]
+    },
+    {
+      "name": "orders",
+      "file": "orders.png",
+      "sha256": "2073828e41321bd28a76be198a44fccdbb131f807f21f11d228ef8de0f3ce601",
+      "width": 1882,
+      "height": 936,
+      "url": "http://127.0.0.1:8119/settings/orders",
+      "labels": [
+        "我的订单",
+        "已取消",
+        "搜索订单号",
+        "查看订单"
+      ]
+    },
+    {
+      "name": "order-detail-delete",
+      "file": "order-detail-delete.png",
+      "sha256": "0571defc2a95707337976681611151b116440de2c899e872641a09149da0b8d2",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8119/settings/orders",
+      "labels": [
+        "订单详情",
+        "尚未创建支付单",
+        "删除订单"
+      ]
+    },
+    {
+      "name": "order-linked-retained",
+      "file": "order-linked-retained.png",
+      "sha256": "1086a30682b53fcbafe9cd97895c0b8689f1d2723762c5317bbee79e0e1e78fa",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8119/settings/orders",
+      "labels": [
+        "订单详情",
+        "已生成支付平台订单号",
+        "不能删除"
+      ]
+    },
+    {
+      "name": "order-delete-confirmation",
+      "file": "order-delete-confirmation.png",
+      "sha256": "3e085193b914ef0431b62d71a6b52e11fee80761d5fb5a56e9b6cceb09526097",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8119/settings/orders",
+      "labels": [
+        "确认删除订单？",
+        "暂不删除",
+        "确认删除"
+      ]
+    },
+    {
+      "name": "team-overview",
+      "file": "team-overview.png",
+      "sha256": "abb718078320c145647fa870aad2f19a0c82fa81c32b7dea58a2e4335965b6d0",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/team",
+      "labels": [
+        "产品协作团队",
+        "成员观察",
+        "团队容量",
+        "成员使用量"
+      ]
+    },
+    {
+      "name": "team-join",
+      "file": "team-join.png",
+      "sha256": "ab3d8817bbaeb23f80889ef2226ab10a89e12417491e52b26e8322e9a84cc1ae",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/e/manual-team/share/00d8cf25a7",
+      "labels": [
+        "加入「产品协作团队」团队空间",
+        "申请加入团队"
+      ]
+    },
+    {
+      "name": "team-resources",
+      "file": "team-resources.png",
+      "sha256": "fbfcb24f901ebbb501e7b73bf33a095b73fe7e8ead48ddf9650c299f953f343b",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/team?tab=resources",
+      "labels": [
+        "专属团队文件",
+        "批量上传文件",
+        "上传文件夹",
+        "暂无团队文件"
+      ]
+    },
+    {
+      "name": "team-members",
+      "file": "team-members.png",
+      "sha256": "0854ac4d81612530e236010a0dbba4b64d331803775141a59e59ad3e8e89ac84",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/team?tab=manage",
+      "labels": [
+        "团队成员",
+        "成员权限",
+        "解散团队"
+      ]
+    },
+    {
+      "name": "team-requests",
+      "file": "team-requests.png",
+      "sha256": "853dcc861615ba3067096fe27f1b2d269297cd800933a8f33593c2250fbe6919",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/team?tab=requests",
+      "labels": [
+        "入团申请",
+        "待处理申请",
+        "当前没有待处理"
+      ]
+    },
+    {
+      "name": "team-member-view",
+      "file": "team-member-view.png",
+      "sha256": "177fc9ed6b78a75dfaf1ded7884510627b4bbf225ffa70ebdc19dbc343428b79",
+      "width": 1897,
+      "height": 894,
+      "url": "http://127.0.0.1:8118/team",
+      "labels": [
+        "退出团队空间",
+        "成员观察",
+        "团队资源",
+        "团队成员视图"
+      ]
+    }
+  ]
+}

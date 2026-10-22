@@ -427,7 +427,7 @@
 .code-input { width: 100%; height: 68px; padding: 0 15px; color: var(--ink); background: #f8f9fb; border: 1px solid #d5dce6; border-radius: 8px; outline: 0; font-family: 'Inter', sans-serif; font-size: 31px; font-weight: 700; letter-spacing: .25em; text-align: center; text-transform: uppercase; }
 .code-input:focus { border-color: #7690b6; }
 .retrieve-hint { display: flex; align-items: center; gap: 6px; margin-top: 13px; color: #616d80; font-size: 11px; }
-.toast { position: fixed; z-index: 8; right: 24px; bottom: 24px; display: flex; align-items: center; gap: 9px; max-width: min(460px, calc(100vw - 48px)); padding: 12px 16px; color: #27426b; background: #eff3fa; border: 1px solid #bfcee4; border-radius: 9px; box-shadow: 0 12px 30px rgba(32, 46, 67, .16); font-size: 13px; font-weight: 600; line-height: 1.5; }
+.toast { position: fixed; z-index: 1000; animation: toastIn .18s ease-out both; right: 24px; bottom: 24px; display: flex; align-items: center; gap: 9px; max-width: min(460px, calc(100vw - 48px)); padding: 12px 16px; color: #27426b; background: #eff3fa; border: 1px solid #bfcee4; border-radius: 9px; box-shadow: 0 12px 30px rgba(32, 46, 67, .16); font-size: 13px; font-weight: 600; line-height: 1.5; }
 .toast.error { color: #a64f45; background: #fff3f1; border-color: #efc8c2; box-shadow: 0 12px 30px rgba(140, 62, 51, .15); }
 .toast-icon { display: grid; place-items: center; flex: none; width: 24px; height: 24px; color: #fff; background: #2c5da7; border-radius: 50%; }
 .toast.error .toast-icon { background: #d85f53; }
@@ -1165,6 +1165,8 @@
 .orders-dialog-actions:empty { display: none; }
 .orders-dialog-actions .primary-button, .orders-dialog-actions .secondary-button { min-height: 40px; }
 .orders-text-action { min-height: 36px; padding: 6px 10px; color: #8a6f61; background: transparent; font-size: 12px; }
+.orders-delete-action { display: inline-flex; align-items: center; gap: 5px; color: #a45a4a; }
+.orders-delete-action:hover:not(:disabled) { color: #8f3f30; background: #fff5f2; }
 .orders-inline-note { margin: 20px 0 0; padding: 10px 12px; color: #637083; background: #f4f5f7; border-radius: 7px; font-size: 12px; line-height: 1.8; }
 .orders-inline-note.success { color: #36517a; background: #edf1f7; }
 .orders-inline-note.error { color: #a05343; background: #fff3ef; }
@@ -1524,3 +1526,13 @@ a { text-decoration: none; }
 @media (max-width: 560px) {
   .result-topline-meta { gap: 3px 12px; font-size: 10.5px; }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+
+/* 公共头部消息入口（PublicShell 的 <a>）：没有显式 color 时会吃浏览器默认链接色，
+   访问过一次就变紫红。固定为正文墨色，只在 hover 给一层浅底。 */
+.public-message-link { display: grid; place-items: center; width: 34px; height: 34px; color: var(--ink); border-radius: 8px; }
+.public-message-link:hover { color: var(--ink); background: #eef2f7; }
+.public-message-link:visited { color: var(--ink); }

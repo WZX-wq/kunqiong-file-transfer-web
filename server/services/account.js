@@ -166,6 +166,10 @@ export function findUpgradeOrder(orderId, userId) {
   return (metadata.upgradeOrders || []).find((order) => order.id === orderId && order.userId === userId) || null
 }
 
+export function canDeleteUpgradeOrder(order = {}) {
+  return ['canceled', 'expired'].includes(order.status) && !String(order.remoteOrderNo || '').trim()
+}
+
 export function recordAuditLog(entry = {}) {
   persistAuditLog({
     id: createToken(12),
@@ -211,35 +215,41 @@ export function upgradePurchaseRestriction(user, planId) {
     : ''
 }
 
-// 团队套餐是组织资产。新数据直接读取 organization.teamPlan*；旧数据没有组织套餐
-// 字段时，先兼容读取当前所有者，再从活跃成员中寻找仍有效的团队套餐，覆盖历史上
-// 「转让给基础版成员后组织额度被错误读成 0」的存量数据。
+function legacyOrganizationTeamPlanSnapshot(organization) {
+  const transfer = readAuditLogs().reduce((latest, log) => {
+    if (log.type !== 'team' || log.action !== '转让团队所有权' || log.details?.organizationId !== organization.id || !log.details?.teamPlanId) return latest
+    const timestamp = new Date(log.createdAt).getTime()
+    return Number.isFinite(timestamp) && (!latest || timestamp > latest.timestamp) ? { log, timestamp } : latest
+  }, null)?.log
+  if (transfer) {
+    const planId = normalizePlanId(transfer.details.teamPlanId)
+    const expiresAt = transfer.details.teamPlanExpiresAt || null
+    const permanent = Object.hasOwn(transfer.details, 'teamPlanPermanent')
+      ? Boolean(transfer.details.teamPlanPermanent)
+      : !expiresAt && Boolean(ACCOUNT_PLANS[planId]?.permanent)
+    return { planId, expiresAt, permanent }
+  }
+  const owner = accountUserById(organization.ownerUserId) || {}
+  const plan = accountPersonalPlanForUser(owner)
+  return { planId: plan.id, expiresAt: plan.permanent ? null : owner.planExpiresAt || null, permanent: plan.permanent }
+}
+
+// 团队套餐是组织资产。新数据直接读取 organization.teamPlan*；旧数据缺少组织套餐字段时，
+// 使用当前所有者权益，或所有权转让审计中保存的组织套餐快照。普通成员的个人套餐不能
+// 代替或延长组织套餐，否则所有者到期后，某个成员的个人套餐会让整个团队继续有效。
 export function organizationTeamPlanForOrganization(organization) {
   if (!organization) return configuredAccountPlan('free')
   if (organization.teamPlanId) {
     return accountPlanForUser({ planId: organization.teamPlanId, planExpiresAt: organization.teamPlanExpiresAt, planPermanent: organization.teamPlanPermanent })
   }
-  const ownerPlan = accountPersonalPlanForUser(accountUserById(organization.ownerUserId) || {})
-  if (ownerPlan.team) return ownerPlan
-  const memberPlans = (organization.members || [])
-    .filter((member) => member.status === 'active' && member.userId !== organization.ownerUserId)
-    .map((member) => accountPersonalPlanForUser(accountUserById(member.userId) || {}))
-    .filter((plan) => plan.team)
-    .sort((a, b) => accountPlanRank(b.id) - accountPlanRank(a.id))
-  return memberPlans[0] || configuredAccountPlan('free')
+  const snapshot = legacyOrganizationTeamPlanSnapshot(organization)
+  return accountPlanForUser({ planId: snapshot.planId, planExpiresAt: snapshot.expiresAt, planPermanent: snapshot.permanent })
 }
 
 export function organizationTeamPlanExpiresAtForOrganization(organization) {
   if (!organization) return null
   if (organization.teamPlanId) return organization.teamPlanExpiresAt || null
-  const owner = accountUserById(organization.ownerUserId) || {}
-  if (accountPersonalPlanForUser(owner).team) return owner.planExpiresAt || null
-  const candidate = (organization.members || [])
-    .filter((member) => member.status === 'active' && member.userId !== organization.ownerUserId)
-    .map((member) => ({ user: accountUserById(member.userId) || {}, plan: accountPersonalPlanForUser(accountUserById(member.userId) || {}) }))
-    .filter((item) => item.plan.team)
-    .sort((a, b) => accountPlanRank(b.plan.id) - accountPlanRank(a.plan.id))[0]
-  return candidate?.user?.planExpiresAt || null
+  return legacyOrganizationTeamPlanSnapshot(organization).expiresAt
 }
 
 // 当所有者的个人套餐发生后台调整或支付开通时，同步组织当前套餐；所有权转让本身
@@ -252,7 +262,7 @@ export function syncOrganizationTeamPlanFromOwner(userOrId) {
     if (organization.ownerUserId !== userId) continue
     const user = accountUserById(userId) || (typeof userOrId === 'object' ? userOrId : {})
     const plan = accountPersonalPlanForUser(user)
-    const expiresAt = plan.permanent ? null : user.planExpiresAt || null
+    const expiresAt = plan.id === 'free' || plan.permanent ? null : user.planExpiresAt || null
     if (organization.teamPlanId !== plan.id || organization.teamPlanExpiresAt !== expiresAt || organization.teamPlanPermanent !== plan.permanent) {
       organization.teamPlanId = plan.id
       organization.teamPlanStartedAt = organization.teamPlanStartedAt || user.planStartedAt || new Date().toISOString()
@@ -304,14 +314,11 @@ export function organizationTeamSpaceBytes(organization) {
   return plan.team ? Number(plan.teamSpaceBytes || 0) : 0
 }
 
-// An explicit administrator plan assignment caps this account's borrowed team rights.
-// Keep the cap after payment: a new purchase restores only the newly purchased features.
+// Team access is granted by the organization plan for every active member. Personal plan
+// expiration or an admin-edited personal plan must not create per-member team access rules.
 export function accountOrganizationPlanForUser(userOrId, organization = null) {
   const user = accountUserById(typeof userOrId === 'string' ? userOrId : userOrId?.id) || userOrId || {}
-  const personal = accountPersonalPlanForUser(user)
-  const teamPlan = organizationTeamPlanForOrganization(organization || accountOrganizationForUser(user.id))
-  if (user.planManagedAt && accountPlanRank(personal.id) <= accountPlanRank(teamPlan.id)) return personal
-  return teamPlan
+  return organizationTeamPlanForOrganization(organization || accountOrganizationForUser(user.id))
 }
 
 export function restoreAdminPlanRestrictions() {
@@ -528,7 +535,7 @@ export function accountWorkspacePayload(user) {
       restrictedByAdmin: Boolean(stored.planManagedAt),
       teamPlanId: organization ? teamPlan.id : '',
       teamPlanLabel: organization ? teamPlan.label : '',
-      teamPlanExpiresAt: stored.planManagedAt && teamPlan.id === plan.id ? stored.planExpiresAt || null : organizationTeamPlanExpiresAtForOrganization(organization),
+      teamPlanExpiresAt: organizationTeamPlanExpiresAtForOrganization(organization),
       canUseTeamSpace: Boolean(organization && teamPlan.team),
     },
     planStartedAt: stored.planStartedAt || null,
@@ -804,7 +811,7 @@ export function publicAccountUser(user = {}) {
       restrictedByAdmin: Boolean(stored.planManagedAt),
       teamPlanId: organization ? teamPlan.id : '',
       teamPlanLabel: organization ? teamPlan.label : '',
-      teamPlanExpiresAt: stored.planManagedAt && teamPlan.id === personalPlan.id ? stored.planExpiresAt || null : organizationTeamPlanExpiresAtForOrganization(organization),
+      teamPlanExpiresAt: organizationTeamPlanExpiresAtForOrganization(organization),
       // 成员可用团队空间上传；这是共享能力，不代表个人升级
       canUseTeamSpace: Boolean(organization && teamPlan.team),
     },
@@ -1048,8 +1055,8 @@ export function accountUsageForUser(userId) {
 }
 
 export function accountTeamUsageForOrganization(organization, userOrId = null) {
-  // Keep organization assets, but apply explicit administrative limits to the acting account.
-  const plan = userOrId ? accountOrganizationPlanForUser(userOrId, organization) : organizationTeamPlanForOrganization(organization)
+  // Organization capacity is the same for every active member.
+  const plan = organizationTeamPlanForOrganization(organization)
   const shares = metadata.shares.filter((share) => share.teamResource && share.teamOrganizationId === organization?.id && !share.cleanedAt)
   const usedBytes = shares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const totalBytes = Number(plan.teamSpaceBytes || 0)
@@ -1146,7 +1153,7 @@ export function validateShareRecipient(share, viewer) {
     if (!organization) return { ok: false, status: 404, message: '团队资源所属团队已不存在' }
     if (!viewer?.id) return { ok: false, status: 401, message: '请先登录团队成员账号' }
     if (!organization.members.some(member => member.userId === viewer.id && member.status === 'active')) return { ok: false, status: 403, message: '当前账号不是该团队的有效成员' }
-    if (!accountOrganizationPlanForUser(viewer.id, organization).team) return { ok: false, status: 403, message: '管理员已调整当前套餐，请购买团队套餐后使用团队功能' }
+    if (!accountOrganizationPlanForUser(viewer.id, organization).team) return { ok: false, status: 403, message: '该团队套餐已过期或未开通，所有成员暂时无法使用团队空间，请联系团队所有者续费或恢复套餐' }
   }
   if (!share.deliveryRecipients?.length) return { ok: true }
   if (!viewer?.id) return { ok: false, status: 401, code: 'directed_login_required', message: '此文件为定向分享，请使用收件账号登录' }

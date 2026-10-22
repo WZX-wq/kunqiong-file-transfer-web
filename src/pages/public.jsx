@@ -1,15 +1,16 @@
 import React from 'react'
+import { copyImageWithFeedback, copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { SecurityCheckFailure, SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { useEffect, useRef, useState } from 'react'
-import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState } from '../lib/api.js'
-import { ConfirmModal, FeedbackMessage, LoadingBlock, PublicShell, StateBlock } from '../components/common.jsx'
+import { apiRequest, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState } from '../lib/api.js'
+import { ConfirmModal, FeedbackMessage, LoadingBlock, PublicShell, StateBlock, Toast } from '../components/common.jsx'
 import { AlertTriangle, ArrowLeft, Building2, CalendarDays, CheckCircle2, Clock3, Copy, Download, Eye, FileText, FolderOpen, Inbox, Info, KeyRound, Link2, Lock, Pause, Play, QrCode, RefreshCw, Settings2, ShieldCheck, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { ProtoStateCard, ProtoBadge, ProtoBanner } from '../components/prototype-ui.jsx'
 import { CollectionLimitInfo, DownloadProgressPanel, FileFormatBadge, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, TeamJoinRequestCard, UserAvatar, toFileItems } from '../components/ui.jsx'
-import { useConfirmDialog, useDownloadTask } from '../hooks.js'
+import { useConfirmDialog, useDownloadTask, useToast } from '../hooks.js'
 import { canReopenCollection, collectionFileAccept, collectionStatusText, createCollectionRecord, createShareRecord, isAllowedCollectionFile, saveAuthoritativeLocalRecord, savePublicRecord, shareStatusText } from '../lib/records.js'
-import { canPreviewFile, clearUploadResume, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, queryUploadResume, readCollectionUploadResume, uploadShareInChunks } from '../lib/transfer.js'
+import { canPreviewFile, clearUploadResume, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, queryUploadResume, readCollectionUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { displayUserName, feedbackTone, formatBytes, formatDate, formatExpiry } from '../lib/format.js'
 import { MAX_FILES } from '../lib/constants.js'
 import { limitInputText } from '../lib/input-limits.js'
@@ -240,6 +241,7 @@ function ShareDownloadingPage({ share, task, onBack, onRetry }) {
 }
 
 export function SharePage({ token, enterpriseSlug = '' }) {
+  const { toast, notify } = useToast()
   const [data, setData] = useState(null)
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -289,22 +291,12 @@ export function SharePage({ token, enterpriseSlug = '' }) {
       <ShareDownloadingPage share={share} task={downloadTask} onBack={() => setDownloadPageOpen(false)} onRetry={retryDownload} />
     </PublicShell>
   )
-  const copyShareQr = async () => {
-    try {
-      await copyImageToClipboard(share.qrDataUrl)
-      setActionError('')
-    } catch {
-      try {
-        await copyTextToClipboard(share.shareUrl)
-        setActionError('当前浏览器不支持直接复制图片，已复制分享链接')
-      } catch {
-        setActionError('当前浏览器不支持自动复制，请手动复制分享链接')
-      }
-    }
-  }
+  const copyShareQr = () => copyImageWithFeedback(share.qrDataUrl, share.shareUrl, notify)
+  const copyShareUrl = () => copyTextWithFeedback(share.shareUrl, notify, '分享链接已复制')
   const totalSize = (share.files || []).reduce((sum, file) => sum + (Number(file.size) || 0), 0)
   return (
     <PublicShell>
+      {toast && <Toast {...toast} />}
       <div className="share-main">
         <header className="share-hero">
           <span className="eyebrow">鲲穹临时分享</span>
@@ -350,7 +342,7 @@ export function SharePage({ token, enterpriseSlug = '' }) {
         )}
         {actionError && !data.requiresPassword && <FeedbackMessage message={actionError} tone="error" />}
         {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
-        {qrOpen && <QrPreviewModal title="扫码在手机上下载" detail="扫码后可直接预览并下载；如设置了密码，需先输入。" qrDataUrl={share.qrDataUrl} targetUrl={share.shareUrl} onClose={() => setQrOpen(false)} onCopyImage={copyShareQr} onCopyLink={() => copyTextToClipboard(share.shareUrl)} />}
+        {qrOpen && <QrPreviewModal title="扫码在手机上下载" detail="扫码后可直接预览并下载；如设置了密码，需先输入。" qrDataUrl={share.qrDataUrl} targetUrl={share.shareUrl} onClose={() => setQrOpen(false)} onCopyImage={copyShareQr} onCopyLink={copyShareUrl} />}
       </div>
       <TeamJoinRequestCard enterpriseSlug={enterpriseSlug} />
     </PublicShell>
@@ -358,10 +350,9 @@ export function SharePage({ token, enterpriseSlug = '' }) {
 }
 
 export function ShareManagePage({ token }) {
+  const { toast, notify } = useToast()
   const [share, setShare] = useState(null)
   const [error, setError] = useState('')
-  const [actionMessage, setActionMessage] = useState('')
-  const [actionTone, setActionTone] = useState('success')
   const [editing, setEditing] = useState(false)
   const [qrOpen, setQrOpen] = useState(false)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
@@ -383,9 +374,10 @@ export function ShareManagePage({ token }) {
       const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify(payload) })
       setShare(result.share)
       savePublicRecord(createShareRecord(result.share, 'my_sent'))
+      notify('分享设置已保存', 'success')
       return true
     } catch (err) {
-      setError(err.message)
+      notify(err.message || '分享设置保存失败，请重试', 'error')
       return false
     }
   }
@@ -402,9 +394,10 @@ export function ShareManagePage({ token }) {
       const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'DELETE' })
       setShare(result.share)
       savePublicRecord(createShareRecord(result.share, 'my_sent'))
+      notify('分享已关闭', 'success')
       return true
     } catch (err) {
-      setError(err.message)
+      notify(err.message || '关闭分享失败，请重试', 'error')
       return false
     }
   }
@@ -414,9 +407,10 @@ export function ShareManagePage({ token }) {
       const result = await apiRequest(`/api/shares/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify({ ...payload, status: 'active' }) })
       setShare(result.share)
       savePublicRecord(createShareRecord(result.share, 'my_sent'))
+      notify('分享已重新开启', 'success')
       return true
     } catch (err) {
-      setError(err.message)
+      notify(err.message || '重新开启分享失败，请重试', 'error')
       return false
     }
   }
@@ -430,31 +424,12 @@ export function ShareManagePage({ token }) {
   const manageTarget = { kind: 'share', record: createShareRecord(share, 'my_sent'), data: share }
   const downloadFile = (file, fileIndex) => startDownload(createShareFileDownloadConfig(share, file, fileIndex))
   const previewFile = (file, fileIndex) => setPreviewItem(createShareFilePreviewConfig(share, file, fileIndex))
-  const copyShareUrl = async () => {
-    try {
-      await copyTextToClipboard(share.shareUrl)
-      setActionMessage('分享链接已复制')
-      setActionTone('success')
-      return true
-    } catch {
-      setActionMessage('当前浏览器不支持自动复制，请手动选中分享链接复制')
-      setActionTone('error')
-      return false
-    }
-  }
-  const copyShareQr = async () => {
-    try {
-      await copyImageToClipboard(share.qrDataUrl)
-      setActionMessage('二维码图片已复制')
-      setActionTone('success')
-    } catch {
-      const copied = await copyShareUrl()
-      if (copied) setActionMessage('当前浏览器不支持直接复制图片，已复制分享链接')
-    }
-  }
+  const copyShareUrl = () => copyTextWithFeedback(share.shareUrl, notify, '分享链接已复制')
+  const copyShareQr = () => copyImageWithFeedback(share.qrDataUrl, share.shareUrl, notify)
 
   return (
-    <PublicShell>
+    <PublicShell className="share-manage-shell">
+      {toast && <Toast {...toast} />}
       <div className="share-manage-page">
         <header className="share-manage-heading">
           <div>
@@ -468,7 +443,6 @@ export function ShareManagePage({ token }) {
             <button className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 分享设置</button>
           </div>
         </header>
-        {actionMessage && <FeedbackMessage message={actionMessage} tone={actionTone} />}
         <div className="manage-stats">
           <div><span>下载次数</span><b>{share.downloadCount || 0}</b><small>{share.downloadLimit ? `上限 ${share.downloadLimit} 次` : '不限次数'}</small></div>
           <div><span>剩余下载</span><b>{share.remainingDownloads ?? '不限'}</b><small>{share.downloadLimit ? '达到上限后链接失效' : '下载不设次数限制'}</small></div>
@@ -506,16 +480,12 @@ export function ShareManagePage({ token }) {
 // 提交成功：对齐原型 collect.js · collect-submitted（绿勾 + 回执 + 复制/再提交）。
 // 编号、文件数、时间、账号都来自服务端返回的真实 submission，不拼演示数据。
 function CollectionSubmittedPage({ collection, submission, onAgain }) {
-  const [copied, setCopied] = useState(false)
+  const { toast, notify } = useToast()
+  const copied = toast?.tone === 'success'
   const files = submission.files || []
   const totalBytes = files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
   const account = submission.submitter?.email || submission.submitter?.phone || submission.submitter?.displayName || ''
   const submittedAt = formatDate(submission.submittedAt)
-  useEffect(() => {
-    if (!copied) return undefined
-    const timer = setTimeout(() => setCopied(false), 2000)
-    return () => clearTimeout(timer)
-  }, [copied])
   const copyReceipt = async () => {
     const lines = [
       `提交编号：${submission.id || '—'}`,
@@ -524,13 +494,11 @@ function CollectionSubmittedPage({ collection, submission, onAgain }) {
       `提交时间：${submittedAt}`,
       `关联账号：${account || '匿名提交'}`,
     ]
-    try {
-      await copyTextToClipboard(lines.join('\n'))
-      setCopied(true)
-    } catch { /* 剪贴板不可用时保持原按钮文案，用户可手动复制 */ }
+    return copyTextWithFeedback(lines.join('\n'), notify, '提交回执已复制')
   }
   return (
     <div className="public-card collection-state-card">
+      {toast && <Toast {...toast} />}
       <PrototypeAsset className="collect-success-badge" name="act-success.png" size={64} />
       <h2>文件提交成功</h2>
       <p>收集人「{collection.ownerName || '收集人'}」已收到你的文件，无需重复提交。<br />如需补充材料，可在截止前再次提交。</p>
@@ -889,21 +857,19 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
 }
 
 export function CollectionManagePage({ token }) {
+  const { toast, notify } = useToast()
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   // destroyed 状态已移除：销毁收集任务在记录页完成（DELETE 后管理页 GET 会 404，走 error 分支）
   const [editing, setEditing] = useState(false)
   const [submissionPage, setSubmissionPage] = useState(1)
-  const [actionError, setActionError] = useState('')
-  const [actionMessage, setActionMessage] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
   const [qrOpen, setQrOpen] = useState(false)
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
 
   const saveManagedCollection = (collection) => {
-    setActionError('')
-    setActionMessage('')
     setData(collection)
     saveAuthoritativeLocalRecord(createCollectionRecord(collection, 'my_collections'))
   }
@@ -918,9 +884,10 @@ export function CollectionManagePage({ token }) {
     try {
       const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify(payload) })
       saveManagedCollection(result.collection)
+      notify('收集任务设置已保存', 'success')
       return true
     } catch (err) {
-      setActionError(err.message)
+      notify(err.message || '收集任务设置保存失败，请重试', 'error')
       return false
     }
   }
@@ -936,9 +903,10 @@ export function CollectionManagePage({ token }) {
     try {
       const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify({ status: 'closed' }) })
       saveManagedCollection(result.collection)
+      notify('收集任务已关闭', 'success')
       return true
     } catch (err) {
-      setActionError(err.message)
+      notify(err.message || '关闭收集任务失败，请重试', 'error')
       return false
     }
   }
@@ -947,9 +915,10 @@ export function CollectionManagePage({ token }) {
     try {
       const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'PATCH', body: JSON.stringify({ ...patch, status: 'active' }) })
       saveManagedCollection(result.collection)
+      notify('收集任务已重新开启', 'success')
       return true
     } catch (err) {
-      setActionError(err.message)
+      notify(err.message || '重新开启收集任务失败，请重试', 'error')
       return false
     }
   }
@@ -965,42 +934,32 @@ export function CollectionManagePage({ token }) {
     try {
       const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}/submissions/${encodeURIComponent(submissionId)}`, { method: 'DELETE' })
       saveManagedCollection(result.collection)
+      notify('提交记录已删除', 'success')
       return true
     } catch (err) {
-      setActionError(err.message)
+      notify(err.message || '删除提交失败，请重试', 'error')
       return false
     }
   }
 
-  const copyPublicValue = async (value) => {
-    setActionError('')
-    setActionMessage('')
-    try {
-      await copyTextToClipboard(value)
-      setActionMessage('已复制到剪贴板')
-    } catch {
-      setActionError('当前浏览器不支持自动复制，请手动复制链接')
-    }
-  }
-  const copyPublicQrImage = async (dataUrl, fallbackText) => {
-    setActionError('')
-    setActionMessage('')
-    try {
-      await copyImageToClipboard(dataUrl)
-      setActionMessage('二维码图片已复制')
-    } catch {
-      try {
-        await copyTextToClipboard(fallbackText || dataUrl)
-        setActionMessage('当前浏览器不支持直接复制图片，已复制链接')
-      } catch {
-        setActionError('当前浏览器不支持自动复制，请手动复制链接')
-      }
-    }
-  }
+  const copyPublicValue = (value) => copyTextWithFeedback(value, notify, '提交链接已复制')
+  const copyPublicQrImage = (dataUrl, fallbackText) => copyImageWithFeedback(dataUrl, fallbackText, notify)
   const downloadAll = () => startDownload(createCollectionDownloadConfig(data))
   const downloadSubmissionItem = (submission) => startDownload(createSubmissionDownloadConfig(data, submission))
   const downloadFile = (submission, fileIndex) => startDownload(createSubmissionFileDownloadConfig(data, submission, fileIndex))
   const previewFile = (submission, fileIndex) => setPreviewItem(createSubmissionFilePreviewConfig(data, submission, fileIndex))
+  const refreshTask = async () => {
+    setRefreshing(true)
+    try {
+      const result = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`)
+      saveManagedCollection(result.collection)
+      notify('收集任务已刷新', 'success')
+    } catch (err) {
+      notify(err.message || '刷新收集任务失败，请重试', 'error')
+    } finally {
+      setRefreshing(false)
+    }
+  }
   if (error) return <PublicShell><StateBlock title="管理链接不可用" detail={error} /></PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   const isActive = data.status === 'active'
@@ -1034,28 +993,32 @@ export function CollectionManagePage({ token }) {
   const safePage = Math.min(submissionPage, pageCount)
   const pageSubmissions = submissions.slice((safePage - 1) * pageSize, safePage * pageSize)
   // 导出清单是客户端根据真实提交生成 CSV，不额外请求服务端。
-  const exportSubmissionsCsv = () => {
-    const rows = [['提交人', '提交账号', '提交时间', '文件数', '文件总大小', '文件名', '文件大小']]
+  // 导出清单：xlsx 而不是 csv —— CSV 无法携带列宽信息，WPS/Excel 打开后日期会被识别成日期值
+  // 显示成 ######、手机号账号会变科学计数法，且必须手动调列宽。xlsx 可按内容写入列宽，
+  // 所有字段都按文本单元格写入，打开即可读。
+  const exportSubmissionsSheet = async () => {
+    const XLSX = await import('xlsx')
+    const header = ['提交人', '提交账号', '提交时间', '文件数', '文件总大小', '文件名', '文件大小']
+    const rows = [header]
     for (const submission of submissions) {
       const size = submission.files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
       for (const file of submission.files) {
-        rows.push([submission.participantName, submission.submitter?.displayName || '', formatDate(submission.submittedAt), submission.files.length, formatBytes(size), file.name, formatBytes(file.size)])
+        rows.push([submission.participantName || '', submission.submitter?.displayName || '', formatDate(submission.submittedAt), submission.files.length, formatBytes(size), file.name, formatBytes(file.size)])
       }
     }
-    const csv = '\ufeff' + rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n')
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${String(data.title || '收集清单').replace(/[\\/:*?"<>|]/g, '_')}.csv`
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-    setActionMessage('已导出提交清单')
+    const sheet = XLSX.utils.aoa_to_sheet(rows)
+    // 列宽随内容自适应：中日韩全角字符按 2 个字符宽计算，留 2 字边距，限制在 8~60 之间
+    const textWidth = (value) => String(value ?? '').replace(/[\u1100-\u115f\u2e80-\ua4cf\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6b\uff00-\uff60\uffe0-\uffe6]/g, '  ').length
+    sheet['!cols'] = header.map((title, col) => ({ wch: Math.min(60, Math.max(8, rows.reduce((width, row) => Math.max(width, textWidth(row[col])), textWidth(title)) + 2)) }))
+    const book = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(book, sheet, '提交清单')
+    XLSX.writeFile(book, `${String(data.title || '收集清单').replace(/[\\/:*?"<>|]/g, '_')}.xlsx`)
+    notify('已导出提交清单', 'success')
   }
   const manageTarget = { kind: 'collection', record: createCollectionRecord(data, 'my_collections'), data }
   return (
     <PublicShell>
+      {toast && <Toast {...toast} />}
       <div className="cm-page">
         <div className="cm-crumb"><a href="/?view=collect">收集文件</a><i>/</i><span>收集管理</span></div>
         <div className="cm-head">
@@ -1066,10 +1029,9 @@ export function CollectionManagePage({ token }) {
           <div className="cm-head-actions">
             <button type="button" className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 收集设置</button>
             <button type="button" className="secondary-button" disabled={!data.publicUrl} onClick={() => copyPublicValue(data.publicUrl)}><Link2 size={15} /> 提交链接</button>
+            <button type="button" className="secondary-button" disabled={refreshing} onClick={refreshTask}><RefreshCw size={15} /> 刷新</button>
           </div>
         </div>
-        {actionMessage && <FeedbackMessage message={actionMessage} tone="success" />}
-        {actionError && <FeedbackMessage message={actionError} tone="error" />}
         <div className="cm-stats">
           <div className="cm-stat"><span>提交人数</span><b>{data.participantCount ?? submissions.length}</b><small>{submissions.length} 份提交</small></div>
           <div className="cm-stat"><span>收到文件</span><b>{totalFileCount}</b><small>{allFiles.length ? (allApproved ? '全部通过安全检查' : '含未完成安全检查的文件') : '暂无文件'}</small></div>
@@ -1083,7 +1045,7 @@ export function CollectionManagePage({ token }) {
                 <h2>已收提交</h2>
                 <div className="cm-card-actions">
                   <button type="button" className="secondary-button" disabled={!submissions.length || downloadBusy} onClick={downloadAll}><Download size={14} /> 全部下载</button>
-                  <button type="button" className="secondary-button" disabled={!submissions.length} onClick={exportSubmissionsCsv}><FileText size={14} /> 导出清单</button>
+                  <button type="button" className="secondary-button" disabled={!submissions.length} onClick={() => { exportSubmissionsSheet().catch(() => notify('导出失败，请稍后重试', 'error')) }}><FileText size={14} /> 导出清单</button>
                 </div>
               </div>
               <div className="cm-card-body">
@@ -1112,7 +1074,15 @@ export function CollectionManagePage({ token }) {
                             <PrototypeFileIcon name={file.name} fallback={FileText} size={20} />
                             <span title={file.name}>{file.name}</span>
                             <small>{formatBytes(file.size)}</small>
-                            {canPreviewFile(file) && <button type="button" className="ghost-icon" aria-label={`预览 ${file.name}`} title="预览" onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}
+                            <div className="cm-file-actions">
+                              {canPreviewFile(file) ? (
+                                <button type="button" className="ghost-icon" aria-label={`预览 ${file.name}`} title="预览" onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>
+                              ) : (
+                                // 不可预览时保留同尺寸占位，避免大小文字与下载按钮左右跳动
+                                <span className="ghost-icon cm-action-slot" aria-hidden="true" />
+                              )}
+                              <button type="button" className="ghost-icon" aria-label={`下载 ${file.name}`} title="下载" disabled={downloadBusy} onClick={() => downloadFile(submission, fileIndex)}><Download size={15} /></button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1145,7 +1115,7 @@ export function CollectionManagePage({ token }) {
                   <div><dt>单文件上限</dt><dd>{sizeText}</dd></div>
                   <div><dt>提交人身份</dt><dd>无需登录 · 支持匿名提交</dd></div>
                 </dl>
-                {data.qrDataUrl && <img className="cm-qr" src={data.qrDataUrl} alt="收集任务二维码" />}
+                {data.qrDataUrl && <button type="button" className="cm-qr-trigger" onClick={() => setQrOpen(true)} aria-label="放大收集任务二维码"><img className="cm-qr" src={data.qrDataUrl} alt="收集任务二维码" /></button>}
                 <p className="cm-qr-note">扫码提交材料</p>
               </div>
             </div>

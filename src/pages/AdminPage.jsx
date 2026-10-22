@@ -4,10 +4,11 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { BarChart3, Check, ChevronLeft, ChevronRight, Copy, Database, Eye, ExternalLink, HardDrive, Inbox, KeyRound, Link2, LockKeyhole, LogOut, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, Users, X, XCircle } from 'lucide-react'
-import { useConfirmDialog } from '../hooks.js'
-import { apiRequest, copyTextToClipboard } from '../lib/api.js'
-import { ConfirmModal, ProductBrand } from '../components/common.jsx'
+import { useConfirmDialog, useToast } from '../hooks.js'
+import { apiRequest } from '../lib/api.js'
+import { ConfirmModal, ProductBrand, Toast } from '../components/common.jsx'
 import { formatBytes, formatDate } from '../lib/format.js'
+import { copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { limitInputText } from '../lib/input-limits.js'
 
 const ADMIN_TABS = new Set(['dashboard', 'resources', 'users', 'security', 'config'])
@@ -340,7 +341,7 @@ export function AdminPage() {
         </div>
       </main>
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
-      {notice && <div className={`toast ${notice.tone || 'success'}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}><span className="toast-icon">{notice.tone === 'error' ? <X size={18} /> : <Check size={18} />}</span><span>{notice.message}</span></div>}
+      {notice && <Toast {...notice} />}
     </div>
   )
 }
@@ -357,7 +358,9 @@ export function AdminResources({ resources = [], total = 0, requestConfirm, onCh
   const [page, setPage] = useState(1)
   const [query, setQuery] = useState('')
   const [busyId, setBusyId] = useState('')
-  const [copiedId, setCopiedId] = useState('')
+  const { toast, notify } = useToast()
+  const [copiedResourceId, setCopiedResourceId] = useState('')
+  const copiedId = toast?.tone === 'success' ? copiedResourceId : ''
   const normalizedQuery = query.trim().toLowerCase()
   const filteredResources = normalizedQuery
     ? resources.filter((item) => [item.name, item.id, item.code, item.ownerUserId].some((value) => String(value || '').toLowerCase().includes(normalizedQuery)))
@@ -369,11 +372,7 @@ export function AdminResources({ resources = [], total = 0, requestConfirm, onCh
   const kindLabel = (item) => (item.kind === 'share' ? '分享' : '收集任务')
   const statusLabel = (status) => (status === 'active' ? '活跃' : status === 'expired' ? '已过期' : '已关闭')
   const copyResourceId = async (item) => {
-    try {
-      await copyTextToClipboard(item.id)
-      setCopiedId(item.id)
-      setTimeout(() => setCopiedId((current) => (current === item.id ? '' : current)), 1600)
-    } catch {}
+    if (await copyTextWithFeedback(item.id, notify, '资源 ID 已复制')) setCopiedResourceId(item.id)
   }
   const removeResource = async (item) => {
     const confirmed = await requestConfirm({
@@ -395,7 +394,7 @@ export function AdminResources({ resources = [], total = 0, requestConfirm, onCh
       setBusyId('')
     }
   }
-  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">分享与收集</p><h2>资源管理</h2></div><span>共 {total} 个资源{total > resources.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索资源名称、ID、提取码或归属用户" /></label><div className="admin-table">{filteredResources.length ? visibleResources.map((item) => <div className="admin-table-row" key={`${item.kind}-${item.id}`}><div className="admin-user-identity"><strong>{kindLabel(item)} · {item.name}</strong><span>{statusLabel(item.status)} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)} · 归属 {item.ownerUserId || '匿名'} · 建于 {formatDate(item.createdAt)}</span><span className="admin-resource-id-row"><button type="button" className="admin-resource-id" title={`资源 ID（${item.kind === 'share' ? '即分享链接 /share/ 末段' : '即收集链接 /collect/ 末段'}），点击复制`} onClick={() => copyResourceId(item)}>{copiedId === item.id ? <Check size={11} /> : <Copy size={11} />}<i>{item.id}</i>{copiedId === item.id ? '已复制' : ''}</button>{item.code ? <em className="admin-resource-code" title="提取码">提取码 {item.code}</em> : null}</span></div><div className="admin-user-actions"><small className="admin-user-usage">{item.expiresAt ? `截止 ${formatDate(item.expiresAt)}` : '永久有效'}</small><button className="secondary-button danger-lite" disabled={busyId === item.id} onClick={() => removeResource(item)}><Trash2 size={14} /> {busyId === item.id ? '删除中' : '删除'}</button></div></div>) : <div className="empty-manage"><Database size={25} /><span>没有匹配的资源</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredResources.length} pageSize={pageSize} onPageChange={setPage} /></div>
+  return <div className="public-card admin-panel">{toast && <Toast {...toast} />}<div className="admin-panel-heading"><div><p className="eyebrow">分享与收集</p><h2>资源管理</h2></div><span>共 {total} 个资源{total > resources.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索资源名称、ID、提取码或归属用户" /></label><div className="admin-table">{filteredResources.length ? visibleResources.map((item) => <div className="admin-table-row" key={`${item.kind}-${item.id}`}><div className="admin-user-identity"><strong>{kindLabel(item)} · {item.name}</strong><span>{statusLabel(item.status)} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)} · 归属 {item.ownerUserId || '匿名'} · 建于 {formatDate(item.createdAt)}</span><span className="admin-resource-id-row"><button type="button" className="admin-resource-id" title={`资源 ID（${item.kind === 'share' ? '即分享链接 /share/ 末段' : '即收集链接 /collect/ 末段'}），点击复制`} onClick={() => copyResourceId(item)}>{copiedId === item.id ? <Check size={11} /> : <Copy size={11} />}<i>{item.id}</i>{copiedId === item.id ? '已复制' : ''}</button>{item.code ? <em className="admin-resource-code" title="提取码">提取码 {item.code}</em> : null}</span></div><div className="admin-user-actions"><small className="admin-user-usage">{item.expiresAt ? `截止 ${formatDate(item.expiresAt)}` : '永久有效'}</small><button className="secondary-button danger-lite" disabled={busyId === item.id} onClick={() => removeResource(item)}><Trash2 size={14} /> {busyId === item.id ? '删除中' : '删除'}</button></div></div>) : <div className="empty-manage"><Database size={25} /><span>没有匹配的资源</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredResources.length} pageSize={pageSize} onPageChange={setPage} /></div>
 }
 
 export function AdminUsers({ plans = [], users = [], total = 0, onUpdate }) {

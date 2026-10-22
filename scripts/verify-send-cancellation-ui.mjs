@@ -6,7 +6,7 @@ import { JSDOM, VirtualConsole } from 'jsdom'
 import { build } from 'vite'
 
 const root = path.resolve(import.meta.dirname, '..')
-const bundle = await build({ root, configFile: false, logLevel: 'silent', build: {
+const bundle = await build({ root, configFile: false, logLevel: 'silent', worker: { format: 'es' }, build: {
   write: false, minify: false, rollupOptions: { input: path.join(root, 'src/main.jsx'), output: { format: 'iife', inlineDynamicImports: true } },
 } })
 const code = bundle.output.find(item => item.type === 'chunk').code

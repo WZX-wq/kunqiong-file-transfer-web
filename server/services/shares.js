@@ -317,7 +317,7 @@ export function validateTeamShareManager(share, req) {
   if (!organization) return { ok: false, status: 404, message: '团队资源所属团队已不存在' }
   if (!viewer) return { ok: false, status: 401, message: '请先登录团队成员账号' }
   if (!organization.members.some(member => member.userId === viewer.id && member.status === 'active')) return { ok: false, status: 403, message: '当前账号不是该团队的有效成员' }
-  if (!accountOrganizationPlanForUser(viewer.id, organization).team) return { ok: false, status: 403, message: '管理员已调整当前套餐，请购买团队套餐后使用团队功能' }
+  if (!accountOrganizationPlanForUser(viewer.id, organization).team) return { ok: false, status: 403, message: '该团队套餐已过期或未开通，所有成员暂时无法使用团队空间，请联系团队所有者续费或恢复套餐' }
   if (viewer.id !== share.ownerUserId && !isOrganizationManager(organization, viewer.id)) return { ok: false, status: 403, message: '仅资源上传者或团队管理者可以管理该团队资源' }
   return { ok: true }
 }
@@ -887,7 +887,7 @@ export function previewKind(file = {}) {
   const contentType = fileContentType(file)
   const extension = path.extname(file.name || file.relativePath || '').toLowerCase()
   if (contentType === 'application/pdf' || extension === '.pdf') return 'pdf'
-  if ((contentType.startsWith('image/') && contentType !== 'image/svg+xml') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(extension)) return 'image'
+  if ((contentType.startsWith('image/') && contentType !== 'image/svg+xml') || ['.jpg', '.jpeg', '.jpe', '.jfif', '.pjpeg', '.png', '.gif', '.webp', '.bmp', '.avif', '.ico'].includes(extension)) return 'image'
   if (contentType.startsWith('video/') || ['.mp4', '.webm', '.ogv', '.mov', '.m4v'].includes(extension)) return 'video'
   if (contentType.startsWith('audio/') || ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.oga', '.ogg'].includes(extension)) return 'audio'
   if (contentType.includes('wordprocessingml') || extension === '.docx') return 'document'
@@ -901,12 +901,16 @@ export function fileContentType(file = {}) {
   const extension = path.extname(file.name || file.relativePath || '').toLowerCase()
   const mimeTypes = {
     '.aac': 'audio/aac',
+    '.avif': 'image/avif',
     '.bmp': 'image/bmp',
     '.csv': 'text/csv',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     '.flac': 'audio/flac',
     '.gif': 'image/gif',
+    '.ico': 'image/x-icon',
+    '.jpe': 'image/jpeg',
     '.jpeg': 'image/jpeg',
+    '.jfif': 'image/jpeg',
     '.jpg': 'image/jpeg',
     '.m4a': 'audio/mp4',
     '.m4v': 'video/mp4',
@@ -917,6 +921,7 @@ export function fileContentType(file = {}) {
     '.ogg': 'audio/ogg',
     '.ogv': 'video/ogg',
     '.pdf': 'application/pdf',
+    '.pjpeg': 'image/jpeg',
     '.png': 'image/png',
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 

@@ -26,7 +26,7 @@ export function requestUploadLimitBytes(req, context = {}) {
   if (task) return Math.min(personalEntitlements(userId).singleFileLimitBytes, collectionFileLimitBytes(task))
   if ((context.mode || req.body?.mode || req.query?.mode) === 'team_resource' && userId) {
     const plan = accountOrganizationPlanForUser(userId)
-    if (!plan.team) throw httpError(403, '管理员已调整当前套餐，请购买团队套餐后使用团队功能')
+    if (!plan.team) throw httpError(403, '该团队套餐已过期或未开通，所有成员暂时无法使用团队空间，请联系团队所有者续费或恢复套餐')
     return Math.min(MAX_FILE_SIZE, plan.singleFileLimitBytes)
   }
   return Math.min(MAX_FILE_SIZE, personalEntitlements(userId).singleFileLimitBytes)
