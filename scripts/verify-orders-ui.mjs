@@ -6,18 +6,18 @@ import { JSDOM, VirtualConsole } from 'jsdom'
 import { build } from 'vite'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const bundle = await build({ root, configFile: false, logLevel: 'silent', build: { write: false, minify: false,
+const bundle = await build({ root, configFile: false, logLevel: 'silent', worker: { format: 'es' }, build: { write: false, minify: false,
   rollupOptions: { input: path.join(root, 'src/main.jsx'), output: { format: 'iife', inlineDynamicImports: true } } } })
 const code = bundle.output.find(item => item.type === 'chunk').code
 let passed = 0
 function check(name, condition) { assert.ok(condition, name); passed++; console.log('PASS ' + name) }
 async function waitFor(condition, name) { for (let i = 0; i < 200; i++) { if (condition()) return; await delay(10) } assert.fail(name) }
 const initialOrders = () => Array.from({ length: 24 }, (_, i) => ({ id: 'order-' + i, orderNo: 'WM1-ORDER-' + i,
-  remoteOrderNo: 'PROVIDER-' + i, planId: 'team', planLabel: '团队版', amount: 4900, payType: i % 2 ? 2 : 1,
+  remoteOrderNo: i === 3 ? '' : 'PROVIDER-' + i, planId: 'team', planLabel: '团队版', amount: 4900, payType: i % 2 ? 2 : 1,
   status: i === 0 ? 'pending_payment' : i === 1 ? 'paid' : i === 2 ? 'expired' : 'canceled',
   createdAt: i === 0 ? new Date().toISOString() : '2026-10-15T07:16:07Z', paidAt: i === 1 ? '2026-10-15T08:18:52Z' : null,
   remoteExpireAt: i === 1 ? '2027-01-13T08:18:52Z' : null }))
-async function mount({ url = '/settings/orders', loggedIn = true, failList = false, retiredOrders = false, blockedOrders = false } = {}) {
+async function mount({ url = '/settings/orders', loggedIn = true, failList = false, failDelete = false, retiredOrders = false, blockedOrders = false } = {}) {
   const errors = [], requests = [], timers = new Map(), copies = []
   const vc = new VirtualConsole(); vc.on('jsdomError', error => errors.push(error))
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://fixture.local' + url, pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole: vc })
@@ -60,6 +60,11 @@ async function mount({ url = '/settings/orders', loggedIn = true, failList = fal
       if (!order) { status = 404; data = { message: '升级订单不存在' } }
       else if (url.endsWith('/confirm')) data = { order: { ...order, payment: { qrcode_img_url: 'data:image/png;base64,YQ==' } }, payment: { qrcode_img_url: 'data:image/png;base64,YQ==' } }
       else if (url.endsWith('/cancel')) { order.status = 'canceled'; data = { order: structuredClone(order) } }
+      else if (options.method === 'DELETE') {
+        if (failDelete) { status = 502; data = { message: '删除订单失败，请稍后重试' } }
+        else if (!['canceled', 'expired'].includes(order.status) || order.remoteOrderNo) { status = 409; data = { message: '当前订单不可删除' } }
+        else { orders = orders.filter(item => item.id !== id); data = { order: structuredClone(order) } }
+      }
       else if (url.endsWith('/pay-status')) {
         if (statusFailure) { status = 502; data = { message: '支付平台暂不可用，请稍后核对' } }
         else { order.status = 'paid'; order.paidAt = '2026-10-15T08:18:52Z'; order.remoteExpireAt = '2027-01-13T08:18:52Z'; data = { order: structuredClone(order), message: '支付成功，会员权益已开通' } }
@@ -91,8 +96,8 @@ async function mount({ url = '/settings/orders', loggedIn = true, failList = fal
 const f = await mount()
 try {
   await waitFor(() => f.document.querySelectorAll('[data-order-id]').length === 5, 'First page loads')
-  check('我的订单显示在个人中心右侧并保留账号侧栏', f.document.querySelector('.settings-panel .orders-page') && f.document.querySelector('.settings-user-card').textContent.includes('测试用户') && f.document.querySelector('.settings-nav .active')?.textContent.trim() === '我的订单')
-  check('订单栏目下方保留设置栏目与返回入口', !!f.document.querySelector('.settings-back-button') && !!f.document.querySelector('a[href="/workspace"]'))
+  check('我的订单显示在个人中心右侧并保留账号侧栏', f.document.querySelector('.settings-panel .orders-page') && f.document.querySelector('.settings-identity')?.textContent.includes('测试用户') && f.document.querySelector('.settings-nav .active')?.textContent.trim() === '我的订单')
+  check('订单栏目下方保留设置栏目与返回入口', [...f.document.querySelectorAll('.settings-sidebar-foot button')].some(button => button.textContent.includes('返回发文件')) && [...f.document.querySelectorAll('.settings-sidebar-foot button')].some(button => button.textContent.includes('会员与团队空间')))
   await f.click('账号与安全')
   check('切换其他设置只替换右侧内容', f.window.location.pathname === '/settings/security' && !f.document.querySelector('.orders-page') && f.document.querySelector('.settings-sidebar'))
   await f.click('我的订单'); await waitFor(() => f.document.querySelector('[data-order-id]'), 'Sidebar opens orders')
@@ -138,7 +143,20 @@ try {
   await f.click('暂不取消'); check('取消确认不发修改请求', !f.requests.some(r => r.url.endsWith('/cancel')))
   await f.click('取消订单'); await f.click('确认取消'); await delay(50)
   check('确认后取消原订单', f.requests.filter(r => r.url.endsWith('/order-0/cancel')).length === 1 && f.text().includes('已取消'))
-  await f.click('关闭订单详情'); await f.click('全部')
+  await f.click('关闭订单详情'); await f.click('已取消'); await waitFor(() => f.document.querySelector('[data-order-id="order-3"]'), 'Deletable canceled order')
+  await f.click('查看订单 WM1-ORDER-3'); await waitFor(() => f.document.querySelector('#order-detail-title'), 'Deletable order details')
+  check('无支付平台订单号的已取消订单显示删除入口', !!f.document.querySelector('button[aria-label="删除订单"]'))
+  await f.click('删除订单'); check('删除订单有二次确认', f.text().includes('确认删除订单？'))
+  await f.click('暂不删除'); check('删除确认可撤回且不发请求', !!f.document.querySelector('#order-detail-title') && !f.requests.some(r => r.method === 'DELETE'))
+  await f.click('删除订单'); await f.click('确认删除'); await delay(50)
+  await waitFor(() => f.document.querySelector('.orders-account-line')?.textContent.includes('23 笔订单'), 'Order count refresh')
+  check('确认删除后关闭详情、提示成功并刷新列表计数', !f.document.querySelector('#order-detail-title') && !f.document.querySelector('[data-order-id="order-3"]') && f.document.querySelector('.orders-account-line')?.textContent.includes('23 笔订单') && f.text().includes('订单已删除') && f.requests.some(r => r.method === 'DELETE' && r.url.endsWith('/order-3')))
+  await f.click('已取消'); await waitFor(() => f.document.querySelector('[data-order-id="order-4"]'), 'Provider-linked canceled order')
+  await f.click('查看订单 WM1-ORDER-4'); await waitFor(() => f.document.querySelector('#order-detail-title'), 'Provider-linked order details')
+  check('有支付平台订单号的已取消订单不显示删除入口', !f.document.querySelector('button[aria-label="删除订单"]'))
+  check('有支付平台订单号时说明订单不可删除的原因', f.text().includes('该订单已生成支付平台订单号，为便于后续核对，不能删除。'))
+  f.window.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape' })); await delay(20)
+  await f.click('全部')
   f.expire(); await f.click('刷新订单'); await delay(50)
   check('会话失效清空订单数据', !f.document.querySelector('[data-order-id]') && /登录后管理账户设置|登录后查看订单/.test(f.text()))
   check('页面运行无JS错误', f.errors.length === 0)
@@ -156,6 +174,13 @@ try {
   await waitFor(() => retry.text().includes('PROVIDER-1'), 'Detail retry')
   check('详情失败后可重试', retry.text().includes('本单有效期'))
 } finally { retry.close() }
+const deleteFailure = await mount({ url: '/settings/orders?status=canceled', failDelete: true })
+try {
+  await waitFor(() => deleteFailure.document.querySelector('[data-order-id="order-3"]'), 'Delete failure fixture order')
+  await deleteFailure.click('查看订单 WM1-ORDER-3'); await deleteFailure.click('删除订单'); await deleteFailure.click('确认删除')
+  await waitFor(() => deleteFailure.text().includes('删除订单失败'), 'Delete failure is visible')
+  check('删除失败保留订单与详情并明确提示', !!deleteFailure.document.querySelector('#order-detail-title') && !!deleteFailure.document.querySelector('[data-order-id="order-3"]') && deleteFailure.text().includes('删除订单失败'))
+} finally { deleteFailure.close() }
 const closing = await mount()
 try {
   await waitFor(() => closing.document.querySelector('[data-order-id]'), 'Closing fixture loads')

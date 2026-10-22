@@ -8,7 +8,7 @@ import { build } from 'vite'
 import { ACCOUNT_PLANS } from '../server/config.js'
 import { systemConfigError } from '../server/lib/admin-validation.js'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
-const bundle=await build({root,configFile:false,logLevel:'silent',build:{write:false,minify:false,rollupOptions:{input:path.join(root,'src/main.jsx'),output:{format:'iife',inlineDynamicImports:true}}}})
+const bundle=await build({root,configFile:false,logLevel:'silent',worker:{format:'es'},build:{write:false,minify:false,rollupOptions:{input:path.join(root,'src/main.jsx'),output:{format:'iife',inlineDynamicImports:true}}}})
 const code=bundle.output.find(x=>x.type==='chunk').code
 let passed=0,failures=[]
 function check(label,value){if(value){passed++;console.log('PASS '+label)}else{failures.push(label);console.log('FAIL '+label)}}

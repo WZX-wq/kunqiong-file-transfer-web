@@ -1,9 +1,10 @@
 import React from 'react'
+import { copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
-import { useRemotePlanPricing } from '../hooks.js'
-import { apiRequest, copyTextToClipboard, mergePlanPricing, upgradeApiRequest } from '../lib/api.js'
-import { ConfirmModal, FeedbackMessage, PublicShell } from '../components/common.jsx'
+import { useRemotePlanPricing, useToast } from '../hooks.js'
+import { apiRequest, mergePlanPricing, upgradeApiRequest } from '../lib/api.js'
+import { ConfirmModal, FeedbackMessage, PublicShell, Toast } from '../components/common.jsx'
 import { ArrowLeft, BadgeCheck, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, History, Info, Link2, PencilLine, RefreshCw, RotateCcw, ScanLine, ShieldCheck, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
 import { feedbackTone, formatBytes, formatDate, formatPlanPrice } from '../lib/format.js'
 import { PlanSpaceSummary } from '../components/ui.jsx'
@@ -13,6 +14,7 @@ import { TEAM_NAME_MAX, limitInputText } from '../lib/input-limits.js'
 import { paymentDeadline, paymentOrderView } from '../lib/upgrade-payment.js'
 
 export function WorkspacePage() {
+  const { toast, notify } = useToast()
   const [user, setUser] = useState(null)
   const [workspace, setWorkspace] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -207,19 +209,15 @@ export function WorkspacePage() {
   const planCatalogView = new URLSearchParams(window.location.search).get('view') === 'plans'
   // 团队邀请入口：走企业专属路径，访客打开后登录即可在页面底部直接申请入团。
   const enterpriseInviteLink = organization ? `${window.location.origin}/e/${organization.slug}/share/` : ''
-  const copyEnterpriseLink = async () => {
+  const copyEnterpriseLink = () => {
     setError('')
     setMessage('')
-    try {
-      await copyTextToClipboard(enterpriseInviteLink)
-      setMessage('团队邀请链接已复制，发给同事即可申请加入')
-    } catch {
-      setError('当前浏览器不支持自动复制，请手动选中链接复制')
-    }
+    return copyTextWithFeedback(enterpriseInviteLink, notify, '团队邀请链接已复制，发给同事即可申请加入')
   }
   if (planCatalogView) return (
     <PublicShell className="workspace-shell">
-      {(message || error) && <div className="workspace-toast"><FeedbackMessage message={message || error} tone={error ? 'error' : feedbackTone(message)} /></div>}
+      {toast && <Toast {...toast} />}
+      {(message || error) && <Toast message={message || error} tone={error ? 'error' : feedbackTone(message)} />}
       <PlanCatalogPage
         plans={plans}
         currentPlan={plan}
@@ -233,8 +231,9 @@ export function WorkspacePage() {
   )
   return (
     <PublicShell className="workspace-shell">
+      {toast && <Toast {...toast} />}
       <section className="workspace-page workspace-overview-page">
-        {(message || error) && <div className="workspace-toast"><FeedbackMessage message={message || error} tone={error ? 'error' : feedbackTone(message)} /></div>}
+        {(message || error) && <Toast message={message || error} tone={error ? 'error' : feedbackTone(message)} />}
 
         <header className="workspace-page-head">
           <div className="workspace-page-head-copy">
@@ -327,7 +326,7 @@ export function WorkspacePage() {
                   </div>
                   {teamUsage && <div className="progress sm" role="progressbar" aria-label="团队空间使用率" aria-valuenow={teamUsedRatio} aria-valuemin="0" aria-valuemax="100"><i style={{ width: `${teamUsedRatio}%` }} /></div>}
 
-                  {!canUseTeamSpace && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>当前权益已关闭团队协作</strong><span>恢复团队版或企业版权益后，可以继续邀请和管理成员。</span></div></div>}
+                  {!canUseTeamSpace && <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队套餐暂不可用</strong><span>{teamRole === 'owner' ? '恢复团队套餐后，所有成员都可以继续使用团队空间。' : '请联系团队所有者续费或恢复套餐；套餐恢复后，所有成员会自动恢复访问。'}</span></div></div>}
 
                   {canManageTeam ? (
                     <div className="workspace-invite-mini">
@@ -348,7 +347,9 @@ export function WorkspacePage() {
                     </div>
                     {canUseTeamSpace
                       ? <button type="button" className="team-manage-link" title="查看团队成员、入团申请和使用情况" onClick={() => { window.location.href = '/team' }}>团队管理 <ChevronRight size={13} /></button>
-                      : <button type="button" className="team-manage-link" onClick={() => setUpgradeOpen(true)}>购买团队套餐 <ChevronRight size={13} /></button>}
+                      : (!organization || teamRole === 'owner')
+                        ? <button type="button" className="team-manage-link" onClick={() => setUpgradeOpen(true)}>购买团队套餐 <ChevronRight size={13} /></button>
+                        : <span className="team-manage-link">联系团队所有者</span>}
                   </div>
                 </>
               )}
@@ -451,6 +452,7 @@ export const accountPlanRank = (planId) => ACCOUNT_PLAN_RANK[planId] ?? 0
 export const accountPlanIcon = (planId) => ACCOUNT_PLAN_ICON[planId] || HardDrive
 
 export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = null, onClose, onRefresh, onNotify, requireCancelConfirmation = false }) {
+  const { toast, notify } = useToast()
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -667,6 +669,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
 
   return createPortal(
     <div className="modal-backdrop upgrade-backdrop" onMouseDown={onClose}>
+      {toast && <Toast {...toast} />}
       <div className={`modal upgrade-modal${orderView ? '' : ' upgrade-modal-compare'}`} role="dialog" aria-modal="true" aria-labelledby="upgrade-modal-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">会员与企业版</p><h2 id="upgrade-modal-title">{orderView ? (orderView.status === 'paid' ? '支付成功' : '升级订单') : '升级权益'}</h2></div>
@@ -684,7 +687,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
               <dl className="upgrade-order-meta">
                 <div><dt>支付金额</dt><dd><strong className="upgrade-success-amount">{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '—'}</strong></dd></div>
                 <div><dt>有效期至</dt><dd>{(orderView.permanent ?? (orderView.planId === 'enterprise' && !orderView.remoteExpireAt)) ? '永久有效' : orderView.remoteExpireAt ? formatDate(orderView.remoteExpireAt) : '以主站权益为准'}</dd></div>
-                <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={async () => { try { await copyTextToClipboard(orderView.orderNo); onNotify?.('订单号已复制', 'success') } catch { /* 忽略 */ } }}><Copy size={13} /> 复制</button></dd></div>
+                <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={() => copyTextWithFeedback(orderView.orderNo, notify, '订单号已复制')}><Copy size={13} /> 复制</button></dd></div>
                 {orderView.paidAt && <div><dt>支付时间</dt><dd>{formatDate(orderView.paidAt)}</dd></div>}
               </dl>
               <div className="upgrade-order-actions">
@@ -698,7 +701,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
                 <span className={`upgrade-order-status ${orderView.status}`}>{UPGRADE_ORDER_STATUS_LABELS[orderView.status] || orderView.status}</span>
               </div>
               <dl className="upgrade-order-meta">
-                <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={async () => { try { await copyTextToClipboard(orderView.orderNo); onNotify?.('订单号已复制', 'success') } catch { /* 忽略 */ } }}><Copy size={13} /> 复制</button></dd></div>
+                <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={() => copyTextWithFeedback(orderView.orderNo, notify, '订单号已复制')}><Copy size={13} /> 复制</button></dd></div>
                 <div><dt>创建时间</dt><dd>{formatDate(orderView.createdAt)}</dd></div>
                 {Object.hasOwn(orderView, 'entitlementDays') && <div><dt>权益期限</dt><dd>{orderView.entitlementDays === null ? '永久有效' : `${orderView.entitlementDays} 天`}</dd></div>}
                 <div><dt>应付金额</dt><dd>{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '价格以支付通道为准'}</dd></div>

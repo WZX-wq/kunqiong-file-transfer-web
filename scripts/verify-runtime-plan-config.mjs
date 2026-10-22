@@ -29,12 +29,22 @@ const users = Object.fromEntries([...planIds, 'sender', 'other', 'buyer', 'perma
 const organizations = { org: { id: 'org', slug: 'org', name: 'fixture', ownerUserId: 'team', teamPlanId: 'team', teamPlanExpiresAt: future, members: ['team', 'sender'].map(userId => ({ id: userId, userId, status: 'active', role: userId === 'team' ? 'owner' : 'member' })) } }
 users['timed-member'] = { id: 'timed-member', username: 'timed-member', planId: 'member', status: 'active', planExpiresAt: new Date(Date.now() + 20 * 86400000).toISOString() }
 organizations.org.members.push({ id: 'timed-member', userId: 'timed-member', status: 'active', role: 'member' })
+const expired = new Date(Date.now() - 1000).toISOString()
+users['legacy-expired-owner'] = { id: 'legacy-expired-owner', username: 'legacy-expired-owner', planId: 'team', status: 'active', planExpiresAt: expired, planPermanent: false, planManagedAt: new Date(Date.now() - 30 * 86400000).toISOString() }
+users['legacy-paid-peer'] = { id: 'legacy-paid-peer', username: 'legacy-paid-peer', planId: 'team', status: 'active', planExpiresAt: future, planPermanent: false }
+organizations['legacy-expiry'] = { id: 'legacy-expiry', slug: 'legacy-expiry', name: 'legacy expiry', ownerUserId: 'legacy-expired-owner', members: ['legacy-expired-owner', 'legacy-paid-peer'].map(userId => ({ id: userId, userId, status: 'active', role: userId === 'legacy-expired-owner' ? 'owner' : 'member' })) }
+users['legacy-transfer-owner'] = { id: 'legacy-transfer-owner', username: 'legacy-transfer-owner', planId: 'free', status: 'active', planExpiresAt: null }
+users['legacy-original-owner'] = { id: 'legacy-original-owner', username: 'legacy-original-owner', planId: 'team', status: 'active', planExpiresAt: future, planPermanent: false }
+organizations['legacy-transferred'] = { id: 'legacy-transferred', slug: 'legacy-transferred', name: 'legacy transferred', ownerUserId: 'legacy-transfer-owner', members: ['legacy-transfer-owner', 'legacy-original-owner'].map(userId => ({ id: userId, userId, status: 'active', role: userId === 'legacy-transfer-owner' ? 'owner' : 'member' })) }
 organizations.legacy = { id: 'legacy-org', slug: 'legacy-org', name: 'legacy team', ownerUserId: 'enterprise', teamPlanId: 'enterprise', teamPlanPermanent: true, members: ['enterprise', 'managed', 'legacy-managed', 'invited'].map(userId => ({ id: userId, userId, status: 'active', role: userId === 'enterprise' ? 'owner' : 'member' })) }
 fs.mkdirSync(path.join(fixture, 'storage'))
 const metadataFile = path.join(fixture, 'storage/metadata.json')
 fs.writeFileSync(metadataFile, JSON.stringify({ users, organizations, sessions: Object.values(users).map(user => ({ id: user.id + '-session', user, expiresAt: future, apiWebToken: 'fixture-token' })), shares: [], collections: [], upgradeOrders: [{ id: 'legacy-pending', orderNo: 'LEGACY-PENDING', userId: 'other', planId: 'enterprise', status: 'pending_payment', amount: 15900, createdAt: new Date().toISOString() }], systemConfig: { anonymousMaxFileSizeMb: 500, anonymousTotalSizeMb: 1024, planOverrides: { enterprise: { totalGb: 2100 } } } }))
 const seeded = JSON.parse(fs.readFileSync(metadataFile, 'utf8'))
-seeded.auditLogs = [{ id: 'legacy-admin-edit', type: 'admin', action: '更新用户状态或权益', targetId: 'legacy-managed', details: { planId: 'free', status: 'active' }, createdAt: new Date(Date.now() - 60000).toISOString() }]
+seeded.auditLogs = [
+  { id: 'legacy-admin-edit', type: 'admin', action: '更新用户状态或权益', targetId: 'legacy-managed', details: { planId: 'free', status: 'active' }, createdAt: new Date(Date.now() - 60000).toISOString() },
+  { id: 'legacy-transfer', type: 'team', action: '转让团队所有权', userId: 'legacy-original-owner', targetId: 'legacy-transfer-owner', details: { organizationId: 'legacy-transferred', previousOwnerId: 'legacy-original-owner', teamPlanId: 'team', teamPlanExpiresAt: future, teamPlanPermanent: false }, createdAt: new Date(Date.now() - 30000).toISOString() },
+]
 fs.writeFileSync(metadataFile, JSON.stringify(seeded))
 const stored = () => JSON.parse(fs.readFileSync(metadataFile, 'utf8'))
 
@@ -94,26 +104,33 @@ const create = (user, extra = {}) => api('/api/collections', { user, method: 'PO
 const submit = (token, user = '', cookie = '', name = 'guest') => { const form = new FormData(); form.append('participantName', name); form.append('files', new Blob(['fixture']), 'fixture.txt'); return api('/api/collections/' + token + '/submissions', { user, cookie, method: 'POST', body: form }) }
 try {
   await start(); await login()
+  eq((await api('/api/account/workspace', { user: 'legacy-expired-owner' })).data.teamEntitlement.canUseTeamSpace, false, 'legacy owner expiry disables organization team access')
+  eq((await api('/api/account/workspace', { user: 'legacy-paid-peer' })).data.teamEntitlement.canUseTeamSpace, false, 'legacy member personal plan cannot keep expired owner organization active')
+  eq([(await api('/api/account/team/overview', { user: 'legacy-expired-owner' })).status, (await api('/api/account/team/overview', { user: 'legacy-paid-peer' })).status], [403, 403], 'legacy expired team denies every member consistently')
+  eq((await api('/api/account/team/overview', { user: 'legacy-transfer-owner' })).status, 200, 'legacy ownership transfer recovers the recorded organization plan')
+  eq((await api('/api/account/team/overview', { user: 'legacy-original-owner' })).status, 200, 'legacy transfer plan applies to previous owner and other members')
   eq((await api('/api/account/team/overview', { user: 'timed-member' })).data.teamPlanExpiresAt, future, 'inherited team expiry is independent from personal monthly expiry')
-  eq((await api('/api/account/workspace', { user: 'legacy-managed' })).data.teamEntitlement.canUseTeamSpace, false, 'previous admin downgrade is recovered from persisted audit evidence')
+  eq((await api('/api/account/workspace', { user: 'legacy-managed' })).data.teamEntitlement.canUseTeamSpace, true, 'member admin downgrade does not revoke the active organization plan')
   eq((await api('/api/account/workspace', { user: 'managed' })).data.teamEntitlement.canUseTeamSpace, true, 'enterprise member initially has team access')
   eq((await api('/api/admin/users/managed', { admin: true, method: 'PATCH', body: { planId: 'free' } })).status, 200, 'admin downgrades former enterprise account')
   const downgraded = (await api('/api/account/workspace', { user: 'managed' })).data
-  eq([downgraded.plan.id, downgraded.teamEntitlement.canUseTeamSpace, downgraded.teamEntitlement.teamPlanId], ['free', false, 'free'], 'admin downgrade revokes inherited enterprise rights')
-  eq((await api('/api/account/team/overview', { user: 'managed' })).status, 403, 'downgraded account cannot access enterprise team API')
-  eq((await session('managed', 1, { mode: 'team_resource' })).status, 403, 'downgraded account cannot bypass restriction through upload sessions')
-  eq((await api('/api/account/workspace', { user: 'invited' })).data.teamEntitlement.canUseTeamSpace, true, 'admin downgrade does not revoke other invited members rights')
+  eq([downgraded.plan.id, downgraded.teamEntitlement.canUseTeamSpace, downgraded.teamEntitlement.teamPlanId], ['free', true, 'enterprise'], 'member personal downgrade does not change organization team access')
+  eq((await api('/api/account/team/overview', { user: 'managed' })).status, 200, 'downgraded personal account shares the active organization team API')
+  const managedTeamSession = await session('managed', 1, { mode: 'team_resource' })
+  eq(managedTeamSession.status, 201, 'downgraded personal account can upload within the active organization plan')
+  await discard(managedTeamSession, 'managed')
+  eq((await api('/api/account/workspace', { user: 'invited' })).data.teamEntitlement.canUseTeamSpace, true, 'member downgrade leaves the shared organization plan active for everyone')
   eq((await api('/api/account/workspace', { user: 'enterprise' })).data.teamEntitlement.teamPlanId, 'enterprise', 'admin member downgrade does not rewrite another owner organization')
   await api('/api/admin/users/managed', { admin: true, method: 'PATCH', body: { planId: 'member' } })
-  eq((await api('/api/account/workspace', { user: 'managed' })).data.teamEntitlement.canUseTeamSpace, false, 'monthly plan does not restore enterprise collaboration')
+  eq((await api('/api/account/workspace', { user: 'managed' })).data.teamEntitlement.canUseTeamSpace, true, 'monthly personal plan does not change enterprise organization access')
   paid = true
   const restoredOrder = (await api('/api/account/upgrade-orders', { user: 'managed', method: 'POST', body: { planId: 'team' } })).data.order
   await api('/api/account/upgrade-orders/' + restoredOrder.id + '/confirm', { user: 'managed', method: 'POST' })
   await api('/api/account/upgrade-orders/' + restoredOrder.id + '/pay-status', { user: 'managed', method: 'POST' })
   const restored = (await api('/api/account/workspace', { user: 'managed' })).data
-  eq([restored.plan.id, restored.teamEntitlement.canUseTeamSpace, restored.teamEntitlement.teamPlanId], ['team', true, 'team'], 'new payment restores only purchased team rights without resurrecting enterprise')
+  eq([restored.plan.id, restored.teamEntitlement.canUseTeamSpace, restored.teamEntitlement.teamPlanId], ['team', true, 'enterprise'], 'personal payment does not overwrite the independent organization plan')
   const restoredTeam = (await api('/api/account/team/overview', { user: 'managed' })).data
-  eq([restoredTeam.plan.id, restoredTeam.capacity.totalBytes, restoredTeam.capacity.singleFileLimitBytes], ['team', 200 * GB, 10 * GB], 'restored team quota and file limit follow new purchase instead of old enterprise')
+  eq([restoredTeam.plan.id, restoredTeam.capacity.totalBytes, restoredTeam.capacity.singleFileLimitBytes], ['enterprise', 1024 * GB, 20 * GB], 'team quota and file limit stay on the organization plan after a member purchase')
   paid = false
   let overview = (await api('/api/admin/overview', { admin: true })).data
   eq(overview.plans.map(plan => plan.id), activePlanIds, 'only five active plans are editable')
@@ -201,10 +218,13 @@ try {
   eq(stored().users.member.planExpiresAt, originalExpiry, 'changing validity never rewrites existing paid expiry')
   const legacy = (await api('/api/account/workspace', { user: 'enterprise' })).data
   eq([legacy.plan.permanent, legacy.capacity.totalBytes], [true, 2100 * GB], 'legacy permanent rights and quotas survive retirement and restart')
-  eq((await api('/api/account/workspace', { user: 'managed' })).data.teamEntitlement.teamPlanId, 'team', 'admin entitlement ceiling survives payment and restart')
+  eq((await api('/api/account/workspace', { user: 'managed' })).data.teamEntitlement.teamPlanId, 'enterprise', 'organization plan remains independent after member payment and restart')
   await api('/api/admin/users/team', { admin: true, method: 'PATCH', body: { planId: 'member' } })
+  eq([(await api('/api/account/team/overview', { user: 'team' })).status, (await api('/api/account/team/overview', { user: 'sender' })).status], [403, 403], 'admin downgrade of the owner disables team access for every member')
   eq((await api('/api/account/workspace', { user: 'team', method: 'PATCH', body: { name: 'blocked rename' } })).status, 403, 'downgraded owner cannot rename team through a direct request')
   eq((await api('/api/account/workspace/members/sender/role', { user: 'team', method: 'PATCH', body: { role: 'admin' } })).status, 403, 'downgraded owner cannot manage roles through a direct request')
+  await api('/api/admin/users/team', { admin: true, method: 'PATCH', body: { planId: 'team', planExpiresAt: future } })
+  eq([(await api('/api/account/team/overview', { user: 'team' })).status, (await api('/api/account/team/overview', { user: 'sender' })).status], [200, 200], 'restoring owner team plan re-enables team access for every member')
   console.log(`Runtime entitlement checks: ${checks} passed; fixture ${fixture}`)
 } finally {
   await stop(); await new Promise(resolve => scanner.close(resolve)); await new Promise(resolve => provider.close(resolve))

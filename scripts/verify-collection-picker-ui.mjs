@@ -8,6 +8,7 @@ import { build } from 'vite'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const bundle = await build({
   root, configFile: false, logLevel: 'silent',
+  worker: { format: 'es' },
   build: { write: false, minify: false, rollupOptions: {
     input: path.join(root, 'src/main.jsx'), output: { format: 'iife', inlineDynamicImports: true },
   } },

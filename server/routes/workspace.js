@@ -51,11 +51,9 @@ export function registerWorkspaceRoutes(app) {
     if (!session) return
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
-    const account = accountUserById(session.user.id) || session.user
-    const teamPlan = accountOrganizationPlanForUser(account, organization)
-    if (!teamPlan.team) return res.status(403).json({ message: '管理员已调整当前套餐，请购买团队套餐后使用团队功能' })
-    const teamPlanExpiresAt = account.planManagedAt && teamPlan.id === account.planId
-      ? account.planExpiresAt || null : organizationTeamPlanExpiresAtForOrganization(organization)
+    const teamPlan = organizationTeamPlanForOrganization(organization)
+    if (!teamPlan.team) return res.status(403).json({ message: '该团队套餐已过期或未开通，所有成员暂时无法使用团队空间，请联系团队所有者续费或恢复套餐' })
+    const teamPlanExpiresAt = organizationTeamPlanExpiresAtForOrganization(organization)
     // 待审批的入团申请（status='requested'）不是成员，不计入成员观察/成员列表，也不应参与团队资源归属判定。
     const canManageTeam = isOrganizationManager(organization, session.user.id)
     const rosterMembers = organization.members.filter(member => canManageTeam ? member.status !== 'requested' : member.status === 'active')
@@ -472,7 +470,7 @@ export function registerWorkspaceRoutes(app) {
       action: '转让团队所有权',
       userId: previousOwner.id,
       targetId: nextOwner.id,
-      details: { organizationId: organization.id, previousOwnerId: previousOwner.id, nextOwnerCanUseTeamSpace, teamPlanId: teamPlan.id, teamPlanExpiresAt: organization.teamPlanExpiresAt },
+      details: { organizationId: organization.id, previousOwnerId: previousOwner.id, nextOwnerCanUseTeamSpace, teamPlanId: teamPlan.id, teamPlanExpiresAt: organization.teamPlanExpiresAt, teamPlanPermanent: teamPlan.permanent },
     })
     res.json({ ...accountWorkspacePayload(previousOwner), transferred: true, nextOwnerName, nextOwnerCanUseTeamSpace })
   })

@@ -26,7 +26,7 @@
 .admin-login-field > input,
 .admin-login-password { height: 42px; background: #fff; border-color: #dce6f5; border-radius: 8px; }
 .admin-login-password input { color: #263750; }
-.admin-login-footer { justify-content: space-between; margin-top: 22px; padding: 0; border: 0; }
+.admin-login-footer { justify-content: space-between; margin: 22px 0 0; padding: 0; border: 0; }
 .admin-login-footer button { min-height: 40px; }
 .admin-page { animation: prototype-page-enter .24s ease-out both; }
 .admin-page .admin-heading,

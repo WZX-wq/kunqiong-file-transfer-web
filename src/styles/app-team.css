@@ -202,7 +202,7 @@
 .workspace-page-head-actions > * { min-height: 36px; padding: 0 13px; font-size: 12.4px; }
 
 /* 两栏骨架（原型 .split / .side-col） */
-.workspace-overview-page .workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: start; gap: 18px; }
+.workspace-overview-page .workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: stretch; gap: 18px; }
 .workspace-overview-page .workspace-side-col { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
 
 /* 套餐摘要 Hero（浅色渐变，文字必须保持深色） */
@@ -321,9 +321,10 @@
 .workspace-overview-page .usage-legend span { display: flex; min-width: 0; align-items: center; gap: 6px; color: #7d8ea6; font-size: 11.6px; white-space: nowrap; }
 .workspace-overview-page .usage-legend i { width: 7px; height: 7px; flex: none; border-radius: 2px; }
 .workspace-overview-page .usage-legend b { margin-left: auto; color: #243449; font-size: 11.6px; font-weight: 600; font-variant-numeric: tabular-nums; }
-/* 760~1000px 两列断点下，本卡会被同一行更高的团队卡拉伸。内容在卡内垂直居中，
- * 避免底部出现大片留白；卡片为自然高度时没有多余空间，观感与原型完全一致。 */
-.workspace-overview-page .workspace-storage-card { display: flex; flex-direction: column; }
+/* 桌面侧栏由团队卡和存储卡组成。团队卡随账号权益变化高度，存储卡需填满侧栏
+ * 剩余空间，才能始终与左侧权益卡底部对齐；窄屏改为 grid 后 flex 不参与分配。
+ * 存储内容垂直居中，同时保留内容所需的最小高度。 */
+.workspace-overview-page .workspace-storage-card { display: flex; flex: 1 0 auto; flex-direction: column; }
 .workspace-overview-page .workspace-storage-card .workspace-side-card-body { display: flex; flex: 1; flex-direction: column; justify-content: center; }
 
 @media (max-width: 1000px) {

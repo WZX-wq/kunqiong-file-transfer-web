@@ -12,7 +12,7 @@ import { build } from 'vite'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const bundle = await build({
-  root, configFile: false, logLevel: 'silent',
+  root, configFile: false, logLevel: 'silent', worker: { format: 'es' },
   build: { write: false, minify: false, rollupOptions: {
     input: path.join(root, 'src/main.jsx'), output: { format: 'iife', inlineDynamicImports: true },
   } },
@@ -50,6 +50,10 @@ window.fetch = async (url, options = {}) => {
   const method = String(options.method || 'GET').toUpperCase()
   if (url === '/api/auth/me') payload = { user: { id: 'fixture-user', nickname: '测试用户' } }
   else if (url === '/api/account/messages' && method === 'GET') payload = { messages, settings: {} }
+  else if (url === '/api/account/messages' && method === 'PATCH') {
+    messages = messages.map(message => ({ ...message, unread: false }))
+    payload = { messages }
+  }
   else if (url.startsWith('/api/account/messages/') && method === 'PATCH') {
     const id = decodeURIComponent(url.split('/').pop())
     messages = messages.map((m) => m.id === id ? { ...m, unread: false } : m)
@@ -93,6 +97,13 @@ await waitFor(() => copiedText === 'NXKTSS', 'Clipboard receives the share code'
 check('点击复制后剪贴板内容为取件码', copiedText === 'NXKTSS')
 await waitFor(() => [...document.querySelectorAll('.message-code-chip')].some((b) => b.textContent.includes('已复制')), 'Copy feedback shows')
 check('按钮给出已复制反馈', [...document.querySelectorAll('.message-code-chip')].some((b) => b.textContent.includes('已复制')))
+await waitFor(() => document.querySelector('.toast.success')?.textContent.includes('取件码已复制'), 'Copy toast shows above the message panel')
+check('复制取件码有全局成功提示', document.querySelector('.toast').parentElement === document.body)
+
+document.querySelector('.message-mark-all').click()
+await waitFor(() => document.querySelector('.toast.success')?.textContent.includes('全部消息已标为已读'), 'Mark all read succeeds with feedback')
+check('全部已读有成功提示且未读状态已更新', messages.every(message => !message.unread))
+check('连续操作替换旧提示，页面只保留一个提示', document.querySelectorAll('.toast').length === 1)
 
 // 3) 删除请求是否携带 keepalive
 const delBtn = document.querySelector('.message-item-delete')
@@ -100,6 +111,14 @@ delBtn.click()
 await waitFor(() => deleteCalls.length > 0, 'Delete request sent')
 check('删除请求携带 keepalive（页面卸载不中断）', deleteCalls[0].keepalive === true)
 await waitFor(() => document.querySelectorAll('.message-item').length === 1, 'Message removed from list')
+await waitFor(() => document.querySelector('.toast.success')?.textContent.includes('消息已删除'), 'Message deletion confirms success')
+check('删除消息有成功提示', Boolean(document.querySelector('.toast.success')))
+
+document.querySelector('.message-mark-all.danger').click()
+await waitFor(() => document.querySelector('.confirm-modal'), 'Clear all asks for confirmation')
+document.querySelector('.confirm-modal .primary-button').click()
+await waitFor(() => document.querySelector('.toast.success')?.textContent.includes('全部消息已清除'), 'Clear all confirms success')
+check('清除全部有成功提示且消息已清空', messages.length === 0 && document.querySelectorAll('.message-item').length === 0)
 
 document.body.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 await waitFor(() => !document.querySelector('.message-center'), 'Message center closes on outside click')

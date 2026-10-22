@@ -14,6 +14,7 @@ const recordsStyles = (await Promise.all([
 ].map(file => readFile(path.resolve(root, file), 'utf8')))).join('\n')
 const bundle = await build({
   root, configFile: false, logLevel: 'silent',
+  worker: { format: 'es' },
   plugins: [{
     name: 'record-preview-test-entry',
     resolveId(id) { if (id === 'record-preview-test') return '\0record-preview-test' },
@@ -67,7 +68,7 @@ try {
   recordsLayout.api.renderRecords([record, received])
   await waitFor(() => recordsLayout.document.querySelectorAll('.record-row').length === 2, 'Records table rows mount')
   const headings = [...recordsLayout.document.querySelectorAll('.records-table-head [role="columnheader"]')].map(item => item.textContent.trim())
-  check('Records page uses prototype table columns', headings.join('|') === '文件名|方向|取件码/入口|大小|时间|状态|操作')
+  check('Records page uses prototype table columns', headings.join('|') === '文件名|方向|取件码/入口|大小|有效期|状态|操作')
   const recordsHeading = recordsLayout.document.querySelector('.records-heading')
   check('Records view tabs and clear action share the page heading row', Boolean(recordsHeading?.querySelector('.records-mode-tabs') && recordsHeading.querySelector('.records-clear-button')))
   const primaryFilters = recordsLayout.document.querySelector('.records-toolbar-main')

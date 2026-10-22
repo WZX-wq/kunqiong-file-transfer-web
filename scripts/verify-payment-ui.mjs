@@ -8,7 +8,7 @@ import { build } from 'vite'
 // Render the real application. Only HTTP responses and the browser clock are faked.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const bundle = await build({
-  root, configFile: false, logLevel: 'silent',
+  root, configFile: false, logLevel: 'silent', worker: { format: 'es' },
   build: { write: false, minify: false, rollupOptions: {
     input: path.join(root, 'src/main.jsx'), output: { format: 'iife', inlineDynamicImports: true },
   } },
@@ -117,7 +117,7 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
 
 const fixture = await mount()
 try {
-  await fixture.click('套餐对比与升级', '.workspace-benefits-cta button')
+  await fixture.click('立即升级', '.workspace-benefits-cta button')
   fixture.hold()
   await fixture.click('创建升级订单')
   await waitFor(fixture.isHeld, 'Pre-checkout workspace response is held')
@@ -132,7 +132,7 @@ try {
   const modalQueries = fixture.statusCalls()
   fixture.paid()
   await fixture.tick(15000)
-  await waitFor(() => fixture.document.querySelector('.workspace-hero h1')?.textContent === '会员版空间', 'Entitlements refresh after the payment dialog closes')
+  await waitFor(() => fixture.document.querySelector('.workspace-plan-hero .ph-badge')?.textContent.includes('会员版'), 'Entitlements refresh after the payment dialog closes')
   check('Closed payment dialog still refreshes paid entitlements', fixture.statusCalls() === modalQueries)
   await waitFor(() => ![...fixture.timers.values()].some((timer) => timer.ms === 15000), 'Paid workspace stops pending-payment polling')
   check('Paid workspace stops periodic payment refresh', true)
@@ -150,7 +150,7 @@ try {
 
 const alipayFixture = await mount()
 try {
-  await alipayFixture.click('套餐对比与升级', '.workspace-benefits-cta button')
+  await alipayFixture.click('立即升级', '.workspace-benefits-cta button')
   await alipayFixture.click('支付宝')
   await alipayFixture.click('创建升级订单')
   await waitFor(() => alipayFixture.document.querySelector('iframe[title="支付宝收银台"]'), 'Selected Alipay checkout loads automatically')
@@ -159,7 +159,7 @@ try {
 
 const retryFixture = await mount({ confirmationFailures: 1 })
 try {
-  await retryFixture.click('套餐对比与升级', '.workspace-benefits-cta button')
+  await retryFixture.click('立即升级', '.workspace-benefits-cta button')
   await retryFixture.click('创建升级订单')
   await waitFor(() => retryFixture.text().includes('支付服务暂不可用'), 'Automatic payment failure is visible')
   await delay(80)
@@ -178,7 +178,7 @@ try {
 for (const options of [{ pending: true, paymentReady: false }, { conflict: true }]) {
   const restored = await mount(options)
   try {
-    await restored.click('套餐对比与升级', '.workspace-benefits-cta button')
+    await restored.click('立即升级', '.workspace-benefits-cta button')
     if (options.conflict) await restored.click('创建升级订单')
     await waitFor(() => restored.document.querySelector('img[alt="微信支付二维码"]'), 'Existing unpaid order automatically loads its QR code')
     check('Existing unpaid order resumes payment automatically ' + (options.conflict ? 'after creation conflict' : 'when reopened'), restored.confirmCalls() === 1 && restored.createCalls() === (options.conflict ? 1 : 0))
@@ -187,7 +187,7 @@ for (const options of [{ pending: true, paymentReady: false }, { conflict: true 
 
 const pendingFixture = await mount({ pending: true })
 try {
-  await pendingFixture.click('套餐对比与升级', '.workspace-benefits-cta button')
+  await pendingFixture.click('立即升级', '.workspace-benefits-cta button')
   check('Reopening an order with a QR code reuses the existing checkout', pendingFixture.confirmCalls() === 0 && !!pendingFixture.document.querySelector('img[alt="微信支付二维码"]'))
   pendingFixture.holdStatus()
   await pendingFixture.tick(2000)
@@ -209,7 +209,7 @@ try {
 for (const refresh of ['manual', 'automatic']) {
   const recovered = await mount({ pending: true, statusFailures: 1 })
   try {
-    await recovered.click('套餐对比与升级', '.workspace-benefits-cta button')
+    await recovered.click('立即升级', '.workspace-benefits-cta button')
     await recovered.click('刷新支付状态')
     check('Payment query failure keeps the original checkout ' + refresh, recovered.text().includes('支付服务返回的套餐有效期无效') && !!recovered.document.querySelector('.upgrade-payment-qr'))
     recovered.paid()
@@ -218,12 +218,12 @@ for (const refresh of ['manual', 'automatic']) {
     await waitFor(() => recovered.document.querySelector('.upgrade-success-view'), 'Paid status restores the success view ' + refresh)
     check('Successful payment clears the previous error ' + refresh, !recovered.text().includes('支付服务返回的套餐有效期无效') && !recovered.document.querySelector('.upgrade-payment-qr'))
     check('Successful payment shows a valid expiry ' + refresh, recovered.document.querySelector('.upgrade-success-view').textContent.includes('有效期至') && !/Invalid Date|以主站权益为准/.test(recovered.document.querySelector('.upgrade-success-view').textContent))
-    await waitFor(() => recovered.document.querySelector('.workspace-hero h1')?.textContent === '会员版空间', 'Recovered payment refreshes account entitlements ' + refresh)
+    await waitFor(() => recovered.document.querySelector('.workspace-plan-hero .ph-badge')?.textContent.includes('会员版'), 'Recovered payment refreshes account entitlements ' + refresh)
   } finally { recovered.close() }
 }
 const expiryFixture = await mount({ pending: true, ageMs: 14 * 60000 })
 try {
-  await expiryFixture.click('套餐对比与升级', '.workspace-benefits-cta button')
+  await expiryFixture.click('立即升级', '.workspace-benefits-cta button')
   check('Reopened checkout keeps the original fifteen-minute deadline', expiryFixture.document.querySelector('.upgrade-payment-countdown')?.textContent.includes('01:00'))
   await expiryFixture.advance(59000)
   check('Payment stays visible one second before expiry', !!expiryFixture.document.querySelector('img[alt="微信支付二维码"]') && expiryFixture.text().includes('00:01'))
@@ -237,20 +237,20 @@ try {
 
 const expiredOnOpen = await mount({ pending: true, paymentReady: false, ageMs: 15 * 60000 })
 try {
-  await expiredOnOpen.click('套餐对比与升级', '.workspace-benefits-cta button')
+  await expiredOnOpen.click('立即升级', '.workspace-benefits-cta button')
   check('Opening an expired order never requests a new code for it', expiredOnOpen.confirmCalls() === 0 && expiredOnOpen.text().includes('支付已超时'))
 } finally { expiredOnOpen.close() }
 
 const suspended = await mount({ pending: true })
 try {
-  await suspended.click('套餐对比与升级', '.workspace-benefits-cta button')
+  await suspended.click('立即升级', '.workspace-benefits-cta button')
   await suspended.returnAfter(16 * 60000)
   check('Returning from a suspended tab catches up without restarting the timer', !suspended.document.querySelector('.upgrade-payment-qr') && suspended.text().includes('支付已超时') && suspended.confirmCalls() === 0)
 } finally { suspended.close() }
 
 const expiryAlipay = await mount()
 try {
-  await expiryAlipay.click('套餐对比与升级', '.workspace-benefits-cta button')
+  await expiryAlipay.click('立即升级', '.workspace-benefits-cta button')
   await expiryAlipay.click('支付宝')
   await expiryAlipay.click('创建升级订单')
   await waitFor(() => expiryAlipay.document.querySelector('iframe'), 'Alipay is ready')
@@ -281,9 +281,8 @@ try {
 const upgradePricing = { member: { available: true, priceCents: 1900, validityDays: 30 }, team: { available: true, priceCents: 4900, validityDays: 90 } }
 const activeMember = await mount({ currentPlan: plans[1], availablePlans: enterprisePlans, pricing: upgradePricing })
 try {
-  const currentCard = activeMember.document.querySelector('.plan-comparison [data-plan-id="member"]')
-  check('Active current tier is disabled in the workspace price cards', currentCard?.disabled)
-  await activeMember.click('套餐对比与升级', '.workspace-benefits-cta button')
+  check('Workspace overview displays the active current tier', activeMember.document.querySelector('.workspace-plan-hero .ph-badge')?.textContent.includes('会员版'))
+  await activeMember.click('立即升级', '.workspace-benefits-cta button')
   const modal = activeMember.document.querySelector('.upgrade-modal')
   const memberCard = [...modal.querySelectorAll('.upgrade-plan-card')].find(item => item.textContent.includes('会员版'))
   const selected = modal.querySelector('.upgrade-plan-card.selected')
@@ -295,7 +294,7 @@ for (const currentPlan of [plans[1], enterprisePlans.find(item => item.id === 't
   for (const paymentReady of [false, true]) {
     const blocked = await mount({ currentPlan, availablePlans: enterprisePlans, pricing: upgradePricing, pending: true, paymentReady })
     try {
-      await blocked.click('套餐对比与升级', '.workspace-benefits-cta button')
+      await blocked.click('立即升级', '.workspace-benefits-cta button')
       const modal = blocked.document.querySelector('.upgrade-modal')
       check('Same or lower pending order hides payment and explains restriction ' + currentPlan.id + '/' + paymentReady, modal.textContent.includes('仅可升级') && !modal.querySelector('.upgrade-payment-qr, iframe, .upgrade-pay-type, .upgrade-payment-countdown'))
       await delay(60)
@@ -309,7 +308,7 @@ for (const currentPlan of [plans[1], enterprisePlans.find(item => item.id === 't
 
 const blockedExpired = await mount({ currentPlan: plans[1], availablePlans: enterprisePlans, pricing: upgradePricing, pending: true, ageMs: 15 * 60000 })
 try {
-  await blockedExpired.click('套餐对比与升级', '.workspace-benefits-cta button')
+  await blockedExpired.click('立即升级', '.workspace-benefits-cta button')
   check('Expired same-tier order cannot be recreated during active membership', !blockedExpired.text().includes('重新创建订单') && blockedExpired.text().includes('核对支付状态') && blockedExpired.confirmCalls() === 0)
 } finally { blockedExpired.close() }
 console.log(`Payment UI checks: ${passed}/${passed}`)

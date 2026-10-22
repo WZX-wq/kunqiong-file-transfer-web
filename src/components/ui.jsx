@@ -1,6 +1,7 @@
 import { collectionSizeOptions } from '../lib/plan-limits.js'
 export { UserAvatar, userAvatarSource, displayUserInitial, displayUserSubtitle } from './account.jsx'
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { PrototypeAsset, PrototypeFileIcon } from './prototype-asset.jsx'
 import { sanitizeOfficeHtml } from '../office-html.js'
 import { readTextPreview } from '../lib/text-preview.js'
@@ -65,7 +66,7 @@ export function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, o
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal qr-modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
         <button type="button" className="ghost-icon modal-close" aria-label="关闭二维码预览" title="关闭二维码预览" onClick={onClose}><X size={18} /></button>
@@ -81,7 +82,7 @@ export function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, o
           <button className="primary-button" onClick={onCopyImage}><Copy size={15} /> 复制图片</button>
         </div>
       </div>
-    </div>
+    </div>, document.body
   )
 }
 
@@ -96,7 +97,7 @@ export function ContentModal({ content, onClose }) {
 
   if (!content) return null
 
-  return (
+  return createPortal(
     <div className="modal-backdrop content-backdrop" onMouseDown={onClose}>
       <div className="modal content-modal" role="dialog" aria-modal="true" aria-labelledby="content-modal-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header content-modal-header">
@@ -115,7 +116,8 @@ export function ContentModal({ content, onClose }) {
           <button className="primary-button" onClick={onClose}><Check size={15} /> 我知道了</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -203,7 +205,7 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
       setDownloadError(downloadException.message || '下载失败')
     }
   }
-  return (
+  return createPortal(
     <div className="modal-backdrop preview-backdrop" onMouseDown={onClose}>
       <div className={`modal preview-modal ${preview.kind}`} role="dialog" aria-modal="true" aria-label={`${file.name || '文件'}预览`} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header preview-modal-header">
@@ -231,12 +233,13 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
           <button className="secondary-button" onClick={handleDownload} disabled={downloadDisabled || !ready}><Download size={15} /> 下载文件</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
 export function RecordPreviewChooser({ previews, onClose, onSelect }) {
-  return (
+  return createPortal(
     <div className="modal-backdrop preview-backdrop" onMouseDown={onClose}>
       <div className="modal record-preview-chooser" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
@@ -256,7 +259,8 @@ export function RecordPreviewChooser({ previews, onClose, onSelect }) {
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -719,7 +723,7 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
     }
   }
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal manage-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
@@ -779,7 +783,8 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
           <button className="primary-button" disabled={saving} onClick={submit}>{saving ? '保存中' : '保存设置'}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -813,7 +818,7 @@ export function RenameRecordModal({ record, onClose, onSave }) {
     onSave(nextName)
   }
 
-  return (
+  return createPortal(
     <div className="modal-backdrop rename-backdrop" onMouseDown={onClose}>
       <div className="modal rename-modal" role="dialog" aria-modal="true" aria-labelledby="rename-record-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header rename-modal-header">
@@ -837,7 +842,8 @@ export function RenameRecordModal({ record, onClose, onSave }) {
           <button className="primary-button" onClick={submit}><Check size={15} /> 保存名称</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

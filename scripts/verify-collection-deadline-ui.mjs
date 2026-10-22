@@ -9,6 +9,7 @@ import { build } from 'vite'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const bundle = await build({
   root, configFile: false, logLevel: 'silent',
+  worker: { format: 'es' },
   build: { write: false, minify: false, rollupOptions: {
     input: path.join(root, 'src/main.jsx'), output: { format: 'iife', inlineDynamicImports: true },
   } },
@@ -102,7 +103,9 @@ await scenario('Valid deadlines can still create', async (f) => {
   await f.click('创建收集任务')
   await waitFor(() => f.document.querySelector('.collection-success'), 'Today can create successfully')
   check('Today is sent as a date-only deadline', f.requests.length === 1 && f.requests[0].deadline === '2026-10-10')
+  check('Viewing received files links to the standalone manager', f.document.querySelector('.collection-success .result-actions a[href="/collect/manage/fixture-manager"]') !== null)
   await f.click('返回创建')
+  check('Saved collection history links to the standalone manager', f.document.querySelector('.collection-history-actions a[href="/collect/manage/fixture-manager"]') !== null)
   const title = f.document.querySelector('.builder-form input')
   Object.getOwnPropertyDescriptor(f.window.HTMLInputElement.prototype, 'value').set.call(title, '未来任务')
   title.dispatchEvent(new f.window.Event('input', { bubbles: true }))

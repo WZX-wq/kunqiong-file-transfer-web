@@ -4,7 +4,7 @@ import { apiRequest, copyTextToClipboard, createUploadSessionState, createUpload
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canPreviewFile, createShareDownloadConfig, createShareFilePreviewConfig, uploadShareInChunks } from '../lib/transfer.js'
 import { createShareRecord, saveLocalRecord, upsertCloudRecords } from '../lib/records.js'
-import { ConfirmModal, FeedbackMessage, PublicShell } from '../components/common.jsx'
+import { ConfirmModal, FeedbackMessage, PublicShell, Toast } from '../components/common.jsx'
 import { ArrowLeft, Building2, Check, ClipboardCheck, Copy, Crown, Database, Download, Eye, FileText, FolderOpen, HardDrive, Home, Link2, LogOut, PencilLine, Search, Settings2, Trash2, UploadCloud, UserPlus, UserRound, Users, X } from 'lucide-react'
 import { formatBytes, formatDate } from '../lib/format.js'
 import { AdminPagination } from './AdminPage.jsx'
@@ -621,7 +621,7 @@ export function TeamPage() {
         </div>}
       </div>
     </section>
-    {notice && <div className={`toast ${notice.tone || 'success'}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}><span className="toast-icon">{notice.tone === 'error' ? <X size={18} /> : <Check size={18} />}</span><span>{notice.message}</span></div>}
+    {notice && <Toast {...notice} />}
     {previewChoices && <RecordPreviewChooser previews={previewChoices} onClose={() => setPreviewChoices(null)} onSelect={(preview) => setPreviewItem(preview)} />}
     {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
     {/* 下载进度与上方团队卡片同宽：包一层受限宽容器，避免被 .public-page 的居中网格压缩。 */}

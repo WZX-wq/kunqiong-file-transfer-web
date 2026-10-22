@@ -44,6 +44,8 @@
 .records-page-records .records-secondary-row input[type="checkbox"] { accent-color: #1f6bff; }
 .records-page-records .records-table-surface { --records-grid-columns: 30px minmax(260px, 2fr) 70px 130px 90px 142px 95px 76px; margin-top: 0; border-color: #e0e9f5; border-radius: 10px; box-shadow: 0 7px 22px rgba(24, 72, 160, .04); }
 .records-page-records .records-table-head { min-height: 44px; color: #7a8da6; background: #f7faff; border-bottom-color: #e8eff8; font-size: 11px; font-weight: 600; }
+.records-page-records .records-table-head > span:nth-child(3),
+.records-page-records .records-table-head > span:nth-child(6) { text-align: center; }
 .records-page-records .record-row-enhanced { min-height: 62px; border-bottom-color: #edf2f8; }
 .records-page-records .record-file-cell { grid-template-columns: 36px minmax(0, 1fr); gap: 10px; }
 .records-page-records .record-file-cell .record-icon { width: 36px; height: 36px; }
@@ -101,16 +103,18 @@
   .records-page-records .records-list,
   .records-page-files .file-center-list {
     display: block;
-    min-width: 940px;
     border-radius: 0 0 9px 9px;
     background: transparent;
   }
+  .records-page-records .records-list { min-width: 940px; }
+  .records-page-files .file-center-list { min-width: 820px; }
   .records-page-records .records-table-head,
   .records-page-records .record-row-enhanced { min-width: 940px; }
   .records-page-files .records-table-head,
   .records-page-files .file-center-row { min-width: 860px; }
   .records-page-records .record-row-enhanced {
     grid-template-columns: var(--records-grid-columns);
+    grid-template-areas: none;
     min-height: 56px;
     padding: 6px 14px;
     border: 0;
@@ -120,6 +124,7 @@
   }
   .records-page-files .file-center-row {
     grid-template-columns: var(--file-center-grid-columns);
+    grid-template-areas: none;
     min-height: 46px;
     padding: 4px 14px;
     border: 0;
@@ -128,6 +133,9 @@
     box-shadow: none;
   }
   .records-page-records .record-row-enhanced > *,
+  .records-page-records .record-row-enhanced .record-code,
+  .records-page-records .record-file-cell .record-icon,
+  .records-page-records .record-file-cell .record-main,
   .records-page-files .file-center-row > * { grid-area: auto; }
   .records-page-records .row-menu-wrap,
   .records-page-files .row-menu-wrap {
@@ -146,9 +154,10 @@
 }
 
 /* File center follows the prototype's category rail and compact file table. */
-.records-page-files .records-heading { margin-bottom: 12px; }
-.app-shell:not(.public-shell):has(.records-page-files) > .page-content.records-content { width: 100%; max-width: none; padding: 18px 0 34px; background: #f6faff; }
-.records-page-files { width: min(1180px, calc(100% - 48px)); margin-inline: auto; }
+.records-page-files .records-heading { margin-bottom: 12px; padding-left: 228px; }
+.app-shell:not(.public-shell) > .page-content.records-content { width: 100%; max-width: none; padding: 18px 0 34px; }
+.app-shell:not(.public-shell):has(.records-page-files) > .page-content.records-content { background: #f6faff; }
+.workspace-page.records-page { width: min(1180px, calc(100% - 48px)); margin: 0 auto; }
 .records-page-files .files-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); align-items: start; gap: 18px; min-width: 0; }
 .records-page-files .file-cats { position: sticky; top: 88px; min-width: 0; padding: 12px; background: #fff; border: 1px solid #e5edf7; border-radius: 14px; }
 .records-page-files .file-cats h2 { padding: 4px 9px 8px; color: #7b8ca4; font-size: 11px; font-weight: 600; line-height: 1.4; }
@@ -192,9 +201,9 @@
 .records-page-files .file-filter-popover > button.danger { color: #b84e55; }
 .records-page-files .file-filter-popover > label em { margin-left: auto; color: #8292a9; font-size: 10px; font-style: normal; }
 .records-page-files .file-filter-popover input { accent-color: #1f6bff; }
-.records-page-files .file-table-scroll { min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; }
+.records-page-files .file-table-scroll { --file-center-grid-columns: 32px minmax(200px, 1fr) 74px 74px 90px 96px 116px; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; }
 .records-page-files .file-head,
-.records-page-files .file-row2 { display: grid; grid-template-columns: 32px minmax(200px, 1fr) 74px 74px 90px 96px 116px; align-items: center; gap: 9px; min-width: 820px; padding-right: 18px; padding-left: 18px; }
+.records-page-files .file-row2 { display: grid; grid-template-columns: var(--file-center-grid-columns); align-items: center; gap: 9px; min-width: 820px; padding-right: 18px; padding-left: 18px; }
 .records-page-files .file-head { height: 42px; color: #8496ad; background: #f8fbff; border-bottom: 1px solid #eef4fc; font-size: 11px; font-weight: 500; }
 .records-page-files .file-head > span:not(:first-child) { text-align: left; }
 .records-page-files .file-row2 { min-height: 62px; border-bottom: 1px solid #f1f6fd; transition: background-color .16s ease; }
@@ -208,7 +217,7 @@
 .records-page-files .file-row2 .rec-name > div { display: grid; min-width: 0; gap: 3px; }
 .records-page-files .file-row2 .rec-name .record-name-text { overflow: hidden; color: #263750; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .records-page-files .file-row2 .rec-name small { overflow: hidden; color: #8292a9; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.records-page-files .file-format-cell { display: block; overflow: hidden; padding: 4px 7px; color: #61748f; background: #f1f5fa; border-radius: 5px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.records-page-files .file-format-cell { display: block; justify-self: start; max-width: 100%; overflow: hidden; padding: 4px 7px; color: #61748f; background: #f1f5fa; border-radius: 5px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .records-page-files .file-source-cell { color: #72839b; font-size: 11px; white-space: nowrap; }
 .records-page-files .rec-size { color: #536782; font-size: 11px; white-space: nowrap; }
 .records-page-files .file-status-cell { min-width: 0; }
@@ -234,11 +243,13 @@
 .records-page-files .file-row-actions .record-menu { right: 0; }
 
 @media (max-width: 1024px) {
+  .records-page-files .records-heading { padding-left: 204px; }
   .records-page-files .files-layout { grid-template-columns: 190px minmax(0, 1fr); gap: 14px; }
   .records-page-files .file-center-card-heading { padding-right: 14px; padding-left: 14px; }
 }
 
 @media (max-width: 760px) {
+  .records-page-files .records-heading { padding-left: 0; }
   .records-page-files .files-layout { grid-template-columns: minmax(0, 1fr); }
   .records-page-files .file-cats { position: static; display: block; padding: 8px; overflow: hidden; }
   .records-page-files .file-cats h2,
@@ -261,6 +272,10 @@
   .records-page-files .file-center-pagination button { transition: none; }
 }
 
+@media (max-width: 650px) {
+  .workspace-page.records-page { width: calc(100% - 28px); }
+}
+
 /* 行操作菜单通过 portal 挂到 body：fixed 定位不受表格 overflow 裁剪，
  * 展开后一次显示全部操作，不需要滚动表格才能看到。 */
 .record-menu-floating { position: fixed; right: auto; z-index: 70; }
@@ -279,7 +294,7 @@
  * 方向：不同方向不同底色（原型 .rec-dir.out/.in/.col/.sub 原值）；
  * 状态：圆点 + 同色文字（原型 .badge.ok/.warn/.blue/默认灰）；
  * 有效期：替换原「时间」列，文案由 recordValidityLabel 按真实到期时间算。 */
-.records-page-records .record-direction { justify-self: start; width: max-content; max-width: 100%; padding: 2px 7px; border-radius: 5px; background: #f2f6fc; color: #6b7d94; font-size: 11px; line-height: 1.5; text-align: left; white-space: nowrap; }
+.records-page-records .record-direction { justify-self: center; width: max-content; max-width: 100%; padding: 2px 7px; border-radius: 5px; background: #f2f6fc; color: #6b7d94; font-size: 11px; line-height: 1.5; text-align: center; white-space: nowrap; }
 .records-page-records .record-direction.my_sent { background: #eef5ff; color: #2a5ea8; }
 .records-page-records .record-direction.sent_to_me { background: #eefaf4; color: #0d8a56; }
 .records-page-records .record-direction.my_collections { background: #fff8ec; color: #93500a; }
@@ -292,6 +307,6 @@
 .records-page-records .record-type.tone-blue { background: #eef5ff; color: #0f5bea; }
 .records-page-records .record-type.tone-expired { background: #f2f5f9; color: #6b7d94; }
 
-.records-page-records .record-expiry { color: #7d8ea6; font-size: 12px; text-align: left; white-space: nowrap; }
+.records-page-records .record-expiry { justify-content: center; color: #7d8ea6; font-size: 12px; text-align: center; white-space: nowrap; }
 .records-page-records .record-expiry.expiring { color: #b54708; }
 .records-page-records .record-expiry.expired { color: #98a5b8; }

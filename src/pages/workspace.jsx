@@ -1,4 +1,5 @@
 import { collectionSizeOptions } from '../lib/plan-limits.js'
+import { copyImageWithFeedback, copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { AuthButton } from '../components/account.jsx'
 import React from 'react'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
@@ -6,10 +7,10 @@ import { SecurityCheckFailure, SecurityCheckStatus } from '../components/securit
 import { defaultDeadline, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
 import { useEffect, useRef, useState } from 'react'
-import { apiRequest, copyTextToClipboard, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState } from '../lib/api.js'
-import { useConfirmDialog, useDownloadTask } from '../hooks.js'
+import { apiRequest, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState } from '../lib/api.js'
+import { useConfirmDialog, useDownloadTask, useToast } from '../hooks.js'
 import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
-import { cancelUploadSession, canPreviewFile, clearUploadResume, copyImageToClipboard, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, readUploadResume, uploadShareInChunks } from '../lib/transfer.js'
+import { cancelUploadSession, canPreviewFile, clearUploadResume, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, readUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronRight, Clock3, CloudUpload, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
 import { SettingsPage } from './settings.jsx'
 import { RecordsView } from './records.jsx'
@@ -33,6 +34,11 @@ export function normalizeMainView(value) {
 
 export function mainViewUrl(view) {
   return view === 'send' ? '/' : `/?view=${encodeURIComponent(view)}`
+}
+
+function collectionManagePath(value) {
+  const token = getManageToken(value)
+  return token ? `/collect/manage/${encodeURIComponent(token)}` : ''
 }
 
 export function WorkspaceApp() {
@@ -60,7 +66,7 @@ export function WorkspaceApp() {
   const [collectionManageData, setCollectionManageData] = useState(null)
   const [collectionManageLoading, setCollectionManageLoading] = useState(false)
   const [managementTarget, setManagementTarget] = useState(null)
-  const [toast, setToast] = useState('')
+  const { toast, notify: setToast } = useToast()
   const [settings, setSettings] = useState(defaultSettings)
   const [records, setRecords] = useState(() => readRecords())
   const [recordsSyncing, setRecordsSyncing] = useState(false)
@@ -253,11 +259,6 @@ export function WorkspaceApp() {
     return () => { cancelled = true; window.removeEventListener('focus', refreshLimits); window.clearInterval(timer) }
   }, [authUser?.id])
 
-  useEffect(() => {
-    if (!toast) return undefined
-    const timer = window.setTimeout(() => setToast(''), 3000)
-    return () => window.clearTimeout(timer)
-  }, [toast])
 
   useEffect(() => {
     if (!authMenuOpen) return undefined
@@ -491,6 +492,7 @@ export function WorkspaceApp() {
     try {
       const data = await markAllCloudMessagesRead()
       setMessages(normalizeMessages(data.messages || []))
+      setToast('全部消息已标为已读', 'success')
     } catch (error) {
       setToast(`消息更新失败：${error.message}`)
       refreshMessages(authUser).catch(() => {})
@@ -503,6 +505,7 @@ export function WorkspaceApp() {
     try {
       const data = await deleteCloudMessage(message.id)
       setMessages(normalizeMessages(data.messages || []))
+      setToast('消息已删除', 'success')
     } catch (error) {
       setToast(`消息删除失败：${error.message}`)
       refreshMessages(authUser).catch(() => {})
@@ -537,6 +540,7 @@ export function WorkspaceApp() {
     try {
       const data = await deleteAllCloudMessages()
       setMessages(normalizeMessages(data.messages || []))
+      setToast('全部消息已清除', 'success')
     } catch (error) {
       setToast(`消息清除失败：${error.message}`)
       refreshMessages(authUser).catch(() => {})
@@ -624,10 +628,7 @@ export function WorkspaceApp() {
         setToast('管理链接无效')
         return
       }
-      const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`)
-      setCollectionManageData(data.collection)
-      replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
-      setActiveView('collect')
+      window.location.href = `/collect/manage/${encodeURIComponent(token)}`
     } catch (error) {
       setToast(error.message)
     } finally {
@@ -641,6 +642,7 @@ export function WorkspaceApp() {
       const data = await apiRequest(`/api/collections/manage/${encodeURIComponent(collectionManageData.manageToken)}`)
       setCollectionManageData(data.collection)
       replaceRecordEntry(createCollectionRecord(data.collection, 'my_collections'))
+      setToast('收集任务已刷新', 'success')
     } catch (error) { setToast(error.message || '刷新收集任务失败，请重试') }
   }
 
@@ -849,28 +851,8 @@ export function WorkspaceApp() {
     setRetrievalCode('')
   }
 
-  const copyValue = async (value) => {
-    try {
-      await copyTextToClipboard(value)
-      setToast('已复制到剪贴板')
-    } catch {
-      setToast('自动复制失败，请手动复制分享信息')
-    }
-  }
-
-  const copyQrImage = async (dataUrl, fallbackText) => {
-    try {
-      await copyImageToClipboard(dataUrl)
-      setToast('二维码图片已复制')
-    } catch {
-      try {
-        await copyTextToClipboard(fallbackText || dataUrl)
-        setToast('当前浏览器不支持直接复制图片，已复制链接')
-      } catch {
-        setToast('当前浏览器不支持自动复制，请手动复制链接')
-      }
-    }
-  }
+  const copyValue = (value) => copyTextWithFeedback(value, setToast)
+  const copyQrImage = (dataUrl, fallbackText) => copyImageWithFeedback(dataUrl, fallbackText, setToast)
 
   const deleteRecord = (recordIds) => {
     const targets = new Set(Array.isArray(recordIds) ? recordIds : [recordIds])
@@ -1002,7 +984,7 @@ export function WorkspaceApp() {
           <NavItem icon={Building2} label="会员与团队" active={false} onClick={() => { window.location.href = '/workspace' }} />
         </nav>
         <div className="topbar-actions">
-          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); changeMessagePanel(!messageOpen) }} onClose={() => changeMessagePanel(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} />
+          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); changeMessagePanel(!messageOpen) }} onClose={() => changeMessagePanel(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} onNotify={setToast} />
           {/* 后台入口不再按账号身份显示（白名单通道已移除，后台只认账号口令）。
               需要直接进后台时访问 /admin，未登录会弹出管理员账号密码弹窗。 */}
           <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); changeMessagePanel(false); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onOrders={() => navigateSettingsSection('/settings/orders')} onLogout={logout} />
@@ -1091,7 +1073,7 @@ export function WorkspaceApp() {
       )}
       <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
       {guestQuotaDialog && <GuestQuotaModal quota={guestQuotaDialog} onClose={() => setGuestQuotaDialog(null)} onLogin={startLogin} />}
-      {toast && <Toast message={toast} />}
+      {toast && <Toast {...toast} />}
     </div>
   )
 }
@@ -1503,19 +1485,24 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
             <span>{collectionRecords.length} 个任务</span>
           </div>
           <div className="collection-history-list">
-            {collectionRecords.slice(0, 6).map((record, index) => (
-              <div className="collection-history-row" key={record.id || `${record.name}-${index}`}>
-                <span className="record-icon collect"><PrototypeAsset name="act-clipboard.png" size={24} /></span>
-                <div>
-                  <strong>{record.name}</strong>
-                  <span>{record.meta}</span>
-                  <CollectionLimitInfo allowedTypes={record.allowedTypes} maxFileSizeMb={record.maxFileSizeMb} compact />
+            {collectionRecords.slice(0, 6).map((record, index) => {
+              const managePath = collectionManagePath(recordManageUrl(record))
+              return (
+                <div className="collection-history-row" key={record.id || `${record.name}-${index}`}>
+                  <span className="record-icon collect"><PrototypeAsset name="act-clipboard.png" size={24} /></span>
+                  <div>
+                    <strong>{record.name}</strong>
+                    <span>{record.meta}</span>
+                    <CollectionLimitInfo allowedTypes={record.allowedTypes} maxFileSizeMb={record.maxFileSizeMb} compact />
+                  </div>
+                  <div className="collection-history-actions">
+                    {managePath
+                      ? <a className="secondary-button" href={managePath}><FolderOpen size={15} /> 查看已收文件</a>
+                      : <button className="secondary-button" disabled={!recordManageUrl(record)} onClick={() => onOpenManager(recordManageUrl(record))}><FolderOpen size={15} /> 查看已收文件</button>}
+                  </div>
                 </div>
-                <div className="collection-history-actions">
-                  <button className="secondary-button" disabled={!recordManageUrl(record)} onClick={() => onOpenManager(recordManageUrl(record))}><FolderOpen size={15} /> 查看已收文件</button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
@@ -1526,6 +1513,7 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
 
 export function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager, onBack }) {
   const [qrOpen, setQrOpen] = useState(false)
+  const managePath = collectionManagePath(result.manageUrl)
 
   return (
     <>
@@ -1555,7 +1543,9 @@ export function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager
         )}
         <div className="result-actions">
           <button className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回创建</button>
-          <button className="secondary-button" onClick={() => onOpenManager(result.manageUrl)}><FolderOpen size={15} /> 查看已收文件</button>
+          {managePath
+            ? <a className="secondary-button" href={managePath}><FolderOpen size={15} /> 查看已收文件</a>
+            : <button className="secondary-button" onClick={() => onOpenManager(result.manageUrl)}><FolderOpen size={15} /> 查看已收文件</button>}
           <button className="primary-button" onClick={() => onCopy(result.manageUrl)}><KeyRound size={15} /> 复制管理链接</button>
         </div>
         <div className="collection-management-note">管理链接供创建者查看、下载和管理已收文件</div>
@@ -1743,8 +1733,8 @@ export function SettingsModal({ settings, setSettings, user, onClose, onSave }) 
         <div className="modal-body">
           <div className="setting-block">
             <span>分享有效期</span>
-            <div className="option-grid">{[['1 天', '1'], ['3 天', '3'], ['7 天', '7'], ['永久', '0']].map(([label, value]) => <button key={value} disabled={value === '0' && !canUsePermanent} className={settings.expiryDays === value ? 'selected' : ''} onClick={() => updateExpiry(label, value)} title={value === '0' && !canUsePermanent ? '会员版或更高权益可用' : ''}>{label}{settings.expiryDays === value && <Check size={14} />}</button>)}</div>
-            {!canUsePermanent && <small className="setting-hint">永久保存需要会员版或更高权益，当前会按普通有效期创建。</small>}
+            <div className="option-grid">{[['1 天', '1'], ['3 天', '3'], ['7 天', '7'], ['永久', '0']].map(([label, value]) => <button key={value} disabled={value === '0' && !canUsePermanent} className={settings.expiryDays === value ? 'selected' : ''} onClick={() => updateExpiry(label, value)} title={value === '0' && !canUsePermanent ? '当前账号不支持永久保存' : ''}>{label}{settings.expiryDays === value && <Check size={14} />}</button>)}</div>
+            {!canUsePermanent && <small className="setting-hint">当前账号不支持永久保存，会按所选有效期创建分享。</small>}
           </div>
           <div className="setting-block">
             <span>下载次数</span>
@@ -1772,12 +1762,19 @@ export function settingsSectionForPath(pathname = '') {
 
 export function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
 
-export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin, onInvitationAction }) {
+export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin, onInvitationAction, onNotify }) {
+  const { toast, notify: localNotify } = useToast()
+  const notify = onNotify || localNotify
   const unreadCount = messages.filter((message) => message.unread).length
   // 长消息默认两行截断，点击展开/收起完整正文（展开的同时保留标已读行为）
   const [expandedIds, setExpandedIds] = useState(() => new Set())
   // 取件码复制反馈：{ code, ok }，1.8s 后自动清除
   const [codeFeedback, setCodeFeedback] = useState(null)
+  useEffect(() => {
+    if (!codeFeedback) return undefined
+    const timer = window.setTimeout(() => setCodeFeedback(null), 1800)
+    return () => window.clearTimeout(timer)
+  }, [codeFeedback])
   const toggleExpanded = (message) => {
     setExpandedIds((current) => {
       const next = new Set(current)
@@ -1793,17 +1790,12 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
   }
   const flashCodeFeedback = (code, ok) => {
     setCodeFeedback({ code, ok })
-    window.setTimeout(() => setCodeFeedback((current) => (current && current.code === code ? null : current)), 1800)
   }
   const copyMessageCode = async (message, code) => {
     if (!code) return
-    try {
-      await copyTextToClipboard(code)
-      flashCodeFeedback(code, true)
-      onMarkRead?.(message)
-    } catch {
-      flashCodeFeedback(code, false)
-    }
+    const copied = await copyTextWithFeedback(code, notify, '取件码已复制')
+    flashCodeFeedback(code, copied)
+    if (copied) onMarkRead?.(message)
   }
   const openMessageAction = (message) => {
     if (!message.actionUrl) return
@@ -1823,6 +1815,7 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
 
   return (
     <div className="message-center-wrap">
+      {toast && <Toast {...toast} />}
       <button className={`message-trigger ${open ? 'active' : ''}`} aria-label={unreadCount ? `消息中心，有 ${unreadCount} 条未读消息` : '消息中心'} aria-haspopup="dialog" aria-expanded={open} onClick={onToggle}>
         <Bell size={18} />
         {unreadCount > 0 && <span className="message-unread-dot" />}

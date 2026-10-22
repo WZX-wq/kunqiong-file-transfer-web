@@ -121,7 +121,7 @@ export function previewKind(file = {}) {
   const mimeType = String(file.mimeType || '').toLowerCase()
   const extension = fileExtension(file.name || file.relativePath)
   if (mimeType === 'application/pdf' || extension === 'pdf') return 'pdf'
-  if ((mimeType.startsWith('image/') && mimeType !== 'image/svg+xml') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(extension)) return 'image'
+  if ((mimeType.startsWith('image/') && mimeType !== 'image/svg+xml') || ['jpg', 'jpeg', 'jpe', 'jfif', 'pjpeg', 'png', 'gif', 'webp', 'bmp', 'avif', 'ico'].includes(extension)) return 'image'
   if (mimeType.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov', 'm4v'].includes(extension)) return 'video'
   if (mimeType.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac', 'flac', 'oga', 'ogg'].includes(extension)) return 'audio'
   if (mimeType.includes('wordprocessingml') || extension === 'docx') return 'document'
