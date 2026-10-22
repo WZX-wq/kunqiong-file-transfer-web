@@ -16,7 +16,7 @@ import express from 'express'
 import { limitResourceCreation } from './server/lib/resource-rate-limit.js'
 
 import {
-  MAX_FILES, collectionsRoot, distRoot, filesRoot, releaseSha,
+  MAX_FILE_SIZE, MAX_FILES, collectionsRoot, distRoot, filesRoot, releaseSha,
   serverHost, serverPort, storageRoot, tempRoot, testEnterpriseForAllUsers, testVerificationDebugMode
 } from './server/config.js'
 
@@ -50,7 +50,7 @@ import {
 } from './server/routes/account.js'
 // 账号域业务逻辑（路由仍在本文件注册，按域逐步迁移）
 import {
-  authSessionFromRequest, cleanupExpired, isSmtpConfigured,
+  authSessionFromRequest, cleanupExpired, configuredAccountPlans, isSmtpConfigured,
   isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog, repairLegacyTestAdminPlans, repairLegacyTestPaidPlans, restoreAdminPlanRestrictions
 } from './server/services/account.js'
 
@@ -216,6 +216,7 @@ app.get('/api/runtime-config', (req, res) => {
   const config = normalizeSystemConfig(metadata.systemConfig)
   res.json({
     upload: personalEntitlements(authSessionFromRequest(req)?.user?.id),
+    maxSupportedFileSizeBytes: Math.min(MAX_FILE_SIZE, Math.max(config.anonymousMaxFileSizeMb * 1024 ** 2, ...configuredAccountPlans().map(plan => plan.singleFileLimitBytes))),
     defaultShareDays: config.defaultShareDays,
     maxShareDays: config.maxShareDays,
     maxBatchFiles: config.maxBatchFiles,

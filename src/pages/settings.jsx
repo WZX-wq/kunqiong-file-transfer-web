@@ -205,7 +205,6 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
     <section className="settings-page">
       <header className="settings-page-head">
         <div className="settings-page-title">
-          <div className="settings-crumb"><a href="/">首页</a><i>/</i><span>账户设置</span></div>
           <h1>{heading.title}</h1>
           <p>{heading.detail}</p>
         </div>

@@ -217,8 +217,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .app-shell .qr-preview-link,
 .app-shell .workspace-link-row code,
 .app-shell .admin-resource-id,
-.app-shell .record-code,
-.app-shell .code-input { font-family: var(--mono); }
+.app-shell .record-code { font-family: var(--mono); }
+.app-shell .code-input { font-family: inherit; font-size: 16px; font-weight: 500; letter-spacing: normal; }
+.app-shell .code-input::placeholder { color: #7d8ea6; font: inherit; opacity: 1; }
 .app-shell .settings-user-card,
 .app-shell .settings-nav,
 .app-shell .settings-panel,
@@ -476,6 +477,16 @@ body { background: #f7fbfe; font-family: 'DM Sans', 'Noto Sans SC', 'Microsoft Y
 .app-shell:not(.public-shell) .nav-item.active::after { display: none; content: none; }
 .app-shell .nav-item.active { color: #1f6bff; }
 .app-shell .nav-item:hover { background: #f4f8ff; }
+
+/* 导航对齐居中的 1180px 主体；首列保留 Logo 的自然宽度，窄屏时避免挤压重叠。 */
+@media (min-width: 901px) {
+  .app-shell:not(.public-shell) .topbar,
+  .app-shell .public-topbar-content {
+    display: grid;
+    grid-template-columns: minmax(max-content, calc((100% - 1180px) / 2 - 24px)) minmax(0, max-content) minmax(max-content, 1fr);
+  }
+  .app-shell .product-brand { justify-self: start; }
+}
 
 @media (max-width: 900px) {
   .app-shell .topbar,

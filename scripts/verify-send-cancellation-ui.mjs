@@ -17,7 +17,7 @@ async function waitFor(fn, name) {
   assert.fail(name)
 }
 const file = (name, size = 24) => new File([Buffer.alloc(size, name.charCodeAt(0))], name, { type: 'application/octet-stream', lastModified: 123 })
-async function mount({ server, storage = {}, guest = false } = {}) {
+async function mount({ server, storage = {}, guest = false, currentUploadLimitBytes = 1.2 * 1024 ** 3 } = {}) {
   const errors = [], vc = new VirtualConsole()
   vc.on('jsdomError', err => errors.push(err))
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://fixture.local/', pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole: vc })
@@ -29,6 +29,7 @@ async function mount({ server, storage = {}, guest = false } = {}) {
     s.requests.push({ url, method: options.method || 'GET' })
     let status = 200, data = {}
     if (url === '/api/auth/me') data = { user: guest ? null : { id: 'owner', username: 'owner' } }
+    else if (url === '/api/runtime-config') data = { upload: { singleFileLimitBytes: currentUploadLimitBytes }, maxSupportedFileSizeBytes: 20 * 1024 ** 3, maxBatchFiles: 100 }
     else if (url === '/api/guest/quota') data = { enabled: guest, limitBytes: 8 * 1024 * 1024 + 19, usedBytes: 0, remainingBytes: s.sessions.size ? 0 : 8 * 1024 * 1024 + 19 }
     else if (url === '/api/upload-sessions') {
       const id = 'session-' + (++s.next), body = JSON.parse(options.body)
@@ -376,6 +377,23 @@ for (const scenario of [
     check(scenario.name + ': correct channel results shown', scenario.expected.every(part => text.includes(part)) && scenario.absent.every(part => !text.includes(part)))
     check(scenario.name + ': no false delivery claim and status is accessible', !/暂无通知送达|未投递|已送达/.test(text) && element?.getAttribute('role') === 'status')
   })
+}
+
+for (const guest of [true, false]) {
+  const limit = guest ? Math.round(1.2 * 1024 ** 3) : 2 * 1024 ** 3
+  const f = await mount({ guest, currentUploadLimitBytes: limit })
+  try {
+    await waitFor(() => f.document.querySelector('.send-prototype-stats')?.textContent.includes('20.00 GB'), 'Runtime configuration populates the homepage maximum')
+    check('Homepage advertises system maximum for ' + (guest ? 'guest' : 'account'), f.document.querySelector('.send-prototype-stats')?.textContent.includes('单文件最高支持'))
+    await f.choose([{ name: 'too-large.bin', size: limit + 1, lastModified: 123 }])
+    const toast = f.document.querySelector('.toast')?.textContent || ''
+    check('Oversized selection explains current entitlement for ' + (guest ? 'guest' : 'account'), toast.includes(guest ? '游客单文件上限' : '当前账号单文件上限') && toast.includes(guest ? '请登录' : '会员与团队'))
+    check('Rejected selection never creates an upload session', f.s.next === 0 && !f.document.querySelector('.send-file-queue'))
+    await f.choose([{ name: 'unsupported.bin', size: 20 * 1024 ** 3 + 1, lastModified: 123 }])
+    check('Files exceeding system capability get a system-limit message', f.document.querySelector('.toast')?.textContent.includes('超过系统最高支持的单文件大小'))
+    await f.choose([{ name: 'at-limit.bin', size: limit, lastModified: 123 }])
+    check('File at current account boundary is selectable', f.document.body.textContent.includes('at-limit.bin') && !f.document.querySelector('.send-prototype-dropzone'))
+  } finally { f.close() }
 }
 
 let guestFixture = await mount({ guest: true })

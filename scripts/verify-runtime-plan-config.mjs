@@ -143,6 +143,14 @@ try {
   eq((await config({ planOverrides: { enterprise: { totalGb: 1 } } })).status, 400, 'retired plan configuration cannot be overwritten')
   eq(overview.config.anonymousMaxFileSizeMb, 1228.8, 'legacy guest default migrated to 1.2GB')
   eq(overview.config.anonymousTotalSizeMb, 2048, 'guest cumulative cap accommodates 1.2GB')
+  for (const [user, actualLimit] of [['', 1.2 * GB], ['free', 2 * GB], ['member', 5 * GB]]) {
+    const runtime = (await api('/api/runtime-config', { user })).data
+    eq(runtime.maxSupportedFileSizeBytes, 20 * GB, 'public maximum is independent of visitor plan: ' + (user || 'guest'))
+    eq(runtime.upload.singleFileLimitBytes, Math.round(actualLimit), 'effective upload limit remains account-specific: ' + (user || 'guest'))
+  }
+  await config({ planOverrides: { year: { singleFileGb: 12 }, halfyear: { singleFileGb: 11 } } })
+  eq((await api('/api/runtime-config')).data.maxSupportedFileSizeBytes, 12 * GB, 'public maximum follows currently configured active plans')
+  await config({ planOverrides: {} })
   eq(overview.plans.map(plan => [plan.totalBytes / GB, plan.teamSpaceBytes / GB, plan.singleFileLimitBytes / GB, plan.collectionParticipantLimit, plan.activeCollectionLimit, plan.validityDays]), [[20,0,2,10,1,null],[100,0,5,50,5,30],[500,200,10,100,20,90],[1024,500,15,300,50,180],[1024,500,20,500,100,365]], 'approved entitlement table')
   eq((await api('/api/admin/config', { method: 'PATCH', body: { planOverrides: {} } })).status, 401, 'non-admin configuration rejected')
   for (const patch of [{ member: { monthlyPrice: 1 } }, { year: { singleFileGb: 21 } }, { member: { activeCollectionLimit: -1 } }, { unknown: {} }]) eq((await config({ planOverrides: patch })).status, 400, 'invalid entitlement/price write rejected')
