@@ -1,0 +1,372 @@
+{
+  "project": {
+    "name": "鲲穹文件传输收集模板与自定义字段验收",
+    "root": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main",
+    "version": "2026-10-23",
+    "environment": "本机验收环境：前端 http://localhost:4173，后端 http://localhost:8045"
+  },
+  "scope": {
+    "included": [
+      "收集模板保存、载入、复制与任务创建",
+      "材料清单的必交/选交规则",
+      "文本、下拉、日期自定义字段",
+      "公开提交页文件上传、文件夹上传、中文文件名和同名文件",
+      "管理端字段答案、已收材料和缺失必交材料展示",
+      "刷新后的分片上传表单状态恢复"
+    ],
+    "excluded": [
+      "真实短信、邮件、第三方病毒扫描",
+      "大于 64 MiB 的性能压测",
+      "生产账号和真实业务材料"
+    ],
+    "assumptions": [
+      "使用测试账号或当前已登录账号；不要上传真实身份证、营业执照或合同",
+      "创建任务后以页面显示的提交链接和管理链接为准",
+      "同名文件场景需要在公开提交页点击选择文件夹并选择 05-重复文件名目录"
+    ]
+  },
+  "cases": [
+    {
+      "id": "TC-COL-001",
+      "module": "模板与建任务",
+      "title": "保存模板并复制后创建收集任务",
+      "priority": "P0",
+      "requirement_ids": [
+        "R-COL-001",
+        "R-COL-002"
+      ],
+      "role": "收集任务管理员",
+      "preconditions": [
+        "服务已启动并能打开创建收集页",
+        "测试账号已登录"
+      ],
+      "fixture_ids": [
+        "D-COL-008"
+      ],
+      "project_paths": [
+        "src/pages/workspace.jsx",
+        "server/routes/collections.js"
+      ],
+      "steps": [
+        "进入创建收集任务页面，填写任务名称“供应商准入材料收集”和说明。",
+        "添加营业执照、签字合同两项必交材料，再添加补充材料并取消必交。",
+        "添加供应商类型下拉字段，选项填写“生产商, 经销商”并设为必填；添加联系人姓名文本必填字段和资料日期日期字段。",
+        "填写模板名称“供应商准入验收模板”，点击保存为新模板。",
+        "在模板选择器中载入模板，点击复制，确认出现副本后选择副本并创建任务。"
+      ],
+      "expected": [
+        "保存反馈显示模板已保存，模板选择器能看到原模板。",
+        "复制后出现新模板，载入内容与原模板一致。",
+        "任务创建成功，生成提交链接和管理链接；创建后的任务配置不因后续模板修改而改变。"
+      ],
+      "cleanup": [
+        "保留任务链接供后续用例使用；验收结束后在任务管理页关闭或删除测试任务。"
+      ],
+      "status": "未执行",
+      "actual": "",
+      "evidence": "",
+      "defect": "",
+      "executed_at": "",
+      "data_paths": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\04-字段参考\\TC-COL-001-模板字段参考.json"
+      ],
+      "project_paths_resolved": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\src\\pages\\workspace.jsx",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\server\\routes\\collections.js"
+      ]
+    },
+    {
+      "id": "TC-COL-002",
+      "module": "公开提交",
+      "title": "填写必填字段并提交两项必交材料",
+      "priority": "P0",
+      "requirement_ids": [
+        "R-COL-002",
+        "R-COL-003"
+      ],
+      "role": "公开提交人",
+      "preconditions": [
+        "已完成 TC-COL-001 并取得公开提交链接",
+        "公开提交页显示营业执照、签字合同等材料项",
+        "提交人姓名填写为“测试供应商-张三”"
+      ],
+      "fixture_ids": [
+        "D-COL-001",
+        "D-COL-002"
+      ],
+      "project_paths": [
+        "src/pages/public.jsx",
+        "server/lib/collection-forms.js"
+      ],
+      "steps": [
+        "打开公开提交链接，填写必填字段：供应商类型选择“生产商”，联系人姓名填写“张三”；资料日期可填写今天。",
+        "在材料清单中勾选营业执照和签字合同。",
+        "点击选择文件，选择本用例的 PDF 和 DOCX 两个文件，确认列表显示中文文件名。",
+        "点击提交文件，等待上传和提交完成。"
+      ],
+      "expected": [
+        "未缺少必填字段或必交材料，提交按钮可用。",
+        "上传成功，页面显示提交完成；两个文件均显示在本次提交中。",
+        "刷新页面后不会把已完成提交重复创建。"
+      ],
+      "cleanup": [
+        "在管理链接中删除本用例提交记录（如页面提供删除），或在验收结束后删除整个测试任务。"
+      ],
+      "status": "未执行",
+      "actual": "",
+      "evidence": "",
+      "defect": "",
+      "executed_at": "",
+      "data_paths": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-营业执照.pdf",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-签字合同.docx"
+      ],
+      "project_paths_resolved": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\src\\pages\\public.jsx",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\server\\lib\\collection-forms.js"
+      ]
+    },
+    {
+      "id": "TC-COL-003",
+      "module": "公开提交",
+      "title": "选交材料、文本字段和日期字段正常提交",
+      "priority": "P1",
+      "requirement_ids": [
+        "R-COL-002",
+        "R-COL-003"
+      ],
+      "role": "公开提交人",
+      "preconditions": [
+        "已完成 TC-COL-001 并取得公开提交链接",
+        "本用例可使用同一任务再次提交"
+      ],
+      "fixture_ids": [
+        "D-COL-001",
+        "D-COL-002",
+        "D-COL-003",
+        "D-COL-004"
+      ],
+      "project_paths": [
+        "src/pages/public.jsx"
+      ],
+      "steps": [
+        "打开公开提交链接，填写供应商类型“经销商”和联系人姓名“李四”，资料日期填写有效日期。",
+        "勾选两项必交材料，并额外勾选选交材料“补充材料”；收集任务支持分次提交，便于后续补交。",
+        "选择本用例 DOCX、PDF、补充说明 TXT 和联系人资料 CSV，点击提交文件。"
+      ],
+      "expected": [
+        "选交材料可以被选择并上传，TXT 与 CSV 文件均通过文档类型限制。",
+        "管理端能看到字段答案和本次已提交材料，缺少其它必交材料时应标记为待补交，而不是丢失本次记录。"
+      ],
+      "cleanup": [
+        "删除本用例提交记录，或验收结束后删除测试任务。"
+      ],
+      "status": "未执行",
+      "actual": "",
+      "evidence": "",
+      "defect": "",
+      "executed_at": "",
+      "data_paths": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-营业执照.pdf",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-签字合同.docx",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\02-选交与字段\\TC-COL-003-选交材料-补充说明.txt",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\02-选交与字段\\TC-COL-003-联系人资料.csv"
+      ],
+      "project_paths_resolved": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\src\\pages\\public.jsx"
+      ]
+    },
+    {
+      "id": "TC-COL-004",
+      "module": "公开提交校验",
+      "title": "缺少必填字段或必交材料时禁止提交",
+      "priority": "P0",
+      "requirement_ids": [
+        "R-COL-003"
+      ],
+      "role": "公开提交人",
+      "preconditions": [
+        "已完成 TC-COL-001 并取得公开提交链接"
+      ],
+      "fixture_ids": [
+        "D-COL-001"
+      ],
+      "project_paths": [
+        "server/lib/collection-forms.js",
+        "src/pages/public.jsx"
+      ],
+      "steps": [
+        "打开公开提交链接，留空必填字段“供应商类型”，填写联系人姓名并选择营业执照 PDF。",
+        "观察提交按钮与页面提示，尝试点击提交文件。",
+        "填写供应商类型后再次提交，只选择营业执照，不选择签字合同。",
+        "打开管理链接查看本次提交的材料状态。"
+      ],
+      "expected": [
+        "缺少必填字段时，页面明确提示必填项，且不能创建上传会话。",
+        "字段补齐后允许提交已选择材料；本系统支持分次提交，未提交的必交材料会在管理端标记为缺件，不能将其误判成已交。",
+        "若必交材料在收集任务中被标记为缺件，验收应记录为业务缺口；当前必交规则用于管理端汇总与催补，提交人可以分次补交。"
+      ],
+      "cleanup": [
+        "保留该部分提交供 TC-COL-006 检查；验收结束后删除测试提交记录或测试任务。"
+      ],
+      "status": "未执行",
+      "actual": "",
+      "evidence": "",
+      "defect": "",
+      "executed_at": "",
+      "data_paths": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-营业执照.pdf"
+      ],
+      "project_paths_resolved": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\server\\lib\\collection-forms.js",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\src\\pages\\public.jsx"
+      ]
+    },
+    {
+      "id": "TC-COL-005",
+      "module": "文件夹与文件名",
+      "title": "文件夹上传保留目录结构和同名文件",
+      "priority": "P1",
+      "requirement_ids": [
+        "R-COL-004"
+      ],
+      "role": "公开提交人",
+      "preconditions": [
+        "已完成 TC-COL-001 并取得公开提交链接",
+        "浏览器支持目录选择；本用例使用文件夹选择入口"
+      ],
+      "fixture_ids": [
+        "D-COL-005",
+        "D-COL-006"
+      ],
+      "project_paths": [
+        "src/pages/public.jsx",
+        "src/lib/transfer.js"
+      ],
+      "steps": [
+        "打开公开提交链接，填写必填字段并勾选允许的材料项。",
+        "点击选择文件夹，选择“05-重复文件名”目录。",
+        "确认文件列表出现两个“同名文件.txt”，并分别显示“资料/同名文件.txt”和“合同/同名文件.txt”等相对路径。",
+        "提交文件并在管理端查看文件列表。"
+      ],
+      "expected": [
+        "两个同名文件都保留，不互相覆盖或去重。",
+        "管理端显示各自相对路径，目录信息与选择时一致。"
+      ],
+      "cleanup": [
+        "删除本用例提交记录，或删除整个测试任务。"
+      ],
+      "status": "未执行",
+      "actual": "",
+      "evidence": "",
+      "defect": "",
+      "executed_at": "",
+      "data_paths": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\05-重复文件名\\资料\\同名文件.txt",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\05-重复文件名\\合同\\同名文件.txt"
+      ],
+      "project_paths_resolved": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\src\\pages\\public.jsx",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\src\\lib\\transfer.js"
+      ]
+    },
+    {
+      "id": "TC-COL-006",
+      "module": "管理端验收",
+      "title": "管理端显示字段答案和缺失必交材料",
+      "priority": "P0",
+      "requirement_ids": [
+        "R-COL-003",
+        "R-COL-004"
+      ],
+      "role": "管理员验收人",
+      "preconditions": [
+        "已完成 TC-COL-001；完成 TC-COL-004 中填写字段但只提交营业执照的步骤，确保产生一条缺少签字合同的提交记录",
+        "已取得管理链接"
+      ],
+      "fixture_ids": [
+        "D-COL-001",
+        "D-COL-007"
+      ],
+      "project_paths": [
+        "src/pages/workspace.jsx",
+        "server/services/collections.js"
+      ],
+      "steps": [
+        "打开管理链接，进入 TC-COL-004 创建的部分提交记录详情。",
+        "查看提交人的字段答案、已提交文件和材料清单状态。",
+        "定位未提交的必交材料，并刷新管理页再次查看。"
+      ],
+      "expected": [
+        "字段答案按字段名称和值展示。",
+        "营业执照显示已提交，签字合同明确列为缺件；该状态支持后续补交后更新。",
+        "刷新后记录和缺件状态保持一致。"
+      ],
+      "cleanup": [
+        "删除测试提交记录，或在验收结束后关闭测试任务。"
+      ],
+      "status": "未执行",
+      "actual": "",
+      "evidence": "",
+      "defect": "",
+      "executed_at": "",
+      "data_paths": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-营业执照.pdf",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\03-缺件场景\\TC-COL-006-缺失材料说明.txt"
+      ],
+      "project_paths_resolved": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\src\\pages\\workspace.jsx",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\server\\services\\collections.js"
+      ]
+    },
+    {
+      "id": "TC-COL-007",
+      "module": "断点续传",
+      "title": "刷新后保留材料选择和字段答案",
+      "priority": "P1",
+      "requirement_ids": [
+        "R-COL-005"
+      ],
+      "role": "公开提交人",
+      "preconditions": [
+        "已完成 TC-COL-001 并取得公开提交链接",
+        "准备较大的测试文件或在开发者工具中模拟上传中断；不要使用真实敏感材料"
+      ],
+      "fixture_ids": [
+        "D-COL-001",
+        "D-COL-002"
+      ],
+      "project_paths": [
+        "src/lib/transfer.js",
+        "server/routes/upload.js"
+      ],
+      "steps": [
+        "填写提交人、必填字段和材料选择，选择 PDF 与 DOCX 后开始提交。",
+        "在分片上传尚未结束时刷新页面或暂时断开网络，再恢复页面。",
+        "观察页面是否恢复上传任务及已填写信息。",
+        "继续上传直至成功，并在管理端核对字段和材料。"
+      ],
+      "expected": [
+        "刷新或重试后，字段答案和材料选择仍与刷新前一致。",
+        "恢复上传不会重复创建同一文件，也不会丢失已完成分片。",
+        "最终管理记录包含正确字段答案和材料关联。"
+      ],
+      "cleanup": [
+        "删除测试提交记录和测试任务，清理浏览器下载/缓存中的临时数据。"
+      ],
+      "status": "未执行",
+      "actual": "",
+      "evidence": "",
+      "defect": "",
+      "executed_at": "",
+      "data_paths": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-营业执照.pdf",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-签字合同.docx"
+      ],
+      "project_paths_resolved": [
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\src\\lib\\transfer.js",
+        "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\server\\routes\\upload.js"
+      ]
+    }
+  ]
+}

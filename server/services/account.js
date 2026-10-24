@@ -1,4 +1,5 @@
 import { keyedDigest } from '../lib/private-key.js'
+import { teamBrandConfiguration } from '../lib/team-branding.js'
 import { upgradePaymentDeadline, upgradePaymentExpired } from '../lib/upgrade-payment.js'
 import { equalSecret, pruneAttempts } from '../lib/security-primitives.js'
 import { clientAddress, requestOrigin, allowedOrigins } from '../lib/request-security.js'
@@ -346,6 +347,15 @@ export function publicOrganization(organization, viewerId = '') {
   const isOwner = organization.ownerUserId === viewerId
   const isManager = isOrganizationManager(organization, viewerId)
   const visibleMembers = organization.members.filter(member => isManager ? member.status !== 'requested' : member.status === 'active')
+  const handovers = (organization.ownershipHandovers || [])
+    .filter(item => isOwner || isManager || [item.fromUserId, item.toUserId].includes(viewerId))
+    .map(item => ({
+      id: item.id, fromUserId: item.fromUserId, toUserId: item.toUserId,
+      fromName: item.fromName, toName: item.toName, status: item.status,
+      initiatedAt: item.initiatedAt, expiresAt: item.expiresAt, resolvedAt: item.resolvedAt,
+      reason: item.reason || '', canCancel: item.status === 'pending' && isOwner && item.fromUserId === viewerId,
+      canRespond: item.status === 'pending' && item.toUserId === viewerId,
+    }))
   return {
     id: organization.id,
     slug: organization.slug,
@@ -355,6 +365,9 @@ export function publicOrganization(organization, viewerId = '') {
     updatedAt: organization.updatedAt,
     members: visibleMembers.map(member => publicOrganizationMember(organization, member, viewerId)),
     isOwner,
+    ...(isManager ? { branding: teamBrandConfiguration(organization) } : {}),
+    ownershipHandover: handovers.find(item => item.status === 'pending') || null,
+    ownershipHandoverHistory: handovers.filter(item => item.status !== 'pending'),
   }
 }
 
@@ -381,7 +394,7 @@ export function publicOrganizationMember(organization, member, viewerId) {
     joinedAt: member.joinedAt || null, invitedAt: member.invitedAt || null,
     canRemove: isManager && role !== 'owner' && (isOwner || role === 'member'),
     canChangeRole: isOwner && role !== 'owner' && member.status === 'active' && accountActive,
-    canTransfer: isOwner && role !== 'owner' && member.status === 'active' && accountActive,
+    canTransfer: isOwner && role !== 'owner' && member.status === 'active' && accountActive && !organization.ownershipHandovers?.some(item => item.status === 'pending'),
   }
 }
 
@@ -642,7 +655,7 @@ export function cleanupExpired() {
 export function cleanupUserExpiredFiles(now = Date.now()) {
   let changed = false
   for (const share of metadata.shares) {
-    if (share.teamResource || share.cleanedAt || !share.ownerUserId || !share.expiresAt || !share.files?.length) continue
+    if (share.teamResource || share.deletedAt || share.cleanedAt || !share.ownerUserId || !share.expiresAt || !share.files?.length) continue
     const owner = accountUserById(share.ownerUserId)
     const settings = normalizeFileCleanupSettings(owner?.fileCleanup)
     const expiresAt = new Date(share.expiresAt).getTime()
@@ -655,7 +668,7 @@ export function cleanupUserExpiredFiles(now = Date.now()) {
     changed = true
   }
   for (const task of metadata.collections) {
-    if (task.cleanedAt || !task.ownerUserId || !task.deadline || !task.submissions?.some((submission) => submission.files?.length)) continue
+    if (task.deletedAt || task.cleanedAt || !task.ownerUserId || !task.deadline || !task.submissions?.some((submission) => submission.files?.length)) continue
     const owner = accountUserById(task.ownerUserId)
     const settings = normalizeFileCleanupSettings(owner?.fileCleanup)
     const deadline = new Date(task.deadline).getTime()
@@ -679,7 +692,7 @@ export function fileCleanupOverviewForOwner(ownerKey, now = Date.now()) {
   let expiredCollectionCount = 0
   let expiredFileCount = 0
   for (const share of metadata.shares) {
-    if (share.teamResource || share.cleanedAt || share.ownerUserId !== ownerKey || !share.files?.length) continue
+    if (share.teamResource || share.deletedAt || share.cleanedAt || share.ownerUserId !== ownerKey || !share.files?.length) continue
     const size = fileListSize(share.files)
     const expiresAt = share.expiresAt ? new Date(share.expiresAt).getTime() : Number.NaN
     if (Number.isFinite(expiresAt) && expiresAt <= now) {
@@ -693,7 +706,7 @@ export function fileCleanupOverviewForOwner(ownerKey, now = Date.now()) {
     }
   }
   for (const task of metadata.collections) {
-    if (task.cleanedAt || task.ownerUserId !== ownerKey) continue
+    if (task.deletedAt || task.cleanedAt || task.ownerUserId !== ownerKey) continue
     const deadline = task.deadline ? new Date(task.deadline).getTime() : Number.NaN
     if (Number.isFinite(deadline) && deadline <= now) {
       if ((task.submissions || []).some((submission) => submission.files?.length)) expiredCollectionCount += 1
@@ -739,7 +752,7 @@ export function cleanupExpiredFilesForOwner(ownerKey, now = Date.now()) {
   let collections = 0
   let files = 0
   for (const share of metadata.shares) {
-    if (share.teamResource || share.cleanedAt || share.ownerUserId !== ownerKey || !share.expiresAt || !share.files?.length) continue
+    if (share.teamResource || share.deletedAt || share.cleanedAt || share.ownerUserId !== ownerKey || !share.expiresAt || !share.files?.length) continue
     const expiresAt = new Date(share.expiresAt).getTime()
     if (!Number.isFinite(expiresAt) || expiresAt > now) continue
     files += share.files.length
@@ -751,7 +764,7 @@ export function cleanupExpiredFilesForOwner(ownerKey, now = Date.now()) {
     share.closeReason = 'manual_cleanup'
   }
   for (const task of metadata.collections) {
-    if (task.cleanedAt || task.ownerUserId !== ownerKey || !task.deadline || !task.submissions?.some((submission) => submission.files?.length)) continue
+    if (task.deletedAt || task.cleanedAt || task.ownerUserId !== ownerKey || !task.deadline || !task.submissions?.some((submission) => submission.files?.length)) continue
     const deadline = new Date(task.deadline).getTime()
     if (!Number.isFinite(deadline) || deadline > now) continue
     for (const submission of task.submissions) {
@@ -1780,7 +1793,7 @@ export function isSecureRequest(req) {
 }
 
 export function publicFile(file = {}) {
-  const { storedName, ...safeFile } = file
+  const { storedName, distributionRecipientUserId: _distributionRecipientUserId, ...safeFile } = file
   return {
     ...safeFile,
     name: normalizeUploadFileName(safeFile.name || safeFile.relativePath || storedName || ''),

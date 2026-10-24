@@ -29,6 +29,11 @@ import {
   organizationTeamPlanForOrganization, organizationTeamPlanExpiresAtForOrganization,
   upsertAccountUser, validateShareRecipient
 } from '../services/account.js'
+import {
+  cancelOwnershipHandoverForDissolution, findOwnershipHandover, initiateOwnershipHandover,
+  reconcileOwnershipHandover, respondOwnershipHandover,
+} from '../services/ownership-handover.js'
+import { registerTeamBrandingRoutes } from './team-branding.js'
 // 每分钟按真实来源与操作者限流，避免通过候选查询批量枚举账号。
 const memberSearchAttempts = new Map()
 const teamResourceRemovals = new Map()
@@ -40,10 +45,12 @@ function validateTeamName(value, organizationId = '') {
   return { name }
 }
 export function registerWorkspaceRoutes(app) {
+  registerTeamBrandingRoutes(app)
   app.get('/api/account/workspace', async (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
     await reconcileUserUpgradeOrders(session)
+    reconcileOwnershipHandover(accountOrganizationForUser(session.user.id))
     res.json(accountWorkspacePayload(session.user))
   })
   app.get('/api/account/team/overview', (req, res) => {
@@ -51,6 +58,7 @@ export function registerWorkspaceRoutes(app) {
     if (!session) return
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
+    reconcileOwnershipHandover(organization)
     const teamPlan = organizationTeamPlanForOrganization(organization)
     if (!teamPlan.team) return res.status(403).json({ message: '该团队套餐已过期或未开通，所有成员暂时无法使用团队空间，请联系团队所有者续费或恢复套餐' })
     const teamPlanExpiresAt = organizationTeamPlanExpiresAtForOrganization(organization)
@@ -71,7 +79,7 @@ export function registerWorkspaceRoutes(app) {
     })
     // 管理凭证仅提供给当前有效的管理者或上传者；接口每次重新校验成员与角色。
     const resources = [
-      ...metadata.shares.filter((item) => item.teamResource && item.teamOrganizationId === organization.id && (canManageTeam || validateShareRecipient(item, session.user).ok)).map((item) => ({
+      ...metadata.shares.filter((item) => !item.deletedAt && item.teamResource && item.teamOrganizationId === organization.id && (canManageTeam || validateShareRecipient(item, session.user).ok)).map((item) => ({
         id: item.id,
         kind: 'share',
         code: item.code,
@@ -352,6 +360,7 @@ export function registerWorkspaceRoutes(app) {
       syncAccountUserSessions(removedUser)
     }
     organization.updatedAt = new Date().toISOString()
+    reconcileOwnershipHandover(organization)
     persistMetadata()
     recordAuditLog({ type: 'team', action: '移除团队成员', userId: session.user.id, targetId: removedMember.userId, details: { organizationId: organization.id, notifiedInApp } })
     res.json({ ...accountWorkspacePayload(session.user), removedMemberId: removedMember.id, notifiedInApp })
@@ -398,6 +407,7 @@ export function registerWorkspaceRoutes(app) {
     upsertAccountUser(account)
     syncAccountUserSessions(account)
     organization.updatedAt = new Date().toISOString()
+    reconcileOwnershipHandover(organization)
     persistMetadata()
 
     const leaverName = displayAccountName(account)
@@ -422,57 +432,24 @@ export function registerWorkspaceRoutes(app) {
     if (!session) return
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
-    if (organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以转让团队' })
-    const targetMemberId = textInput(req.body?.targetMemberId,'目标成员 ID',40)
+    if (organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以发起负责人交接' })
+    const input = objectInput(req.body, ['targetMemberId'], { nonempty: true })
+    const targetMemberId = textInput(input.targetMemberId,'目标成员 ID',80)
     if (!targetMemberId) return res.status(400).json({ message: '请指定要接管的成员' })
-    const targetMember = organization.members.find((member) => member.id === targetMemberId)
-    if (!targetMember || targetMember.status !== 'active') return res.status(400).json({ message: '只能转让给已加入团队的正式成员' })
-    if (targetMember.userId === session.user.id) return res.status(400).json({ message: '你已经是团队所有者' })
-    const previousOwner = accountUserById(session.user.id) || session.user
-    const nextOwner = accountUserById(targetMember.userId)
-    if (!nextOwner) return res.status(404).json({ message: '接管成员的账号不存在' })
-    if (nextOwner.status === 'disabled') return res.status(400).json({ message: '已禁用账号不能接管团队，请选择有效成员' })
-    const now = new Date().toISOString()
-    const previousOwnerName = displayAccountName(previousOwner)
-    const nextOwnerName = displayAccountName(nextOwner)
-    // 先固化组织当前套餐，再变更 owner。转让只改变管理者，不能把组织已购额度
-    // 重新按新 owner 的个人基础版计算为 0。
-    const teamPlan = organizationTeamPlanForOrganization(organization)
-    organization.teamPlanId = teamPlan.id
-    organization.teamPlanStartedAt = organization.teamPlanStartedAt || previousOwner.planStartedAt || now
-    organization.teamPlanExpiresAt = organizationTeamPlanExpiresAtForOrganization(organization)
-
-    organization.ownerUserId = nextOwner.id
-    targetMember.role = 'owner'
-    targetMember.displayName = nextOwnerName
-    const previousOwnerMember = organization.members.find((member) => member.userId === previousOwner.id)
-    if (previousOwnerMember) previousOwnerMember.role = 'member'
-    previousOwner.organizationRole = 'member'
-    previousOwner.updatedAt = now
-    upsertAccountUser(previousOwner)
-    syncAccountUserSessions(previousOwner)
-    nextOwner.organizationRole = 'owner'
-    nextOwner.updatedAt = now
-    upsertAccountUser(nextOwner)
-    syncAccountUserSessions(nextOwner)
-    organization.updatedAt = now
-    persistMetadata()
-
-    const nextOwnerCanUseTeamSpace = Boolean(accountEffectivePlanForUser(nextOwner.id).team)
-    addAccountMessage(nextOwner.id, {
-      category: 'other',
-      eventType: 'teamOwnership',
-      title: '你已成为团队所有者',
-      body: `${previousOwnerName}已将团队“${organization.name}”的所有权转让给你。团队空间继续沿用组织的${teamPlan.label}额度，你的个人套餐与团队套餐分别计算。`,
-    })
-    recordAuditLog({
-      type: 'team',
-      action: '转让团队所有权',
-      userId: previousOwner.id,
-      targetId: nextOwner.id,
-      details: { organizationId: organization.id, previousOwnerId: previousOwner.id, nextOwnerCanUseTeamSpace, teamPlanId: teamPlan.id, teamPlanExpiresAt: organization.teamPlanExpiresAt, teamPlanPermanent: teamPlan.permanent },
-    })
-    res.json({ ...accountWorkspacePayload(previousOwner), transferred: true, nextOwnerName, nextOwnerCanUseTeamSpace })
+    const result = initiateOwnershipHandover(organization, session.user.id, targetMemberId)
+    res.status(result.reused ? 200 : 201).json({ ...accountWorkspacePayload(session.user), handover: result.handover, reused: result.reused, transferred: false })
+  })
+  app.post('/api/account/workspace/ownership-handovers/:handoverId', (req, res) => {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    const input = objectInput(req.body, ['decision'], { nonempty: true })
+    const decision = input.decision
+    if (!['accept', 'decline', 'cancel'].includes(decision)) return res.status(400).json({ message: '交接处理方式无效' })
+    const handoverId = textInput(req.params.handoverId, '交接 ID', 80)
+    const found = findOwnershipHandover(handoverId, session.user.id)
+    if (!found) return res.status(404).json({ message: '负责人交接不存在或无权访问' })
+    const result = respondOwnershipHandover(found.organization, found.handover, session.user.id, decision)
+    res.json({ ...accountWorkspacePayload(session.user), handover: result.handover, reused: result.reused, transferred: result.handover.status === 'accepted', messages: accountMessagesForUser(session.user.id) })
   })
   app.post('/api/account/workspace/dissolve', (req, res) => {
     const session = requireAuthSession(req, res)
@@ -480,6 +457,7 @@ export function registerWorkspaceRoutes(app) {
     const organization = accountOrganizationForUser(session.user.id)
     if (!organization) return res.status(404).json({ message: '尚未创建团队空间' })
     if (organization.ownerUserId !== session.user.id) return res.status(403).json({ message: '只有团队所有者可以解散团队' })
+    cancelOwnershipHandoverForDissolution(organization, session.user.id)
     const now = new Date().toISOString()
     const ownerName = displayAccountName(accountUserById(session.user.id) || session.user)
     const activeMembers = organization.members.filter((member) => member.status === 'active')

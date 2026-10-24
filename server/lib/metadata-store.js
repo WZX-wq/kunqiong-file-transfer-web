@@ -129,7 +129,9 @@ export function initMetadata(next) {
 // ── 常量 ─────────────────────────────────────────────────────
 const METADATA_MERGE_RULES = [
   { key: 'shares', kind: 'array', time: ['updatedAt', 'createdAt'] },
+  { key: 'distributions', kind: 'array', time: ['updatedAt', 'createdAt'] },
   { key: 'collections', kind: 'array', time: ['updatedAt', 'createdAt'] },
+  { key: 'collectionTemplates', kind: 'array', time: ['updatedAt', 'createdAt'] },
   { key: 'sessions', kind: 'array', time: ['createdAt'] },
   { key: 'upgradeOrders', kind: 'array', time: ['updatedAt', 'createdAt'] },
   { key: 'auditLogs', kind: 'array', time: ['createdAt'] },
@@ -148,7 +150,9 @@ const instanceTag = crypto.randomUUID().slice(0, 8)
 export function emptyMetadata() {
   return {
     shares: [],
+    distributions: [],
     collections: [],
+    collectionTemplates: [],
     sessions: [],
     records: {},
     users: {},

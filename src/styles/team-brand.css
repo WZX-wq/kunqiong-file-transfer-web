@@ -1,0 +1,14 @@
+.team-brand { display: flex; align-items: center; gap: 15px; min-width: 0; padding: 18px 20px; border: 1px solid #dbe5f1; border-radius: 14px; background: #fff; color: #17212f; animation: team-brand-in .2s ease-out; }
+.team-brand-logo { width: 60px; height: 60px; flex: 0 0 60px; display: grid; place-items: center; border: 1px solid #e0e7f0; border-radius: 12px; background: #f4f8ff; color: #2563eb; overflow: hidden; }
+.team-brand-logo img { display: block; width: 100%; height: 100%; padding: 4px; box-sizing: border-box; object-fit: contain; }
+.team-brand-copy { flex: 1; min-width: 0; }
+.team-brand-copy > span { display: block; color: #576779; font-size: 12px; margin-bottom: 3px; }
+.team-brand-copy > strong { display: block; font-size: 18px; line-height: 1.5; overflow-wrap: anywhere; }
+.team-brand-copy > p { margin: 5px 0 0; color: #526174; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.share-main > .team-brand { margin-bottom: 22px; }
+.collection-submit-card > .team-brand, .collection-submit-card > .team-brand + header { margin-top: 0; }
+.collection-submit-card > .team-brand { margin: 22px 24px 0; }
+.team-brand-public-top { width: min(700px, 100%); box-sizing: border-box; margin: 0 auto 18px; }
+@keyframes team-brand-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 600px) { .team-brand { gap: 12px; padding: 15px; } .team-brand-logo { width: 48px; height: 48px; flex-basis: 48px; } .team-brand-copy > strong { font-size: 17px; } .collection-submit-card > .team-brand { margin: 16px 16px 0; } }
+@media (prefers-reduced-motion: reduce) { .team-brand { animation: none; } }

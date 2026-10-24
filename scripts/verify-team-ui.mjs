@@ -20,10 +20,11 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  if(navigation.previousRoutes?.length){window.history.replaceState(null,'',navigation.previousRoutes[0]);for(const previous of navigation.previousRoutes.slice(1))window.history.pushState(null,'',previous);window.history.pushState(null,'',route)}
  const copiedTexts=[];Object.defineProperty(window.navigator,'clipboard',{configurable:true,value:{writeText:async value=>copiedTexts.push(String(value))}})
  let roleChangeFailure=false; let currentRole=role,removed=!hasOrganization,name=teamName,hasTeam=hasOrganization,renameFailure=false,resourceDeleted=false,deleteFailure=false,holdDelete=false,releaseDelete=null,resourceUnlocked=false,quotaUsed=false
+ let pendingHandover=navigation.pendingHandover||null, handoverHistory=navigation.handoverHistory||[], handoverFailure=false, holdHandover=false, releaseHandover=null
  const plan={id:'enterprise',label:'企业版',team:true,totalBytes:2048*1024**3,teamSpaceBytes:1024**4,permanent:true,features:[]}
  const members=[{id:'m-owner',userId:'owner',displayName:'所有者',role:'owner',status:'active',usedBytes:0,fileCount:0},{id:'m-member',userId:'member',displayName:'普通成员',role:'member',status:'active',usedBytes:4,fileCount:1}]
- const permittedMembers=()=>members.map(member=>({...member,canRemove:['owner','admin'].includes(currentRole)&&member.role!=='owner'&&(currentRole==='owner'||member.role==='member'),canChangeRole:currentRole==='owner'&&member.role!=='owner',canTransfer:currentRole==='owner'&&member.role!=='owner'}));
- const organization=()=>({id:'org',slug:'team-slug',name,ownerUserId:currentRole==='owner'?'owner':'new-owner',members:permittedMembers(),createdAt:new Date().toISOString()})
+ const permittedMembers=()=>members.map(member=>({...member,canRemove:['owner','admin'].includes(currentRole)&&member.role!=='owner'&&(currentRole==='owner'||member.role==='member'),canChangeRole:currentRole==='owner'&&member.role!=='owner',canTransfer:currentRole==='owner'&&member.role!=='owner'&&!pendingHandover}));
+ const organization=()=>({id:'org',slug:'team-slug',name,ownerUserId:currentRole==='owner'?'owner':'new-owner',members:permittedMembers(),ownershipHandover:pendingHandover,ownershipHandoverHistory:handoverHistory,createdAt:new Date().toISOString()})
  const overview=()=>({organization:organization(),canManage:['owner','admin'].includes(currentRole),isOwner:currentRole==='owner',plan,capacity:{usedBytes:resourceDeleted?0:4,totalBytes:1024**4,shareCount:resourceDeleted?0:1,fileCount:resourceDeleted?0:1},memberUsage:permittedMembers().map(m=>m.userId==='member'&&resourceDeleted?{...m,usedBytes:0,fileCount:0}:m),joinRequests:[],resources:resourceDeleted?[]:[{id:'teamfile',code:'TEAM01',kind:'share',name:'安全文件.txt',files:[{name:'安全文件.txt',size:4,mimeType:'text/plain'}],ownerUserId:'member',status:navigation.resourceStatus||'active',fileCount:resourceFileCount,totalSize:4*resourceFileCount,canManage:['owner','admin','member'].includes(currentRole),canDelete:['owner','admin','member'].includes(currentRole),...(['owner','admin','member'].includes(currentRole)?{manageToken:'test',manageUrl:'/share/manage/test'}:{})}]})
  window.fetch=async(url,options={})=>{const method=options.method||'GET';calls.push({url,method,body:options.body,headers:options.headers});let data={},status=200
   const pathname = new URL(url, 'http://fixture.local').pathname
@@ -57,7 +58,12 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
   else if(url==='/api/account/workspace'){if(method==='PATCH'&&renameFailure){renameFailure=false;status=409;data={message:'团队名称已存在，请使用其他名称'}}else{if(method==='PATCH'||method==='POST'){name=JSON.parse(options.body).name;hasTeam=true}data={plan,plans:[plan],capacity:{usedBytes:0,totalBytes:plan.totalBytes},organization:hasTeam?organization():null,canManage:hasTeam&&['owner','admin'].includes(currentRole),isOwner:currentRole==='owner',teamEntitlement:{role:currentRole,canManage:hasTeam&&['owner','admin'].includes(currentRole),canUseTeamSpace:hasTeam,teamSpaceBytes:plan.teamSpaceBytes},orders:[]}}}
   else if(url.startsWith('/api/account/workspace/member-search'))data={users:[{id:'candidate',displayName:'候选成员',username:'candidate',email:'c***@example.test',phone:'138****9999'}]}
   else if(url==='/api/account/workspace/members/m-member/role'&&method==='PATCH'){if(roleChangeFailure){roleChangeFailure=false;status=403;data={message:'角色调整被拒绝'}}else{members.find(member=>member.id==='m-member').role=JSON.parse(options.body).role;data={organization:organization()}}}
-  else if(url==='/api/account/workspace/transfer-ownership'){currentRole='member';data={transferred:true,nextOwnerName:'普通成员'}}
+  else if(url==='/api/account/workspace/transfer-ownership'){pendingHandover={id:'handover-1',fromUserId:'owner',toUserId:'member',fromName:'所有者',toName:'普通成员',status:'pending',initiatedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+7*86400000).toISOString(),canCancel:true,canRespond:false};status=201;data={transferred:false,handover:pendingHandover}}
+  else if(url.startsWith('/api/account/workspace/ownership-handovers/')){
+   if(holdHandover)await new Promise(resolve=>releaseHandover=resolve)
+   if(handoverFailure){handoverFailure=false;status=409;data={message:'交接已失效，请刷新后查看'}}
+   else{const decision=JSON.parse(options.body).decision;handoverHistory=[{...pendingHandover,status:{accept:'accepted',decline:'declined',cancel:'canceled'}[decision],resolvedAt:new Date().toISOString()},...handoverHistory];pendingHandover=null;if(decision==='accept')currentRole='owner';data={transferred:decision==='accept'}}
+  }
   else if(url==='/api/account/workspace/leave'){removed=true;data={leftOrganizationId:'org'}}
   else if(url==='/api/account/workspace/dissolve'){removed=true;data={dissolvedOrganizationId:'org'}}
   else if(url.startsWith('/api/organizations/'))data=url.includes('wrong')?{available:false,reason:'unavailable'}:{available:!!currentRole,reason:currentRole?'eligible':'anonymous',organizationName:name}
@@ -73,7 +79,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  const input=async(element,value)=>{assert.ok(element,'input found');Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new window.Event('input',{bubbles:true}));await delay(30)}
  const file=(name,relativePath=name)=>{const item=new File(['test'],name,{type:'text/plain',lastModified:123});Object.defineProperty(item,'webkitRelativePath',{value:relativePath});return item}
  const choose=async(items,folder=false)=>{const picker=document.querySelector(folder?'input[webkitdirectory]':'input[type="file"]:not([webkitdirectory])');assert.ok(picker,'file picker');Object.defineProperty(picker,'files',{configurable:true,value:items});picker.dispatchEvent(new window.Event('change',{bubbles:true}));await delay(30)}
- return {exhaustDownloads:()=>quotaUsed=true,failNextRoleChange:()=>roleChangeFailure=true,dom,window,document,calls,errors,copiedTexts,click,find,input,file,choose,remove:()=>removed=true,failNextRename:()=>renameFailure=true,failNextResourceDelete:()=>deleteFailure=true,holdNextResourceDelete:()=>holdDelete=true,releaseResourceDelete:()=>{holdDelete=false;releaseDelete?.()}}
+ return {failNextHandover:()=>handoverFailure=true,holdNextHandover:()=>holdHandover=true,releaseHandover:()=>{holdHandover=false;releaseHandover?.()},exhaustDownloads:()=>quotaUsed=true,failNextRoleChange:()=>roleChangeFailure=true,dom,window,document,calls,errors,copiedTexts,click,find,input,file,choose,remove:()=>removed=true,failNextRename:()=>renameFailure=true,failNextResourceDelete:()=>deleteFailure=true,holdNextResourceDelete:()=>holdDelete=true,releaseResourceDelete:()=>{holdDelete=false;releaseDelete?.()}}
 }
 async function scenario(id,fn){try{await fn();cases.push({id,status:'PASS'})}catch(e){failures.push({id,message:e.message});cases.push({id,status:'FAIL'});console.log('FAIL '+id+' '+e.stack)}}
 await scenario('TEAM-BACK-NAVIGATION', async () => {
@@ -400,7 +406,49 @@ await scenario('TEAM-ADMIN-CONTROLS',async()=>{
  }finally{admin.dom.window.close()}
 })
 
-await scenario('TEAM-009',async()=>{const f=await mount();try{[...f.document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.includes('团队成员')).click();await delay(30);await f.click('转让给普通成员');check('转让先确认',!!f.document.querySelector('[role="dialog"]')&&!f.calls.some(c=>c.url.endsWith('transfer-ownership')));await f.click('取消');check('取消转让无请求',!f.calls.some(c=>c.url.endsWith('transfer-ownership')));await f.click('转让给普通成员');await f.click('确认转让');check('转让只提交一次',f.calls.filter(c=>c.url.endsWith('transfer-ownership')).length===1);check('转让后隐藏原管理权且可退出',!f.find('解散团队')&&!!f.find('退出团队空间')&&!f.document.querySelector('.team-members-panel'))}finally{f.dom.window.close()}})
+await scenario('TEAM-009',async()=>{
+ const f=await mount()
+ try{
+  await f.click('团队成员 2');await f.click('转让给普通成员')
+  check('交接先确认且未提交',!!f.document.querySelector('[role="dialog"]')&&!f.calls.some(c=>c.url.endsWith('transfer-ownership')))
+  check('提示明确待确认和套餐保留',f.document.querySelector('[role="dialog"]').textContent.includes('对方接受后')&&f.document.querySelector('[role="dialog"]').textContent.includes('套餐和容量继续保留'))
+  await f.click('取消');check('取消发起不发送请求',!f.calls.some(c=>c.url.endsWith('transfer-ownership')))
+  await f.click('转让给普通成员');await f.click('发起交接')
+  check('交接只提交一次',f.calls.filter(c=>c.url.endsWith('transfer-ownership')).length===1)
+  check('发起后切到交接页签并保持所有者权限',!!f.document.querySelector('.team-handover-pending')&&!!f.find('团队设置')&&!f.find('退出团队空间'))
+  check('交接页不重复展示用量卡以减少下滑',!f.document.querySelector('.team-kpi-grid'))
+  check('所有者可取消待办且不能代确认',!!f.find('取消本次交接')&&!f.find('接受交接'))
+  await f.click('团队成员 2');check('待确认时不显示第二次交接入口',!f.find('转让给普通成员'))
+  await f.click('查看交接');await f.click('取消本次交接');await f.click('再想想')
+  check('取消决定未确认时无请求',!f.calls.some(c=>c.url.includes('ownership-handovers/')))
+  await f.click('取消本次交接');await f.click('确认取消交接')
+  check('确认取消后记录更新',!f.document.querySelector('.team-handover-pending')&&f.document.querySelector('.team-handover-history').textContent.includes('已取消'))
+  check('交接页面无运行错误',!f.errors.length)
+ }finally{f.dom.window.close()}
+})
+await scenario('TEAM-HANDOVER-RECIPIENT',async()=>{
+ const pending={id:'recipient-1',fromName:'所有者',toName:'普通成员',initiatedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString(),canRespond:true,canCancel:false}
+ for(const decision of ['accept','decline']){
+  const f=await mount('/team?tab=handover','member','隔离验证团队',true,1,{pendingHandover:pending})
+  try{
+   check('普通接收者能直达交接页',!!f.find('接受交接')&&!!f.find('拒绝交接')&&!f.find('取消本次交接'))
+   await f.click(decision==='accept'?'接受交接':'拒绝交接');await f.click('再想想')
+   check(decision+'取消确认不提交',!f.calls.some(c=>c.url.includes('ownership-handovers/')))
+   f.holdNextHandover();await f.click(decision==='accept'?'接受交接':'拒绝交接')
+   const confirm=f.find(decision==='accept'?'确认接受':'确认拒绝');confirm.click();confirm.click()
+   await waitFor(()=>f.calls.some(c=>c.url.includes('ownership-handovers/')),'decision submitted')
+   check(decision+'处理中禁用按钮并防重复',f.find('接受交接').disabled&&f.calls.filter(c=>c.url.includes('ownership-handovers/')).length===1)
+   f.releaseHandover();await waitFor(()=>!f.document.querySelector('.team-handover-pending')&&f.document.querySelector('.team-handover-history'),'decision resolved with history')
+   check(decision+'结果和授权正确',f.document.querySelector('.team-handover-history').textContent.includes(decision==='accept'?'已完成':'已拒绝')&&!!f.find('团队设置')===(decision==='accept'))
+   check(decision+'保留交接页且无运行错误',new URL(f.window.location.href).searchParams.get('tab')==='handover'&&!f.errors.length)
+  }finally{f.releaseHandover();f.dom.window.close()}
+ }
+ const failed=await mount('/team?tab=handover','member','隔离验证团队',true,1,{pendingHandover:pending})
+ try{failed.failNextHandover();await failed.click('接受交接');await failed.click('确认接受');check('交接失败显示原因并恢复操作',failed.document.body.textContent.includes('交接已失效')&&!failed.find('接受交接').disabled&&!failed.find('团队设置'))}finally{failed.dom.window.close()}
+ const history=Array.from({length:7},(_,index)=>({id:'history-'+index,fromName:'发起人'+index,toName:'接收人'+index,status:'canceled',initiatedAt:new Date().toISOString(),resolvedAt:new Date().toISOString()}))
+ const paged=await mount('/team?tab=handover','owner','隔离验证团队',true,1,{handoverHistory:history})
+ try{check('记录每页最多五条',paged.document.querySelectorAll('.team-handover-history li').length===5);await paged.click('下一页');check('记录分页可查看剩余条目',paged.document.querySelectorAll('.team-handover-history li').length===2&&paged.document.querySelector('.team-handover-history').textContent.includes('发起人6'))}finally{paged.dom.window.close()}
+})
 await scenario('TEAM-010',async()=>{const f=await mount('/team','member');try{await f.click('退出团队空间');await f.click('再想想');check('取消退出无请求',!f.calls.some(c=>c.url.endsWith('/leave')));await f.click('退出团队空间');await f.click('确认退出');check('退出提交一次',f.calls.filter(c=>c.url.endsWith('/leave')).length===1);check('退出后清除团队面板',f.document.body.textContent.includes('暂未加入团队空间')&&!f.document.querySelector('.team-kpi-grid'))}finally{f.dom.window.close()}})
 await scenario('TEAM-011',async()=>{const f=await mount();try{[...f.document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.includes('团队成员')).click();await delay(30);await f.click('解散团队');check('解散先确认且未发请求',!!f.document.querySelector('[role="dialog"]')&&!f.calls.some(c=>c.url.endsWith('/dissolve')));await f.click('取消');check('取消第一步保持团队',!f.calls.some(c=>c.url.endsWith('/dissolve'))&&!!f.document.querySelector('.team-kpi-grid'));await f.click('解散团队');await f.click('下一步');await f.click('再想想');check('取消最终确认不解散',!f.calls.some(c=>c.url.endsWith('/dissolve')));await f.click('解散团队');await f.click('下一步');await f.click('确认解散');check('两次确认后仅一次解散',f.calls.filter(c=>c.url.endsWith('/dissolve')).length===1)}finally{f.dom.window.close()}})
 await scenario('TEAM-013',async()=>{const html='<img src=x onerror=alert(1)>';const f=await mount('/team','owner',html);try{check('团队名称HTML按文本展示',f.document.body.textContent.includes(html));check('无脚本或事件属性注入',!f.document.querySelector('img[src=x],[onerror]'))}finally{f.dom.window.close()}})

@@ -130,6 +130,62 @@ try {
   const publicView = await api(`/api/collections/${task.token}`)
   check('提交链接可匿名访问且状态 active', publicView.status === 200 && publicView.data.collection.status === 'active')
 
+  console.log('\n=== COLL-013 材料清单与自定义字段 ===')
+  const formConfig = {
+    title: '供应商资料收集',
+    description: '请按材料要求提交资料',
+    allowedTypes: ['文档'],
+    maxFileSizeMb: 10,
+    materials: [
+      { id: 'business-license', name: '营业执照', required: true },
+      { id: 'signed-contract', name: '签字合同', required: true },
+      { id: 'supplement', name: '补充材料', required: false },
+    ],
+    customFields: [
+      { id: 'supplier-type', label: '供应商类型', type: 'select', required: true, options: ['生产商', '经销商'] },
+      { id: 'contact-date', label: '联系人日期', type: 'date', required: false },
+    ],
+  }
+  const removedTemplateEndpoint = await api('/api/collection-templates', { user: 'owner' })
+  check('收集模板接口已移除', removedTemplateEndpoint.status === 404, `status=${removedTemplateEndpoint.status}`)
+  const collectionFormTask = await api('/api/collections', { user: 'owner', method: 'POST', body: formConfig })
+  const collectionFormToken = collectionFormTask.data.collection?.token
+  check('直接创建的任务保留材料清单和自定义字段', collectionFormTask.status === 201 && collectionFormTask.data.collection.materials?.length === 3 && collectionFormTask.data.collection.customFields?.length === 2 && !Object.hasOwn(collectionFormTask.data.collection, 'templateId'))
+  const collectionFormAfterCreate = await api(`/api/collections/${collectionFormToken}`)
+  check('提交入口可读取创建时配置的材料项和字段', collectionFormAfterCreate.status === 200 && collectionFormAfterCreate.data.collection.title === formConfig.title && collectionFormAfterCreate.data.collection.customFields?.[0]?.label === '供应商类型')
+  const missingCustomFields = await api(`/api/collections/${collectionFormToken}/submissions`, { method: 'POST', body: form([{ name: 'license.txt' }], { participantName: '表单提交者', materialIds: JSON.stringify(['business-license']) }) })
+  check('服务端拒绝缺少必填自定义字段的提交', missingCustomFields.status === 400, `status=${missingCustomFields.status} msg=${missingCustomFields.data.message}`)
+  const validFormSubmission = await api(`/api/collections/${collectionFormToken}/submissions`, { method: 'POST', body: form([{ name: 'license.txt' }], {
+    participantName: '表单提交者',
+    materialIds: JSON.stringify(['business-license']),
+    fieldValues: JSON.stringify({ 'supplier-type': '生产商', 'contact-date': '2026-10-23' }),
+  }) })
+  check('提交成功后保存自定义字段值与所交材料', validFormSubmission.status === 201 && validFormSubmission.data.submission?.fieldValues?.['supplier-type'] === '生产商' && validFormSubmission.data.submission?.materialIds?.includes('business-license'), `status=${validFormSubmission.status} msg=${validFormSubmission.data.message}`)
+  const collectionFormManage = await api(`/api/collections/manage/${collectionFormTask.data.manageToken}`, { user: 'owner' })
+  const managedFormSubmission = collectionFormManage.data.collection?.submissions?.find((item) => item.id === validFormSubmission.data.submission?.id)
+  check('管理端可查看字段答案、已交材料和缺少的必交材料', managedFormSubmission?.fieldValues?.['supplier-type'] === '生产商' && managedFormSubmission?.materialIds?.includes('business-license') && managedFormSubmission?.missingMaterialIds?.includes('signed-contract'))
+
+  console.log('\n=== COLL-014 材料文件命名规则 ===')
+  const invalidNamingPattern = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '非法命名格式', materials: [{ id: 'license', name: '营业执照', required: true, namingPattern: '{未知字段}.pdf' }] } })
+  check('创建任务拒绝不支持的命名占位符', invalidNamingPattern.status === 400 && /不支持的占位符/.test(invalidNamingPattern.data.message || ''), `status=${invalidNamingPattern.status} msg=${invalidNamingPattern.data.message}`)
+  const namingTaskResponse = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '材料命名规则', materials: [{ id: 'license', name: '营业执照', required: true, namingPattern: '{提交人}/{材料项}.exe' }] } })
+  const namingTask = namingTaskResponse.data.collection
+  check('任务创建时保存材料命名格式', namingTaskResponse.status === 201 && namingTask.materials?.[0]?.namingPattern === '{提交人}/{材料项}.exe', `status=${namingTaskResponse.status}`)
+  const namingMissingMap = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([{ name: '合同.pdf' }], { participantName: '张三', materialIds: JSON.stringify(['license']) }) })
+  check('启用命名规则后缺少逐文件材料映射会被拒绝', namingMissingMap.status === 400 && /每个文件/.test(namingMissingMap.data.message || ''), `status=${namingMissingMap.status} msg=${namingMissingMap.data.message}`)
+  const namingBadMap = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([{ name: '合同.pdf' }], { participantName: '张三', materialIds: JSON.stringify(['license']), fileMaterialIds: JSON.stringify(['not-selected']) }) })
+  check('服务端拒绝未选择或不存在的文件材料映射', namingBadMap.status === 400, `status=${namingBadMap.status} msg=${namingBadMap.data.message}`)
+  const namingSubmit = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([{ name: '合同.pdf' }, { name: '补充合同.pdf' }], {
+    participantName: '张/三', materialIds: JSON.stringify(['license']), fileMaterialIds: JSON.stringify(['license', 'license']),
+  }) })
+  const namedFiles = namingSubmit.data.submission?.files || []
+  check('提交名清理路径字符并沿用原文件扩展名', namingSubmit.status === 201 && namedFiles[0]?.name === '张_三_营业执照.pdf', `status=${namingSubmit.status} names=${namedFiles.map((file) => file.name).join('|')}`)
+  check('相同生成名在同一目录下稳定加序号消除冲突', namedFiles[1]?.name === '张_三_营业执照 (2).pdf', `names=${namedFiles.map((file) => file.name).join('|')}`)
+  check('提交记录保存文件原名、原路径及材料标识', namedFiles[0]?.originalName === '合同.pdf' && namedFiles[0]?.originalRelativePath === '合同.pdf' && namedFiles[0]?.materialId === 'license', `file=${JSON.stringify(namedFiles[0])}`)
+  const namingArchive = await api(`/api/collections/manage/${namingTaskResponse.data.manageToken}/download`, { user: 'owner', raw: true })
+  const namingArchiveNames = zipEntryNames(namingArchive.buffer).map((entry) => entry.name)
+  check('ZIP 使用生成后的安全文件名且含全部文件', namingArchive.status === 200 && namingArchiveNames.some((name) => name.endsWith('/张_三_营业执照.pdf')) && namingArchiveNames.some((name) => name.endsWith('/张_三_营业执照 (2).pdf')), `entries=${namingArchiveNames.join('|')}`)
+
   console.log('\n=== COLL-002 表单校验 ===')
   const beforeCount = diskCollections().length
   const emptyTitle = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '   ' } })
@@ -229,10 +285,10 @@ try {
   check('匿名任务超容量提交被拒绝（507 或 413）', [507, 413].includes(oversized.status), `status=${oversized.status} msg=${oversized.data.message}`)
 
   console.log('\n=== COLL-008 分片上传与断点恢复 ===')
-  const chunkTask = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '分片收集', maxFileSizeMb: 100 } })).data.collection
+  const chunkTask = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '分片收集', maxFileSizeMb: 100, materials: [{ id: 'chunk-material', name: '分片材料', required: true, namingPattern: '{提交人}-{材料项}-{原文件名}' }] } })).data.collection
   const bigChunkA = Buffer.alloc(1024 * 1024, 0x61)
   const bigChunkB = Buffer.from('tail-B')
-  const sessionCreate = await api('/api/upload-sessions', { user: 'owner', method: 'POST', body: { chunkSize: 1024 * 1024, files: [{ name: '分段大文件.bin', size: bigChunkA.length + bigChunkB.length }], mode: 'collection', collectionToken: chunkTask.token, participantName: '分片提交者' } })
+  const sessionCreate = await api('/api/upload-sessions', { user: 'owner', method: 'POST', body: { chunkSize: 1024 * 1024, files: [{ name: '分段大文件.bin', size: bigChunkA.length + bigChunkB.length }], mode: 'collection', collectionToken: chunkTask.token, participantName: '分片提交者', materialIds: ['chunk-material'], fileMaterialIds: ['chunk-material'] } })
   const sessionId = sessionCreate.data.sessionId
   check('仅任务相关方可创建分片会话（所有者创建成功）', sessionCreate.status === 201, `status=${sessionCreate.status}`)
   const strangerCreate = await api('/api/upload-sessions', { user: 'stranger', method: 'POST', body: { chunkSize: 1024 * 1024, files: [{ name: 'x.bin', size: 10 }], mode: 'collection', collectionToken: 'unknown-token' } })
@@ -258,6 +314,7 @@ try {
   const complete = await api(`/api/upload-sessions/${sessionId}/complete`, { user: 'owner', method: 'POST', body: {} })
   const submittedFile = complete.data.submission?.files?.[0]
   check('完成后文件完整且扫描通过', complete.status === 201 && submittedFile?.size === bigChunkA.length + bigChunkB.length && submittedFile?.scanEngine === 'clamav', `status=${complete.status} size=${submittedFile?.size} engine=${submittedFile?.scanEngine}`)
+  check('分片重启后仍按冻结的材料映射生成提交名', submittedFile?.name === 'owner-分片材料-分段大文件.bin' && submittedFile?.originalName === '分段大文件.bin' && submittedFile?.materialId === 'chunk-material', `file=${JSON.stringify(submittedFile)}`)
   const projSub = diskCollections().find((item) => item.token === chunkTask.token).submissions.find((item) => item.id === complete.data.submission.id)
   const assembled = fs.readFileSync(path.join(fixture, 'storage', 'collections', chunkTask.token, projSub.id, projSub.files[0].storedName))
   check('组装后字节逐位一致（含跨片尾部）', assembled.equals(Buffer.concat([bigChunkA, bigChunkB])))
@@ -266,13 +323,13 @@ try {
   // kq_guest_id 会被拒绝，避免通过轮换 Cookie 绕过累计配额和会话归属。
   const initialGuestCookie = 'kq_guest_id=coll008guestholder12345678'
   const anonymousSession = await api('/api/upload-sessions', { method: 'POST', headers: { cookie: initialGuestCookie }, body: {
-    mode: 'collection', collectionToken: chunkTask.token, participantName: '匿名续传者', files: [{ name: 'guest.bin', size: 16 }],
+    mode: 'collection', collectionToken: chunkTask.token, participantName: '匿名续传者', materialIds: ['chunk-material'], fileMaterialIds: ['chunk-material'], files: [{ name: 'guest.bin', size: 16 }],
   } })
   const guestId = anonymousSession.data.sessionId
   const guestCookie = (anonymousSession.headers.get('set-cookie') || '').split(';')[0]
   check('匿名提交者可创建自己的会话', anonymousSession.status === 201)
   const sameNetworkSession = await api('/api/upload-sessions', { method: 'POST', body: {
-    mode: 'collection', collectionToken: chunkTask.token, participantName: '另一位匿名提交者', files: [{ name: 'guest.bin', size: 16 }],
+    mode: 'collection', collectionToken: chunkTask.token, participantName: '另一位匿名提交者', materialIds: ['chunk-material'], fileMaterialIds: ['chunk-material'], files: [{ name: 'guest.bin', size: 16 }],
   } })
   check('同一网络相同文件仍创建独立匿名会话', sameNetworkSession.status === 201 && sameNetworkSession.data.sessionId !== guestId)
   check('同一网络的另一浏览器不能取消原提交者会话', (await api(`/api/upload-sessions/${guestId}`, { headers: { cookie: guestCookie } })).status === 200)

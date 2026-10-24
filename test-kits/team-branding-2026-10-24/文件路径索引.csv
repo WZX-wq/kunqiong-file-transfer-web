@@ -1,0 +1,21 @@
+﻿用例编号,测试目的,绝对文件路径,用途
+BRAND-001,保存正常品牌并检查公开页,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\test-kits\team-branding-2026-10-24\数据\Logo\BRAND-001-正常正方形Logo.png,数据
+BRAND-001,保存正常品牌并检查公开页,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件
+BRAND-002,管理员修改宽幅Logo,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\test-kits\team-branding-2026-10-24\数据\Logo\BRAND-002-正常宽幅Logo.webp,数据
+BRAND-002,管理员修改宽幅Logo,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件
+BRAND-003,接受400 KiB精确上限,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\test-kits\team-branding-2026-10-24\数据\Logo\BRAND-003-大小上限-409600字节.png,数据
+BRAND-003,接受400 KiB精确上限,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件
+BRAND-004,拒绝超限一字节图片,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\test-kits\team-branding-2026-10-24\数据\Logo\BRAND-004-超限-409601字节.png,数据
+BRAND-004,拒绝超限一字节图片,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件
+BRAND-005,拒绝SVG类型,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\test-kits\team-branding-2026-10-24\数据\Logo\BRAND-005-不支持类型.svg,数据
+BRAND-005,拒绝SVG类型,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件
+BRAND-006,后端拒绝损坏图片,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\test-kits\team-branding-2026-10-24\数据\Logo\BRAND-006-损坏PNG.png,数据
+BRAND-006,后端拒绝损坏图片,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件
+BRAND-007,普通成员无法修改品牌,无需文件,无文件
+BRAND-007,普通成员无法修改品牌,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件
+BRAND-008,未登录展示与访问权限,无需文件,无文件
+BRAND-008,未登录展示与访问权限,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件
+BRAND-009,多人编辑冲突不覆盖,无需文件,无文件
+BRAND-009,多人编辑冲突不覆盖,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件
+BRAND-010,恢复默认与移动端显示,无需文件,无文件
+BRAND-010,恢复默认与移动端显示,D:\demo\鲲穹文件传输\kunqiong-file-transfer-web-main\kunqiong-file-transfer-web-main\docs\聊天确认功能-开发测试验收计划-2026-10-23.md,项目文件

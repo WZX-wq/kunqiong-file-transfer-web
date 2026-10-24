@@ -8,12 +8,14 @@ import { AlertTriangle, ArrowLeft, Building2, CalendarDays, CheckCircle2, Clock3
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { ProtoStateCard, ProtoBadge, ProtoBanner } from '../components/prototype-ui.jsx'
 import { CollectionLimitInfo, DownloadProgressPanel, FileFormatBadge, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, TeamJoinRequestCard, UserAvatar, toFileItems } from '../components/ui.jsx'
+import { renderCollectionFilename } from '../lib/collection-naming.js'
 import { useConfirmDialog, useDownloadTask, useToast } from '../hooks.js'
 import { canReopenCollection, collectionFileAccept, collectionStatusText, createCollectionRecord, createShareRecord, isAllowedCollectionFile, saveAuthoritativeLocalRecord, savePublicRecord, shareStatusText } from '../lib/records.js'
 import { canPreviewFile, clearUploadResume, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, queryUploadResume, readCollectionUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { displayUserName, feedbackTone, formatBytes, formatDate, formatExpiry } from '../lib/format.js'
 import { MAX_FILES } from '../lib/constants.js'
 import { limitInputText } from '../lib/input-limits.js'
+import { TeamBrand } from '../components/team-brand.jsx'
 
 export function TeamInvitePage({ slug }) {
   // 落地页自己探一次团队是否存在：无效 slug 时上方导语必须换成「链接已失效」，
@@ -268,7 +270,8 @@ export function SharePage({ token, enterpriseSlug = '' }) {
   }, [token, enterpriseSlug])
   const findShare = async () => {
     try {
-      const result = await apiRequest(`/api/shares/lookup/${data.share.code}`, { method: 'POST', body: JSON.stringify({ password }) })
+      const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
+      const result = await apiRequest(`/api/shares/lookup/${data.share.code}${query}`, { method: 'POST', body: JSON.stringify({ password }) })
       setData(result)
       setActionError('')
       savePublicRecord(createShareRecord(result.share, 'sent_to_me'))
@@ -288,6 +291,7 @@ export function SharePage({ token, enterpriseSlug = '' }) {
   const previewFile = (file, fileIndex) => setPreviewItem(createShareFilePreviewConfig(share, file, fileIndex, { password }))
   if (downloadPageOpen) return (
     <PublicShell>
+      <TeamBrand branding={share.branding} className="team-brand-public-top" />
       <ShareDownloadingPage share={share} task={downloadTask} onBack={() => setDownloadPageOpen(false)} onRetry={retryDownload} />
     </PublicShell>
   )
@@ -298,6 +302,7 @@ export function SharePage({ token, enterpriseSlug = '' }) {
     <PublicShell>
       {toast && <Toast {...toast} />}
       <div className="share-main">
+        <TeamBrand branding={share.branding} />
         <header className="share-hero">
           <span className="eyebrow">鲲穹临时分享</span>
           <h1>有人给你发来了文件</h1>
@@ -550,6 +555,8 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const [user, setUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [name, setName] = useState('')
+  const [fieldValues, setFieldValues] = useState({})
+  const [materialIds, setMaterialIds] = useState([])
   const [progress, setProgress] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [uploadPhase, setUploadPhase] = useState('idle')
@@ -570,6 +577,8 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
     apiRequest(`/api/collections/${token}${query}`).then((data) => {
       setCollection(data.collection)
+      setFieldValues({})
+      setMaterialIds([])
       savePublicRecord(createCollectionRecord(data.collection, 'collect_from_me'))
     }).catch((err) => {
       // 410 走原型里的「收集已截止」页；其余错误仍是通用不可用页。
@@ -584,6 +593,8 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     if (entry) {
       setPendingUpload(entry)
       setName(entry.participantName)
+      setFieldValues(entry.fieldValues || {})
+      setMaterialIds(entry.materialIds || [])
       setUploadPhase('paused')
       queryUploadResume(entry).then((restored) => {
         if (!active || submitRunRef.current !== restoreRun) return
@@ -631,16 +642,27 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     ))
   }
 
+  const namingEnabled = Boolean(collection?.materials?.some((material) => material.namingPattern))
+  const fileMaterialIdFor = (file, index) => {
+    if (pendingUpload) {
+      const pendingIndex = pendingUpload.files.findIndex((saved) => saved.name === file.name && saved.size === file.size && saved.relativePath === file.relativePath)
+      return pendingUpload.fileMaterialIds?.[pendingIndex >= 0 ? pendingIndex : index] || ''
+    }
+    return file.materialId || ''
+  }
+
   const handleSelectFiles = (incoming) => {
     if (submitting || completionPending || !incoming?.length) return
     const selectedFiles = toFileItems(incoming).map((item) => ({
       ...item, id: JSON.stringify([item.relativePath, item.size, item.file.lastModified]),
+      ...(namingEnabled && collection.materials.length === 1 ? { materialId: collection.materials[0].id } : {}),
     }))
     setFiles((current) => {
       const merged = new Map(current.map((item) => [item.id, item]))
       for (const item of selectedFiles) merged.set(item.id, item)
       return [...merged.values()]
     })
+    if (namingEnabled && collection.materials.length === 1) setMaterialIds((current) => [...new Set([...current, collection.materials[0].id])])
     if (pendingUpload?.completion?.status !== 'failed') setMessage('')
     if (!pendingUpload) setProgress(0)
   }
@@ -653,6 +675,15 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     : invalidFile ? `${invalidFile.name} 不符合当前收集任务的文件限制`
       : pendingUpload && files.length && !resumeMatches ? '请选择与上次上传一致且未修改的原文件，或放弃本次上传后重新提交' : ''
   const selectedBytes = files.reduce((sum, file) => sum + file.size, 0)
+  const activeFieldValues = pendingUpload?.fieldValues || fieldValues
+  const activeMaterialIds = pendingUpload?.materialIds || materialIds
+  const missingField = (collection?.customFields || []).find((field) => field.required && !String(activeFieldValues[field.id] || '').trim())
+  const formError = missingField
+    ? `请填写必填项：${missingField.label}`
+    : (collection?.materials?.length && !activeMaterialIds.length ? '请选择本次要提交的材料项' : '')
+  const namingError = namingEnabled && files.length && files.some((file, index) => !fileMaterialIdFor(file, index))
+    ? '请为每个文件选择对应的材料项'
+    : ''
 
   const pauseSubmit = () => {
     if (uploadPhase === 'finalizing') return
@@ -698,6 +729,14 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       setMessage(signedIn ? '请选择要提交的文件' : '请填写提交人名称并选择文件')
       return
     }
+    if (formError) {
+      setMessage(formError)
+      return
+    }
+    if (namingError) {
+      setMessage(namingError)
+      return
+    }
     if (selectionError || !resumeMatches) {
       setMessage(selectionError)
       return
@@ -729,6 +768,9 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
         mode: 'collection',
         collectionToken: token,
         participantName,
+        fieldValues: activeFieldValues,
+        materialIds: activeMaterialIds,
+        fileMaterialIds: orderedFiles.map((item, index) => fileMaterialIdFor(item, index)),
         relativePaths: orderedFiles.map((item) => item.relativePath),
         // The local fingerprint includes modification times to reject changed files.
         ...(pendingUpload ? pendingUpload.fileLastModified ? { fileLastModified: pendingUpload.fileLastModified } : {} : { fileLastModified: orderedFiles.map((item) => item.file.lastModified) }),
@@ -738,7 +780,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       if (submitRunRef.current !== submitRun) return
       const submittedAt = result.submission?.submittedAt || new Date().toISOString()
       const submittedFiles = result.submission?.files || files
-      savePublicRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt, files: submittedFiles }))
+      savePublicRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt, files: submittedFiles, fieldValues: result.submission?.fieldValues || activeFieldValues, materialIds: result.submission?.materialIds || activeMaterialIds }))
       setSubmissionInfo({ submission: { ...result.submission, submittedAt, files: submittedFiles } })
       setMessage('')
       setFiles([])
@@ -768,6 +810,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   if (closedInfo) return <PublicShell className="collection-submit-shell"><CollectionClosedPage info={closedInfo} signedIn={signedIn} /></PublicShell>
   if (collection && submissionInfo) return (
     <PublicShell className="collection-submit-shell">
+      <TeamBrand branding={collection.branding} className="team-brand-public-top" />
       <CollectionSubmittedPage collection={collection} submission={submissionInfo.submission} onAgain={() => { setSubmissionInfo(null); setMessage('') }} />
     </PublicShell>
   )
@@ -776,6 +819,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       <div className="public-card collection-submit-card">
         {collection ? (
           <>
+            <TeamBrand branding={collection.branding} />
             <header className="collection-submit-hero">
               <p className="eyebrow">文件收集</p>
               <h1>{collection.title}</h1>
@@ -812,6 +856,27 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
             {(!signedIn || !authChecked) && (
               <label className="public-label">提交人名称<input value={name} maxLength={40} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => setName(event.target.value)} placeholder="例如：张三 / 市场部" /></label>
             )}
+            {(collection.materials || []).length > 0 && <fieldset className="collection-submit-form-section">
+              <legend>本次提交材料</legend>
+              <p>可分次提交；管理端会按提交人汇总必交材料。</p>
+              <div className="collection-submit-materials">{collection.materials.map((material) => <label key={material.id} className="collection-submit-choice">
+                <input type="checkbox" checked={activeMaterialIds.includes(material.id)} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => {
+                  const next = event.target.checked ? [...new Set([...materialIds, material.id])] : materialIds.filter((id) => id !== material.id)
+                  setMaterialIds(next)
+                  setMessage('')
+                }} />
+                <span>{material.name}{material.required ? <em>必交</em> : <small>选交</small>}</span>
+              </label>)}</div>
+            </fieldset>}
+            {(collection.customFields || []).length > 0 && <fieldset className="collection-submit-form-section">
+              <legend>补充信息</legend>
+              <div className="collection-submit-custom-fields">{collection.customFields.map((field) => <label key={field.id} className="public-label">
+                <span>{field.label}{field.required ? <em>必填</em> : <small>选填</small>}</span>
+                {field.type === 'select' ? <select value={activeFieldValues[field.id] || ''} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => { setFieldValues((current) => ({ ...current, [field.id]: event.target.value })); setMessage('') }}>
+                  <option value="">请选择</option>{field.options?.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select> : <input type={field.type === 'date' ? 'date' : 'text'} value={activeFieldValues[field.id] || ''} maxLength={field.type === 'text' ? 500 : undefined} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => { setFieldValues((current) => ({ ...current, [field.id]: event.target.value })); setMessage('') }} placeholder={field.type === 'date' ? '' : `请填写${field.label}`} />}
+              </label>)}</div>
+            </fieldset>}
             {pendingUpload && <div className="collection-resume-notice" role="status">
               <strong>发现未完成的上传 · {pendingUpload.files.length} 个文件</strong>
               <span>{pendingUpload.files.map((file) => file.relativePath || file.name).join('、')}</span>
@@ -829,6 +894,27 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
               </div>
             </div>
             {files.length > 0 && <div className="public-files collection-selected-files" role="region" aria-label="已选文件列表" tabIndex={0}>{files.map((file) => <FileRow key={file.id} file={file} showPath onRemove={submitting || completionPending ? undefined : () => removeSelectedFile(file.id)} />)}</div>}
+            {namingEnabled && files.length > 0 && <div className="collection-file-naming" aria-label="文件命名确认">
+              <div className="collection-file-naming-heading"><strong>文件命名</strong><span>选择材料后，提交包会使用生成名称；原文件名仍会保留用于追溯。</span></div>
+              {files.map((file, index) => {
+                const selectedId = fileMaterialIdFor(file, index)
+                const material = collection.materials.find((item) => item.id === selectedId)
+                const generatedName = material?.namingPattern ? renderCollectionFilename(material.namingPattern, { 提交人: signedIn ? displayUserName(user) : name.trim(), 材料项: material.name, 原文件名: file.name }, file.name) : file.name
+                return <div className="collection-file-naming-row" key={`naming-${file.id}`}>
+                  <span className="collection-file-naming-original" title={file.name}>{file.name}</span>
+                  <select aria-label={`${file.name}对应材料`} value={selectedId} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => {
+                    const nextId = event.target.value
+                    setFiles((current) => current.map((item) => item.id === file.id ? { ...item, materialId: nextId } : item))
+                    if (nextId && !materialIds.includes(nextId)) setMaterialIds((current) => [...new Set([...current, nextId])])
+                    setMessage('')
+                  }}>
+                    <option value="">请选择材料项</option>
+                    {collection.materials.map((item) => <option key={item.id} value={item.id}>{item.name}{item.namingPattern ? '' : '（使用原文件名）'}</option>)}
+                  </select>
+                  <small>提交名称：{generatedName}</small>
+                </div>
+              })}
+            </div>}
             <div className="collection-submit-actions">
               <div className="collection-selection-summary">
                 <span aria-live="polite"><strong>{files.length}</strong> / {MAX_FILES} 个文件 · 共 {formatBytes(selectedBytes)}</span>
@@ -837,10 +923,10 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
               {(submitting || pendingUpload) && <div className="progress-wrap"><div className="progress-label"><span>{uploadPhase === 'finalizing' ? '正在校验文件并完成提交...' : uploadPhase === 'blocked' ? '安全检查发现风险，已阻止提交' : uploadPhase === 'scan-failed' ? '文件已上传，安全检查未完成' : uploadPhase === 'query' ? '文件已上传，处理结果待查询' : uploadPhase === 'pausing' ? '正在暂停...' : submitting ? '正在分片上传...' : '已暂停 · 可继续上传'}</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
               {uploadPhase === 'finalizing' && <SecurityCheckStatus startedAt={checkState.checkStartedAt} stage={checkState.checkStage} currentFile={checkState.currentFile} fileIndex={checkState.checkFileIndex} fileCount={checkState.checkFileCount} completedCount={checkState.checkCompletedCount} activeCount={checkState.checkActiveCount} connectionMessage={checkState.connectionMessage} />}
               {['blocked', 'scan-failed'].includes(uploadPhase) && <SecurityCheckFailure message={scanFailure?.message || message} code={scanFailure?.code} fileName={scanFailure?.scanFile} finding={scanFailure?.scanFinding} />}
-              {(selectionError || (message && !['blocked', 'scan-failed'].includes(uploadPhase))) && <FeedbackMessage message={selectionError || message} tone={selectionError || uploadPhase === 'query' ? 'error' : feedbackTone(message)} />}
+              {(selectionError || formError || namingError || (message && !['blocked', 'scan-failed'].includes(uploadPhase))) && <FeedbackMessage message={selectionError || formError || namingError || message} tone={selectionError || formError || namingError || uploadPhase === 'query' ? 'error' : feedbackTone(message)} />}
               {submitting && ['uploading', 'pausing'].includes(uploadPhase) && <button className="secondary-button wide" disabled={uploadPhase === 'pausing'} onClick={pauseSubmit}><Pause size={16} /> {uploadPhase === 'pausing' ? '正在暂停...' : '暂停上传'}</button>}
               {pendingUpload && !submitting && !completionPending && <button className="secondary-button wide" onClick={abandonUpload}><X size={16} /> 放弃本次上传</button>}
-              <button className="primary-button wide" onClick={submit} disabled={submitting || uploadPhase === 'blocked' || !files.length || Boolean(selectionError) || !resumeMatches}>{pendingUpload ? <Play size={17} /> : <UploadCloud size={17} />} {submitting ? uploadPhase === 'finalizing' ? '正在完成提交...' : '提交中...' : uploadPhase === 'blocked' ? '风险文件已阻止' : completionPending ? '查询处理结果' : uploadPhase === 'scan-failed' ? '重试安全检查' : pendingUpload ? '继续上传' : '提交文件'}</button>
+              <button className="primary-button wide" onClick={submit} disabled={submitting || uploadPhase === 'blocked' || !files.length || Boolean(selectionError) || Boolean(formError) || Boolean(namingError) || !resumeMatches}>{pendingUpload ? <Play size={17} /> : <UploadCloud size={17} />} {submitting ? uploadPhase === 'finalizing' ? '正在完成提交...' : '提交中...' : uploadPhase === 'blocked' ? '风险文件已阻止' : completionPending ? '查询处理结果' : uploadPhase === 'scan-failed' ? '重试安全检查' : pendingUpload ? '继续上传' : '提交文件'}</button>
             </div>
             </div>
           </>

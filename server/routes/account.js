@@ -32,11 +32,15 @@ import {
   createVerificationCode, discardVerificationCode, assertContactAvailable,
   getEmailTransporter, fileCleanupOverviewForOwner, isOAuthConfigured, isTencentSmsConfigured, mailErrorReason,
   mergeAccountRecords, pruneOrphanRecordEntries, publicAccountUser,
-  purgeOwnedStaleResource, readCookie, removeAuthSession, requireAuthSession, safeReturnUrl,
+  readCookie, removeAuthSession, requireAuthSession, safeReturnUrl,
   sendTencentSmsCode, syncAccountUserSessions, syncOrganizationMemberProfile,
   updateFileCleanupSettings, upsertAccountUser, verificationSendBlocked, verifyAuthCode,
   getRequestOrigin, setOAuthStateCookie
 } from '../services/account.js'
+import {
+  TRASH_RETENTION_DAYS, listTrashForOwner, permanentlyDeleteTrashResource,
+  restoreTrashResource, trashResourceForOwner,
+} from '../services/trash.js'
 
 import {
   oauthStates
@@ -277,6 +281,32 @@ export function registerAccountRoutes(app) {
     res.json({ records: accountRecordsForUser(session.user.id) })
   })
 
+  app.get('/api/account/trash', (req, res) => {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    res.json({ items: listTrashForOwner(session.user.id), retentionDays: TRASH_RETENTION_DAYS })
+  })
+
+  app.post('/api/account/trash/:kind/:id/restore', (req, res, next) => {
+    try {
+      const session = requireAuthSession(req, res)
+      if (!session) return
+      const item = restoreTrashResource(session.user.id, req.params.kind, req.params.id)
+      persistMetadata()
+      res.json({ item, retentionDays: TRASH_RETENTION_DAYS })
+    } catch (error) { next(error) }
+  })
+
+  app.delete('/api/account/trash/:kind/:id', async (req, res, next) => {
+    try {
+      const session = requireAuthSession(req, res)
+      if (!session) return
+      const item = await permanentlyDeleteTrashResource(session.user.id, req.params.kind, req.params.id)
+      persistMetadata()
+      res.json({ ok: true, item })
+    } catch (error) { next(error) }
+  })
+
   app.put('/api/account/records', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
@@ -314,13 +344,13 @@ export function registerAccountRoutes(app) {
     if (ids.length) {
       const targets = new Set(ids)
       for (const id of ids) {
-        const purgedResource = purgeOwnedStaleResource(session.user.id, id)
+        const purgedResource = trashResourceForOwner(session.user.id, id)
         if (purgedResource) purged.push(purgedResource)
       }
       metadata.records[key] = accountRecordsForUser(session.user.id).filter((record) => !targets.has(record.id))
     } else {
       for (const record of accountRecordsForUser(session.user.id)) {
-        const purgedResource = purgeOwnedStaleResource(session.user.id, record.id)
+        const purgedResource = trashResourceForOwner(session.user.id, record.id)
         if (purgedResource) purged.push(purgedResource)
       }
       metadata.records[key] = []

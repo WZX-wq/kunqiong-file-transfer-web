@@ -59,6 +59,7 @@ import { registerCollectionRoutes } from './server/routes/collections.js'
 
 // 按域拆出的路由模块
 import { registerShareCreateRoutes, registerShareAccessRoutes } from './server/routes/shares.js'
+import { registerDistributionRoutes } from './server/routes/distributions.js'
 import { registerUploadRoutes } from './server/routes/upload.js'
 import { registerSeoRoutes } from './server/routes/seo.js'
 import { renderSpaDocument } from './server/services/seo.js'
@@ -72,6 +73,7 @@ import {
 import {
   purgeExpiredAuditLogs
 } from './server/services/admin.js'
+import { purgeExpiredTrash } from './server/services/trash.js'
 // 审计工具
 import {
   requestIp, sanitizeAuditPath
@@ -255,6 +257,7 @@ registerAdminRoutes(app)
 // 按域注册业务路由（顺序即 Express 匹配顺序，不可调整）
 registerShareCreateRoutes(app)
 registerUploadRoutes(app)
+registerDistributionRoutes(app)
 registerShareAccessRoutes(app)
 registerCollectionRoutes(app)
 
@@ -344,6 +347,7 @@ const server = app.listen(serverPort, serverHost, () => {
 
 const cleanupTimer = setInterval(() => {
   cleanupExpired()
+  purgeExpiredTrash()
   cleanupUploadSessions()
 }, 60 * 1000)
 cleanupTimer.unref()
@@ -362,6 +366,7 @@ const auditLogTimer = setInterval(() => {
 auditLogTimer.unref()
 restoreUploadSessions()
 cleanupExpired()
+purgeExpiredTrash()
 cleanupUploadSessions()
 
 let shuttingDown = false

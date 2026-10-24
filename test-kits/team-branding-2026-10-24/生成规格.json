@@ -1,0 +1,435 @@
+{
+  "project": {
+    "name": "团队品牌展示验收",
+    "root": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main",
+    "version": "本地开发待用户验收",
+    "environment": "localhost:18048 隔离合成账号"
+  },
+  "scope": {
+    "included": [
+      "团队品牌设置与预览",
+      "Logo类型及400 KiB边界",
+      "公开分享和收集展示",
+      "权限、冲突与恢复默认"
+    ],
+    "excluded": [
+      "回收站",
+      "定向分发",
+      "真实数据库和部署"
+    ],
+    "assumptions": [
+      "已启动 scripts/serve-team-branding-demo.mjs",
+      "对外展示名不修改团队账号名",
+      "团队专属收集链接展示品牌，普通个人链接保留平台默认"
+    ]
+  },
+  "requirements": [
+    {
+      "id": "R-BRAND",
+      "text": "管理员可设置对外展示名称、Logo和简介，并恢复默认；失败不覆盖已保存配置",
+      "source": "docs/聊天确认功能-开发测试验收计划-2026-10-23.md 第三节6及本次阶段约定"
+    },
+    {
+      "id": "R-LOGO",
+      "text": "静态PNG/JPEG/WebP，原文件最多409600字节，后端完整解码且保留比例",
+      "source": "server/lib/team-branding.js; server/lib/avatar-validation.js"
+    },
+    {
+      "id": "R-PUBLIC",
+      "text": "关联团队页面展示品牌；不扩大文件访问权限；普通成员不能修改",
+      "source": "server/routes/team-branding.js; server/services/shares.js; server/services/collections.js"
+    }
+  ],
+  "roles": [
+    {
+      "name": "所有者",
+      "setup": "隔离入口选择原负责人，无真实账号凭据"
+    },
+    {
+      "name": "管理员",
+      "setup": "隔离入口选择团队管理员"
+    },
+    {
+      "name": "普通成员",
+      "setup": "隔离入口选择普通成员"
+    },
+    {
+      "name": "访客",
+      "setup": "隔离入口选择未登录查看收集页"
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "F-PNG",
+      "kind": "copy",
+      "path": "Logo/BRAND-001-正常正方形Logo.png",
+      "source": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\.workbuddy\\team-branding-testkit-sources\\square.png",
+      "format_check": "png"
+    },
+    {
+      "id": "F-WEBP",
+      "kind": "copy",
+      "path": "Logo/BRAND-002-正常宽幅Logo.webp",
+      "source": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\.workbuddy\\team-branding-testkit-sources\\wide.webp",
+      "format_check": "none"
+    },
+    {
+      "id": "F-LIMIT",
+      "kind": "copy",
+      "path": "Logo/BRAND-003-大小上限-409600字节.png",
+      "source": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\.workbuddy\\team-branding-testkit-sources\\limit-409600.png",
+      "format_check": "png"
+    },
+    {
+      "id": "F-OVER",
+      "kind": "copy",
+      "path": "Logo/BRAND-004-超限-409601字节.png",
+      "source": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\.workbuddy\\team-branding-testkit-sources\\limit-409601.png",
+      "format_check": "png"
+    },
+    {
+      "id": "F-SVG",
+      "kind": "text",
+      "path": "Logo/BRAND-005-不支持类型.svg",
+      "text": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"512\" height=\"512\" viewBox=\"0 0 512 512\"><rect width=\"512\" height=\"512\" rx=\"100\" fill=\"#2563eb\"/><path d=\"M148 126h62v110l112-110h82L264 260l148 126h-90L210 278v108h-62z\" fill=\"white\"/></svg>"
+    },
+    {
+      "id": "F-BAD",
+      "kind": "copy",
+      "path": "Logo/BRAND-006-损坏PNG.png",
+      "source": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\.workbuddy\\team-branding-testkit-sources\\damaged.png",
+      "format_check": "none"
+    }
+  ],
+  "cases": [
+    {
+      "id": "BRAND-001",
+      "module": "团队品牌",
+      "title": "保存正常品牌并检查公开页",
+      "priority": "P1",
+      "role": "所有者",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo",
+        "选择原负责人进入团队品牌页"
+      ],
+      "fixture_ids": [
+        "F-PNG"
+      ],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "填写展示名称“鲲穹测试中心”和简介，选择所列PNG文件",
+        "检查右侧预览并保存",
+        "回到验收入口打开专属分享页和专属收集页"
+      ],
+      "expected": [
+        "预览与输入一致，保存后显示已启用",
+        "两个页面显示相同名称、Logo和简介，平台导航仍保留",
+        "团队账号名称和文件权限不改变"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    },
+    {
+      "id": "BRAND-002",
+      "module": "团队品牌",
+      "title": "管理员修改宽幅Logo",
+      "priority": "P1",
+      "role": "管理员",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo",
+        "已有保存的品牌"
+      ],
+      "fixture_ids": [
+        "F-WEBP"
+      ],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "选择管理员进入",
+        "选择所列宽幅WebP，修改简介并保存",
+        "刷新专属收集页"
+      ],
+      "expected": [
+        "有品牌编辑入口",
+        "图片完整显示且不拉伸裁剪",
+        "刷新显示新的简介"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    },
+    {
+      "id": "BRAND-003",
+      "module": "团队品牌",
+      "title": "接受400 KiB精确上限",
+      "priority": "P1",
+      "role": "所有者",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo",
+        "进入品牌设置"
+      ],
+      "fixture_ids": [
+        "F-LIMIT"
+      ],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "仅选择所列409600字节PNG并保存"
+      ],
+      "expected": [
+        "文件可读取和提交",
+        "保存成功，公开Logo为标准化图片"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    },
+    {
+      "id": "BRAND-004",
+      "module": "团队品牌",
+      "title": "拒绝超限一字节图片",
+      "priority": "P1",
+      "role": "所有者",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo",
+        "已保存正常Logo"
+      ],
+      "fixture_ids": [
+        "F-OVER"
+      ],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "选择所列409601字节PNG",
+        "刷新专属收集页"
+      ],
+      "expected": [
+        "提示最大400 KB",
+        "已保存Logo保持原样"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    },
+    {
+      "id": "BRAND-005",
+      "module": "团队品牌",
+      "title": "拒绝SVG类型",
+      "priority": "P1",
+      "role": "所有者",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo",
+        "已保存正常Logo"
+      ],
+      "fixture_ids": [
+        "F-SVG"
+      ],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "文件选择器切换所有文件后选择所列SVG"
+      ],
+      "expected": [
+        "提示仅支持静态PNG、JPEG、WebP",
+        "原已保存品牌不变"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    },
+    {
+      "id": "BRAND-006",
+      "module": "团队品牌",
+      "title": "后端拒绝损坏图片",
+      "priority": "P1",
+      "role": "所有者",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo",
+        "已保存正常Logo"
+      ],
+      "fixture_ids": [
+        "F-BAD"
+      ],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "选择所列损坏PNG，点击保存并启用",
+        "查看提示并刷新页面"
+      ],
+      "expected": [
+        "服务端提示图片损坏或格式错误",
+        "旧品牌仍存在；页面可重新选择图片"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    },
+    {
+      "id": "BRAND-007",
+      "module": "团队品牌",
+      "title": "普通成员无法修改品牌",
+      "priority": "P0",
+      "role": "普通成员",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo"
+      ],
+      "fixture_ids": [],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "选择普通成员进入",
+        "直接访问 /team?tab=branding"
+      ],
+      "expected": [
+        "没有团队品牌编辑入口",
+        "地址回落到可访问页，不能编辑品牌"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    },
+    {
+      "id": "BRAND-008",
+      "module": "团队品牌",
+      "title": "未登录展示与访问权限",
+      "priority": "P0",
+      "role": "访客",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo",
+        "已保存品牌"
+      ],
+      "fixture_ids": [],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "从验收入口选择未登录查看收集页",
+        "打开普通收集链接作对比",
+        "打开需要成员身份的团队文件链接"
+      ],
+      "expected": [
+        "专属收集页可见品牌且能正常填写提交信息",
+        "普通个人收集链接没有团队品牌",
+        "团队文件仍要求成员登录，品牌不扩大权限"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    },
+    {
+      "id": "BRAND-009",
+      "module": "团队品牌",
+      "title": "多人编辑冲突不覆盖",
+      "priority": "P0",
+      "role": "所有者",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo",
+        "使用两个不同浏览器或一个隐私窗口，分别以所有者和管理员登录并打开品牌页"
+      ],
+      "fixture_ids": [],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "两边修改展示名称",
+        "先在管理员页面保存，再在所有者旧页面保存",
+        "所有者点击重新加载，先保留修改，再确认放弃"
+      ],
+      "expected": [
+        "旧版本不能覆盖新版本",
+        "旧草稿保留并提示重新加载",
+        "重新加载有确认，确认后得到管理员最新配置"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    },
+    {
+      "id": "BRAND-010",
+      "module": "团队品牌",
+      "title": "恢复默认与移动端显示",
+      "priority": "P1",
+      "role": "所有者",
+      "requirement_ids": [
+        "R-BRAND",
+        "R-LOGO",
+        "R-PUBLIC"
+      ],
+      "preconditions": [
+        "打开 http://localhost:18048/__branding_demo",
+        "已有品牌，准备桌面和390px左右手机视口"
+      ],
+      "fixture_ids": [],
+      "project_paths": [
+        "docs/聊天确认功能-开发测试验收计划-2026-10-23.md"
+      ],
+      "steps": [
+        "检查编辑、预览、按钮和公开页是否横向溢出",
+        "点恢复默认后取消，再次恢复并确认",
+        "刷新专属分享页和收集页"
+      ],
+      "expected": [
+        "字体可读、按钮完整、没有横向溢出",
+        "取消不修改保存内容",
+        "确认后两个页面恢复默认，团队名和文件不变"
+      ],
+      "cleanup": [
+        "需要恢复初始数据时，仅重启本功能隔离演示脚本；不会修改真实团队"
+      ]
+    }
+  ]
+}
