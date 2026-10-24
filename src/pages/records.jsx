@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { canReopenCollection, fileCategoryIcon, isDateInputStillOpen, managedFileItemsFromRecords, matchesManagedFileCategory, matchesManagedFileSearch, matchesRecordDate, matchesRecordScope, matchesRecordStatus, normalizeRecord, recordCopyLabel, recordCopyTarget, recordDetail, recordDisplayName, recordDisplayStatus, recordExpiryLabel, recordIconForScope, recordLink, recordManageUrl, recordOpenLabel, recordScopeLabel, recordStatusGroup, recordStatusTone, recordValidityLabel, toDateInputValue } from '../lib/records.js'
 import { useEffect, useState } from 'react'
 import { defaultDeadline, formatBytes, isClosedStatus } from '../lib/format.js'
-import { Archive, ArrowLeft, CalendarDays, Check, Code2, Copy, Download, ExternalLink, Eye, FileQuestion, FileText, Filter, HardDrive, History, Image as ImageIcon, Inbox, Layers3, Link2, MoreHorizontal, Music2, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, Upload, Video, X } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, CalendarDays, Check, Code2, Copy, Download, ExternalLink, Eye, FileQuestion, FileText, Filter, HardDrive, History, Image as ImageIcon, Inbox, Layers3, Link2, MoreHorizontal, Music2, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, Upload, Video, X } from 'lucide-react'
 import { DatePicker, FileFormatBadge, FilePreviewModal, QrPreviewModal, RecordNameText, RecordPreviewChooser, RenameRecordModal } from '../components/ui.jsx'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { useDownloadTask } from '../hooks.js'
@@ -11,6 +11,7 @@ import { FILE_CATEGORY_FILTERS, RECORD_DATE_FILTERS, RECORD_SCOPE_TABS, RECORD_S
 import { recordPreviewConfigs } from '../lib/transfer.js'
 import QRCode from 'qrcode'
 import { AdminPagination } from './AdminPage.jsx'
+import { apiRequest } from '../lib/api.js'
 
 const FILE_CATEGORY_ICONS = {
   all: Layers3,
@@ -113,6 +114,10 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   const [previewItem, setPreviewItem] = useState(null)
   const [previewChoices, setPreviewChoices] = useState(null)
   const [qrPreview, setQrPreview] = useState(null)
+  const [trashOpen, setTrashOpen] = useState(false)
+  const [trashItems, setTrashItems] = useState([])
+  const [trashRetentionDays, setTrashRetentionDays] = useState(7)
+  const [trashLoading, setTrashLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [recordPage, setRecordPage] = useState(1)
   const [filePage, setFilePage] = useState(1)
@@ -225,6 +230,39 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     } finally {
       setRefreshing(false)
     }
+  }
+
+  const openTrash = async () => {
+    if (!user?.id) return onNotify?.('登录后才能查看回收站')
+    setTrashOpen(true)
+    setTrashLoading(true)
+    try {
+      const data = await apiRequest('/api/account/trash')
+      setTrashItems(data.items || [])
+      setTrashRetentionDays(Number(data.retentionDays) || 7)
+    } catch (error) {
+      setTrashOpen(false)
+      onNotify?.(error.message || '回收站加载失败')
+    } finally { setTrashLoading(false) }
+  }
+
+  const restoreTrash = async (item) => {
+    try {
+      await apiRequest(`/api/account/trash/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}/restore`, { method: 'POST' })
+      setTrashItems(current => current.filter(candidate => !(candidate.kind === item.kind && candidate.id === item.id)))
+      await handleRefresh({ silent: true })
+      onNotify?.('资源已恢复，公开链接保持关闭状态')
+    } catch (error) { onNotify?.(error.message || '恢复失败') }
+  }
+
+  const permanentlyDeleteTrash = async (item) => {
+    if (!window.confirm(`彻底删除“${item.name}”？删除后无法恢复。`)) return
+    try {
+      await apiRequest(`/api/account/trash/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
+      setTrashItems(current => current.filter(candidate => !(candidate.kind === item.kind && candidate.id === item.id)))
+      await handleRefresh({ silent: true })
+      onNotify?.('资源已彻底删除')
+    } catch (error) { onNotify?.(error.message || '彻底删除失败') }
   }
 
   const toggleMenu = (menuId, event, record) => {
@@ -467,7 +505,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
             </>
           )}
           {viewMode === 'records' && (
-            <button type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空记录</button>
+            <><button type="button" className="secondary-button" onClick={openTrash}><ArchiveRestore size={15} /> 回收站</button><button type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空记录</button></>
           )}
         </div>
       </div>
@@ -659,6 +697,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
       {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startRecordPreviewDownload(config || previewItem.downloadConfig)} downloadDisabled={previewDownloadBusy} />}
       {qrPreview && <QrPreviewModal title={qrPreview.title} detail={qrPreview.detail || '扫码打开提交入口'} qrDataUrl={qrPreview.qrDataUrl} targetUrl={qrPreview.targetUrl} onClose={() => setQrPreview(null)} onCopyImage={() => onCopyQrImage?.(qrPreview.qrDataUrl, qrPreview.targetUrl)} onCopyLink={() => onCopy?.(qrPreview.targetUrl)} />}
       {openMenu && menuRecord && menuAnchor && createPortal(renderRecordMenu(menuRecord), document.body)}
+      {trashOpen && <div className="trash-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTrashOpen(false) }}><section className="trash-panel" role="dialog" aria-modal="true" aria-labelledby="trash-title"><div className="trash-panel-head"><div><h2 id="trash-title"><ArchiveRestore size={20} />回收站</h2><p>删除的个人资源保留 {trashRetentionDays} 天；恢复后公开链接不会自动重新开放。</p></div><button className="ghost-icon" type="button" aria-label="关闭回收站" onClick={() => setTrashOpen(false)}><X size={18} /></button></div>{trashLoading ? <div className="trash-empty">正在加载回收站...</div> : trashItems.length ? <div className="trash-list">{trashItems.map(item => <div className="trash-row" key={`${item.kind}-${item.id}`}><div className="trash-row-icon"><ArchiveRestore size={17} /></div><div className="trash-row-main"><strong>{item.name}</strong><span>{item.kind === 'share' ? '文件分享' : '收集任务'} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)}</span><small>删除于 {item.deletedAt ? new Date(item.deletedAt).toLocaleString('zh-CN') : '未知时间'} · 保留至 {item.trashExpiresAt ? new Date(item.trashExpiresAt).toLocaleString('zh-CN') : '未知'}</small></div><div className="trash-row-actions"><button className="secondary-button" type="button" onClick={() => restoreTrash(item)}><RotateCcw size={14} />恢复</button><button className="danger-button" type="button" onClick={() => permanentlyDeleteTrash(item)}><Trash2 size={14} />彻底删除</button></div></div>)}</div> : <div className="trash-empty"><ArchiveRestore size={28} /><strong>回收站为空</strong><span>删除的个人分享和收集任务会在这里保留一段时间。</span></div>}</section></div>}
       <div className="records-footnote"><HardDrive size={16} /> {syncing ? '账号记录同步中...' : user?.id ? '已登录，记录会同步到账号并可跨设备查看。' : '游客记录仅保留在当前设备，登录后可跨设备同步。'}</div>
     </section>
   )

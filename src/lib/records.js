@@ -295,6 +295,12 @@ export async function respondWorkspaceInvitation(invitationId, decision) {
   })
 }
 
+export async function respondWorkspaceOwnershipHandover(handoverId, decision) {
+  return apiRequest(`/api/account/workspace/ownership-handovers/${encodeURIComponent(handoverId)}`, {
+    method: 'POST', body: JSON.stringify({ decision }),
+  })
+}
+
 export async function saveCloudNoticeSettings(settings) {
   return apiRequest('/api/account/notification-settings', {
     method: 'PUT',

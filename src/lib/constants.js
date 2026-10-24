@@ -141,7 +141,7 @@ export const fileIcon = (name = '') => {
   return FileCheck2
 }
 
-export const MAIN_VIEWS = new Set(['send', 'collect', 'records'])
+export const MAIN_VIEWS = new Set(['send', 'collect', 'deliver', 'records'])
 
 export const TEXT_PREVIEW_MAX_BYTES = 512 * 1024
 

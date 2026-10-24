@@ -211,7 +211,7 @@ export function readCollectionUploadResume(token) {
   try {
     const manifest = JSON.parse(entry?.signature || 'null')
     if (!entry?.sessionId || manifest?.mode?.mode !== 'collection' || manifest.mode.collectionToken !== token || !Array.isArray(manifest.files)) return null
-    return { ...entry, files: manifest.files, fileLastModified: manifest.mode.fileLastModified, participantName: manifest.mode.participantName || '' }
+    return { ...entry, files: manifest.files, fileLastModified: manifest.mode.fileLastModified, participantName: manifest.mode.participantName || '', fieldValues: manifest.mode.fieldValues || {}, materialIds: Array.isArray(manifest.mode.materialIds) ? manifest.mode.materialIds : [], fileMaterialIds: Array.isArray(manifest.mode.fileMaterialIds) ? manifest.mode.fileMaterialIds : [] }
   } catch { return null }
 }
 

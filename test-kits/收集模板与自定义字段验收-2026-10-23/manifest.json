@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "root": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23",
+  "generated_at": "2026-10-23T11:33:05.079002+00:00",
+  "fixtures": [
+    {
+      "id": "D-COL-001",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "D-COL-002",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "D-COL-003",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "D-COL-004",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "D-COL-005",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "D-COL-006",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "D-COL-007",
+      "kind": "text",
+      "file_count": 1
+    },
+    {
+      "id": "D-COL-008",
+      "kind": "json",
+      "file_count": 1
+    }
+  ],
+  "files": [
+    {
+      "fixture_id": "D-COL-001",
+      "path": "数据/01-基础文件/TC-COL-002-必交材料-营业执照.pdf",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-营业执照.pdf",
+      "bytes": 33244,
+      "sha256": "ad9418fe765829b69e8a897439e6c7ccce2d75515e2d1ade61a0ec3cff31fb2e",
+      "case_ids": [
+        "TC-COL-002",
+        "TC-COL-003",
+        "TC-COL-004",
+        "TC-COL-006",
+        "TC-COL-007"
+      ]
+    },
+    {
+      "fixture_id": "D-COL-002",
+      "path": "数据/01-基础文件/TC-COL-002-必交材料-签字合同.docx",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\01-基础文件\\TC-COL-002-必交材料-签字合同.docx",
+      "bytes": 36812,
+      "sha256": "79f7fd51309b95755a033be176473fe2a80c0f41a56a89988071d9194070b12e",
+      "case_ids": [
+        "TC-COL-002",
+        "TC-COL-003",
+        "TC-COL-007"
+      ]
+    },
+    {
+      "fixture_id": "D-COL-003",
+      "path": "数据/02-选交与字段/TC-COL-003-选交材料-补充说明.txt",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\02-选交与字段\\TC-COL-003-选交材料-补充说明.txt",
+      "bytes": 127,
+      "sha256": "9a7b758bf3abd7b8ee86378698fc301899e3db4e54a361188fa03ac8f5b0006b",
+      "case_ids": [
+        "TC-COL-003"
+      ]
+    },
+    {
+      "fixture_id": "D-COL-004",
+      "path": "数据/02-选交与字段/TC-COL-003-联系人资料.csv",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\02-选交与字段\\TC-COL-003-联系人资料.csv",
+      "bytes": 100,
+      "sha256": "08b7aa33d4205700492f1319797dd4f9a7a352da1bd8cc28a100c3cca42c4a01",
+      "case_ids": [
+        "TC-COL-003"
+      ]
+    },
+    {
+      "fixture_id": "D-COL-005",
+      "path": "数据/05-重复文件名/资料/同名文件.txt",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\05-重复文件名\\资料\\同名文件.txt",
+      "bytes": 65,
+      "sha256": "9da55f21903038afa6820fb3b01e5c8cb476d203829a8d4378b78bd115da59c2",
+      "case_ids": [
+        "TC-COL-005"
+      ]
+    },
+    {
+      "fixture_id": "D-COL-006",
+      "path": "数据/05-重复文件名/合同/同名文件.txt",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\05-重复文件名\\合同\\同名文件.txt",
+      "bytes": 65,
+      "sha256": "f7e115abc933def58ec641472df31387cefa90d29f1abec49067f68f0195d284",
+      "case_ids": [
+        "TC-COL-005"
+      ]
+    },
+    {
+      "fixture_id": "D-COL-007",
+      "path": "数据/03-缺件场景/TC-COL-006-缺失材料说明.txt",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\03-缺件场景\\TC-COL-006-缺失材料说明.txt",
+      "bytes": 97,
+      "sha256": "a485b5c2c300e57da318127250591c6656968360c4da1ed3ecc10ce41b623dc3",
+      "case_ids": [
+        "TC-COL-006"
+      ]
+    },
+    {
+      "fixture_id": "D-COL-008",
+      "path": "数据/04-字段参考/TC-COL-001-模板字段参考.json",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23\\数据\\04-字段参考\\TC-COL-001-模板字段参考.json",
+      "bytes": 632,
+      "sha256": "608e07e7bcfd87b062f5bcd9fff9f10103acdec62163dafc76eb09e5ad7b39e5",
+      "case_ids": [
+        "TC-COL-001"
+      ]
+    }
+  ]
+}

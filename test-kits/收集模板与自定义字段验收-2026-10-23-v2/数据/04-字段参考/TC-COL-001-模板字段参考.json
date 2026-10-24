@@ -1,0 +1,38 @@
+{
+  "taskTitle": "供应商准入材料收集",
+  "materials": [
+    {
+      "name": "营业执照",
+      "required": true
+    },
+    {
+      "name": "签字合同",
+      "required": true
+    },
+    {
+      "name": "补充材料",
+      "required": false
+    }
+  ],
+  "fields": [
+    {
+      "label": "供应商类型",
+      "type": "select",
+      "options": [
+        "生产商",
+        "经销商"
+      ],
+      "required": true
+    },
+    {
+      "label": "联系人姓名",
+      "type": "text",
+      "required": true
+    },
+    {
+      "label": "资料日期",
+      "type": "date",
+      "required": false
+    }
+  ]
+}

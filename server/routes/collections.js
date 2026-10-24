@@ -29,6 +29,7 @@ import {
   enforceDownloadOrigin, ensureStoredFilesScanned, guestQuotaLimitBytes, isAllowedType,
   normalizeExpiryInput, publicSubmission, publishCollectionSubmission,
   reserveUploadCapacity, resolveCollectionSubmitter, sendDownloadFile, sendPreviewFile,
+  enterpriseOrganizationForUser,
   streamZip, validateCollection, validateEnterpriseSlug, prepareDirectUpload, resolveGuestKey,
 } from '../services/shares.js'
 import {
@@ -39,6 +40,7 @@ import QRCode from 'qrcode'
 import { integerInput, textInput } from '../lib/input-validation.js'
 import { relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
 import { collectionTypesInput } from '../services/shares.js'
+import { normalizeCollectionCustomFields, normalizeCollectionMaterials, validateCollectionSubmissionInput } from '../lib/collection-forms.js'
 
 function assertCollectionManager(task, req) {
   // Anonymous collections intentionally remain bearer-link managed. Once a
@@ -63,20 +65,21 @@ export function registerCollectionRoutes(app) {
       const ownerGuestKey = ownerSession?.user?.id ? '' : resolveGuestKey(req, res)
       const entitlement = personalEntitlements(ownerSession?.user?.id)
       assertActiveCollectionLimit(ownerSession?.user?.id, ownerGuestKey)
+      const source = req.body || {}
       // 与 applyCollectionUpdate 保持一致的服务端校验：
       // 标题/说明超长直接拒绝（400 + 可理解的错误信息，不再静默截断入库），
       // 单人大小限制必须为有限正数（此前负数/NaN 会被接受并创建出「永远无法提交」的废任务）。
-      const title = textInput(req.body.title, '任务名称', COLLECTION_TITLE_MAX)
+      const title = textInput(source.title, '任务名称', COLLECTION_TITLE_MAX)
       if (!title) return res.status(400).json({ message: '请填写任务名称' })
       if (title.length > COLLECTION_TITLE_MAX) return res.status(400).json({ message: `任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字` })
-      const maxFileSizeMbRaw = integerInput(req.body.maxFileSizeMb ?? 500,'单文件大小限制',1,Math.floor(entitlement.singleFileLimitBytes / 1024 ** 2))
+      const maxFileSizeMbRaw = integerInput(source.maxFileSizeMb ?? 500,'单文件大小限制',1,Math.floor(entitlement.singleFileLimitBytes / 1024 ** 2))
       if (!Number.isFinite(maxFileSizeMbRaw) || maxFileSizeMbRaw <= 0) return res.status(400).json({ message: '单人大小限制不正确' })
-      const descriptionRaw = textInput(req.body.description ?? '', '收集说明', COLLECTION_DESCRIPTION_MAX, {optional:true,multiline:true})
+      const descriptionRaw = textInput(source.description ?? '', '收集说明', COLLECTION_DESCRIPTION_MAX, {optional:true,multiline:true})
       if (descriptionRaw.length > COLLECTION_DESCRIPTION_MAX) return res.status(400).json({ message: `收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字` })
       const description = descriptionRaw || '请上传你负责的文件'
       const token = createToken(10)
       const manageToken = createToken(18)
-      const deadline = normalizeExpiryInput(req.body.deadline === undefined ? new Date(Date.now() + 7 * 86400000).toISOString() : req.body.deadline, '截止时间')
+      const deadline = normalizeExpiryInput(source.deadline === undefined ? new Date(Date.now() + 7 * 86400000).toISOString() : source.deadline, '截止时间')
       if (!deadline) return res.status(400).json({ message: '截止时间格式不正确' })
       if (new Date(deadline).getTime() <= Date.now()) return res.status(400).json({ message: '截止时间必须晚于当前时间' })
       const task = {
@@ -86,11 +89,14 @@ export function registerCollectionRoutes(app) {
         title,
         description,
         deadline,
-        allowedTypes: req.body.allowedTypes === undefined ? ['全部格式'] : collectionTypesInput(req.body.allowedTypes),
+        allowedTypes: source.allowedTypes === undefined ? ['全部格式'] : collectionTypesInput(source.allowedTypes),
+        materials: normalizeCollectionMaterials(source.materials),
+        customFields: normalizeCollectionCustomFields(source.customFields),
         maxFileSizeMb: Math.floor(maxFileSizeMbRaw),
         capacityBytes: ownerSession?.user?.id ? null : guestQuotaLimitBytes() || 1024 * 1024 * 1024,
         createdAt: new Date().toISOString(),
         ownerUserId: ownerSession?.user?.id || '',
+        brandingOrganizationId: enterpriseOrganizationForUser(ownerSession?.user?.id)?.id || '',
         ownerGuestKey,
         status: 'active',
         submissions: [],
@@ -147,6 +153,7 @@ export function registerCollectionRoutes(app) {
       if (!uploadedFiles.length) {
         return res.status(400).json({ message: '至少选择一个文件' })
       }
+      const submissionData = validateCollectionSubmissionInput(task, req.body.fieldValues, req.body.materialIds, req.body.fileMaterialIds, uploadedFiles.length)
       const relativePaths = relativePathsInput(req.body.relativePaths, uploadedFiles)
       uniqueFilePaths(uploadedFiles.map((file,index) => ({ relativePath:relativePaths[index] })))
       assertConfiguredUploadLimits(req, uploadedFiles)
@@ -168,7 +175,7 @@ export function registerCollectionRoutes(app) {
         const relativePath = safeRelativePath(relativePaths[index] || file.originalname)
         return { name: file.originalname, relativePath, tempPath: file.path, size: file.size, mimeType: file.mimetype || 'application/octet-stream', reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt }
       })
-      const submission = await publishCollectionSubmission(task, files, submitter, req, { guestKey })
+      const submission = await publishCollectionSubmission(task, files, { ...submitter, ...submissionData }, req, { guestKey })
       res.status(201).json({ submission: publicSubmission(submission) })
     } catch (error) {
       cleanupUploadedFiles(req.files)

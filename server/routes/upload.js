@@ -39,6 +39,7 @@ import {
 } from '../state.js'
 import { fileMetadataInput, relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
 import { integerInput, textInput } from '../lib/input-validation.js'
+import { validateCollectionSubmissionInput } from '../lib/collection-forms.js'
 
 export function registerUploadRoutes(app) {
   app.post('/api/upload-sessions', (req, res) => {
@@ -62,6 +63,7 @@ export function registerUploadRoutes(app) {
   let collectionTask = null
   let teamOrganization = null
   let collectionSubmitter = null
+  let collectionSubmissionData = { fieldValues: {}, materialIds: [] }
   if (req.body.mode === 'collection') {
     collectionTask = metadata.collections.find((item) => item.token === String(req.body.collectionToken || ''))
     if (!collectionTask) return res.status(404).json({ message: '收集任务不存在' })
@@ -70,6 +72,7 @@ export function registerUploadRoutes(app) {
     collectionSubmitter = resolveCollectionSubmitter(req, res)
     assertCollectionParticipant(collectionTask, collectionSubmitter)
     if (!collectionSubmitter.participantName) return res.status(400).json({ message: '请先登录，或填写提交人名称' })
+    collectionSubmissionData = validateCollectionSubmissionInput(collectionTask, req.body.fieldValues, req.body.materialIds, req.body.fileMaterialIds, normalizedFiles.length)
     const invalidCollectionFile = normalizedFiles.find((file) => file.size > collectionTask.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.name, collectionTask.allowedTypes))
     if (invalidCollectionFile) return res.status(413).json({ message: `${invalidCollectionFile.name} 不符合当前收集任务的文件限制` })
   }
@@ -117,6 +120,9 @@ export function registerUploadRoutes(app) {
     participantKey: collectionSubmitter?.participantKey || '',
     submitterUserId: collectionSubmitter?.submitterUserId || '',
     submitterName: collectionSubmitter?.submitterName || '',
+    fieldValues: collectionSubmissionData.fieldValues,
+    materialIds: collectionSubmissionData.materialIds,
+    fileMaterialIds: collectionSubmissionData.fileMaterialIds,
     relativePaths: paths,
     directory: sessionDirectory,
     createdAt: new Date().toISOString(),
@@ -339,7 +345,7 @@ async function completeUpload(req, session, mergedFiles) {
     assertCollectionFiles(task, mergedFiles)
     assertUploadCapacity(session, session.id)
     const participantName = textInput(session.participantName, '提交人名称', 40)
-    const submission = await publishCollectionSubmission(task, mergedFiles, { participantName, participantKey: session.participantKey, submitterUserId: session.submitterUserId, submitterName: session.submitterName }, req, { uploadSessionId: session.id, guestKey: session.guestKey })
+    const submission = await publishCollectionSubmission(task, mergedFiles, { participantName, participantKey: session.participantKey, submitterUserId: session.submitterUserId, submitterName: session.submitterName, fieldValues: session.fieldValues || {}, materialIds: session.materialIds || [], fileMaterialIds: session.fileMaterialIds || [] }, req, { uploadSessionId: session.id, guestKey: session.guestKey })
     return { submission: publicSubmission(submission) }
   }
   if (session.mode === 'team_resource') {

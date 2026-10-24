@@ -21,7 +21,7 @@ async function waitFor(condition, name) {
   for (let i = 0; i < 150; i++) { if (condition()) return; await delay(10) }
   assert.fail(name)
 }
-async function mount({ allowedTypes = ['全部格式'], maxFileSizeMb = 500 } = {}) {
+async function mount({ allowedTypes = ['全部格式'], maxFileSizeMb = 500, materials = [], customFields = [] } = {}) {
   const errors = [], requests = []
   const virtualConsole = new VirtualConsole()
   virtualConsole.on('jsdomError', (error) => errors.push(error))
@@ -35,7 +35,7 @@ async function mount({ allowedTypes = ['全部格式'], maxFileSizeMb = 500 } = 
     if (url === '/api/auth/me') payload = { user: null }
     else if (url === '/api/collections/picker-test') payload = { collection: {
       id: 'picker-test', token: 'picker-test', title: '文件夹收集测试', description: '请上传文件或文件夹',
-      deadline: new Date(Date.now() + 86400000).toISOString(), allowedTypes, maxFileSizeMb,
+      deadline: new Date(Date.now() + 86400000).toISOString(), allowedTypes, maxFileSizeMb, materials, customFields,
       status: 'active', publicUrl: 'http://fixture.local/collect/picker-test',
     } }
     else if (url === '/api/upload-sessions' && options.method === 'POST') {
@@ -91,6 +91,37 @@ await scenario('Folder selection', async (f) => {
   check('Upload manifest preserves nested paths', JSON.stringify(f.requests[0].files.map((item) => item.relativePath)) === JSON.stringify(['资料/甲/同名.txt', '资料/乙/同名.txt']))
   check('Collection upload also receives directory paths', JSON.stringify(f.requests[0].relativePaths) === JSON.stringify(['资料/甲/同名.txt', '资料/乙/同名.txt']))
 })
+await scenario('Materials and custom fields', async (f) => {
+  check('Required material and custom field are rendered', f.document.body.textContent.includes('营业执照') && f.document.body.textContent.includes('供应商类型'))
+  check('Submission is disabled until required field is filled', f.button('提交文件')?.disabled === true)
+  const select = f.document.querySelector('.collection-submit-custom-fields select')
+  select.value = '生产商'
+  select.dispatchEvent(new f.window.Event('change', { bubbles: true }))
+  const material = [...f.document.querySelectorAll('.collection-submit-choice input')].find((item) => item.parentElement.textContent.includes('营业执照'))
+  material.click()
+  await delay(20)
+  await f.choose([f.file('license.txt')])
+  check('Filling field and selecting material enables submission', f.button('提交文件')?.disabled === false)
+  await f.click('提交文件')
+  await waitFor(() => f.requests.length === 1, 'Collection uploader creates a manifest with form data')
+  check('Upload manifest preserves material and custom field answers', f.requests[0].materialIds?.includes('license') && f.requests[0].fieldValues?.type === '生产商')
+}, { materials: [{ id: 'license', name: '营业执照', required: true }, { id: 'extra', name: '补充材料', required: false }], customFields: [{ id: 'type', label: '供应商类型', type: 'select', required: true, options: ['生产商', '经销商'] }] })
+await scenario('Per-file naming mapping', async (f) => {
+  await f.choose([f.file('license.pdf')])
+  check('Naming preview is shown and submission waits for a material mapping', f.document.querySelector('.collection-file-naming')?.textContent.includes('张三_营业执照_license.pdf') === false && f.button('提交文件')?.disabled === true)
+  const mapping = f.document.querySelector('[aria-label="license.pdf对应材料"]')
+  check('Each named file has a material selector', Boolean(mapping))
+  mapping.value = 'license'
+  mapping.dispatchEvent(new f.window.Event('change', { bubbles: true }))
+  await delay(20)
+  check('Selecting a material previews the generated name and enables submit', f.document.querySelector('.collection-file-naming')?.textContent.includes('测试提交者_营业执照_license.pdf') && f.button('提交文件')?.disabled === false)
+  await f.click('提交文件')
+  await waitFor(() => f.requests.length === 1, 'Named collection creates its upload session')
+  check('Per-file material mapping is frozen in the upload session request', JSON.stringify(f.requests[0].fileMaterialIds) === JSON.stringify(['license']))
+}, { materials: [
+  { id: 'license', name: '营业执照', required: false, namingPattern: '{提交人}_{材料项}_{原文件名}' },
+  { id: 'other', name: '其他材料', required: false },
+] })
 await scenario('Selection editing', async (f) => {
   const first = f.file('a.txt'), second = f.file('b.txt')
   await f.choose([first])

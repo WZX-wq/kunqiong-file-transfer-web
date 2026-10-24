@@ -1,0 +1,20 @@
+{
+  "executedAt": "2026-10-24T03:07:47.767Z",
+  "environment": "Isolated localhost:18048 synthetic team",
+  "passed": [
+    "Real PNG chooser upload, preview and save",
+    "Associated public share brand rendered",
+    "Guest collection brand rendered and Logo decoded",
+    "Reset cancellation preserves brand",
+    "Confirmed reset removes public brand",
+    "Member cannot enter branding editor"
+  ],
+  "consoleErrors": [],
+  "viewportAttempt": {
+    "requestedWidth": 390,
+    "observedWidth": 1280,
+    "status": "not-verified",
+    "reason": "Viewport capability did not change actual page width; reset called"
+  },
+  "userAcceptance": "pending"
+}

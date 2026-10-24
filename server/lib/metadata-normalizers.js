@@ -28,6 +28,9 @@ import {
   runtime,
 } from '../state.js'
 
+import { normalizeCollectionCustomFields, normalizeCollectionMaterials } from './collection-forms.js'
+import { normalizeStoredTeamBranding } from './team-branding.js'
+
 export function normalizeMetadata(value = {}) {
   const shares = Array.isArray(value.shares) ? value.shares : []
   for (const share of shares) {
@@ -41,6 +44,18 @@ export function normalizeMetadata(value = {}) {
       runtime.metadataNeedsPersist = true
     }
   }
+  const distributions = Array.isArray(value.distributions) ? value.distributions.filter(item => item && typeof item === 'object' && item.id) : []
+  for (const distribution of distributions) {
+    distribution.id = String(distribution.id).slice(0, 120)
+    distribution.ownerUserId = String(distribution.ownerUserId || '').slice(0, 120)
+    distribution.idempotencyKey = String(distribution.idempotencyKey || '').slice(0, 200)
+    distribution.shareId = String(distribution.shareId || '').slice(0, 120)
+    distribution.status = 'published'
+    distribution.rows = Array.isArray(distribution.rows) ? distribution.rows.map(row => ({
+      key: String(row?.key || '').slice(0, 80), userId: String(row?.userId || '').slice(0, 120),
+      recipient: String(row?.recipient || '').slice(0, 160), fileName: String(row?.fileName || '').slice(0, 240),
+    })).filter(row => row.key && row.userId && row.fileName) : []
+  }
   const collections = Array.isArray(value.collections) ? value.collections : []
   for (const task of collections) {
     if (!task.manageToken) {
@@ -51,6 +66,18 @@ export function normalizeMetadata(value = {}) {
       task.submissions = []
       runtime.metadataNeedsPersist = true
     }
+    let normalizedMaterials = []
+    let normalizedFields = []
+    try { normalizedMaterials = normalizeCollectionMaterials(task.materials) } catch { runtime.metadataNeedsPersist = true }
+    try { normalizedFields = normalizeCollectionCustomFields(task.customFields) } catch { runtime.metadataNeedsPersist = true }
+    if (JSON.stringify(normalizedMaterials) !== JSON.stringify(task.materials || []) || JSON.stringify(normalizedFields) !== JSON.stringify(task.customFields || [])) runtime.metadataNeedsPersist = true
+    task.materials = normalizedMaterials
+    task.customFields = normalizedFields
+  }
+  const collectionTemplates = Array.isArray(value.collectionTemplates) ? value.collectionTemplates : []
+  for (const template of collectionTemplates) {
+    try { template.materials = normalizeCollectionMaterials(template.materials) } catch { template.materials = []; runtime.metadataNeedsPersist = true }
+    try { template.customFields = normalizeCollectionCustomFields(template.customFields) } catch { template.customFields = []; runtime.metadataNeedsPersist = true }
   }
   const systemConfig = normalizeSystemConfig(value.systemConfig)
   // Upgrade only the previous shipped guest defaults; retain custom admin values.
@@ -74,7 +101,9 @@ export function normalizeMetadata(value = {}) {
   return {
     ...value,
     shares,
+    distributions,
     collections,
+    collectionTemplates,
     sessions,
     records: normalizeAccountRecordStore(value.records),
     users,
@@ -207,6 +236,26 @@ export function normalizeAuditLog(item) {
   }
 }
 
+export function normalizeOwnershipHandovers(value) {
+  if (!Array.isArray(value)) return []
+  const statuses = new Set(['pending', 'accepted', 'declined', 'canceled', 'expired', 'invalidated'])
+  const seen = new Set()
+  return value.filter(item => item && typeof item === 'object').map(item => ({
+    id: trimRecordString(item.id, 80),
+    fromUserId: trimRecordString(item.fromUserId, 120), toUserId: trimRecordString(item.toUserId, 120),
+    toMemberId: trimRecordString(item.toMemberId, 80),
+    fromName: trimRecordString(item.fromName, 80) || '原所有者', toName: trimRecordString(item.toName, 80) || '接收者',
+    status: statuses.has(item.status) ? item.status : 'invalidated',
+    initiatedAt: normalizeRecordDate(item.initiatedAt), expiresAt: normalizeRecordDate(item.expiresAt),
+    resolvedAt: normalizeRecordDate(item.resolvedAt), resolvedByUserId: trimRecordString(item.resolvedByUserId, 120),
+    reason: trimRecordString(item.reason, 180),
+  })).filter(item => {
+    if (!item.id || !item.fromUserId || !item.toUserId || seen.has(item.id)) return false
+    seen.add(item.id)
+    return true
+  }).sort((a, b) => Date.parse(b.initiatedAt || 0) - Date.parse(a.initiatedAt || 0))
+}
+
 export function normalizeOrganizations(value = []) {
   const source = Array.isArray(value)
     ? Object.fromEntries(value.map((item) => [item?.id, item]))
@@ -243,6 +292,8 @@ export function normalizeOrganizations(value = []) {
       teamPlanStartedAt: normalizeRecordDate(item.teamPlanStartedAt),
       teamPlanExpiresAt: normalizeRecordDate(item.teamPlanExpiresAt),
       teamPlanPermanent: item.teamPlanPermanent ?? (!item.teamPlanExpiresAt && Boolean(ACCOUNT_PLANS[item.teamPlanId]?.permanent)),
+      ownershipHandovers: normalizeOwnershipHandovers(item.ownershipHandovers),
+      branding: normalizeStoredTeamBranding(item.branding),
       createdAt: normalizeRecordDate(item.createdAt) || new Date().toISOString(),
       updatedAt: normalizeRecordDate(item.updatedAt) || new Date().toISOString(),
       members,

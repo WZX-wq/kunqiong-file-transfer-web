@@ -56,8 +56,8 @@ async function mount() {
   }
   window.eval(code)
   const document = window.document
-  await waitFor(() => document.querySelector('.builder-form input'), 'Collection form renders')
-  const title = document.querySelector('.builder-form input')
+  await waitFor(() => document.querySelector('.builder-form > label input'), 'Collection form renders')
+  const title = document.querySelector('.builder-form > label input')
   Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(title, '截止日期验证')
   title.dispatchEvent(new window.Event('input', { bubbles: true }))
   await delay(20)
@@ -106,7 +106,7 @@ await scenario('Valid deadlines can still create', async (f) => {
   check('Viewing received files links to the standalone manager', f.document.querySelector('.collection-success .result-actions a[href="/collect/manage/fixture-manager"]') !== null)
   await f.click('返回创建')
   check('Saved collection history links to the standalone manager', f.document.querySelector('.collection-history-actions a[href="/collect/manage/fixture-manager"]') !== null)
-  const title = f.document.querySelector('.builder-form input')
+  const title = f.document.querySelector('.builder-form > label input')
   Object.getOwnPropertyDescriptor(f.window.HTMLInputElement.prototype, 'value').set.call(title, '未来任务')
   title.dispatchEvent(new f.window.Event('input', { bubbles: true }))
   await delay(20)

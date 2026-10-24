@@ -1,0 +1,41 @@
+.team-branding-description { margin: 8px 0 22px; color: #526174; font-size: 15px; line-height: 1.7; }
+.team-branding-status { padding: 5px 11px; border: 1px solid #dce6f4; border-radius: 7px; background: #f4f8ff; color: #2458aa; font-size: 13px; white-space: nowrap; }
+.team-branding-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 32px; }
+.team-branding-form { min-width: 0; }
+.team-branding-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.team-branding-form legend { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.team-branding-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0 8px; color: #17212f; font-size: 15px; font-weight: 600; }
+.team-branding-label > span { color: #657487; font-size: 12px; font-weight: 400; }
+.team-branding-logo-field .team-branding-label { margin-top: 0; }
+.team-branding-logo-row { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+.team-branding-logo-sample { padding: 0; border: 0; flex: 0 0 72px; background: transparent; }
+.team-branding-logo-sample .team-brand-logo { width: 72px; height: 72px; flex-basis: 72px; }
+.team-branding-logo-sample .team-brand-copy { display: none; }
+.team-branding-file-input { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+.team-branding-clear { display: flex; align-items: center; gap: 4px; padding: 8px 0 0; border: 0; background: transparent; color: #526174; font-size: 13px; cursor: pointer; }
+.team-branding-form input:not([type=file]), .team-branding-form textarea { width: 100%; box-sizing: border-box; border: 1px solid #ccd8e6; border-radius: 9px; padding: 11px 12px; background: #fff; color: #17212f; font: inherit; font-size: 15px; line-height: 1.5; transition: border-color .15s, box-shadow .15s; }
+.team-branding-form textarea { resize: vertical; min-height: 96px; }
+.team-branding-form input:focus, .team-branding-form textarea:focus { outline: 0; border-color: #2563eb; box-shadow: 0 0 0 3px #2563eb1a; }
+.team-branding-form small { display: block; margin-top: 6px; color: #58697d; font-size: 13px; line-height: 1.7; }
+.team-branding-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; }
+.team-branding-actions button { min-height: 42px; font-size: 15px; }
+.team-branding-preview { min-width: 0; padding: 20px; border: 1px solid #dfe7f1; border-radius: 14px; background: #f7f9fc; }
+.team-branding-preview-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.team-branding-preview-heading strong { display: flex; align-items: center; gap: 7px; font-size: 15px; color: #17212f; }
+.team-branding-preview-heading > span { color: #657487; font-size: 12px; }
+.team-branding-preview-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 16px; background: #eaf0f7; border-radius: 9px; }
+.team-branding-preview-tabs button { border: 0; border-radius: 6px; background: transparent; padding: 8px; color: #526174; font: inherit; font-size: 14px; cursor: pointer; transition: background .15s, color .15s, transform .15s; }
+.team-branding-preview-tabs button[aria-pressed=true] { background: #fff; color: #1759bd; box-shadow: 0 1px 3px #17212f0a; }
+.team-branding-preview-content { margin-top: 14px; padding: 24px 18px; border: 1px solid #e0e7f0; border-radius: 12px; background: #fff; text-align: center; }
+.team-branding-preview-icon { display: inline-grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; background: #eef4ff; color: #2563eb; }
+.team-branding-preview-content h3 { color: #17212f; font-size: 18px; margin: 12px 0 8px; }
+.team-branding-preview-content p { color: #526174; font-size: 14px; }
+.team-branding-preview-cta { display: inline-block; padding: 9px 24px; margin-top: 6px; border-radius: 8px; color: #fff; background: #2563eb; font-size: 14px; }
+.team-branding-public-note { margin: 14px 0 0; color: #58697d; font-size: 13px; line-height: 1.8; }
+.team-branding-conflict { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; color: #9b3131; font-size: 14px; }
+.team-branding-panel button { transition: background-color .15s, border-color .15s, transform .15s; }
+.team-branding-panel button:not(:disabled):hover { filter: brightness(.97); }
+.team-branding-panel button:not(:disabled):active { transform: scale(.98); }
+.team-branding-panel button:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
+@media (max-width: 760px) { .team-branding-grid { grid-template-columns: minmax(0, 1fr); gap: 24px; } .team-branding-preview { padding: 16px; } .team-branding-actions { position: sticky; bottom: 10px; padding: 10px 0; background: #fff; z-index: 1; } .team-branding-actions button { flex: 1; justify-content: center; } }
+@media (prefers-reduced-motion: reduce) { .team-branding-panel button, .team-branding-form input, .team-branding-form textarea { transition: none; } .team-branding-panel button:not(:disabled):active { transform: none; } }

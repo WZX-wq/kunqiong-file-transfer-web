@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "root": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\team-branding-2026-10-24",
+  "generated_at": "2026-10-24T02:51:09.389327+00:00",
+  "fixtures": [
+    {
+      "id": "F-PNG",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "F-WEBP",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "F-LIMIT",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "F-OVER",
+      "kind": "copy",
+      "file_count": 1
+    },
+    {
+      "id": "F-SVG",
+      "kind": "text",
+      "file_count": 1
+    },
+    {
+      "id": "F-BAD",
+      "kind": "copy",
+      "file_count": 1
+    }
+  ],
+  "files": [
+    {
+      "fixture_id": "F-PNG",
+      "path": "数据/Logo/BRAND-001-正常正方形Logo.png",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\team-branding-2026-10-24\\数据\\Logo\\BRAND-001-正常正方形Logo.png",
+      "bytes": 14709,
+      "sha256": "c0115c20a390514feacf2e0a32edb4c43e992dcc59b14c40096fc90ce683e193",
+      "case_ids": [
+        "BRAND-001"
+      ]
+    },
+    {
+      "fixture_id": "F-WEBP",
+      "path": "数据/Logo/BRAND-002-正常宽幅Logo.webp",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\team-branding-2026-10-24\\数据\\Logo\\BRAND-002-正常宽幅Logo.webp",
+      "bytes": 3164,
+      "sha256": "604791ce587b78913cba96eb2de20f2f4eef57fee58ea37f1a89cd0afbe9a95e",
+      "case_ids": [
+        "BRAND-002"
+      ]
+    },
+    {
+      "fixture_id": "F-LIMIT",
+      "path": "数据/Logo/BRAND-003-大小上限-409600字节.png",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\team-branding-2026-10-24\\数据\\Logo\\BRAND-003-大小上限-409600字节.png",
+      "bytes": 409600,
+      "sha256": "9a1e8bae43c21a0027cf4bf1d42b80bde211f47e412b2bd99ff9325c26b980b8",
+      "case_ids": [
+        "BRAND-003"
+      ]
+    },
+    {
+      "fixture_id": "F-OVER",
+      "path": "数据/Logo/BRAND-004-超限-409601字节.png",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\team-branding-2026-10-24\\数据\\Logo\\BRAND-004-超限-409601字节.png",
+      "bytes": 409601,
+      "sha256": "94dc60bd8f26a73e2a08d9704d1c5dbadb89659dd74013f631461d04fc89725c",
+      "case_ids": [
+        "BRAND-004"
+      ]
+    },
+    {
+      "fixture_id": "F-SVG",
+      "path": "数据/Logo/BRAND-005-不支持类型.svg",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\team-branding-2026-10-24\\数据\\Logo\\BRAND-005-不支持类型.svg",
+      "bytes": 237,
+      "sha256": "b9de9d8820385d9ee58164d26c1eb62132a13b785022521b040e15edf93ec200",
+      "case_ids": [
+        "BRAND-005"
+      ]
+    },
+    {
+      "fixture_id": "F-BAD",
+      "path": "数据/Logo/BRAND-006-损坏PNG.png",
+      "absolute_path": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\team-branding-2026-10-24\\数据\\Logo\\BRAND-006-损坏PNG.png",
+      "bytes": 35,
+      "sha256": "b6bff1842a7c74ce4a5ad178ac1128ec818ee56ce7ca11c20562de8be72c48b5",
+      "case_ids": [
+        "BRAND-006"
+      ]
+    }
+  ]
+}

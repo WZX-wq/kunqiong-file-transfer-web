@@ -1,0 +1,31 @@
+{
+  "included": [
+    "cases.json",
+    "manifest.json",
+    "文件路径索引.csv",
+    "测试用例.md",
+    "生成规格.json",
+    "数据/01-基础文件/TC-COL-002-必交材料-签字合同.docx",
+    "数据/01-基础文件/TC-COL-002-必交材料-营业执照.pdf",
+    "数据/02-选交与字段/TC-COL-003-联系人资料.csv",
+    "数据/02-选交与字段/TC-COL-003-选交材料-补充说明.txt",
+    "数据/03-缺件场景/TC-COL-006-缺失材料说明.txt",
+    "数据/04-字段参考/TC-COL-001-模板字段参考.json",
+    "数据/05-重复文件名/合同/同名文件.txt",
+    "数据/05-重复文件名/资料/同名文件.txt"
+  ],
+  "excluded": [],
+  "uncompressed_bytes": 136316,
+  "regenerate": [
+    "C:\\Users\\admin\\AppData\\Local\\Programs\\Python\\Python310\\python.exe",
+    "C:\\Users\\admin\\.codex\\skills\\generate-test-kit\\scripts\\build_test_kit.py",
+    "--spec",
+    "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23-v2\\生成规格.json",
+    "--out",
+    "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\test-kits\\收集模板与自定义字段验收-2026-10-23-v2-重新生成",
+    "--max-total-bytes",
+    "71142"
+  ],
+  "original_spec": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\_testkit_sources_20261023\\collection-spec.json",
+  "note": "绝对路径对应原生成机器；迁移后用原规格重新生成到新目录。排除文件没有进入轻量 ZIP。"
+}

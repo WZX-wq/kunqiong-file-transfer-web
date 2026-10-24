@@ -1,5 +1,6 @@
 import { assertCollectionParticipant, assertFileEntitlement, collectionFileLimitBytes, personalEntitlements, requestUploadLimitBytes } from './entitlements.js'
 import { keyedDigest } from '../lib/private-key.js'
+import { publicTeamBrand } from '../lib/team-branding.js'
 import { equalSecret, passwordDigest, passwordMatches, pruneAttempts } from '../lib/security-primitives.js'
 import { clientAddress, allowedOrigins } from '../lib/request-security.js'
 // 分享 / 上传会话域业务逻辑
@@ -48,6 +49,7 @@ import {
 } from '../services/account.js'
 
 import { normalizeUploadFileName } from '../lib/file-name.js'
+import { applyCollectionNaming } from '../lib/collection-naming.js'
 import { createScanCoordinator, scanFileBatch } from '../lib/scan-coordinator.js'
 
 import {
@@ -143,6 +145,9 @@ export function persistUploadSession(session) {
       participantKey: session.participantKey,
       submitterUserId: session.submitterUserId,
       submitterName: session.submitterName,
+      fieldValues: session.fieldValues || {},
+      materialIds: session.materialIds || [],
+      fileMaterialIds: session.fileMaterialIds || [],
       guestKey: session.guestKey || '',
       ownerUserId: session.ownerUserId || '',
       ownerGuestId: session.ownerGuestId || '',
@@ -298,7 +303,11 @@ export function enterpriseOrganizationForUser(userId) {
 }
 
 export function resourceEnterpriseOrganization(item) {
-  if (!item?.teamResource) return item?.ownerUserId ? enterpriseOrganizationForUser(item.ownerUserId) : null
+  if (!item?.teamResource) {
+    if (!Object.hasOwn(item || {}, 'brandingOrganizationId')) return item?.ownerUserId ? enterpriseOrganizationForUser(item.ownerUserId) : null
+    const organization = metadata.organizations?.[item.brandingOrganizationId]
+    return organization && enterpriseOrganizationForUser(item.ownerUserId)?.id === organization.id ? organization : null
+  }
   const organization = metadata.organizations?.[item.teamOrganizationId]
   return organization && accountOrganizationPlanForUser(organization.ownerUserId, organization).team ? organization : null
 }
@@ -328,7 +337,7 @@ export function publicShare(share, req, includeFiles = true, includeManage = fal
   const payload = {
     id: share.id,
     code: share.code,
-    files: includeFiles ? share.files.map(publicFile) : [],
+    files: includeFiles ? shareFilesForViewer(share, req).map(publicFile) : [],
     createdAt: share.createdAt,
     expiresAt: share.expiresAt,
     downloadLimit: share.downloadLimit,
@@ -338,6 +347,7 @@ export function publicShare(share, req, includeFiles = true, includeManage = fal
     downloadUrl: `${getOrigin(req)}/api/shares/${share.id}/download`,
     qrDataUrl: share.qrDataUrl,
     enterpriseUrl: organization ? `${getOrigin(req)}/e/${organization.slug}/share/${share.id}` : '',
+    branding: organization && (share.teamResource || req.query?.organization === organization.slug) ? publicTeamBrand(organization) : null,
     requiresPassword: Boolean(share.passwordHash),
     closeReason: share.closeReason || null,
     directed: Boolean(share.deliveryRecipients?.length),
@@ -353,6 +363,17 @@ export function publicShare(share, req, includeFiles = true, includeManage = fal
     payload.canReopen = Boolean(ownerPlanForReopen && (ownerPlanForReopen.permanent || (ownerPlanForReopen.id && ownerPlanForReopen.id !== 'free')))
   }
   return payload
+}
+
+// 普通分享保持原行为；定向分发在服务端按当前登录账号过滤逐文件映射。
+// 管理者（分享所有者）可以看到完整清单，未登录或其他账号不会得到任何分发文件。
+export function shareFilesForViewer(share, req) {
+  const files = Array.isArray(share?.files) ? share.files : []
+  if (!share?.distributionId) return files
+  const viewer = authSessionFromRequest(req)?.user
+  if (viewer?.id && viewer.id === share.ownerUserId) return files
+  if (!viewer?.id) return []
+  return files.filter(file => file.distributionRecipientUserId === viewer.id)
 }
 
 export function validateEnterpriseSlug(item, slug) {
@@ -1294,6 +1315,8 @@ export function publicSubmission(submission) {
     // 匿名/历史提交没有这段，管理端回落到 participantName。
     submitter: publicSubmissionSubmitter(submission),
     submittedAt: submission.submittedAt,
+    fieldValues: submission.fieldValues || {},
+    materialIds: submission.materialIds || [],
     files: submission.files.map(publicFile),
   }
 }
@@ -1345,7 +1368,13 @@ export async function publishUploadedFiles(tempFiles, directory, { attach, detac
       const destination = path.join(directory, storedName)
       fs.renameSync(file.tempPath, destination)
       moves.push({ source: file.tempPath, destination })
-      return { name: file.name, relativePath, storedName, size: Number(file.size || 0), mimeType: file.mimeType || 'application/octet-stream', reviewStatus: file.reviewStatus || 'unscanned', scanEngine: file.scanEngine || null, scannedAt: file.scannedAt || null }
+      return {
+        name: file.name, relativePath, storedName, size: Number(file.size || 0), mimeType: file.mimeType || 'application/octet-stream',
+        reviewStatus: file.reviewStatus || 'unscanned', scanEngine: file.scanEngine || null, scannedAt: file.scannedAt || null,
+        ...(file.originalName ? { originalName: file.originalName } : {}),
+        ...(file.originalRelativePath ? { originalRelativePath: file.originalRelativePath } : {}),
+        ...(file.materialId ? { materialId: file.materialId } : {}),
+      }
     })
     const resource = attach(files)
     attemptedCommit = true
@@ -1370,15 +1399,16 @@ export async function publishUploadedFiles(tempFiles, directory, { attach, detac
   }
 }
 
-export async function publishCollectionSubmission(task, tempFiles, submitter, req, { uploadSessionId = '', guestKey = '' } = {}) {
+export async function publishCollectionSubmission(task, tempFiles, submitter, req, { uploadSessionId = '', guestKey = '', fieldValues = submitter.fieldValues || {}, materialIds = submitter.materialIds || [] } = {}) {
   const id = createToken(12)
-  const submission = await publishUploadedFiles(tempFiles, path.join(collectionsRoot, task.id, id), {
+  const namedFiles = applyCollectionNaming(task, tempFiles, submitter.participantName, submitter.fileMaterialIds || [])
+  const submission = await publishUploadedFiles(namedFiles, path.join(collectionsRoot, task.id, id), {
     attach(files) {
       const access = validateCollection(task)
       if (!access.ok) throw httpError(access.status, access.message)
       assertCollectionFiles(task, files)
       assertCollectionParticipant(task, submitter)
-      const item = { id, participantKey: submitter.participantKey || '', ...(uploadSessionId ? { uploadSessionId } : {}), participantName: submitter.participantName, submitterUserId: submitter.submitterUserId || '', submitterName: submitter.submitterName || submitter.participantName, submittedAt: new Date().toISOString(), files }
+      const item = { id, participantKey: submitter.participantKey || '', ...(uploadSessionId ? { uploadSessionId } : {}), participantName: submitter.participantName, submitterUserId: submitter.submitterUserId || '', submitterName: submitter.submitterName || submitter.participantName, fieldValues, materialIds, submittedAt: new Date().toISOString(), files }
       task.submissions.push(item)
       return item
     },
@@ -1425,7 +1455,10 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
       ...(options.uploadSessionId ? { uploadSessionId: options.uploadSessionId } : {}),
       manageToken: createToken(18),
       code: reservedCode,
-      files,
+      files: files.map((file, index) => options.distributionRecipientUserIds?.[index]
+        ? { ...file, distributionRecipientUserId: String(options.distributionRecipientUserIds[index]) }
+        : file),
+      ...(options.distributionId ? { distributionId: String(options.distributionId) } : {}),
       createdAt: new Date().toISOString(),
       expiresAt: expiryDays === '0' ? null : new Date(Date.now() + Number(expiryDays) * 86400000).toISOString(),
       downloadLimit,
@@ -1439,11 +1472,19 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
       status: 'active',
       teamResource: Boolean(options.teamResource),
       teamOrganizationId: options.teamResource ? String(options.teamOrganizationId || '') : '',
+      brandingOrganizationId: options.teamResource ? String(options.teamOrganizationId || '') : enterpriseOrganizationForUser(ownerSession?.user?.id)?.id || '',
     }
       item.qrDataUrl = qrDataUrl
       metadata.shares.push(item)
+      if (options.distributionRecord?.id) {
+        metadata.distributions = Array.isArray(metadata.distributions) ? metadata.distributions : []
+        metadata.distributions.push({ ...options.distributionRecord, shareId: shareToken })
+      }
       return item
-    }, detach: () => { metadata.shares = metadata.shares.filter(item => item.id !== shareToken) },
+    }, detach: () => {
+      metadata.shares = metadata.shares.filter(item => item.id !== shareToken)
+      if (options.distributionRecord?.id) metadata.distributions = (metadata.distributions || []).filter(item => item.id !== options.distributionRecord.id)
+    },
     persisted: snapshot => snapshot.shares?.some(item => item.id === shareToken) })
     reservedShareCodes.delete(reservedCode)
     share.notificationLog = await notifyShareRecipients(share, req, ownerSession?.user)
@@ -1504,7 +1545,7 @@ export function sharePasswordInput(value) {
 }
 
 export function findShareByManageToken(manageToken) {
-  return metadata.shares.find((share) => share.manageToken === String(manageToken || ''))
+  return metadata.shares.find((share) => !share.deletedAt && share.manageToken === String(manageToken || ''))
 }
 
 export function applyShareUpdate(share, body = {}, ownerUser = null) {
@@ -1582,7 +1623,7 @@ export function normalizeExpiryInput(value, label) {
 }
 
 export function findShareByCode(code) {
-  return metadata.shares.find((share) => share.code.toLowerCase() === String(code).trim().toLowerCase())
+  return metadata.shares.find((share) => !share.deletedAt && share.code.toLowerCase() === String(code).trim().toLowerCase())
 }
 
 export function validateShare(share, password, { allowMissingPassword = false, hasAccessCookie = false, allowClosed = false } = {}) {

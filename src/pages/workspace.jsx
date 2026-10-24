@@ -14,11 +14,14 @@ import { cancelUploadSession, canPreviewFile, clearUploadResume, createCollectio
 import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronRight, Clock3, CloudUpload, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
 import { SettingsPage } from './settings.jsx'
 import { RecordsView } from './records.jsx'
+import { DistributionView } from './distribution.jsx'
 import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, ValueItem } from '../components/ui.jsx'
 import { ConfirmModal, ProductBrand, Toast } from '../components/common.jsx'
 import { getRecordOwner } from '../lib/records.js'
 import { RECIPIENT_TEXT_MAX, recipientInputError } from '../../server/lib/contact-input.js'
 import { limitInputText } from '../lib/input-limits.js'
+import { respondWorkspaceOwnershipHandover } from '../lib/records.js'
+import { COLLECTION_FILENAME_PATTERN_MAX } from '../lib/collection-naming.js'
 
 export const createDefaultCollectionForm = () => ({
   title: '',
@@ -26,7 +29,13 @@ export const createDefaultCollectionForm = () => ({
   deadline: defaultDeadline(10),
   allowedTypes: ['全部格式'],
   maxFileSizeMb: 500,
+      materials: [],
+  customFields: [],
 })
+
+function newCollectionFormItemId(prefix) {
+  return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`}`
+}
 
 export function normalizeMainView(value) {
   return MAIN_VIEWS.has(value) ? value : 'send'
@@ -79,6 +88,8 @@ export function WorkspaceApp() {
   const [authMenuOpen, setAuthMenuOpen] = useState(false)
   const [messageOpen, setMessageOpen] = useState(() => new URLSearchParams(window.location.search).get('panel') === 'messages')
   const [messages, setMessages] = useState([])
+  const handoverDecisionRef = useRef(false)
+  const [handoverDecisionId, setHandoverDecisionId] = useState('')
   const [footerContentKey, setFooterContentKey] = useState('')
   // 未登录传输配额：enabled=true 时展示剩余额度；null 表示已登录或接口不可用。
   const [guestQuota, setGuestQuota] = useState(null)
@@ -530,6 +541,27 @@ export function WorkspaceApp() {
       setToast(`邀请处理失败：${error.message}`)
       refreshMessages(authUser).catch(() => {})
     }
+  }
+
+  const respondToOwnershipHandover = async (message, decision) => {
+    if (!authUser?.id || !message?.actionId || handoverDecisionRef.current) return
+    handoverDecisionRef.current = true
+    try {
+      const confirmed = await requestConfirm({
+        eyebrow: '负责人交接', title: decision === 'accept' ? '接受团队负责人交接' : '拒绝团队负责人交接',
+        detail: decision === 'accept' ? '接受后你成为该团队所有者，原所有者变为普通成员。团队套餐与容量保留，既有文件和任务归属不变。确认接受吗？' : '拒绝后本次交接结束，团队所有者和成员权限保持原样。',
+        confirmText: decision === 'accept' ? '确认接受' : '确认拒绝', cancelText: '再想想', tone: 'danger',
+      })
+      if (!confirmed) return
+      setHandoverDecisionId(message.actionId)
+      const data = await respondWorkspaceOwnershipHandover(message.actionId, decision)
+      setMessages(normalizeMessages(data.messages || []))
+      await refreshAuthUser()
+      setToast(decision === 'accept' ? '交接已完成，你现在是团队所有者' : '已拒绝负责人交接', 'success')
+    } catch (error) {
+      setToast(`交接处理失败：${error.message}`)
+      await refreshMessages(authUser).catch(() => {})
+    } finally { handoverDecisionRef.current = false; setHandoverDecisionId('') }
   }
 
   const clearAllMessages = async () => {
@@ -986,11 +1018,12 @@ export function WorkspaceApp() {
         <nav className="main-nav" aria-label="主导航">
           <NavItem icon={Send} label="发文件" active={!isSettingsRoute && activeView === 'send'} onClick={() => navigateMainView('send')} />
           <NavItem icon={Inbox} label="收集文件" active={!isSettingsRoute && activeView === 'collect'} onClick={() => navigateMainView('collect')} />
+          <NavItem icon={Send} label="定向分发" active={!isSettingsRoute && activeView === 'deliver'} onClick={() => navigateMainView('deliver')} />
           <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
           <NavItem icon={Building2} label="会员与团队" active={false} onClick={() => { window.location.href = '/workspace' }} />
         </nav>
         <div className="topbar-actions">
-          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); changeMessagePanel(!messageOpen) }} onClose={() => changeMessagePanel(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} onNotify={setToast} />
+          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); changeMessagePanel(!messageOpen) }} onClose={() => changeMessagePanel(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} onHandoverAction={respondToOwnershipHandover} handoverDecisionId={handoverDecisionId} onNotify={setToast} />
           {/* 后台入口不再按账号身份显示（白名单通道已移除，后台只认账号口令）。
               需要直接进后台时访问 /admin，未登录会弹出管理员账号密码弹窗。 */}
           <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); changeMessagePanel(false); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onOrders={() => navigateSettingsSection('/settings/orders')} onLogout={logout} />
@@ -1052,6 +1085,7 @@ export function WorkspaceApp() {
             onRefreshRecords={refreshRecords}
           />
         )}
+        {!isSettingsRoute && activeView === 'deliver' && <DistributionView user={authUser} onLogin={startLogin} onNotify={setToast} />}
         {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onUpload={() => navigateMainView('send')} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} onSaveShareExpiry={saveShareExpiry} onNotify={setToast} />}
       </main>
 
@@ -1469,9 +1503,40 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
                   <span className="builder-label"><span>收集说明</span><small className={form.description.length >= COLLECTION_DESCRIPTION_MAX ? 'field-count at-limit' : 'field-count'}>{form.description.length}/{COLLECTION_DESCRIPTION_MAX}</small></span>
                   <textarea value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={COLLECTION_DESCRIPTION_MAX} placeholder="例如：请上传你负责的图片、文档或视频素材" rows={4} />
                 </label>
-                <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} min={formatDateInput(new Date())} ariaLabel="截止时间" /></label>
+                <div className="collection-inline-fields">
+                  <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} min={formatDateInput(new Date())} ariaLabel="截止时间" /></label>
+                  <label>单文件大小限制<select value={Math.min(form.maxFileSizeMb, collectionMaxMb)} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}>{collectionSizeOptions(collectionMaxMb, form.maxFileSizeMb).map(size => <option key={size} value={size}>{formatBytes(size * 1024 ** 2)}</option>)}</select></label>
+                </div>
                 <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
-                <label>单文件大小限制<select value={Math.min(form.maxFileSizeMb, collectionMaxMb)} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}>{collectionSizeOptions(collectionMaxMb, form.maxFileSizeMb).map(size => <option key={size} value={size}>{formatBytes(size * 1024 ** 2)}</option>)}</select></label>
+                <div className="collection-builder-groups">
+                  <section className={`collection-builder-section ${form.materials.length ? 'has-items' : ''}`} aria-labelledby="collection-materials-heading">
+                    <div className="collection-builder-section-heading"><div><strong id="collection-materials-heading">材料清单</strong><small>标记必交项；命名格式支持 {'{提交人}'}、{'{材料项}'}、{'{原文件名}'}</small></div><button type="button" className="secondary-button" disabled={form.materials.length >= 30} onClick={() => update('materials', [...form.materials, { id: newCollectionFormItemId('mat'), name: '', required: true }])}><span>添加材料</span></button></div>
+                    {form.materials.length ? form.materials.map((material, index) => <div className="collection-rule-row" key={material.id}>
+                      <input aria-label={`材料名称 ${index + 1}`} value={material.name} maxLength={40} onChange={(event) => update('materials', form.materials.map((item) => item.id === material.id ? { ...item, name: event.target.value } : item))} placeholder="例如：营业执照" />
+                      <label className="collection-rule-required"><input type="checkbox" checked={material.required} onChange={(event) => update('materials', form.materials.map((item) => item.id === material.id ? { ...item, required: event.target.checked } : item))} />必交</label>
+                      <button type="button" className="ghost-icon" aria-label={`删除材料 ${index + 1}`} title="删除材料" onClick={() => update('materials', form.materials.filter((item) => item.id !== material.id))}><Trash2 size={15} /></button>
+                      <label className="collection-material-naming-field">
+                        <span>命名格式（可选）</span>
+                        <input className="collection-material-naming" aria-label={`${material.name || `材料 ${index + 1}`}命名格式`} value={material.namingPattern || ''} maxLength={COLLECTION_FILENAME_PATTERN_MAX} onChange={(event) => update('materials', form.materials.map((item) => item.id === material.id ? { ...item, namingPattern: event.target.value } : item))} placeholder="例如：{提交人}_{材料项}_{原文件名}" />
+                        <small className="collection-material-naming-preview">当前规则：<code>{material.namingPattern || '未设置，提交时使用原文件名'}</code></small>
+                      </label>
+                    </div>) : <p className="collection-builder-empty">未设置时可直接上传任意文件</p>}
+                  </section>
+                  <section className={`collection-builder-section ${form.customFields.length ? 'has-items' : ''}`} aria-labelledby="collection-fields-heading">
+                    <div className="collection-builder-section-heading"><div><strong id="collection-fields-heading">自定义字段</strong><small>设置提交人需补充填写的信息，支持文本、下拉和日期，最多 20 项</small></div><button type="button" className="secondary-button" disabled={form.customFields.length >= 20} onClick={() => update('customFields', [...form.customFields, { id: newCollectionFormItemId('field'), label: '', type: 'text', required: false }])}><span>添加字段</span></button></div>
+                    {form.customFields.length ? form.customFields.map((field, index) => <div className="collection-field-editor" key={field.id}>
+                      <div className="collection-field-editor-main">
+                        <input aria-label={`字段名称 ${index + 1}`} value={field.label} maxLength={40} onChange={(event) => update('customFields', form.customFields.map((item) => item.id === field.id ? { ...item, label: event.target.value } : item))} placeholder="字段名称，例如：供应商类型" />
+                        <div className="collection-field-controls">
+                          <select aria-label={`字段类型 ${index + 1}`} value={field.type} onChange={(event) => update('customFields', form.customFields.map((item) => item.id === field.id ? { ...item, type: event.target.value, ...(event.target.value === 'select' ? { options: item.options?.length >= 2 ? item.options : ['选项一', '选项二'] } : {}) } : item))}><option value="text">文本填写</option><option value="select">下拉选择</option><option value="date">日期选择</option></select>
+                          <label className="collection-rule-required"><input type="checkbox" checked={field.required} onChange={(event) => update('customFields', form.customFields.map((item) => item.id === field.id ? { ...item, required: event.target.checked } : item))} />必填</label>
+                          <button type="button" className="secondary-button collection-field-delete" aria-label={`删除字段 ${index + 1}`} onClick={() => update('customFields', form.customFields.filter((item) => item.id !== field.id))}><Trash2 size={16} /><span>删除</span></button>
+                        </div>
+                      </div>
+                      {field.type === 'select' && <input className="collection-field-options" aria-label={`${field.label || `字段 ${index + 1}`}下拉选项`} value={(field.options || []).join(', ')} onChange={(event) => update('customFields', form.customFields.map((item) => item.id === field.id ? { ...item, options: event.target.value.split(',').map((option) => option.trim()).filter(Boolean) } : item))} placeholder="选项之间用逗号分隔，例如：生产商, 经销商" />}
+                    </div>) : <p className="collection-builder-empty">未添加时只需选择材料并上传文件</p>}
+                  </section>
+                </div>
                 <p className="admin-plan-help">每个任务最多 {(entitlement?.collectionParticipantLimit ?? 10) || '不限'} 人提交 · 同时进行 {(entitlement?.activeCollectionLimit ?? 1) || '不限'} 个任务</p>
                 <button className="primary-button wide" onClick={() => onCreate({ ...form, maxFileSizeMb: Math.min(form.maxFileSizeMb, collectionMaxMb) })}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
               </div>
@@ -1601,6 +1666,10 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
           )}
         </div>
       </div>
+      {(data.materials?.length > 0 || data.customFields?.length > 0) && <div className="collection-manager-rules">
+        {data.materials?.length > 0 && <div><strong>材料清单</strong><span>{data.materials.map((material) => `${material.name}${material.required ? '（必交）' : '（选交）'}${material.namingPattern ? ` · 命名：${material.namingPattern}` : ''}`).join('、')}</span></div>}
+        {data.customFields?.length > 0 && <div><strong>自定义字段</strong><span>{data.customFields.map((field) => `${field.label}${field.required ? '（必填）' : ''}`).join('、')}</span></div>}
+      </div>}
       {data.submissions.length > 0 && <button className="primary-button wide collection-download-all" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
       <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
       {data.submissions.length ? (
@@ -1623,7 +1692,11 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
                   <button className="submission-delete-button" onClick={() => onDeleteSubmission(data, submission.id)}><Trash2 size={14} /> 删除提交</button>
                 </div>
               </div>
-              <div className="submission-files" role="region" aria-label={`${submission.participantName}的文件列表`} tabIndex={0}>{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><PrototypeFileIcon name={file.name} size={20} fallback={FileText} /><span>{file.name}</span><small>{formatBytes(file.size)}</small>{canPreviewFile(file) && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}<button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><Download size={15} /></button></div>)}</div>
+              <div className="submission-files" role="region" aria-label={`${submission.participantName}的文件列表`} tabIndex={0}>{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><PrototypeFileIcon name={file.name} size={20} fallback={FileText} /><span title={file.name}>{file.name}{file.originalName && file.originalName !== file.name && <small className="submission-original-name">原文件名：{file.originalName}</small>}</span><small>{formatBytes(file.size)}</small>{canPreviewFile(file) && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}<button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><Download size={15} /></button></div>)}</div>
+              {(data.materials?.length > 0 || data.customFields?.length > 0) && <div className="submission-form-values">
+                {data.materials?.length > 0 && <div className="submission-value-group"><strong>本次材料</strong><span>{(submission.materialIds || []).map((id) => data.materials.find((material) => material.id === id)?.name || id).join('、') || '未标记'}</span>{submission.missingMaterialIds?.length > 0 && <em>缺少必交：{submission.missingMaterialIds.map((id) => data.materials.find((material) => material.id === id)?.name || id).join('、')}</em>}</div>}
+                {data.customFields?.map((field) => <div className="submission-value-group" key={field.id}><strong>{field.label}</strong><span>{submission.fieldValues?.[field.id] || '未填写'}</span></div>)}
+              </div>}
             </div>
           ))}
         </div>
@@ -1765,7 +1838,7 @@ export function settingsSectionForPath(pathname = '') {
 
 export function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
 
-export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin, onInvitationAction, onNotify }) {
+export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin, onInvitationAction, onHandoverAction, handoverDecisionId, onNotify }) {
   const { toast, notify: localNotify } = useToast()
   const notify = onNotify || localNotify
   const unreadCount = messages.filter((message) => message.unread).length
@@ -1812,8 +1885,13 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
 
   useEffect(() => {
     if (!open) return undefined
-    window.addEventListener('click', onClose)
-    return () => window.removeEventListener('click', onClose)
+    const closeOnOutsideClick = (event) => {
+      // 授权确认弹窗属于消息待办流程；点击确认/再想想不应收起底层消息面板。
+      if (event.target?.closest?.('.confirm-backdrop')) return
+      onClose?.()
+    }
+    window.addEventListener('click', closeOnOutsideClick)
+    return () => window.removeEventListener('click', closeOnOutsideClick)
   }, [open, onClose])
 
   return (
@@ -1855,6 +1933,8 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
                     </div>
                   )}
                   {message.actionType === 'workspace_invite' && <div className="message-invite-actions"><button type="button" className="secondary-button" onClick={() => onInvitationAction?.(message, 'decline')}><UserX size={15} /> 拒绝</button><button type="button" className="primary-button" onClick={() => onInvitationAction?.(message, 'accept')}><UserCheck size={15} /> 接受加入</button></div>}
+                  {message.actionType === 'workspace_ownership_handover' && <div className="message-invite-actions message-handover-actions" aria-busy={Boolean(handoverDecisionId)}><button type="button" className="secondary-button" disabled={Boolean(handoverDecisionId)} onClick={() => onHandoverAction?.(message, 'decline')}><UserX size={15} /> 拒绝交接</button><button type="button" className="primary-button" disabled={Boolean(handoverDecisionId)} onClick={() => onHandoverAction?.(message, 'accept')}><UserCheck size={15} /> {handoverDecisionId === message.actionId ? '处理中…' : '接受交接'}</button></div>}
+                  {(message.actionType || '').startsWith('workspace_ownership_handover') && message.actionUrl && <div className="message-invite-actions message-handover-actions"><button type="button" className="secondary-button" onClick={() => openMessageAction(message)}><ArrowRight size={14} /> 查看交接</button></div>}
                   <button className="message-item-delete" aria-label={`删除消息：${message.title}`} title="删除消息" onClick={(event) => { event.stopPropagation(); onDelete(message) }}><Trash2 size={14} /></button>
                 </div>
                 )

@@ -18,12 +18,13 @@ import {
   accountUserById, authSessionFromRequest, currentCollectionStatus, displayAccountName, fileListSize, getOrigin
 } from '../services/account.js'
 import {
-  collectionCapacityBytes, enterpriseOrganizationForUser, collectionTypesInput,
+  collectionCapacityBytes, resourceEnterpriseOrganization, collectionTypesInput,
   normalizeExpiryInput, publicSubmission, zipEntryPath
 } from '../services/shares.js'
 import { integerInput, objectInput, textInput } from '../lib/input-validation.js'
 import path from 'node:path'
 import QRCode from 'qrcode'
+import { publicTeamBrand } from '../lib/team-branding.js'
 
 // 收集人展示名：公开提交页要写「收集人「xxx」已收到」，只暴露昵称/用户名，不暴露邮箱手机号。
 export function collectionOwnerName(task = {}) {
@@ -45,7 +46,7 @@ export function collectionClosedMeta(task = {}) {
 }
 
 export function publicCollection(task, req, includeManage = false) {
-  const organization = task.ownerUserId ? enterpriseOrganizationForUser(task.ownerUserId) : null
+  const organization = resourceEnterpriseOrganization(task)
   const status = currentCollectionStatus(task)
   const payload = {
     id: task.id,
@@ -55,6 +56,8 @@ export function publicCollection(task, req, includeManage = false) {
     ownerName: collectionOwnerName(task),
     deadline: task.deadline,
     allowedTypes: task.allowedTypes,
+    materials: Array.isArray(task.materials) ? task.materials : [],
+    customFields: Array.isArray(task.customFields) ? task.customFields : [],
     maxFileSizeMb: Math.min(collectionFileLimitBytes(task), includeManage ? Infinity : personalEntitlements(authSessionFromRequest(req)?.user?.id).singleFileLimitBytes) / 1024 ** 2,
     maxConfigurableFileSizeMb: Math.floor(personalEntitlements(task.ownerUserId).singleFileLimitBytes / 1024 ** 2),
     participantLimit: personalEntitlements(task.ownerUserId).collectionParticipantLimit,
@@ -66,6 +69,7 @@ export function publicCollection(task, req, includeManage = false) {
     publicUrl: `${getOrigin(req)}/collect/${task.token}`,
     qrDataUrl: task.qrDataUrl,
     enterpriseUrl: organization ? `${getOrigin(req)}/e/${organization.slug}/collect/${task.token}` : '',
+    branding: organization && req.query?.organization === organization.slug ? publicTeamBrand(organization) : null,
   }
   if (includeManage) {
     payload.manageToken = task.manageToken
@@ -81,9 +85,32 @@ export async function ensureCollectionQrDataUrl(task, req) {
 }
 
 export function managerCollection(task, req) {
+  const submissions = task.submissions.map(publicSubmission)
+  const requiredMaterialIds = (task.materials || []).filter((material) => material.required).map((material) => material.id)
+  const materialGroups = new Map()
+  for (const submission of task.submissions) {
+    const key = submission.submitterUserId
+      ? `user:${submission.submitterUserId}`
+      : submission.participantKey
+        ? `participant:${submission.participantKey}`
+        : `submission:${submission.id}`
+    const submitted = materialGroups.get(key) || new Set()
+    for (const id of submission.materialIds || []) submitted.add(id)
+    materialGroups.set(key, submitted)
+  }
+  const missingBySubmission = new Map()
+  for (const submission of task.submissions) {
+    const key = submission.submitterUserId
+      ? `user:${submission.submitterUserId}`
+      : submission.participantKey
+        ? `participant:${submission.participantKey}`
+        : `submission:${submission.id}`
+    const submitted = materialGroups.get(key) || new Set()
+    missingBySubmission.set(submission.id, requiredMaterialIds.filter((id) => !submitted.has(id)))
+  }
   return {
     ...publicCollection(task, req, true),
-    submissions: task.submissions.map(publicSubmission),
+    submissions: submissions.map((submission) => ({ ...submission, missingMaterialIds: missingBySubmission.get(submission.id) || [] })),
     downloadUrl: `${getOrigin(req)}/api/collections/manage/${task.manageToken}/download`,
   }
 }

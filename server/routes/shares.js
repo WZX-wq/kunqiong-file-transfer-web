@@ -23,7 +23,7 @@ import {
   enforceDownloadOrigin, ensureStoredFilesScanned, findShareByCode, findShareByManageToken,
   prepareDirectUpload, publicShare, readShareOptions, registerShareDownload, reserveUploadCapacity,
   sendDownloadFile, sendPreviewFile, setShareAccessCookie, shareLookupRateLimited, streamZip,
-  validateEnterpriseSlug, validateShareRequest, validateTeamShareManager
+  validateEnterpriseSlug, validateShareRequest, validateTeamShareManager, shareFilesForViewer
 } from '../services/shares.js'
 import {
   uploadReservations
@@ -105,7 +105,9 @@ export function registerShareAccessRoutes(app) {
       const access = validateManagedFileAccess(share, req)
       if (!access.ok) return res.status(access.status).json({ message: access.message })
       enforceDownloadOrigin(req)
-      await ensureStoredFilesScanned(share.files, path.join(filesRoot, share.id))
+      const visibleFiles = shareFilesForViewer(share, req)
+      if (!visibleFiles.length) return res.status(403).json({ message: '当前账号没有可领取的文件' })
+      await ensureStoredFilesScanned(visibleFiles, path.join(filesRoot, share.id))
       // 扫描期间可能删除资源、移除成员、撤销角色或使会话失效，发送前重新校验。
       if (findShareByManageToken(req.params.manageToken) !== share) return res.status(404).json({ message: '分享管理链接不存在' })
       const currentAccess = validateManagedFileAccess(share, req)
@@ -114,11 +116,11 @@ export function registerShareAccessRoutes(app) {
         if (req.method === 'HEAD') setShareAccessCookie(res, req, share)
         registerShareDownload(share, res)
       }
-      if (share.files.length === 1) {
-        const file = share.files[0]
+      if (visibleFiles.length === 1) {
+        const file = visibleFiles[0]
         return sendDownloadFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
       }
-      await streamZip(res, next, '鲲穹文件包.zip', share.files.map(file => ({ path: path.join(filesRoot, share.id, file.storedName), name: file.relativePath || file.name, size: file.size })))
+      await streamZip(res, next, '鲲穹文件包.zip', visibleFiles.map(file => ({ path: path.join(filesRoot, share.id, file.storedName), name: file.relativePath || file.name, size: file.size })))
     } catch (error) { next(error) }
   })
   // 管理文件与公开提取使用不同入口；账号文件仍需本人登录，游客使用管理令牌。
@@ -130,7 +132,7 @@ export function registerShareAccessRoutes(app) {
         const access = validateManagedFileAccess(share, req)
         if (!access.ok) return res.status(access.status).json({ message: access.message })
         enforceDownloadOrigin(req)
-        const file = share.files[Number(req.params.fileIndex)]
+        const file = shareFilesForViewer(share, req)[Number(req.params.fileIndex)]
         if (!file) return res.status(404).json({ message: '文件不存在' })
         await ensureStoredFilesScanned([file], path.join(filesRoot, share.id))
         if (findShareByManageToken(req.params.manageToken) !== share) return res.status(404).json({ message: '分享管理链接不存在' })
@@ -172,6 +174,7 @@ app.get('/api/shares/lookup/:code', (req, res) => {
   if (shareLookupRateLimited(req)) return res.status(429).json({ message: '查询过于频繁，请稍后再试' })
   const share = findShareByCode(req.params.code)
   if (!share) return res.status(404).json({ message: '取件码不存在或已失效' })
+  if (!validateEnterpriseSlug(share, req.query.organization)) return res.status(404).json({ message: '企业专属链接无效' })
   const access = validateShareRequest(share, req, { allowMissingPassword: true, allowOwner: true })
   if (!access.ok) return res.status(access.status).json(shareGonePayload(share, access))
   if (share.passwordHash) return res.json({ share: publicShare(share, req, false), requiresPassword: true })
@@ -181,13 +184,14 @@ app.get('/api/shares/lookup/:code', (req, res) => {
   if (shareLookupRateLimited(req)) return res.status(429).json({ message: '查询过于频繁，请稍后再试' })
   const share = findShareByCode(req.params.code)
   if (!share) return res.status(404).json({ message: '取件码不存在或已失效' })
+  if (!validateEnterpriseSlug(share, req.query.organization)) return res.status(404).json({ message: '企业专属链接无效' })
   const access = validateShareRequest(share, req, { password: req.body.password, allowOwner: true })
   if (!access.ok) return res.status(access.status).json(shareGonePayload(share, access))
   setShareAccessCookie(res, req, share)
   res.json({ share: publicShare(share, req, true), requiresPassword: false })
 })
   app.get('/api/shares/token/:token', (req, res) => {
-  const share = metadata.shares.find((item) => item.id === req.params.token)
+  const share = metadata.shares.find((item) => !item.deletedAt && item.id === req.params.token)
   if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
   if (!validateEnterpriseSlug(share, req.query.organization)) return res.status(404).json({ message: '企业专属链接无效' })
   const access = validateShareRequest(share, req, { allowMissingPassword: true, allowOwner: true })
@@ -233,24 +237,26 @@ app.get('/api/shares/lookup/:code', (req, res) => {
 })
   app.get('/api/shares/:token/download', async (req, res, next) => {
   try {
-    const share = metadata.shares.find((item) => item.id === req.params.token)
+    const share = metadata.shares.find((item) => !item.deletedAt && item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
     enforceDownloadOrigin(req)
     const access = validateShareRequest(share, req, { allowOwner: true })
     if (!access.ok) return res.status(access.status).json({ message: access.message })
-    await ensureStoredFilesScanned(share.files, path.join(filesRoot, share.id))
+    const visibleFiles = shareFilesForViewer(share, req)
+    if (!visibleFiles.length) return res.status(403).json({ message: '当前账号没有可领取的文件' })
+    await ensureStoredFilesScanned(visibleFiles, path.join(filesRoot, share.id))
     if (!metadata.shares.includes(share)) return res.status(404).json({ message: '分享不存在或已失效' })
     const currentAccess = validateShareRequest(share, req, { allowOwner: true })
     if (!currentAccess.ok) return res.status(currentAccess.status).json({ message: currentAccess.message })
     if (req.method === 'HEAD') setShareAccessCookie(res, req, share)
     registerShareDownload(share, res)
     const shareDirectory = path.join(filesRoot, share.id)
-    if (share.files.length === 1) {
-      const file = share.files[0]
+    if (visibleFiles.length === 1) {
+      const file = visibleFiles[0]
       sendDownloadFile(req, res, next, path.join(shareDirectory, file.storedName), file)
       return
     }
-    await streamZip(res, next, '鲲穹文件包.zip', share.files.map((file) => ({
+    await streamZip(res, next, '鲲穹文件包.zip', visibleFiles.map((file) => ({
       path: path.join(shareDirectory, file.storedName),
       name: file.relativePath,
       size: file.size,
@@ -261,12 +267,12 @@ app.get('/api/shares/lookup/:code', (req, res) => {
 })
   app.get('/api/shares/:token/files/:fileIndex/download', async (req, res, next) => {
   try {
-    const share = metadata.shares.find((item) => item.id === req.params.token)
+    const share = metadata.shares.find((item) => !item.deletedAt && item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
     enforceDownloadOrigin(req)
     const access = validateShareRequest(share, req, { allowOwner: true })
     if (!access.ok) return res.status(access.status).json({ message: access.message })
-    const file = share.files[Number(req.params.fileIndex)]
+    const file = shareFilesForViewer(share, req)[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
     await ensureStoredFilesScanned([file], path.join(filesRoot, share.id))
     if (!metadata.shares.includes(share)) return res.status(404).json({ message: '分享不存在或已失效' })
@@ -281,12 +287,12 @@ app.get('/api/shares/lookup/:code', (req, res) => {
 })
   app.get('/api/shares/:token/files/:fileIndex/preview', async (req, res, next) => {
   try {
-    const share = metadata.shares.find((item) => item.id === req.params.token)
+    const share = metadata.shares.find((item) => !item.deletedAt && item.id === req.params.token)
     if (!share) return res.status(404).json({ message: '分享不存在或已失效' })
     enforceDownloadOrigin(req)
     const access = validateShareRequest(share, req, { allowOwner: true })
     if (!access.ok) return res.status(access.status).json({ message: access.message })
-    const file = share.files[Number(req.params.fileIndex)]
+    const file = shareFilesForViewer(share, req)[Number(req.params.fileIndex)]
     if (!file) return res.status(404).json({ message: '文件不存在' })
     await ensureStoredFilesScanned([file], path.join(filesRoot, share.id))
     if (!metadata.shares.includes(share)) return res.status(404).json({ message: '分享不存在或已失效' })
