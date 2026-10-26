@@ -91,11 +91,12 @@ None.
 | 2026-10-24 10:00 | T1 | plan and existing workspace/team/invitation code | Reconciled inherited empty template; fixed scope, API design and acceptance gates | main |
 
 | 2026-10-24 10:20 | T2 | server/services/ownership-handover.js; workspace routes; normalizers; account payload | Added pending/terminal state, role validation, mandatory messages, idempotent decisions and audit history | main |
-| 2026-10-24 10:25 | T3 | team page; team-handover component; workspace messages; records helper; app-team.css | Added dedicated tab, confirmation actions, status banner, paged history and responsive styling | main |
+| 2026-10-24 10:25 | T3 | team page; team-handover component; workspace messages; records helper; app-team.css | Added confirmation actions, status banner, paged history and responsive styling | main |
 
 | 2026-10-24 10:05 | T4 | API and UI verification scripts; package.json | Added 67 handover API checks, 19 message checks, team-page handover cases; adapted immediate-transfer regression | main |
 | 2026-10-24 10:10 | T5 | serve-team-handover-demo.mjs; docs/阶段二-企业负责人交接-验收说明.md | Added isolated synthetic browser demo and human acceptance procedure; final browser pass in progress | main |
 | 2026-10-24 10:17 | T5 | Team responsive layout; docs/verification/team-handover; acceptance guide | Removed redundant KPI cards from handover tab; verified 390px/1280px layouts and both roles in actual browser; saved proof and restarted clean synthetic demo | main |
+| 2026-10-26 14:35 | T3/T5 | team page; ownership-handover service; acceptance guide; UI tests | Removed the standalone handover tab; integrated pending decisions and history into team member management, showed recipients' actions on their member page, routed new/legacy links accordingly, and refreshed acceptance steps | main |
 
 ## Verification Evidence
 | Time | Command | Result | Notes (regression vs. pre-existing) |
@@ -112,6 +113,8 @@ None.
 | 2026-10-24 10:10 | npx vite build | PASS | TEMP/kunqiong-handover-release-build.log; existing chunk-size warning only |
 | 2026-10-24 10:15 | CUA actual browser on isolated localhost demo | PASS | 390px mobile has no horizontal overflow; 1280px desktop confirms new owner management and old owner demotion; no captured console errors/warnings; screenshots in docs/verification/team-handover |
 | 2026-10-24 10:17 | git diff --check; plan.py check --strict | PASS before close-out | Repeated once after final documentation edits; no reset, commit, deployment, or real storage mutation |
+| 2026-10-26 14:30 | npm run test:handover | PASS: 67 API, 284 team UI, and 19 message checks | Verifies the existing member-management workflow, recipient decisions, legacy-link redirects, messages, permissions and history |
+| 2026-10-26 14:30 | npx vite build; git diff --check | PASS | Existing chunk-size warning remains; no whitespace errors |
 
 ## Bug & Fix Log
 | Time | Symptom | Root cause | Fix (files) | Guard added (test/assert/check) |
@@ -120,9 +123,9 @@ None.
 | 2026-10-24 09:53 | Native fs.cpSync crashed on this Windows runtime | Environment filesystem native copy behavior | Fixture uses existing recursive readdir/copyFile pattern | API fixture ran and passed |
 
 ## Completion Summary
-Implemented two-party ownership handover, accept/decline/cancel, mandatory in-app pending actions, seven-day expiry, invalidation and audit history. Reused the project's React/Express/Lucide/dialog patterns without adding a library. Targeted API, permission, team UI, message, entitlement and collection regressions pass; build passes. Actual browser verification confirms both roles and mobile/desktop layouts. A fresh isolated synthetic demo and step-by-step Chinese acceptance guide are ready.
+Implemented two-party ownership handover, accept/decline/cancel, mandatory in-app pending actions, seven-day expiry, invalidation and audit history. The workflow is integrated into the existing team member-management page: owners initiate from a member row, owners and recipients see any pending decision in that page, and history stays beneath the member controls. There is no standalone handover tab; old links redirect to the correct member page. Targeted API, permission, team UI and message checks pass; the production build passes. A synthetic demo and step-by-step Chinese acceptance guide are available.
 
 Verification remains partial because MySQL mode, cross-instance concurrency and deployment were not exercised. The existing whole-metadata snapshot model remains a multi-instance constraint; this work verifies same-process state transitions and JSON persistence only. User acceptance is pending and is not recorded as passed. No third-stage work, deployment, Git commit, or real-data transfer was performed.
 
 ## Next Steps
-Wait for the user's acceptance of this feature using docs/阶段二-企业负责人交接-验收说明.md and http://localhost:18047/__handover_demo. Continue the next feature only after that checkpoint.
+Wait for the user's acceptance of this feature using docs/阶段二-企业负责人交接-验收说明.md and http://localhost:18047/__handover_demo. The workflow is on the existing team member page; continue the next feature only after that checkpoint.

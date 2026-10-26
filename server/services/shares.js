@@ -975,7 +975,7 @@ export function assertUniqueTeamResourceNames(organization, files) {
   const resourcePath = (file) => safeRelativePath(normalizeUploadFileName(file.relativePath || file.name || '')).trim().toLowerCase()
   const existingNames = new Set(
     metadata.shares
-      .filter((share) => share.teamResource && share.teamOrganizationId === organization?.id)
+      .filter((share) => share.teamResource && !share.deletedAt && share.teamOrganizationId === organization?.id)
       .flatMap((share) => share.files || [])
       .map(resourcePath)
       .filter(Boolean),

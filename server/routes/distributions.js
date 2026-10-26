@@ -32,6 +32,28 @@ function rosterBody(body) {
   return body?.roster ?? body?.recipients ?? body?.recipientList ?? ''
 }
 
+// 前端逐条核对后的配对结果，multipart 里以 JSON 字符串提交。
+function assignmentsBody(body) {
+  const raw = body?.assignments ?? body?.pairs ?? null
+  if (Array.isArray(raw)) return raw
+  if (typeof raw !== 'string' || !raw.trim()) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch { return [] }
+}
+
+// 收件人看到的是去掉“编号__”前缀的原文件名；同名文件保留原样避免混淆。
+function shareFileNames(files, rows) {
+  const counts = new Map()
+  for (const row of rows) counts.set(row.displayName, (counts.get(row.displayName) || 0) + 1)
+  return files.map((file, index) => {
+    const row = rows.find(item => item.fileIndex === index)
+    const displayName = row && counts.get(row.displayName) === 1 ? row.displayName : ''
+    return { row, name: displayName || row?.fileName || file.originalname }
+  })
+}
+
 function idempotencyKey(req) {
   const value = req.get('Idempotency-Key') || req.body?.idempotencyKey || ''
   const key = String(value).trim()
@@ -59,7 +81,7 @@ export function registerDistributionRoutes(app) {
     const session = requireAuthSession(req, res)
     if (!session) return
     const files = Array.isArray(req.body?.files) ? req.body.files.map(name => ({ name })) : []
-    const preview = buildDistributionPreview({ files, roster: rosterBody(req.body), users: usersForMatching() })
+    const preview = buildDistributionPreview({ files, roster: rosterBody(req.body), assignments: assignmentsBody(req.body), users: usersForMatching() })
     res.json({ preview })
   })
 
@@ -86,7 +108,7 @@ export function registerDistributionRoutes(app) {
         cleanupUploadedFiles(files)
         return res.status(400).json({ message: '请提供至少 8 个字符的 Idempotency-Key' })
       }
-      const preview = buildDistributionPreview({ files, roster: rosterBody(req.body), users: usersForMatching() })
+      const preview = buildDistributionPreview({ files, roster: rosterBody(req.body), assignments: assignmentsBody(req.body), users: usersForMatching() })
       if (!preview.ok) {
         cleanupUploadedFiles(files)
         return res.status(400).json({ message: '分发匹配存在问题，请修正后再发布', preview })
@@ -113,12 +135,14 @@ export function registerDistributionRoutes(app) {
         rows: preview.rows.map(row => ({ key: row.key, userId: row.userId, recipient: row.recipient, fileName: row.fileName })),
       }
       await assertSafeUploadFiles(files)
+      const namedFiles = shareFileNames(files, preview.rows)
       const share = await withPublishLock(`${session.user.id}:${key}`, async () => {
         const concurrent = findExisting(session.user.id, key)
         if (concurrent) return metadata.shares.find(candidate => candidate.id === concurrent.shareId)
-        return createShareFromTempFiles(files.map(file => ({
-          name: file.originalname, relativePath: file.originalname, size: file.size, mimeType: file.mimetype,
-          tempPath: file.path, reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt,
+        return createShareFromTempFiles(namedFiles.map(({ name }, index) => ({
+          name, relativePath: files[index].originalname, size: files[index].size, mimeType: files[index].mimetype,
+          tempPath: files[index].path, reviewStatus: files[index].reviewStatus, scanEngine: files[index].scanEngine, scannedAt: files[index].scannedAt,
+          ...(name !== files[index].originalname ? { originalName: files[index].originalname } : {}),
         })), { ...options, distributionId, distributionRecipientUserIds: fileRecipientUserIds, distributionRecord }, req)
       })
       if (!share) throw httpError(503, '分发发布状态不确定，请稍后查询分发记录')

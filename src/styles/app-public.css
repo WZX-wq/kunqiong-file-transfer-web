@@ -380,6 +380,8 @@
 .cm-head h1 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: #172a45; font-size: 24px; font-weight: 750; letter-spacing: -.3px; line-height: 1.3; overflow-wrap: anywhere; }
 .cm-head p { margin-top: 6px; color: #6b7d94; font-size: 13px; }
 .cm-head-actions { display: flex; flex: none; flex-wrap: wrap; gap: 8px; }
+.cm-head-actions .cm-danger-action { color: #b42318; background: #fff7f6; border-color: #f3c9c3; }
+.cm-head-actions .cm-danger-action:hover { color: #9f1d14; background: #fdeceb; border-color: #eaa9a2; }
 .cm-head-actions .secondary-button { min-height: 38px; padding: 0 14px; font-size: 12.5px; }
 .cm-page > .feedback, .cm-page > .feedback-message { margin-bottom: 12px; }
 .cm-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -414,6 +416,14 @@
 .cm-file-row > img, .cm-file-row > svg { flex: none; }
 .cm-file-row > span { min-width: 0; flex: 1; overflow: hidden; color: #3c4f68; font-size: 12.3px; text-overflow: ellipsis; white-space: nowrap; }
 .cm-file-row > small { flex: none; color: #8b9bb0; font-family: 'Inter', sans-serif; font-size: 11px; }
+.cm-submission-details { display: grid; gap: 7px; margin-top: 10px; padding: 11px 12px; color: #52647d; background: #f8fbff; border: 1px solid #e5edf7; border-radius: 8px; animation: cm-detail-enter .18s ease-out both; transition: background-color .16s ease, border-color .16s ease; }
+.cm-submission-details:hover { background: #f5f9ff; border-color: #d6e4f5; }
+.cm-submission-details-title { color: #344a66; font-size: 11.5px; font-weight: 650; }
+.cm-submission-detail-row { display: grid; grid-template-columns: minmax(82px, 24%) minmax(0, 1fr); align-items: start; gap: 4px 10px; font-size: 12px; line-height: 1.55; }
+.cm-submission-detail-row b { color: #71829a; font-weight: 550; }
+.cm-submission-detail-row > span { min-width: 0; color: #263b56; overflow-wrap: anywhere; white-space: pre-wrap; }
+.cm-submission-detail-row > small { grid-column: 2; color: #b54545; font-size: 11px; }
+@keyframes cm-detail-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 /* 操作区固定右侧：预览不可用时用同尺寸占位，保证「大小」文字与下载按钮在所有行对齐 */
 .cm-file-actions { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .cm-action-slot { visibility: hidden; pointer-events: none; }
@@ -457,7 +467,9 @@
   .cm-card-foot { align-items: flex-start; flex-direction: column; }
   .cm-sub-head { flex-wrap: wrap; }
   .cm-sub-head .secondary-button { margin-left: 44px; }
+  .cm-submission-detail-row { grid-template-columns: minmax(70px, 31%) minmax(0, 1fr); gap: 4px 8px; }
 }
+@media (prefers-reduced-motion: reduce) { .cm-submission-details { animation: none; transition: none; } }
 
 /* 收集提交成功 / 收集已截止（对齐原型 collect.js 的两个状态页） */
 .collection-state-card { width: 100%; max-width: 520px; margin: 20px auto 0; padding: 38px 36px 30px; text-align: center; }

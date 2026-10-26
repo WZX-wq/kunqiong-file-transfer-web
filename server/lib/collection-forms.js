@@ -1,6 +1,7 @@
 import { createToken, httpError } from './http.js'
 import { booleanInput, textInput } from './input-validation.js'
 import { COLLECTION_FILENAME_PATTERN_MAX, COLLECTION_FILENAME_TOKENS } from './collection-naming.js'
+import { COLLECTION_FIELD_TYPES, collectionFieldValueError, isCollectionFieldVisible } from './collection-fields.js'
 
 const FIELD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
 
@@ -41,7 +42,7 @@ export function normalizeCollectionMaterials(value) {
 export function normalizeCollectionCustomFields(value) {
   const items = formArray(value, '自定义字段', 20)
   const seen = new Set()
-  return items.map((item, index) => {
+  const fields = items.map((item, index) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw httpError(400, `第 ${index + 1} 个自定义字段格式不正确`)
     const id = formId(item.id, '字段')
     if (seen.has(id)) throw httpError(400, '自定义字段标识不能重复')
@@ -49,16 +50,44 @@ export function normalizeCollectionCustomFields(value) {
     const label = textInput(item.label, '字段名称', 40)
     if (!label) throw httpError(400, '请填写字段名称')
     const type = String(item.type || 'text')
-    if (!['text', 'select', 'date'].includes(type)) throw httpError(400, `字段「${label}」类型不支持`)
+    if (!COLLECTION_FIELD_TYPES.includes(type)) throw httpError(400, `字段「${label}」类型不支持`)
     const field = { id, label, type, required: booleanInput(item.required ?? false, '字段必填设置') }
+    if (Object.prototype.hasOwnProperty.call(item, 'help')) {
+      const help = textInput(item.help ?? '', '字段填写提示', 120, { optional: true })
+      if (help) field.help = help
+    }
     if (type === 'select') {
       if (!Array.isArray(item.options) || item.options.length < 2 || item.options.length > 30) throw httpError(400, `字段「${label}」的选项需要设置 2 到 30 项`)
       const options = item.options.map((option) => textInput(option, '下拉选项', 40)).filter(Boolean)
       if (options.length < 2 || new Set(options).size !== options.length) throw httpError(400, `字段「${label}」的下拉选项不能为空或重复`)
       field.options = options
     }
+    if (item.showWhen !== undefined && item.showWhen !== null) {
+      if (typeof item.showWhen !== 'object' || Array.isArray(item.showWhen)) throw httpError(400, `字段「${label}」的显示条件格式不正确`)
+      const fieldId = String(item.showWhen.fieldId || '')
+      if (!FIELD_ID_PATTERN.test(fieldId)) throw httpError(400, `字段「${label}」的显示条件格式不正确`)
+      const conditionValue = textInput(item.showWhen.value, '显示条件', 40)
+      if (!conditionValue) throw httpError(400, `字段「${label}」请选择显示条件`)
+      field.showWhen = { fieldId, value: conditionValue }
+    }
     return field
   })
+  const byId = new Map(fields.map((field) => [field.id, field]))
+  for (const field of fields) {
+    if (!field.showWhen) continue
+    const controller = byId.get(field.showWhen.fieldId)
+    if (!controller) throw httpError(400, `字段「${field.label}」的显示条件引用了不存在的字段`)
+    if (controller.id === field.id) throw httpError(400, `字段「${field.label}」不能依赖自身显示`)
+    if (controller.type !== 'select' || !controller.options?.includes(field.showWhen.value)) throw httpError(400, `字段「${field.label}」的显示条件无效`)
+    const visited = new Set([field.id])
+    let current = controller
+    while (current?.showWhen) {
+      if (visited.has(current.id)) throw httpError(400, `字段「${field.label}」的显示条件存在循环依赖`)
+      visited.add(current.id)
+      current = byId.get(current.showWhen.fieldId)
+    }
+  }
+  return fields
 }
 
 function parseSubmittedJson(value, label, fallback) {
@@ -87,9 +116,16 @@ export function validateCollectionSubmissionInput(task, fieldValuesInput, materi
   for (const id of Object.keys(fieldValues)) if (!knownFieldIds.has(id)) throw httpError(400, '包含当前任务不存在的自定义字段')
   const normalizedValues = {}
   for (const field of fields) {
+    // 条件字段只在条件成立时参与必填和类型校验；隐藏字段即使带了旧值也不会入库。
+    if (!isCollectionFieldVisible(field, fields, fieldValues)) continue
     const raw = fieldValues[field.id]
-    const value = raw === undefined || raw === null ? '' : textInput(raw, `字段「${field.label}」`, field.type === 'select' ? 40 : 500, { optional: true, multiline: field.type === 'text' })
-    if (field.required && !value.trim()) throw httpError(400, `请填写必填项：${field.label}`)
+    const max = field.type === 'select' ? 40 : 500
+    const value = raw === undefined || raw === null ? '' : textInput(raw, `字段「${field.label}」`, max, {
+      optional: true,
+      multiline: field.type === 'textarea' || field.type === 'text',
+    })
+    const error = collectionFieldValueError(field, value)
+    if (error) throw httpError(400, error)
     if (value && field.type === 'select' && !field.options?.includes(value)) throw httpError(400, `字段「${field.label}」请选择有效选项`)
     if (value && field.type === 'date' && !isDateOnly(value)) throw httpError(400, `字段「${field.label}」日期格式不正确`)
     if (value) normalizedValues[field.id] = value
@@ -101,7 +137,10 @@ export function validateCollectionSubmissionInput(task, fieldValuesInput, materi
   const namingRequired = materials.some((material) => Boolean(material.namingPattern))
   if (fileCount > 0 && namingRequired && fileMaterialIds.length !== fileCount) throw httpError(400, '请为每个文件指定对应的材料项')
   if (fileMaterialIds.length && (fileCount > 0 && fileMaterialIds.length !== fileCount)) throw httpError(400, '文件材料对应关系与文件数量不一致')
-  const normalizedFileMaterialIds = fileMaterialIds.map((id) => String(id))
+  const submittedFileMaterialIds = fileMaterialIds.map((id) => String(id ?? '').trim())
+  if (namingRequired && submittedFileMaterialIds.some((id) => !id)) throw httpError(400, '请为每个文件指定对应的材料项')
+  // 旧版提交页会在未配置命名规则时按文件发送空字符串占位；这时文件无需关联材料。
+  const normalizedFileMaterialIds = submittedFileMaterialIds.filter(Boolean)
   if (normalizedFileMaterialIds.some((id) => !knownMaterialIds.has(id) || !normalizedMaterialIds.includes(id))) throw httpError(400, '文件只能对应本次已选择的有效材料项')
   return { fieldValues: normalizedValues, materialIds: normalizedMaterialIds, fileMaterialIds: normalizedFileMaterialIds }
 }

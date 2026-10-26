@@ -22,6 +22,7 @@ import {
   normalizeExpiryInput, publicSubmission, zipEntryPath
 } from '../services/shares.js'
 import { integerInput, objectInput, textInput } from '../lib/input-validation.js'
+import { normalizeCollectionCustomFields, normalizeCollectionMaterials } from '../lib/collection-forms.js'
 import path from 'node:path'
 import QRCode from 'qrcode'
 import { publicTeamBrand } from '../lib/team-branding.js'
@@ -128,7 +129,7 @@ export function collectionZipEntries(task, targetSubmission = null) {
 }
 
 export function applyCollectionUpdate(task, body = {}) {
-  objectInput(body, ['title','description','deadline','allowedTypes','maxFileSizeMb','status'], {nonempty:true})
+  objectInput(body, ['title','description','deadline','allowedTypes','maxFileSizeMb','status','materials','customFields'], {nonempty:true})
   const draft = structuredClone(task)
   applyCollectionUpdateDraft(draft, body)
   if (currentCollectionStatus(draft) === 'active' && currentCollectionStatus(task) !== 'active') assertActiveCollectionLimit(task.ownerUserId, task.ownerGuestKey, task.id)
@@ -157,6 +158,12 @@ function applyCollectionUpdateDraft(task, body = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(body, 'allowedTypes')) {
     task.allowedTypes = collectionTypesInput(body.allowedTypes)
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'materials')) {
+    task.materials = normalizeCollectionMaterials(body.materials)
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'customFields')) {
+    task.customFields = normalizeCollectionCustomFields(body.customFields)
   }
   if (Object.prototype.hasOwnProperty.call(body, 'maxFileSizeMb')) {
     const maxFileSizeMb = integerInput(body.maxFileSizeMb,'单文件大小限制',1,Math.floor(personalEntitlements(task.ownerUserId).singleFileLimitBytes / 1024 ** 2))

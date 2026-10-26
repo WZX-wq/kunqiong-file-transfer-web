@@ -8,9 +8,11 @@ import { AlertTriangle, ArrowLeft, Building2, CalendarDays, CheckCircle2, Clock3
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { ProtoStateCard, ProtoBadge, ProtoBanner } from '../components/prototype-ui.jsx'
 import { CollectionLimitInfo, DownloadProgressPanel, FileFormatBadge, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, TeamJoinRequestCard, UserAvatar, toFileItems } from '../components/ui.jsx'
+import { CollectionMaterialMatrix } from '../components/collection-material-matrix.jsx'
+import { collectionFieldInputType, collectionFieldValueError, visibleCollectionFields } from '../lib/collection-fields.js'
 import { renderCollectionFilename } from '../lib/collection-naming.js'
 import { useConfirmDialog, useDownloadTask, useToast } from '../hooks.js'
-import { canReopenCollection, collectionFileAccept, collectionStatusText, createCollectionRecord, createShareRecord, isAllowedCollectionFile, saveAuthoritativeLocalRecord, savePublicRecord, shareStatusText } from '../lib/records.js'
+import { canReopenCollection, collectionFileAccept, collectionStatusText, createCollectionRecord, createShareRecord, deleteCloudRecords, isAllowedCollectionFile, readRecords, saveAuthoritativeLocalRecord, savePublicRecord, shareStatusText, writeRecords } from '../lib/records.js'
 import { canPreviewFile, clearUploadResume, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, queryUploadResume, readCollectionUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { displayUserName, feedbackTone, formatBytes, formatDate, formatExpiry } from '../lib/format.js'
 import { MAX_FILES } from '../lib/constants.js'
@@ -548,6 +550,8 @@ function CollectionClosedPage({ info, signedIn }) {
 export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const inputRef = useRef(null)
   const folderInputRef = useRef(null)
+  const materialUploadRef = useRef(null)
+  const materialUploadTargetRef = useRef('')
   const uploadRef = useRef(createUploadSessionState())
   const submitRunRef = useRef(0)
   const [collection, setCollection] = useState(null)
@@ -556,6 +560,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const [authChecked, setAuthChecked] = useState(false)
   const [name, setName] = useState('')
   const [fieldValues, setFieldValues] = useState({})
+  const [fieldTouched, setFieldTouched] = useState({})
   const [materialIds, setMaterialIds] = useState([])
   const [progress, setProgress] = useState(0)
   const [submitting, setSubmitting] = useState(false)
@@ -651,20 +656,29 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
     return file.materialId || ''
   }
 
-  const handleSelectFiles = (incoming) => {
+  const handleSelectFiles = (incoming, { materialId = '' } = {}) => {
     if (submitting || completionPending || !incoming?.length) return
+    const boundMaterialId = materialId
+      || (namingEnabled && collection.materials.length === 1 ? collection.materials[0].id : '')
     const selectedFiles = toFileItems(incoming).map((item) => ({
-      ...item, id: JSON.stringify([item.relativePath, item.size, item.file.lastModified]),
-      ...(namingEnabled && collection.materials.length === 1 ? { materialId: collection.materials[0].id } : {}),
+      ...item,
+      id: JSON.stringify([item.relativePath, item.size, item.file.lastModified]),
+      ...(boundMaterialId ? { materialId: boundMaterialId } : {}),
     }))
     setFiles((current) => {
       const merged = new Map(current.map((item) => [item.id, item]))
       for (const item of selectedFiles) merged.set(item.id, item)
       return [...merged.values()]
     })
-    if (namingEnabled && collection.materials.length === 1) setMaterialIds((current) => [...new Set([...current, collection.materials[0].id])])
+    if (boundMaterialId) setMaterialIds((current) => [...new Set([...current, boundMaterialId])])
     if (pendingUpload?.completion?.status !== 'failed') setMessage('')
     if (!pendingUpload) setProgress(0)
+  }
+
+  const selectFilesForMaterial = (materialId) => {
+    if (submitting || completionPending || Boolean(pendingUpload)) return
+    materialUploadTargetRef.current = materialId
+    materialUploadRef.current?.click()
   }
 
   const invalidFile = firstInvalidFile(files)
@@ -677,9 +691,13 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const selectedBytes = files.reduce((sum, file) => sum + file.size, 0)
   const activeFieldValues = pendingUpload?.fieldValues || fieldValues
   const activeMaterialIds = pendingUpload?.materialIds || materialIds
-  const missingField = (collection?.customFields || []).find((field) => field.required && !String(activeFieldValues[field.id] || '').trim())
-  const formError = missingField
-    ? `请填写必填项：${missingField.label}`
+  const visibleFields = visibleCollectionFields(collection?.customFields || [], activeFieldValues)
+  const fieldErrors = Object.fromEntries(visibleFields
+    .map((field) => [field.id, collectionFieldValueError(field, activeFieldValues[field.id])])
+    .filter(([, fieldError]) => fieldError))
+  const firstFieldError = visibleFields.find((field) => fieldErrors[field.id])
+  const formError = firstFieldError
+    ? fieldErrors[firstFieldError.id]
     : (collection?.materials?.length && !activeMaterialIds.length ? '请选择本次要提交的材料项' : '')
   const namingError = namingEnabled && files.length && files.some((file, index) => !fileMaterialIdFor(file, index))
     ? '请为每个文件选择对应的材料项'
@@ -729,6 +747,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       setMessage(signedIn ? '请选择要提交的文件' : '请填写提交人名称并选择文件')
       return
     }
+    setFieldTouched(Object.fromEntries(visibleFields.map((field) => [field.id, true])))
     if (formError) {
       setMessage(formError)
       return
@@ -770,7 +789,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
         participantName,
         fieldValues: activeFieldValues,
         materialIds: activeMaterialIds,
-        fileMaterialIds: orderedFiles.map((item, index) => fileMaterialIdFor(item, index)),
+        fileMaterialIds: namingEnabled ? orderedFiles.map((item, index) => fileMaterialIdFor(item, index)) : [],
         relativePaths: orderedFiles.map((item) => item.relativePath),
         // The local fingerprint includes modification times to reject changed files.
         ...(pendingUpload ? pendingUpload.fileLastModified ? { fileLastModified: pendingUpload.fileLastModified } : {} : { fileLastModified: orderedFiles.map((item) => item.file.lastModified) }),
@@ -783,6 +802,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       savePublicRecord(createCollectionRecord(collection, 'collect_from_me', { participantName, submittedAt, files: submittedFiles, fieldValues: result.submission?.fieldValues || activeFieldValues, materialIds: result.submission?.materialIds || activeMaterialIds }))
       setSubmissionInfo({ submission: { ...result.submission, submittedAt, files: submittedFiles } })
       setMessage('')
+      setFieldTouched({})
       setFiles([])
       setPendingUpload(null)
       setUploadPhase('idle')
@@ -858,24 +878,47 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
             )}
             {(collection.materials || []).length > 0 && <fieldset className="collection-submit-form-section">
               <legend>本次提交材料</legend>
-              <p>可分次提交；管理端会按提交人汇总必交材料。</p>
-              <div className="collection-submit-materials">{collection.materials.map((material) => <label key={material.id} className="collection-submit-choice">
-                <input type="checkbox" checked={activeMaterialIds.includes(material.id)} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => {
-                  const next = event.target.checked ? [...new Set([...materialIds, material.id])] : materialIds.filter((id) => id !== material.id)
-                  setMaterialIds(next)
-                  setMessage('')
-                }} />
-                <span>{material.name}{material.required ? <em>必交</em> : <small>选交</small>}</span>
-              </label>)}</div>
+              <p>可分次提交；管理端会按提交人汇总必交材料。也可以直接上传到某一项材料。</p>
+              <div className="collection-submit-materials">{collection.materials.map((material) => <div className="collection-submit-material-row" key={material.id}>
+                <label className="collection-submit-choice">
+                  <input type="checkbox" checked={activeMaterialIds.includes(material.id)} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => {
+                    const checked = event.target.checked
+                    const next = checked ? [...new Set([...materialIds, material.id])] : materialIds.filter((id) => id !== material.id)
+                    setMaterialIds(next)
+                    if (!checked) setFiles((current) => current.map((item) => item.materialId === material.id ? { ...item, materialId: '' } : item))
+                    setMessage('')
+                  }} />
+                  <span>{material.name}{material.required ? <em>必交</em> : <small>选交</small>}</span>
+                </label>
+                <button type="button" className="collection-material-upload" disabled={submitting || completionPending || Boolean(pendingUpload)} onClick={() => selectFilesForMaterial(material.id)}><UploadCloud size={13} /> 上传到此材料</button>
+              </div>)}</div>
             </fieldset>}
-            {(collection.customFields || []).length > 0 && <fieldset className="collection-submit-form-section">
+            {visibleFields.length > 0 && <fieldset className="collection-submit-form-section">
               <legend>补充信息</legend>
-              <div className="collection-submit-custom-fields">{collection.customFields.map((field) => <label key={field.id} className="public-label">
-                <span>{field.label}{field.required ? <em>必填</em> : <small>选填</small>}</span>
-                {field.type === 'select' ? <select value={activeFieldValues[field.id] || ''} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => { setFieldValues((current) => ({ ...current, [field.id]: event.target.value })); setMessage('') }}>
-                  <option value="">请选择</option>{field.options?.map((option) => <option key={option} value={option}>{option}</option>)}
-                </select> : <input type={field.type === 'date' ? 'date' : 'text'} value={activeFieldValues[field.id] || ''} maxLength={field.type === 'text' ? 500 : undefined} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => { setFieldValues((current) => ({ ...current, [field.id]: event.target.value })); setMessage('') }} placeholder={field.type === 'date' ? '' : `请填写${field.label}`} />}
-              </label>)}</div>
+              <div className="collection-submit-custom-fields">{visibleFields.map((field) => {
+                const error = fieldTouched[field.id] ? fieldErrors[field.id] : ''
+                const value = activeFieldValues[field.id] || ''
+                const updateValue = (next) => { setFieldValues((current) => ({ ...current, [field.id]: next })); setMessage('') }
+                return <label key={field.id} className="public-label">
+                  <span>{field.label}{field.required ? <em>必填</em> : <small>选填</small>}{field.showWhen?.fieldId && <small className="collection-field-conditional">条件显示</small>}</span>
+                  {field.type === 'select' ? <select value={value} aria-invalid={Boolean(error)} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => updateValue(event.target.value)}>
+                    <option value="">请选择</option>{field.options?.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select> : field.type === 'textarea' ? <textarea rows={3} maxLength={500} value={value} aria-invalid={Boolean(error)} disabled={submitting || Boolean(pendingUpload)} onBlur={() => setFieldTouched((current) => ({ ...current, [field.id]: true }))} onChange={(event) => updateValue(event.target.value)} placeholder={field.help || `请填写${field.label}`} /> : <input
+                    type={collectionFieldInputType(field.type)}
+                    value={value}
+                    maxLength={field.type === 'text' ? 500 : undefined}
+                    inputMode={field.type === 'number' ? 'decimal' : field.type === 'phone' ? 'tel' : undefined}
+                    step={field.type === 'number' ? 'any' : undefined}
+                    aria-invalid={Boolean(error)}
+                    disabled={submitting || Boolean(pendingUpload)}
+                    onBlur={() => setFieldTouched((current) => ({ ...current, [field.id]: true }))}
+                    onChange={(event) => updateValue(event.target.value)}
+                    placeholder={field.help || (field.type === 'date' ? '' : `请填写${field.label}`)}
+                  />}
+                  {field.help && <small className="collection-field-help">{field.help}</small>}
+                  {error && <small className="collection-field-error" role="alert">{error}</small>}
+                </label>
+              })}</div>
             </fieldset>}
             {pendingUpload && <div className="collection-resume-notice" role="status">
               <strong>发现未完成的上传 · {pendingUpload.files.length} 个文件</strong>
@@ -884,6 +927,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
             </div>}
             <input ref={inputRef} type="file" multiple hidden disabled={submitting || completionPending} accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
             <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden disabled={submitting || completionPending} onChange={(event) => { handleSelectFiles(event.target.files); event.target.value = '' }} />
+            <input ref={materialUploadRef} type="file" multiple hidden disabled={submitting || completionPending} accept={collectionFileAccept(collection.allowedTypes)} onChange={(event) => { handleSelectFiles(event.target.files, { materialId: materialUploadTargetRef.current }); event.target.value = ''; materialUploadTargetRef.current = '' }} />
             <div className="public-drop collection-file-picker">
               <PrototypeAsset className="collection-drop-image" name="ico-cloud.png" width={58} height={48} />
               <strong>{files.length ? '继续添加文件或文件夹' : '选择要提交的文件或文件夹'}</strong>
@@ -946,7 +990,7 @@ export function CollectionManagePage({ token }) {
   const { toast, notify } = useToast()
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
-  // destroyed 状态已移除：销毁收集任务在记录页完成（DELETE 后管理页 GET 会 404，走 error 分支）
+  // 删除任务通过管理接口完成；删除后再次打开此管理链接会进入 error 分支。
   const [editing, setEditing] = useState(false)
   const [submissionPage, setSubmissionPage] = useState(1)
   const [refreshing, setRefreshing] = useState(false)
@@ -1028,6 +1072,26 @@ export function CollectionManagePage({ token }) {
     }
   }
 
+  const deleteCollection = async () => {
+    const confirmed = await requestConfirm({
+      title: '删除收集任务',
+      detail: '删除后，提交链接、已提交文件和填写信息都会永久移除，且无法恢复。确定删除这个收集任务吗？',
+      confirmText: '删除收集',
+      cancelText: '取消',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    try {
+      await apiRequest(`/api/collections/manage/${encodeURIComponent(token)}`, { method: 'DELETE' })
+      const record = createCollectionRecord(data, 'my_collections')
+      writeRecords(readRecords().filter((item) => item.id !== record.id))
+      await deleteCloudRecords([record.id]).catch(() => {})
+      window.location.href = '/?view=collect'
+    } catch (err) {
+      notify(err.message || '删除收集任务失败，请重试', 'error')
+    }
+  }
+
   const copyPublicValue = (value) => copyTextWithFeedback(value, notify, '提交链接已复制')
   const copyPublicQrImage = (dataUrl, fallbackText) => copyImageWithFeedback(dataUrl, fallbackText, notify)
   const downloadAll = () => startDownload(createCollectionDownloadConfig(data))
@@ -1084,12 +1148,13 @@ export function CollectionManagePage({ token }) {
   // 所有字段都按文本单元格写入，打开即可读。
   const exportSubmissionsSheet = async () => {
     const XLSX = await import('xlsx')
-    const header = ['提交人', '提交账号', '提交时间', '文件数', '文件总大小', '文件名', '文件大小']
+    const customFields = data.customFields || []
+    const header = ['提交人', '提交账号', '提交时间', '文件数', '文件总大小', '文件名', '文件大小', ...customFields.map((field) => field.label)]
     const rows = [header]
     for (const submission of submissions) {
       const size = submission.files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
       for (const file of submission.files) {
-        rows.push([submission.participantName || '', submission.submitter?.displayName || '', formatDate(submission.submittedAt), submission.files.length, formatBytes(size), file.name, formatBytes(file.size)])
+        rows.push([submission.participantName || '', submission.submitter?.displayName || '', formatDate(submission.submittedAt), submission.files.length, formatBytes(size), file.name, formatBytes(file.size), ...customFields.map((field) => submission.fieldValues?.[field.id] || '')])
       }
     }
     const sheet = XLSX.utils.aoa_to_sheet(rows)
@@ -1115,6 +1180,7 @@ export function CollectionManagePage({ token }) {
             <button type="button" className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 收集设置</button>
             <button type="button" className="secondary-button" disabled={!data.publicUrl} onClick={() => copyPublicValue(data.publicUrl)}><Link2 size={15} /> 提交链接</button>
             <button type="button" className="secondary-button" disabled={refreshing} onClick={refreshTask}><RefreshCw size={15} /> 刷新</button>
+            <button type="button" className="secondary-button cm-danger-action" onClick={deleteCollection}><Trash2 size={15} /> 删除收集</button>
           </div>
         </div>
         <div className="cm-stats">
@@ -1135,6 +1201,7 @@ export function CollectionManagePage({ token }) {
               </div>
               <div className="cm-card-body">
                 <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+                <CollectionMaterialMatrix materials={data.materials || []} submissions={submissions} />
                 {pageSubmissions.length ? pageSubmissions.map((submission) => {
                   const submissionSize = submission.files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
                   return (
@@ -1171,6 +1238,18 @@ export function CollectionManagePage({ token }) {
                           </div>
                         ))}
                       </div>
+                      {(data.materials?.length > 0 || data.customFields?.length > 0) && <div className="cm-submission-details" aria-label={`${submission.participantName || '匿名提交人'}的填写信息`}>
+                        <strong className="cm-submission-details-title">填写信息</strong>
+                        {data.materials?.length > 0 && <div className="cm-submission-detail-row">
+                          <b>本次材料</b>
+                          <span>{(submission.materialIds || []).map((id) => data.materials.find((material) => material.id === id)?.name || id).join('、') || '未标记'}</span>
+                          {submission.missingMaterialIds?.length > 0 && <small>缺少必交：{submission.missingMaterialIds.map((id) => data.materials.find((material) => material.id === id)?.name || id).join('、')}</small>}
+                        </div>}
+                        {data.customFields?.map((field) => <div className="cm-submission-detail-row" key={field.id}>
+                          <b>{field.label}</b>
+                          <span>{String(submission.fieldValues?.[field.id] ?? '').trim() || '未填写'}</span>
+                        </div>)}
+                      </div>}
                     </article>
                   )
                 }) : (

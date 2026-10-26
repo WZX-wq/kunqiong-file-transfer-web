@@ -30,6 +30,7 @@ const PRIVATE_ROUTES = [
   { prefix: '/workspace', title: `工作台 - ${SITE_NAME}` },
   { prefix: '/team', title: `团队空间 - ${SITE_NAME}` },
   { prefix: '/settings', title: `账号设置 - ${SITE_NAME}` },
+  { prefix: '/trash', title: `回收站 - ${SITE_NAME}` },
   { prefix: '/admin', title: `管理后台 - ${SITE_NAME}` },
   { prefix: '/orders', title: `我的订单 - ${SITE_NAME}` },
 ]

@@ -16,12 +16,14 @@ import { SettingsPage } from './settings.jsx'
 import { RecordsView, TrashView } from './records.jsx'
 import { DistributionView } from './distribution.jsx'
 import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, ValueItem } from '../components/ui.jsx'
+import { CollectionFieldsEditor, CollectionMaterialsEditor, CollectionStructureAssistant, CollectionSubmitPreview } from '../components/collection-builder.jsx'
+import { CollectionMaterialMatrix } from '../components/collection-material-matrix.jsx'
 import { ConfirmModal, ProductBrand, Toast } from '../components/common.jsx'
 import { getRecordOwner } from '../lib/records.js'
 import { RECIPIENT_TEXT_MAX, recipientInputError } from '../../server/lib/contact-input.js'
 import { limitInputText } from '../lib/input-limits.js'
 import { respondWorkspaceOwnershipHandover } from '../lib/records.js'
-import { COLLECTION_FILENAME_PATTERN_MAX } from '../lib/collection-naming.js'
+import { clearCollectionDraft, collectionStructureFromTask, hasCollectionDraftContent, loadCollectionDraft, mergeCollectionStructure, saveCollectionDraft, validateCollectionStructure } from '../lib/collection-form.js'
 
 export const createDefaultCollectionForm = () => ({
   title: '',
@@ -29,13 +31,9 @@ export const createDefaultCollectionForm = () => ({
   deadline: defaultDeadline(10),
   allowedTypes: ['全部格式'],
   maxFileSizeMb: 500,
-      materials: [],
+  materials: [],
   customFields: [],
 })
-
-function newCollectionFormItemId(prefix) {
-  return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`}`
-}
 
 export function normalizeMainView(value) {
   return MAIN_VIEWS.has(value) ? value : 'send'
@@ -1029,6 +1027,7 @@ export function WorkspaceApp() {
           <NavItem icon={Building2} label="会员与团队" active={false} onClick={() => { window.location.href = '/workspace' }} />
         </nav>
         <div className="topbar-actions">
+          <button type="button" className={`message-trigger topbar-trash-trigger${isTrashRoute ? ' active' : ''}`} aria-label="回收站" title="回收站" aria-current={isTrashRoute ? 'page' : undefined} onClick={() => { setAuthMenuOpen(false); changeMessagePanel(false); navigateTrash() }}><Trash2 size={18} /></button>
           <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); changeMessagePanel(!messageOpen) }} onClose={() => changeMessagePanel(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} onHandoverAction={respondToOwnershipHandover} handoverDecisionId={handoverDecisionId} onNotify={setToast} />
           {/* 后台入口不再按账号身份显示（白名单通道已移除，后台只认账号口令）。
               需要直接进后台时访问 /admin，未登录会弹出管理员账号密码弹窗。 */}
@@ -1093,8 +1092,8 @@ export function WorkspaceApp() {
           />
         )}
         {!isSettingsRoute && !isTrashRoute && activeView === 'deliver' && <DistributionView user={authUser} onLogin={startLogin} onNotify={setToast} />}
-        {!isSettingsRoute && !isTrashRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onUpload={() => navigateMainView('send')} onOpenTrash={navigateTrash} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} onSaveShareExpiry={saveShareExpiry} onNotify={setToast} />}
-        {!isSettingsRoute && isTrashRoute && <TrashView user={authUser} authLoading={authLoading} onLogin={startLogin} onBack={() => navigateMainView('records')} onRefresh={refreshRecords} onNotify={setToast} />}
+        {!isSettingsRoute && !isTrashRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onUpload={() => navigateMainView('send')} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} onSaveShareExpiry={saveShareExpiry} onNotify={setToast} />}
+        {!isSettingsRoute && isTrashRoute && <TrashView user={authUser} authLoading={authLoading} onLogin={startLogin} onBack={() => navigateMainView('records')} onRefresh={refreshRecords} onNotify={setToast} requestConfirm={requestConfirm} />}
       </main>
 
       <footer className="page-footer">
@@ -1180,10 +1179,13 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
                 <span className="send-prototype-pill"><i />临时传输 · 上传即分享</span>
                 <h1>轻松发送<em>大文件</em></h1>
                 <p>支持多种文件格式，安全快速，随时随地分享</p>
-                <div className="send-prototype-stats">
-                  <div><b>{maxSupportedFileSizeBytes ? formatBytes(maxSupportedFileSizeBytes) : '—'}</b><span>单文件最高支持</span></div>
-                  <div><b>{batchLimit} 个</b><span>单次文件数</span></div>
-                  <div><b>{settings.expiry || '3 天'}</b><span>默认有效期</span></div>
+                <div className="send-prototype-hero-actions">
+                  <div className="send-prototype-stats">
+                    <div><b>{maxSupportedFileSizeBytes ? formatBytes(maxSupportedFileSizeBytes) : '—'}</b><span>单文件最高支持</span></div>
+                    <div><b>{batchLimit} 个</b><span>单次文件数</span></div>
+                    <div><b>{settings.expiry || '3 天'}</b><span>默认有效期</span></div>
+                  </div>
+                  <button type="button" className="send-distribution-entry send-distribution-hero" onClick={onOpenDistribution}><Send size={15} />批量定向发布<ArrowRight size={14} /></button>
                 </div>
               </div>
               <div className="send-prototype-hero-art"><PrototypeAsset name="hero.png" width={400} height={300} alt="" /></div>
@@ -1192,11 +1194,7 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
             <section className={`upload-panel send-prototype-drop-card ${isDragging ? 'dragging' : ''}`}>
               <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
               <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
-              <div className="send-prototype-upload-head">
-                <div className="send-prototype-upload-head-spacer" aria-hidden="true" />
-                {guestQuota?.enabled ? <div className="send-prototype-guest-strip"><span><Gauge size={15} />游客模式 · 本次剩余 <b>{formatBytes(guestQuota.remainingBytes)}</b></span><button type="button" onClick={onLogin}>登录后同步记录与额度 <ChevronRight size={14} /></button></div> : <div />}
-                <button type="button" className="send-distribution-entry" onClick={onOpenDistribution}><Send size={15} />批量定向发布<ArrowRight size={14} /></button>
-              </div>
+              {guestQuota?.enabled ? <div className="send-prototype-guest-strip"><span><Gauge size={15} />游客模式 · 本次剩余 <b>{formatBytes(guestQuota.remainingBytes)}</b></span><button type="button" onClick={onLogin}>登录后同步记录与额度 <ChevronRight size={14} /></button></div> : null}
               <div className={`send-prototype-dropzone ${isDragging ? 'dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
                 <PrototypeAsset className="send-prototype-cloud" name="ico-cloud.png" width={64} height={54} />
                 <h2>{isDragging ? '松开即可添加文件' : '拖拽文件或文件夹到这里'}</h2>
@@ -1466,17 +1464,82 @@ export function ShareNotificationStatus({ result }) {
 
 export function CollectView({ entitlement, result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
   const collectionMaxMb = Math.floor((entitlement?.singleFileLimitBytes || 1.2 * 1024 ** 3) / 1024 ** 2)
-  const [form, setForm] = useState(createDefaultCollectionForm)
-  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+  const restoredDraftRef = useRef(undefined)
+  if (restoredDraftRef.current === undefined) restoredDraftRef.current = loadCollectionDraft(createDefaultCollectionForm()) || null
+  const [form, setForm] = useState(() => restoredDraftRef.current || createDefaultCollectionForm())
+  const [draftStatus, setDraftStatus] = useState(() => restoredDraftRef.current ? '已恢复上次未完成的草稿' : '')
+  const [submitAttempted, setSubmitAttempted] = useState(false)
+  const [structureMessage, setStructureMessage] = useState('')
   const collectionRecords = records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
+  const validation = validateCollectionStructure(form.materials, form.customFields)
+  const titleMissing = submitAttempted && !form.title.trim()
+  const update = (key, value) => {
+    setStructureMessage('')
+    setDraftStatus('正在保存草稿…')
+    setForm((current) => ({ ...current, [key]: value }))
+  }
+  const copySources = collectionRecords
+    .filter((record) => record.collectionToken || getCollectionToken(record.publicUrl || record.shareUrl))
+    .map((record) => ({ id: record.id, name: record.name || '未命名任务' }))
 
   useEffect(() => {
     onRefreshRecords?.({ silent: true }).catch(() => {})
   }, [])
 
+  useEffect(() => {
+    if (result) return undefined
+    const timer = window.setTimeout(() => {
+      if (!hasCollectionDraftContent(form)) { setDraftStatus(''); return }
+      if (saveCollectionDraft(form)) setDraftStatus('草稿已自动保存')
+    }, 700)
+    return () => window.clearTimeout(timer)
+  }, [form, result])
+
+  useEffect(() => {
+    if (!result) return
+    clearCollectionDraft()
+    setDraftStatus('')
+  }, [result])
+
   const backToCreate = () => {
+    clearCollectionDraft()
     setForm(createDefaultCollectionForm())
+    setSubmitAttempted(false)
+    setDraftStatus('')
+    setStructureMessage('')
     onResetResult()
+  }
+
+  const applyStructure = (structure) => {
+    const merged = mergeCollectionStructure(form, structure)
+    if (merged.addedMaterials || merged.addedFields) {
+      setForm(merged.form)
+      setDraftStatus('正在保存草稿…')
+    }
+    return merged
+  }
+
+  const copyStructureFromRecord = async (recordId) => {
+    const record = collectionRecords.find((item) => String(item.id) === String(recordId))
+    const token = record?.collectionToken || getCollectionToken(record?.publicUrl || record?.shareUrl)
+    if (!token) throw new Error('这个任务缺少可用的提交链接，无法复制结构')
+    const data = await apiRequest(`/api/collections/${encodeURIComponent(token)}`)
+    return collectionStructureFromTask(data.collection)
+  }
+
+  const submitCreate = () => {
+    setSubmitAttempted(true)
+    if (validation.hasErrors) {
+      setStructureMessage('请先修正材料或字段下方的提示，再创建任务。')
+      return
+    }
+    setStructureMessage('')
+    onCreate({
+      ...form,
+      maxFileSizeMb: Math.min(form.maxFileSizeMb, collectionMaxMb),
+      materials: form.materials.map(({ autoFocus, ...material }) => material),
+      customFields: form.customFields.map(({ autoFocus, ...field }) => field),
+    })
   }
 
   return (
@@ -1496,61 +1559,46 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
           {!result ? (
             <>
               <div className="builder-preview">
-                <div className="preview-label">收集任务预览</div>
-                <div className="preview-card collection-preview-card">
-                  <div className="collection-preview-title"><span className="preview-icon"><Inbox size={19} /></span><strong>{form.title || '未命名任务'}</strong></div>
-                  <span className="collection-preview-description">{form.description || '请填写收集说明'}</span>
-                  <CollectionLimitInfo allowedTypes={form.allowedTypes} maxFileSizeMb={form.maxFileSizeMb} compact />
-                  <div className="collection-preview-drop"><PrototypeAsset name="ico-cloud.png" width={26} height={22} /><span>拖拽文件到这里，或点击选择</span></div>
-                  <small>截止 {form.deadline || '未设置'} · 允许匿名提交</small>
-                </div>
+                <div className="preview-label">提交页实时预览</div>
+                <CollectionSubmitPreview form={{ ...form, maxFileSizeMb: Math.min(form.maxFileSizeMb, collectionMaxMb) }} />
+                <p className="collection-preview-note"><Eye size={13} /> 左侧修改后，这里会实时更新</p>
               </div>
               <div className="builder-form">
-                <div className="builder-form-heading"><h2>收集任务信息</h2><p>设置收集内容与提交要求</p></div>
+                <div className="builder-form-heading"><h2>收集任务信息</h2><p>先填写基本信息，再设置材料清单和补充字段</p></div>
                 <label>
                   <span className="builder-label"><span>任务名称</span><small className={form.title.length >= COLLECTION_TITLE_MAX ? 'field-count at-limit' : 'field-count'}>{form.title.length}/{COLLECTION_TITLE_MAX}</small></span>
-                  <input value={form.title} onChange={(event) => update('title', event.target.value)} maxLength={COLLECTION_TITLE_MAX} placeholder="例如：9 月产品素材收集" />
+                  <input className={titleMissing ? 'has-error' : ''} aria-invalid={titleMissing} value={form.title} onChange={(event) => update('title', event.target.value)} maxLength={COLLECTION_TITLE_MAX} placeholder="例如：9 月产品素材收集" />
+                  {titleMissing && <small className="collection-inline-error" role="alert">请填写任务名称</small>}
                 </label>
                 <label>
                   <span className="builder-label"><span>收集说明</span><small className={form.description.length >= COLLECTION_DESCRIPTION_MAX ? 'field-count at-limit' : 'field-count'}>{form.description.length}/{COLLECTION_DESCRIPTION_MAX}</small></span>
-                  <textarea value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={COLLECTION_DESCRIPTION_MAX} placeholder="例如：请上传你负责的图片、文档或视频素材" rows={4} />
+                  <textarea value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={COLLECTION_DESCRIPTION_MAX} placeholder="例如：请上传你负责的图片、文档或视频素材。也可以写清需要提交的材料和要填写的信息，便于智能推荐。" rows={4} />
                 </label>
                 <div className="collection-inline-fields">
                   <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} min={formatDateInput(new Date())} ariaLabel="截止时间" /></label>
                   <label>单文件大小限制<select value={Math.min(form.maxFileSizeMb, collectionMaxMb)} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}>{collectionSizeOptions(collectionMaxMb, form.maxFileSizeMb).map(size => <option key={size} value={size}>{formatBytes(size * 1024 ** 2)}</option>)}</select></label>
                 </div>
                 <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
+                <CollectionStructureAssistant form={form} onApplyStructure={applyStructure} copySources={copySources} onCopyStructure={copyStructureFromRecord} />
                 <div className="collection-builder-groups">
-                  <section className={`collection-builder-section ${form.materials.length ? 'has-items' : ''}`} aria-labelledby="collection-materials-heading">
-                    <div className="collection-builder-section-heading"><div><strong id="collection-materials-heading">材料清单</strong><small>标记必交项；命名格式支持 {'{提交人}'}、{'{材料项}'}、{'{原文件名}'}</small></div><button type="button" className="secondary-button" disabled={form.materials.length >= 30} onClick={() => update('materials', [...form.materials, { id: newCollectionFormItemId('mat'), name: '', required: true }])}><span>添加材料</span></button></div>
-                    {form.materials.length ? form.materials.map((material, index) => <div className="collection-rule-row" key={material.id}>
-                      <input aria-label={`材料名称 ${index + 1}`} value={material.name} maxLength={40} onChange={(event) => update('materials', form.materials.map((item) => item.id === material.id ? { ...item, name: event.target.value } : item))} placeholder="例如：营业执照" />
-                      <label className="collection-rule-required"><input type="checkbox" checked={material.required} onChange={(event) => update('materials', form.materials.map((item) => item.id === material.id ? { ...item, required: event.target.checked } : item))} />必交</label>
-                      <button type="button" className="ghost-icon" aria-label={`删除材料 ${index + 1}`} title="删除材料" onClick={() => update('materials', form.materials.filter((item) => item.id !== material.id))}><Trash2 size={15} /></button>
-                      <label className="collection-material-naming-field">
-                        <span>命名格式（可选）</span>
-                        <input className="collection-material-naming" aria-label={`${material.name || `材料 ${index + 1}`}命名格式`} value={material.namingPattern || ''} maxLength={COLLECTION_FILENAME_PATTERN_MAX} onChange={(event) => update('materials', form.materials.map((item) => item.id === material.id ? { ...item, namingPattern: event.target.value } : item))} placeholder="例如：{提交人}_{材料项}_{原文件名}" />
-                        <small className="collection-material-naming-preview">当前规则：<code>{material.namingPattern || '未设置，提交时使用原文件名'}</code></small>
-                      </label>
-                    </div>) : <p className="collection-builder-empty">未设置时可直接上传任意文件</p>}
-                  </section>
-                  <section className={`collection-builder-section ${form.customFields.length ? 'has-items' : ''}`} aria-labelledby="collection-fields-heading">
-                    <div className="collection-builder-section-heading"><div><strong id="collection-fields-heading">自定义字段</strong><small>设置提交人需补充填写的信息，支持文本、下拉和日期，最多 20 项</small></div><button type="button" className="secondary-button" disabled={form.customFields.length >= 20} onClick={() => update('customFields', [...form.customFields, { id: newCollectionFormItemId('field'), label: '', type: 'text', required: false }])}><span>添加字段</span></button></div>
-                    {form.customFields.length ? form.customFields.map((field, index) => <div className="collection-field-editor" key={field.id}>
-                      <div className="collection-field-editor-main">
-                        <input aria-label={`字段名称 ${index + 1}`} value={field.label} maxLength={40} onChange={(event) => update('customFields', form.customFields.map((item) => item.id === field.id ? { ...item, label: event.target.value } : item))} placeholder="字段名称，例如：供应商类型" />
-                        <div className="collection-field-controls">
-                          <select aria-label={`字段类型 ${index + 1}`} value={field.type} onChange={(event) => update('customFields', form.customFields.map((item) => item.id === field.id ? { ...item, type: event.target.value, ...(event.target.value === 'select' ? { options: item.options?.length >= 2 ? item.options : ['选项一', '选项二'] } : {}) } : item))}><option value="text">文本填写</option><option value="select">下拉选择</option><option value="date">日期选择</option></select>
-                          <label className="collection-rule-required"><input type="checkbox" checked={field.required} onChange={(event) => update('customFields', form.customFields.map((item) => item.id === field.id ? { ...item, required: event.target.checked } : item))} />必填</label>
-                          <button type="button" className="secondary-button collection-field-delete" aria-label={`删除字段 ${index + 1}`} onClick={() => update('customFields', form.customFields.filter((item) => item.id !== field.id))}><Trash2 size={16} /><span>删除</span></button>
-                        </div>
-                      </div>
-                      {field.type === 'select' && <input className="collection-field-options" aria-label={`${field.label || `字段 ${index + 1}`}下拉选项`} value={(field.options || []).join(', ')} onChange={(event) => update('customFields', form.customFields.map((item) => item.id === field.id ? { ...item, options: event.target.value.split(',').map((option) => option.trim()).filter(Boolean) } : item))} placeholder="选项之间用逗号分隔，例如：生产商, 经销商" />}
-                    </div>) : <p className="collection-builder-empty">未添加时只需选择材料并上传文件</p>}
-                  </section>
+                  <CollectionMaterialsEditor
+                    materials={form.materials}
+                    onChange={(materials) => update('materials', materials)}
+                    errors={validation.materialErrors}
+                  />
+                  <CollectionFieldsEditor
+                    customFields={form.customFields}
+                    onChange={(customFields) => update('customFields', customFields)}
+                    errors={validation.fieldErrors}
+                  />
                 </div>
+                {(structureMessage || (submitAttempted && validation.hasErrors)) && <div className="collection-builder-errors" role="alert">
+                  <strong>{structureMessage || '请先完善收集设置'}</strong>
+                  <span>共 {validation.errorCount} 处需要修正，错误提示已显示在对应材料或字段下方。</span>
+                </div>}
+                <div className="collection-draft-status" aria-live="polite">{draftStatus && <><Save size={13} /><span>{draftStatus}</span></>}</div>
                 <p className="admin-plan-help">每个任务最多 {(entitlement?.collectionParticipantLimit ?? 10) || '不限'} 人提交 · 同时进行 {(entitlement?.activeCollectionLimit ?? 1) || '不限'} 个任务</p>
-                <button className="primary-button wide" onClick={() => onCreate({ ...form, maxFileSizeMb: Math.min(form.maxFileSizeMb, collectionMaxMb) })}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
+                <button className="primary-button wide" onClick={submitCreate}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
               </div>
             </>
           ) : (
@@ -1684,6 +1732,7 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
       </div>}
       {data.submissions.length > 0 && <button className="primary-button wide collection-download-all" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
       <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
+      <CollectionMaterialMatrix materials={data.materials || []} submissions={data.submissions || []} />
       {data.submissions.length ? (
         <div className="collection-submissions" role="region" aria-label="已收提交列表" tabIndex={0}>
           {data.submissions.map((submission) => (

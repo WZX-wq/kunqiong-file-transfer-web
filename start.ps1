@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $frontendPort = 4173
@@ -98,8 +98,15 @@ try {
   $scannerPortText = if ($env:KUNQIONG_CLAMAV_PORT) { $env:KUNQIONG_CLAMAV_PORT } else { Get-DotEnvValue 'KUNQIONG_CLAMAV_PORT' }
   if ($scannerHost -in @('127.0.0.1', 'localhost', '::1') -and (Get-Command docker -ErrorAction SilentlyContinue)) {
     $scannerPort = if ($scannerPortText -match '^\d+$') { [int]$scannerPortText } else { 3310 }
-    $scannerContainer = & docker ps --filter 'name=^/kunqiong-clamav$' --format '{{.Names}}' 2>$null
-    if ($LASTEXITCODE -eq 0 -and $scannerContainer -eq 'kunqiong-clamav' -and $scannerPort -eq 3310) {
+    # Docker Desktop 未启动时 docker 会往 stderr 写错误；$ErrorActionPreference='Stop' 下
+    # 这会变成终止性错误，直接把整个启动流程打断。这里只当“没有本地扫描容器”处理。
+    $scannerContainer = ''
+    try {
+      $scannerContainer = (& docker ps --filter 'name=^/kunqiong-clamav$' --format '{{.Names}}' 2>$null | Out-String).Trim()
+    } catch {
+      $scannerContainer = ''
+    }
+    if ($scannerContainer -eq 'kunqiong-clamav' -and $scannerPort -eq 3310) {
       & (Join-Path $root 'scripts/configure-local-scanner.ps1') -Port $scannerPort
     }
   }

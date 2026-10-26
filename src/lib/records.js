@@ -466,6 +466,22 @@ export function createCollectionManageForm(collection = {}) {
     deadline: toDateInputValue(collection.deadline),
     allowedTypes: Array.isArray(collection.allowedTypes) ? collection.allowedTypes : [],
     maxFileSizeMb: String(collection.maxFileSizeMb || 500),
+    // 管理端可继续维护材料清单和字段；id 必须原样保留，已提交记录的 materialIds/fieldValues 都依赖它。
+    materials: (Array.isArray(collection.materials) ? collection.materials : []).map((material) => ({
+      id: material.id,
+      name: material.name || '',
+      required: Boolean(material.required),
+      ...(material.namingPattern ? { namingPattern: material.namingPattern } : {}),
+    })),
+    customFields: (Array.isArray(collection.customFields) ? collection.customFields : []).map((field) => ({
+      id: field.id,
+      label: field.label || '',
+      type: field.type || 'text',
+      required: Boolean(field.required),
+      ...(field.help ? { help: field.help } : {}),
+      ...(field.type === 'select' && Array.isArray(field.options) ? { options: [...field.options] } : {}),
+      ...(field.showWhen?.fieldId ? { showWhen: { ...field.showWhen } } : {}),
+    })),
   }
 }
 

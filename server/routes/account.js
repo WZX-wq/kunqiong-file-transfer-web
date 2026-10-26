@@ -38,8 +38,8 @@ import {
   getRequestOrigin, setOAuthStateCookie
 } from '../services/account.js'
 import {
-  TRASH_RETENTION_DAYS, listTrashForOwner, permanentlyDeleteTrashResource,
-  restoreTrashResource, trashResourceForOwner,
+  TRASH_RETENTION_DAYS, emptyTrashForOwner, ensureRestoredResourceRecords, listTrashForOwner,
+  permanentlyDeleteTrashResource, restoreTrashResource, trashResourceForOwner,
 } from '../services/trash.js'
 
 import {
@@ -278,6 +278,7 @@ export function registerAccountRoutes(app) {
   app.get('/api/account/records', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
+    if (ensureRestoredResourceRecords(session.user.id)) persistMetadata()
     res.json({ records: accountRecordsForUser(session.user.id) })
   })
 
@@ -285,6 +286,16 @@ export function registerAccountRoutes(app) {
     const session = requireAuthSession(req, res)
     if (!session) return
     res.json({ items: listTrashForOwner(session.user.id), retentionDays: TRASH_RETENTION_DAYS })
+  })
+
+  app.delete('/api/account/trash', async (req, res, next) => {
+    try {
+      const session = requireAuthSession(req, res)
+      if (!session) return
+      const result = await emptyTrashForOwner(session.user.id)
+      persistMetadata()
+      res.json({ ok: true, ...result })
+    } catch (error) { next(error) }
   })
 
   app.post('/api/account/trash/:kind/:id/restore', (req, res, next) => {
