@@ -1018,7 +1018,6 @@ export function WorkspaceApp() {
         <nav className="main-nav" aria-label="主导航">
           <NavItem icon={Send} label="发文件" active={!isSettingsRoute && activeView === 'send'} onClick={() => navigateMainView('send')} />
           <NavItem icon={Inbox} label="收集文件" active={!isSettingsRoute && activeView === 'collect'} onClick={() => navigateMainView('collect')} />
-          <NavItem icon={Send} label="定向分发" active={!isSettingsRoute && activeView === 'deliver'} onClick={() => navigateMainView('deliver')} />
           <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
           <NavItem icon={Building2} label="会员与团队" active={false} onClick={() => { window.location.href = '/workspace' }} />
         </nav>
@@ -1059,6 +1058,7 @@ export function WorkspaceApp() {
             onCopy={copyValue}
             onCopyQrImage={copyQrImage}
             onRetrieve={(code) => { if (code) setRetrievalCode(String(code).toUpperCase()); setRetrieveOpen(true) }}
+            onOpenDistribution={() => navigateMainView('deliver')}
             guestQuota={guestQuota}
             onLogin={startLogin}
           />
@@ -1148,7 +1148,17 @@ export function GuestQuotaModal({ quota, onClose, onLogin }) {
   )
 }
 
-export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, guestQuota, onLogin }) {
+function BatchDistributionEntry({ onOpen, compact = false }) {
+  return (
+    <button type="button" className={`send-batch-entry${compact ? ' compact' : ''}`} onClick={onOpen}>
+      <span className="send-batch-entry-icon"><Send size={compact ? 16 : 18} /></span>
+      <span className="send-batch-entry-copy"><strong>批量定向发布</strong><small>按编号匹配文件和收件人，逐人发放并固定权限</small></span>
+      <ArrowRight className="send-batch-entry-arrow" size={compact ? 15 : 17} />
+    </button>
+  )
+}
+
+export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, onOpenDistribution, guestQuota, onLogin }) {
   const [retrieveCode, setRetrieveCode] = useState('')
   const showUploadStatus = ['uploading', 'paused', 'failed', 'finalizing'].includes(uploadState.status)
   const recipientError = recipientInputError(settings.recipients, user)
@@ -1204,6 +1214,8 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
                 <span className="upload-note">上传后自动生成链接、二维码和取件码</span>
               </div>
             </section>
+
+            <BatchDistributionEntry onOpen={onOpenDistribution} />
 
             <section className="value-strip send-prototype-values">
               <ValueItem image="ico-bolt.png" title="高速传输" detail="分片并发，跑满带宽" />
@@ -1268,7 +1280,7 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
                 <h1>{shareResult ? '发送完成' : '已选文件'}</h1>
                 <p>{shareResult ? '分享链接、取件码和二维码已准备好。' : '确认要发送的内容，可继续添加文件或文件夹。'}</p>
               </div>
-              {!shareResult && <div className="send-page-head-actions"><button className="secondary-button" type="button" onClick={() => inputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件</button><button className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件夹</button></div>}
+              {!shareResult && <div className="send-page-head-actions"><BatchDistributionEntry compact onOpen={onOpenDistribution} /><button className="secondary-button" type="button" onClick={() => inputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件</button><button className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件夹</button></div>}
             </div>
             <section className={`upload-panel send-prototype-drop-card send-prototype-queue-card ${isDragging ? 'dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
               <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
