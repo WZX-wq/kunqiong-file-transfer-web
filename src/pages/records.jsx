@@ -1,9 +1,9 @@
 import React from 'react'
 import { createPortal } from 'react-dom'
 import { canReopenCollection, fileCategoryIcon, isDateInputStillOpen, managedFileItemsFromRecords, matchesManagedFileCategory, matchesManagedFileSearch, matchesRecordDate, matchesRecordScope, matchesRecordStatus, normalizeRecord, recordCopyLabel, recordCopyTarget, recordDetail, recordDisplayName, recordDisplayStatus, recordExpiryLabel, recordIconForScope, recordLink, recordManageUrl, recordOpenLabel, recordScopeLabel, recordStatusGroup, recordStatusTone, recordValidityLabel, toDateInputValue } from '../lib/records.js'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { defaultDeadline, formatBytes, isClosedStatus } from '../lib/format.js'
-import { Archive, ArchiveRestore, ArrowLeft, CalendarDays, Check, Code2, Copy, Download, ExternalLink, Eye, FileQuestion, FileText, Filter, HardDrive, History, Image as ImageIcon, Inbox, Layers3, Link2, MoreHorizontal, Music2, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, Upload, Video, X } from 'lucide-react'
+import { Archive, ArrowLeft, Building2, CalendarDays, Check, Code2, Copy, Download, ExternalLink, Eye, FileQuestion, FileText, Filter, HardDrive, History, Image as ImageIcon, Inbox, Layers3, Link2, MoreHorizontal, Music2, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, Upload, Video, X } from 'lucide-react'
 import { DatePicker, FileFormatBadge, FilePreviewModal, QrPreviewModal, RecordNameText, RecordPreviewChooser, RenameRecordModal } from '../components/ui.jsx'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { useDownloadTask } from '../hooks.js'
@@ -24,6 +24,20 @@ const FILE_CATEGORY_ICONS = {
   collection: Inbox,
   mixed: Layers3,
   other: FileQuestion,
+}
+
+const TRASH_PAGE_SIZE = 8
+
+function trashPageNumbers(current, total) {
+  if (total <= 5) return Array.from({ length: total }, (_, index) => index + 1)
+  const pages = new Set([1, total, current - 1, current, current + 1])
+  const sorted = [...pages].filter(page => page >= 1 && page <= total).sort((a, b) => a - b)
+  const result = []
+  sorted.forEach((page, index) => {
+    if (index > 0 && page - sorted[index - 1] > 1) result.push(`gap-${sorted[index - 1]}`)
+    result.push(page)
+  })
+  return result
 }
 
 export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
@@ -91,7 +105,7 @@ export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
   )
 }
 
-export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, onDelete, onRename, onClear, onRefresh, onOpen, onOpenCollectionManager, onUpload, onOpenTrash, onManage, onCloseManaged, onReopenManaged, onSaveShareExpiry, onNotify }) {
+export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, onDelete, onRename, onClear, onRefresh, onOpen, onOpenCollectionManager, onUpload, onManage, onCloseManaged, onReopenManaged, onSaveShareExpiry, onNotify }) {
   const [viewMode, setViewMode] = useState(() => new URLSearchParams(window.location.search).get('center') === 'files' ? 'files' : 'records')
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
@@ -468,7 +482,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
             </>
           )}
           {viewMode === 'records' && (
-            <><button type="button" className="secondary-button" onClick={onOpenTrash}><ArchiveRestore size={15} /> 回收站</button><button type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空记录</button></>
+            <button type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空记录</button>
           )}
         </div>
       </div>
@@ -665,36 +679,98 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   )
 }
 
-export function TrashView({ user, authLoading = false, onLogin, onBack, onRefresh, onNotify }) {
+export function TrashView({ user, authLoading = false, onLogin, onBack, onRefresh, onNotify, requestConfirm }) {
+  const hasTeam = Boolean(user?.organization?.id)
+  const [scope, setScope] = useState(() => new URLSearchParams(window.location.search).get('tab') === 'team' ? 'team' : 'personal')
   const [items, setItems] = useState([])
   const [retentionDays, setRetentionDays] = useState(7)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [busyAction, setBusyAction] = useState('')
-  const [reloadKey, setReloadKey] = useState(0)
+  const [teamItems, setTeamItems] = useState([])
+  const [teamRetentionDays, setTeamRetentionDays] = useState(7)
+  const [teamLoading, setTeamLoading] = useState(false)
+  const [teamLoadError, setTeamLoadError] = useState('')
+  const [teamBusyAction, setTeamBusyAction] = useState('')
+  const [page, setPage] = useState(1)
+  const trashRequestRef = useRef(0)
+
+  const isTeam = scope === 'team'
+  const activeItems = isTeam ? teamItems : items
+  const activeRetentionDays = isTeam ? teamRetentionDays : retentionDays
+  const activeLoading = isTeam ? teamLoading : loading
+  const activeLoadError = isTeam ? teamLoadError : loadError
+  const activeBusyAction = isTeam ? teamBusyAction : busyAction
+  const pageCount = Math.max(1, Math.ceil(activeItems.length / TRASH_PAGE_SIZE))
+  const safePage = Math.min(page, pageCount)
+  const pageItems = activeItems.slice((safePage - 1) * TRASH_PAGE_SIZE, safePage * TRASH_PAGE_SIZE)
+  const activeFileCount = activeItems.reduce((sum, item) => sum + Number(item.fileCount || 0), 0)
+  const activeTotalSize = activeItems.reduce((sum, item) => sum + Number(item.totalSize || 0), 0)
+  // 团队回收站只有所有者/管理员能彻底删除；普通成员即使能看到自己的资源也不能清空。
+  const canEmptyTrash = Boolean(user?.id) && !activeLoading && !activeLoadError && activeItems.length > 0
+    && (!isTeam || activeItems.some(item => item.canDelete === true))
+
+  const loadTrash = useCallback(async (targetScope, { notify = false } = {}) => {
+    const requestId = ++trashRequestRef.current
+    const teamScope = targetScope === 'team'
+    const applyLoading = teamScope ? setTeamLoading : setLoading
+    const applyError = teamScope ? setTeamLoadError : setLoadError
+    const applyItems = teamScope ? setTeamItems : setItems
+    const applyRetention = teamScope ? setTeamRetentionDays : setRetentionDays
+    applyLoading(true)
+    applyError('')
+    try {
+      const data = await apiRequest(teamScope ? '/api/account/team/trash' : '/api/account/trash')
+      if (requestId !== trashRequestRef.current) return
+      applyItems(data.items || [])
+      applyRetention(Number(data.retentionDays) || 7)
+      if (notify) onNotify?.(teamScope ? '团队回收站已刷新' : '个人回收站已刷新', 'success')
+    } catch (error) {
+      if (requestId !== trashRequestRef.current) return
+      applyError(error.message || '回收站加载失败')
+      if (notify) onNotify?.(error.message || (teamScope ? '团队回收站刷新失败' : '个人回收站刷新失败'), 'error')
+    } finally {
+      if (requestId === trashRequestRef.current) applyLoading(false)
+    }
+  }, [onNotify])
 
   useEffect(() => {
-    if (authLoading) return undefined
-    if (!user?.id) {
-      setItems([])
-      setLoading(false)
-      return undefined
-    }
-    let active = true
-    setLoading(true)
-    setLoadError('')
-    apiRequest('/api/account/trash')
-      .then(data => {
-        if (!active) return
-        setItems(data.items || [])
-        setRetentionDays(Number(data.retentionDays) || 7)
-      })
-      .catch(error => { if (active) setLoadError(error.message || '回收站加载失败') })
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
-  }, [authLoading, user?.id, reloadKey])
+    if (page > pageCount) setPage(pageCount)
+  }, [page, pageCount])
 
-  const refreshTrash = () => setReloadKey(current => current + 1)
+  // 未加入团队时不能停留在团队页签；同时清理旧链接里的 tab=team。
+  useEffect(() => {
+    if (authLoading || scope !== 'team' || hasTeam) return
+    setScope('personal')
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('tab') !== 'team') return
+    url.searchParams.delete('tab')
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [authLoading, hasTeam, scope])
+
+  useEffect(() => {
+    if (authLoading || !user?.id || scope !== 'personal') return undefined
+    loadTrash('personal')
+    return () => { trashRequestRef.current += 1 }
+  }, [authLoading, user?.id, scope, loadTrash])
+
+  useEffect(() => {
+    if (authLoading || !user?.id || !hasTeam || scope !== 'team') return undefined
+    loadTrash('team')
+    return () => { trashRequestRef.current += 1 }
+  }, [authLoading, user?.id, hasTeam, scope, loadTrash])
+
+  const changeScope = (nextScope) => {
+    if (nextScope === 'team' && !hasTeam) return
+    setScope(nextScope)
+    setPage(1)
+    const url = new URL(window.location.href)
+    if (nextScope === 'team') url.searchParams.set('tab', 'team')
+    else url.searchParams.delete('tab')
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+  }
+
+  const refreshTrash = () => loadTrash(scope, { notify: true })
   const refreshRecordsSafely = async () => {
     try { await onRefresh?.({ silent: true }) } catch { /* The recycle-bin action already succeeded. */ }
   }
@@ -713,7 +789,16 @@ export function TrashView({ user, authLoading = false, onLogin, onBack, onRefres
   }
 
   const permanentlyDeleteItem = async (item) => {
-    if (!window.confirm(`彻底删除“${item.name}”？删除后无法恢复。`)) return
+    const confirmed = await requestConfirm?.({
+      eyebrow: '回收站 · 彻底删除',
+      title: `彻底删除这个${item.kind === 'collection' ? '收集任务' : '文件分享'}？`,
+      subject: item.name,
+      detail: `该${item.kind === 'collection' ? '收集任务' : '文件分享'}及其文件将被永久删除，无法恢复。`,
+      confirmText: '彻底删除',
+      cancelText: '取消',
+      tone: 'danger',
+    })
+    if (!confirmed) return
     const actionKey = `${item.kind}:${item.id}:delete`
     setBusyAction(actionKey)
     try {
@@ -726,55 +811,150 @@ export function TrashView({ user, authLoading = false, onLogin, onBack, onRefres
     } finally { setBusyAction('') }
   }
 
+  const restoreTeamItem = async (item) => {
+    if (item.canRestore === false || teamBusyAction) return
+    const actionKey = `${item.id}:restore`
+    setTeamBusyAction(actionKey)
+    try {
+      await apiRequest(`/api/account/team/trash/${encodeURIComponent(item.id)}/restore`, { method: 'POST' })
+      setTeamItems(current => current.filter(candidate => candidate.id !== item.id))
+      await refreshRecordsSafely()
+      onNotify?.('资源已恢复到团队文件，分享仍保持关闭状态')
+    } catch (error) {
+      onNotify?.(error.message || '团队资源恢复失败')
+    } finally { setTeamBusyAction('') }
+  }
+
+  const permanentlyDeleteTeamItem = async (item) => {
+    if (item.canDelete !== true || teamBusyAction) return
+    const confirmed = await requestConfirm?.({
+      eyebrow: '团队回收站 · 彻底删除',
+      title: '彻底删除这个团队资源？',
+      subject: item.name,
+      detail: `将永久删除 ${item.fileCount || 0} 个文件（${formatBytes(item.totalSize || 0)}），并释放团队容量。此操作无法撤销。`,
+      confirmText: '彻底删除',
+      cancelText: '取消',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    const actionKey = `${item.id}:delete`
+    setTeamBusyAction(actionKey)
+    try {
+      await apiRequest(`/api/account/team/trash/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
+      setTeamItems(current => current.filter(candidate => candidate.id !== item.id))
+      await refreshRecordsSafely()
+      onNotify?.('团队文件已彻底删除，团队容量已释放')
+    } catch (error) {
+      onNotify?.(error.message || '彻底删除团队文件失败')
+    } finally { setTeamBusyAction('') }
+  }
+
+  const emptyTrash = async () => {
+    if (!canEmptyTrash || activeBusyAction) return
+    const confirmed = await requestConfirm?.({
+      eyebrow: isTeam ? '团队回收站 · 清空' : '回收站 · 清空',
+      title: isTeam ? '清空团队回收站？' : '清空个人回收站？',
+      subject: `${activeItems.length} 个项目 · ${activeFileCount} 个文件 · ${formatBytes(activeTotalSize)}`,
+      detail: isTeam
+        ? `将永久删除团队回收站中的全部 ${activeItems.length} 个资源（${activeFileCount} 个文件，${formatBytes(activeTotalSize)}），并释放团队容量。此操作无法撤销。`
+        : `将永久删除回收站中的全部 ${activeItems.length} 个项目（${activeFileCount} 个文件，${formatBytes(activeTotalSize)}）。此操作无法撤销。`,
+      confirmText: '清空回收站',
+      cancelText: '取消',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    const setBusy = isTeam ? setTeamBusyAction : setBusyAction
+    setBusy('empty')
+    try {
+      const data = await apiRequest(isTeam ? '/api/account/team/trash' : '/api/account/trash', { method: 'DELETE' })
+      if (isTeam) setTeamItems([])
+      else setItems([])
+      setPage(1)
+      await refreshRecordsSafely()
+      const deletedCount = Number(data?.deletedCount)
+      const deletedSummary = Number.isFinite(deletedCount) ? `，共删除 ${deletedCount} ${isTeam ? '个资源' : '个项目'}` : ''
+      onNotify?.(isTeam ? `已清空团队回收站${deletedSummary}，团队容量已释放` : `已清空个人回收站${deletedSummary}`)
+    } catch (error) {
+      onNotify?.(error.message || (isTeam ? '清空团队回收站失败' : '清空个人回收站失败'), 'error')
+      loadTrash(scope)
+    } finally { setBusy('') }
+  }
+
   return (
     <section className="workspace-page trash-page">
       <div className="workspace-heading trash-page-heading">
         <div className="trash-page-title">
-          <span className="trash-page-title-icon"><ArchiveRestore size={21} /></span>
-          <div><h1>回收站</h1><p>管理已删除的文件分享和收集任务</p></div>
+          <span className="trash-page-title-icon"><Trash2 size={21} /></span>
+          <div><h1>回收站</h1><p>{hasTeam ? '统一管理个人与团队的已删除资源' : '管理已删除的文件分享和收集任务'}</p></div>
         </div>
         <div className="trash-page-actions">
           <button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} />返回收发记录</button>
-          {user?.id && <button type="button" className="secondary-button" onClick={refreshTrash} disabled={loading}><RefreshCw size={15} className={loading ? 'trash-refresh-icon is-spinning' : ''} />刷新</button>}
+          {user?.id && <button type="button" className="secondary-button trash-refresh-button" onClick={refreshTrash} disabled={activeLoading || Boolean(activeBusyAction)}><RefreshCw size={15} className={activeLoading ? 'trash-refresh-icon is-spinning' : ''} />{activeLoading ? '刷新中' : '刷新'}</button>}
+          {canEmptyTrash && <button type="button" className="secondary-button danger-lite trash-empty-button" onClick={emptyTrash} disabled={Boolean(activeBusyAction)}>{activeBusyAction === 'empty' ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <Trash2 size={15} />}{activeBusyAction === 'empty' ? '清空中' : '清空回收站'}</button>}
         </div>
       </div>
 
-      <section className="trash-page-panel" aria-label="回收站内容">
+      {hasTeam && (
+        <div className="trash-scope-tabs" role="tablist" aria-label="回收站分类">
+          <button type="button" role="tab" aria-selected={!isTeam} className={!isTeam ? 'active' : ''} onClick={() => changeScope('personal')}><Trash2 size={15} />个人回收站{!loading && <strong>{items.length}</strong>}</button>
+          <button type="button" role="tab" aria-selected={isTeam} className={isTeam ? 'active' : ''} onClick={() => changeScope('team')}><Building2 size={15} />团队回收站{!teamLoading && teamItems.length > 0 && <strong>{teamItems.length}</strong>}</button>
+        </div>
+      )}
+
+      <section className="trash-page-panel" aria-label={isTeam ? '团队回收站内容' : '个人回收站内容'}>
         <div className="trash-retention-note">
-          <div><strong>删除的个人资源保留 {retentionDays} 天</strong><span>恢复后公开链接不会自动重新开放；彻底删除后无法恢复。</span></div>
-          {user?.id && !loading && !loadError && <span className="trash-item-count">{items.length} 个项目</span>}
+          <div>
+            <strong>{isTeam ? `团队资源保留 ${activeRetentionDays} 天` : `删除的个人资源保留 ${activeRetentionDays} 天`}</strong>
+            <span>{isTeam ? '期间仍占用团队容量；恢复后分享保持关闭，需由有权限的成员重新开启；仅团队所有者或管理员可彻底删除。' : '恢复后公开链接不会自动重新开放；彻底删除后无法恢复。'}</span>
+          </div>
+          {user?.id && !activeLoading && !activeLoadError && <span className="trash-item-count">{activeItems.length} 个项目</span>}
         </div>
         {authLoading ? (
           <div className="trash-page-state"><RefreshCw size={22} className="trash-refresh-icon is-spinning" /><span>正在确认登录状态...</span></div>
         ) : !user?.id ? (
-          <div className="trash-page-state"><ArchiveRestore size={30} /><strong>登录后查看回收站</strong><span>回收站保存的是账号下已删除的分享和收集任务。</span><button type="button" className="primary-button" onClick={onLogin}>登录后查看</button></div>
-        ) : loading ? (
-          <div className="trash-page-state"><RefreshCw size={22} className="trash-refresh-icon is-spinning" /><span>正在加载回收站...</span></div>
-        ) : loadError ? (
-          <div className="trash-page-state trash-page-error"><strong>回收站暂时无法加载</strong><span>{loadError}</span><button type="button" className="secondary-button" onClick={refreshTrash}><RefreshCw size={14} />重试</button></div>
-        ) : items.length ? (
-          <div className="trash-list">
-            {items.map(item => {
-              const restoreKey = `${item.kind}:${item.id}:restore`
-              const deleteKey = `${item.kind}:${item.id}:delete`
-              return (
-                <article className="trash-row" key={`${item.kind}-${item.id}`}>
-                  <div className="trash-row-icon"><ArchiveRestore size={18} /></div>
-                  <div className="trash-row-main">
-                    <strong title={item.name}>{item.name}</strong>
-                    <span>{item.kind === 'share' ? '文件分享' : '收集任务'} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)}</span>
-                    <small>删除于 {item.deletedAt ? new Date(item.deletedAt).toLocaleString('zh-CN') : '未知时间'} · 保留至 {item.trashExpiresAt ? new Date(item.trashExpiresAt).toLocaleString('zh-CN') : '未知'}</small>
-                  </div>
-                  <div className="trash-row-actions">
-                    <button type="button" className="secondary-button trash-restore-button" disabled={Boolean(busyAction)} onClick={() => restoreItem(item)}>{busyAction === restoreKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <RotateCcw size={15} />}{busyAction === restoreKey ? '恢复中' : '恢复'}</button>
-                    <button type="button" className="danger-button trash-permanent-delete" disabled={Boolean(busyAction)} onClick={() => permanentlyDeleteItem(item)}>{busyAction === deleteKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <Trash2 size={15} />}{busyAction === deleteKey ? '删除中' : '彻底删除'}</button>
-                  </div>
-                </article>
-              )
-            })}
-          </div>
+          <div className="trash-page-state"><Trash2 size={30} /><strong>登录后查看回收站</strong><span>回收站保存的是账号下已删除的个人资源与团队文件。</span><button type="button" className="primary-button" onClick={onLogin}>登录后查看</button></div>
+        ) : activeLoading ? (
+          <div className="trash-page-state"><RefreshCw size={22} className="trash-refresh-icon is-spinning" /><span>正在加载{isTeam ? '团队' : ''}回收站...</span></div>
+        ) : activeLoadError ? (
+          <div className="trash-page-state trash-page-error"><strong>{isTeam ? '团队' : ''}回收站暂时无法加载</strong><span>{activeLoadError}</span><button type="button" className="secondary-button" onClick={refreshTrash}><RefreshCw size={14} />重试</button></div>
+        ) : activeItems.length ? (
+          <>
+            <div className="trash-list">
+              {pageItems.map(item => {
+                const restoreKey = `${item.id}:restore`
+                const deleteKey = `${item.id}:delete`
+                const expired = item.trashExpiresAt ? new Date(item.trashExpiresAt).getTime() <= Date.now() : false
+                const restoreDisabled = Boolean(activeBusyAction) || expired || (isTeam && item.canRestore === false)
+                const deleteDisabled = Boolean(activeBusyAction) || (isTeam && item.canDelete !== true)
+                return (
+                  <article className="trash-row" key={`${isTeam ? 'team' : 'personal'}-${item.kind || 'share'}-${item.id}`}>
+                    <div className="trash-row-icon">{isTeam ? <Building2 size={18} /> : <Trash2 size={18} />}</div>
+                    <div className="trash-row-main">
+                      <strong title={item.name}>{item.name}</strong>
+                      <span>{isTeam ? `${item.ownerName || '团队成员'} 上传 · ` : ''}{item.kind === 'share' ? '文件分享' : '收集任务'} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)}</span>
+                      <small>删除于 {item.deletedAt ? new Date(item.deletedAt).toLocaleString('zh-CN') : '未知时间'} · {expired ? '已到期，等待自动清理' : `保留至 ${item.trashExpiresAt ? new Date(item.trashExpiresAt).toLocaleString('zh-CN') : '未知'}`}</small>
+                    </div>
+                    <div className="trash-row-actions">
+                      <button type="button" className="secondary-button trash-restore-button" disabled={restoreDisabled} onClick={() => isTeam ? restoreTeamItem(item) : restoreItem(item)}>{activeBusyAction === restoreKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <RotateCcw size={15} />}{activeBusyAction === restoreKey ? '恢复中' : '恢复'}</button>
+                      {(!isTeam || item.canDelete === true) && <button type="button" className="danger-button trash-permanent-delete" disabled={deleteDisabled} onClick={() => isTeam ? permanentlyDeleteTeamItem(item) : permanentlyDeleteItem(item)}>{activeBusyAction === deleteKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <Trash2 size={15} />}{activeBusyAction === deleteKey ? '删除中' : '彻底删除'}</button>}
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+            <div className="trash-list-footer">
+              <span>共 {activeItems.length} 个项目 · 第 {(safePage - 1) * TRASH_PAGE_SIZE + 1}–{Math.min(safePage * TRASH_PAGE_SIZE, activeItems.length)} 个</span>
+              <div className="trash-pagination" role="navigation" aria-label="回收站分页">
+                <button type="button" disabled={safePage <= 1} onClick={() => setPage(Math.max(1, safePage - 1))}>上一页</button>
+                {trashPageNumbers(safePage, pageCount).map(entry => typeof entry === 'number'
+                  ? <button type="button" key={entry} className={entry === safePage ? 'active' : ''} aria-current={entry === safePage ? 'page' : undefined} onClick={() => setPage(entry)}>{entry}</button>
+                  : <span className="trash-pagination-gap" key={entry}>…</span>)}
+                <button type="button" disabled={safePage >= pageCount} onClick={() => setPage(Math.min(pageCount, safePage + 1))}>下一页</button>
+              </div>
+            </div>
+          </>
         ) : (
-          <div className="trash-page-state"><ArchiveRestore size={32} /><strong>回收站为空</strong><span>删除的个人分享和收集任务会在这里保留一段时间。</span></div>
+          <div className="trash-page-state"><Trash2 size={32} /><strong>{isTeam ? '团队回收站为空' : '个人回收站为空'}</strong><span>{isTeam ? `删除的团队文件会在这里保留 ${activeRetentionDays} 天，可在期限内恢复。` : '删除的个人分享和收集任务会在这里保留一段时间。'}</span></div>
         )}
       </section>
     </section>

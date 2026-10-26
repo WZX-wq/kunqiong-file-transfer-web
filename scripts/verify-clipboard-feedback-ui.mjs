@@ -196,9 +196,19 @@ try {
 
 const submissionActions = fixture()
 try {
-  submissionActions.window.collectionFixture.submissions = [{ id: 'submission-demo', participantName: '测试提交人', submittedAt: share.createdAt, files: share.files }]
+  submissionActions.window.collectionFixture.materials = [{ id: 'license', name: '营业执照', required: true }]
+  submissionActions.window.collectionFixture.customFields = [{ id: 'supplier-name', label: '供应商名称', type: 'text', required: true }]
+  submissionActions.window.collectionFixture.submissions = [{ id: 'submission-demo', participantName: '测试提交人', submittedAt: share.createdAt, materialIds: ['license'], missingMaterialIds: [], fieldValues: { 'supplier-name': '华星科技' }, files: share.files }]
   submissionActions.api.render('CollectionManagePage', { token: 'demo' })
   await waitFor(() => submissionActions.button('刷新'), 'Collection manager mounts')
+  check('Collection manager exposes delete collection action', Boolean(submissionActions.document.querySelector('.cm-danger-action')))
+  submissionActions.document.querySelector('.cm-danger-action').click()
+  await waitFor(() => submissionActions.button('删除收集'), 'Delete collection asks for confirmation')
+  check('Delete collection confirmation explains irreversible file removal', submissionActions.document.body.textContent.includes('已提交文件') && submissionActions.document.body.textContent.includes('无法恢复'))
+  submissionActions.button('取消')?.click()
+  const submittedDetails = submissionActions.document.querySelector('.cm-submission-details')?.textContent || ''
+  check('Collection manager shows submitted custom field answers', submittedDetails.includes('供应商名称') && submittedDetails.includes('华星科技'))
+  check('Collection manager shows selected material items', submittedDetails.includes('本次材料') && submittedDetails.includes('营业执照'))
   submissionActions.button('刷新').click()
   await waitFor(() => submissionActions.document.querySelector('.toast.success')?.textContent.includes('收集任务已刷新'), 'Refresh reports completion')
   check('Refreshing a collection displays success feedback', true)

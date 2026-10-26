@@ -105,6 +105,7 @@ await scenario('Materials and custom fields', async (f) => {
   await f.click('提交文件')
   await waitFor(() => f.requests.length === 1, 'Collection uploader creates a manifest with form data')
   check('Upload manifest preserves material and custom field answers', f.requests[0].materialIds?.includes('license') && f.requests[0].fieldValues?.type === '生产商')
+  check('未启用命名规则时不发送空文件材料映射', JSON.stringify(f.requests[0].fileMaterialIds) === '[]')
 }, { materials: [{ id: 'license', name: '营业执照', required: true }, { id: 'extra', name: '补充材料', required: false }], customFields: [{ id: 'type', label: '供应商类型', type: 'select', required: true, options: ['生产商', '经销商'] }] })
 await scenario('Per-file naming mapping', async (f) => {
   await f.choose([f.file('license.pdf')])

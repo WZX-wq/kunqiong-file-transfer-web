@@ -300,8 +300,7 @@
 .workspace-overview-page .workspace-inline-form input:focus-visible { border-color: #8eaddf; }
 .workspace-overview-page .workspace-inline-form .primary-button { width: 100%; min-height: 34px; font-size: 12px; }
 
-/* 交接聚合为独立页签，记录分页，避免拉长成员管理页。 */
-.team-handover-banner { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 18px; margin-bottom: 14px; color: #17375e; background: #f3f7ff; border: 1px solid #d8e5fb; border-radius: 12px; font-size: 14px; }
+/* 交接状态与历史记录嵌入团队成员管理页。 */
 .team-handover-panel { animation: team-handover-enter .18s ease-out; }
 .team-page .team-handover-panel .team-panel-heading { align-items: center; flex-direction: row; }
 .team-handover-description { max-width: 780px; margin: 0 0 20px; color: #465467; font-size: 15px; line-height: 1.8; }
@@ -315,7 +314,6 @@
 .team-handover-people svg { flex: none; color: #2563eb; }
 .team-handover-pending p { margin: 0 0 18px; color: #536175; font-size: 14px; line-height: 1.7; }
 .team-handover-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.team-handover-empty { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px; color: #536175; background: #f8fafc; border: 1px dashed #d6dfeb; border-radius: 10px; font-size: 14px; }
 .team-handover-history-heading { margin-top: 26px; }
 .team-handover-history-heading h3 { display: flex; align-items: center; gap: 8px; margin: 0; color: #17212f; font-size: 16px; }
 .team-handover-history { padding: 0; margin: 14px 0 0; list-style: none; }
@@ -326,21 +324,19 @@
 .team-handover-history small { display: block; margin-top: 6px; color: #536175; font-size: 13px; overflow-wrap: anywhere; }
 .team-handover-no-history { margin: 18px 0 0; color: #64748b; font-size: 14px; }
 .team-handover-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 14px; margin-top: 12px; font-size: 14px; }
-.team-handover-panel button, .team-handover-banner button { min-height: 40px; font-size: 14px; transition: transform .15s ease, background-color .15s ease, opacity .15s ease; }
-.team-handover-panel button:not(:disabled):hover, .team-handover-banner button:hover { transform: translateY(-1px); }
-.team-handover-panel button:not(:disabled):active, .team-handover-banner button:active { transform: scale(.98); }
-.team-handover-panel button:focus-visible, .team-handover-banner button:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
+.team-handover-panel button { min-height: 40px; font-size: 14px; transition: transform .15s ease, background-color .15s ease, opacity .15s ease; }
+.team-handover-panel button:not(:disabled):hover { transform: translateY(-1px); }
+.team-handover-panel button:not(:disabled):active { transform: scale(.98); }
+.team-handover-panel button:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
 @keyframes team-handover-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 640px) {
-  .team-page.team-page-handover { width: calc(100% - 24px); margin-top: 12px; }
-  .team-handover-banner, .team-handover-empty { align-items: stretch; flex-direction: column; }
   .team-handover-state { align-items: flex-start; flex-direction: column; }
   .team-handover-pending { padding: 16px; }
   .team-handover-actions > button { flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .team-handover-panel { animation: none; }
-  .team-handover-panel button, .team-handover-banner button { transition: none; transform: none !important; }
+  .team-handover-panel button { transition: none; transform: none !important; }
 }
 
 /* 存储用量卡（原型 usage-total / usage-bar / usage-legend） */

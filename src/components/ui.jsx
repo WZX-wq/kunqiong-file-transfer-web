@@ -15,6 +15,8 @@ import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIO
 import { createCollectionManageForm, createShareManageForm, fileFormatLabel, formatAllowedTypes, formatDateInputDisplay, getManageToken, isClosedOrExpiredStatus, isDateInputStillOpen, normalizeCollectionTypes, recordDisplayName, recordExpiryLabel, recordScopeLabel, toggleCollectionType } from '../lib/records.js'
 import { OFFICE_PREVIEW_LIMITS, assertOfficeFileSize, createOfficePreviewSession, readPreviewResponse } from '../lib/office-preview-core.js'
 import { limitInputText } from '../lib/input-limits.js'
+import { CollectionFieldsEditor, CollectionMaterialsEditor } from './collection-builder.jsx'
+import { validateCollectionStructure } from '../lib/collection-form.js'
 
 export function DownloadProgressPanel({ task, onRetry }) {
   if (!task || task.status === 'idle') return null
@@ -607,6 +609,7 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
   const [closing, setClosing] = useState(false)
   const [reopening, setReopening] = useState(false)
   const [error, setError] = useState('')
+  const collectionValidation = validateCollectionStructure(collectionForm.materials || [], collectionForm.customFields || [])
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -645,12 +648,18 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
       setError('请先把截止日期调整到今天或未来日期')
       return null
     }
+    if (collectionValidation.hasErrors) {
+      setError('请先修正材料清单或自定义字段下方的提示')
+      return null
+    }
     return {
       title,
       description,
       deadline: collectionForm.deadline,
       allowedTypes: normalizeCollectionTypes(collectionForm.allowedTypes),
       maxFileSizeMb: Math.min(Number(collectionForm.maxFileSizeMb), data.maxConfigurableFileSizeMb || 20480),
+      materials: (collectionForm.materials || []).map(({ autoFocus, ...material }) => material),
+      customFields: (collectionForm.customFields || []).map(({ autoFocus, ...field }) => field),
     }
   }
 
@@ -725,7 +734,7 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
 
   return createPortal(
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal manage-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div className={`modal manage-modal ${isShare ? '' : 'manage-modal-wide'}`.trim()} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">{isShare ? '分享管理' : '收集任务管理'}</p><h2>{isShare ? '管理分享设置' : '管理收集设置'}</h2></div>
           <button className="ghost-icon modal-close" aria-label="关闭管理窗口" onClick={onClose}><X size={18} /></button>
@@ -769,6 +778,20 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
                 <span>单文件大小限制</span>
                 <select value={Math.min(Number(collectionForm.maxFileSizeMb), data.maxConfigurableFileSizeMb || 20480)} onChange={(event) => updateCollection({ maxFileSizeMb: event.target.value })}>{collectionSizeOptions(data.maxConfigurableFileSizeMb || 20480, collectionForm.maxFileSizeMb).map(size => <option key={size} value={size}>{formatBytes(size * 1024 ** 2)}</option>)}</select>
               </label>
+              <div className="manage-collection-structure">
+                <CollectionMaterialsEditor
+                  materials={collectionForm.materials || []}
+                  onChange={(materials) => updateCollection({ materials })}
+                  errors={collectionValidation.materialErrors}
+                  compact
+                />
+                <CollectionFieldsEditor
+                  customFields={collectionForm.customFields || []}
+                  onChange={(customFields) => updateCollection({ customFields })}
+                  errors={collectionValidation.fieldErrors}
+                  compact
+                />
+              </div>
             </>
           )}
           {error && <p className="manage-form-error">{error}</p>}

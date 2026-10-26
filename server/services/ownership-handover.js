@@ -43,7 +43,7 @@ function finishHandover(organization, handover, status, actorUserId, reason = ''
   }
   addAccountMessage(handover.fromUserId, {
     category: 'other', eventType: 'teamOwnership', title: `负责人交接${outcomeLabels[status]}`,
-    body, actionUrl: '/team?tab=handover',
+    body, actionUrl: '/team?tab=members',
   }, { respectSettings: false })
   recordAuditLog({
     type: 'team', action: status === 'accepted' ? '转让团队所有权' : `负责人交接${outcomeLabels[status]}`,
@@ -104,7 +104,7 @@ export function initiateOwnershipHandover(organization, ownerId, targetMemberId)
   addAccountMessage(recipient.id, {
     category: 'other', eventType: 'teamOwnership', title: '待确认的团队负责人交接',
     body: `${handover.fromName}邀请你接管团队“${organization.name}”。接受后你成为所有者，对方变为普通成员；团队套餐、文件和原任务归属保留。请在 7 天内处理。`,
-    actionType: 'workspace_ownership_handover', actionId: handover.id, actionUrl: '/team?tab=handover',
+    actionType: 'workspace_ownership_handover', actionId: handover.id, actionUrl: '/team?tab=members',
   }, { respectSettings: false })
   recordAuditLog({ type: 'team', action: '发起负责人交接', userId: ownerId, targetId: recipient.id,
     details: { organizationId: organization.id, handoverId: handover.id, fromUserId: ownerId, toUserId: recipient.id, initiatedAt: now, expiresAt: handover.expiresAt } })

@@ -37,7 +37,7 @@ app.get('/__handover_demo', (_req, res) => res.type('html').send('<!doctype html
 app.get('/__handover_demo/login/:role', (req, res) => {
  if (!['owner','recipient','peer'].includes(req.params.role)) return res.sendStatus(404);
  res.setHeader('Set-Cookie', 'kunqiong_session=handover-demo-' + req.params.role + '; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400');
- res.redirect('/team?tab=handover');
+ res.redirect('/team?tab=members');
 });
 `
 fs.writeFileSync(path.join(fixture, 'server.mjs'), fs.readFileSync(path.join(root, 'server.mjs'), 'utf8').replace('registerWorkspaceRoutes(app)', fixtureRoutes + '\nregisterWorkspaceRoutes(app)'))

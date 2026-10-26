@@ -2,13 +2,11 @@
 //
 // 依赖方向：routes → services → lib → state → config（单向）
 // 注册顺序即 Express 匹配顺序，server.mjs 中的调用点顺序不可调整。
-import fs from 'node:fs'
-import path from 'node:path'
 import { INVALID_TEXT, objectInput, textInput } from '../lib/input-validation.js'
 import {
-  createToken, httpError
+  createToken
 } from '../lib/http.js'
-import { TEAM_NAME_MAX, TEAM_QUERY_MAX, filesRoot } from '../config.js'
+import { TEAM_NAME_MAX, TEAM_QUERY_MAX } from '../config.js'
 
 import {
   normalizeEmailValue, normalizePhoneValue, trimRecordString
@@ -23,7 +21,7 @@ import {
   accountTeamUsageForOrganization, accountUserById, accountWorkspacePayload, addAccountMessage,
   authSessionFromRequest, createOrganization, currentShareStatus, displayAccountName,
   fileListSize, findAccountUserByInvitationTarget, getOrigin, isJoinRequestRateLimited,
-  isOrganizationManager, joinRequestCooldownRemaining, organizationBySlug, parseAccountRecordResource, publicFile,
+  isOrganizationManager, joinRequestCooldownRemaining, organizationBySlug, publicFile,
   publicJoinRequestsForOrganization, publicOrganization, publicOrganizationMember, reconcileUserUpgradeOrders,
   recordAuditLog, recordJoinRequestAttempt, requireAuthSession, syncAccountUserSessions,
   organizationTeamPlanForOrganization, organizationTeamPlanExpiresAtForOrganization,
@@ -34,9 +32,12 @@ import {
   reconcileOwnershipHandover, respondOwnershipHandover,
 } from '../services/ownership-handover.js'
 import { registerTeamBrandingRoutes } from './team-branding.js'
+import {
+  TRASH_RETENTION_DAYS, emptyTeamTrashForOrganization, listTeamTrashForOrganization,
+  permanentlyDeleteTeamTrashResource, restoreTeamTrashResource, trashTeamResourceForOrganization,
+} from '../services/trash.js'
 // 每分钟按真实来源与操作者限流，避免通过候选查询批量枚举账号。
 const memberSearchAttempts = new Map()
-const teamResourceRemovals = new Map()
 const INVITATION_TTL_MS = 7 * 86400000
 function validateTeamName(value, organizationId = '') {
   const name = typeof value === 'string' ? value.trim() : ''
@@ -121,39 +122,69 @@ export function registerWorkspaceRoutes(app) {
       // 以当前成员关系及资源固定组织归属判断权限，不信任客户端的角色、上传者或管理令牌。
       const organization = accountOrganizationForUser(session.user.id)
       if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
-      const share = metadata.shares.find(item => item.id === req.params.resourceId && item.teamResource && item.teamOrganizationId === organization.id)
-      if (!share) return res.status(404).json({ message: '团队资源不存在或已删除' })
-      if (!isOrganizationManager(organization, session.user.id) && share.ownerUserId !== session.user.id) return res.status(403).json({ message: '仅资源上传者或团队管理者可以删除该团队资源' })
-
-      const directory = path.resolve(filesRoot, share.id)
-      if (path.dirname(directory) !== path.resolve(filesRoot)) throw httpError(500, '资源存储路径无效，无法删除')
-      const deletedFileCount = share.files?.length || 0
-      const releasedBytes = fileListSize(share.files)
-      // 文件删除成功后再释放容量；失败保留资源记录供重试。
-      const pendingRemoval = teamResourceRemovals.get(share.id)
-      if (pendingRemoval) {
-        await pendingRemoval.catch(() => {})
-        if (!metadata.shares.some(item => item.id === share.id)) return res.status(404).json({ message: '团队资源已删除' })
-      }
-      const removal = fs.promises.rm(directory, { recursive: true, force: true })
-      teamResourceRemovals.set(share.id, removal)
-      try { await removal } finally {
-        if (teamResourceRemovals.get(share.id) === removal) teamResourceRemovals.delete(share.id)
-      }
-      // await 期间另一次删除可能已移除该资源，重新定位，避免删除相邻记录。
-      const index = metadata.shares.indexOf(share)
-      if (index < 0) return res.status(404).json({ message: '团队资源已删除' })
-      metadata.shares.splice(index, 1)
-      const removedKeys = new Set([share.id, share.manageToken, share.code].filter(Boolean))
-      for (const [userId, records] of Object.entries(metadata.records || {})) {
-        metadata.records[userId] = records.filter(record => {
-          const parsed = parseAccountRecordResource(record.id)
-          return parsed?.kind !== 'share' || !removedKeys.has(parsed.key)
-        })
-      }
+      const canManageTeam = isOrganizationManager(organization, session.user.id)
+      const item = trashTeamResourceForOrganization(organization.id, session.user.id, req.params.resourceId, canManageTeam)
       persistMetadata()
-      recordAuditLog({ type: 'account', action: '删除团队资源', userId: session.user.id, targetId: share.id, details: { organizationId: organization.id, deletedFileCount, releasedBytes } })
-      res.json({ ok: true, deletedResourceId: share.id, deletedFileCount, releasedBytes, capacity: accountTeamUsageForOrganization(organization, session.user.id) })
+      recordAuditLog({ type: 'account', action: '移入团队回收站', userId: session.user.id, targetId: item.id, details: { organizationId: organization.id, deletedFileCount: item.fileCount, retainedBytes: item.totalSize, trashExpiresAt: item.trashExpiresAt } })
+      res.json({ ok: true, deletedResourceId: item.id, deletedFileCount: item.fileCount, releasedBytes: 0, retainedBytes: item.totalSize, trashExpiresAt: item.trashExpiresAt, capacity: accountTeamUsageForOrganization(organization, session.user.id) })
+    } catch (error) { next(error) }
+  })
+  app.get('/api/account/team/trash', (req, res) => {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    const organization = accountOrganizationForUser(session.user.id)
+    if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
+    const canManageTeam = isOrganizationManager(organization, session.user.id)
+    const items = listTeamTrashForOrganization(organization.id, session.user.id, canManageTeam).map(item => ({
+      ...item,
+      ownerName: displayAccountName(accountUserById(item.ownerUserId) || {}),
+      deletedByName: displayAccountName(accountUserById(item.deletedByUserId) || {}),
+      canRestore: canManageTeam || item.ownerUserId === session.user.id,
+      canDelete: canManageTeam,
+    }))
+    res.json({ items, retentionDays: TRASH_RETENTION_DAYS })
+  })
+
+  app.delete('/api/account/team/trash', async (req, res, next) => {
+    try {
+      const session = requireAuthSession(req, res)
+      if (!session) return
+      const organization = accountOrganizationForUser(session.user.id)
+      if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
+      if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '仅团队所有者或管理员可以清空团队回收站' })
+      const result = await emptyTeamTrashForOrganization(organization.id)
+      persistMetadata()
+      if (result.deletedCount > 0) {
+        recordAuditLog({ type: 'account', action: '清空团队回收站', userId: session.user.id, targetId: organization.id, details: { organizationId: organization.id, deletedResourceCount: result.deletedCount, deletedFileCount: result.deletedFileCount, releasedBytes: result.releasedBytes } })
+        persistMetadata()
+      }
+      res.json({ ok: true, ...result, capacity: accountTeamUsageForOrganization(organization, session.user.id) })
+    } catch (error) { next(error) }
+  })
+  app.post('/api/account/team/trash/:resourceId/restore', (req, res, next) => {
+    try {
+      const session = requireAuthSession(req, res)
+      if (!session) return
+      const organization = accountOrganizationForUser(session.user.id)
+      if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
+      const canManageTeam = isOrganizationManager(organization, session.user.id)
+      const item = restoreTeamTrashResource(organization.id, session.user.id, canManageTeam, req.params.resourceId)
+      persistMetadata()
+      recordAuditLog({ type: 'account', action: '恢复团队资源', userId: session.user.id, targetId: item.id, details: { organizationId: organization.id } })
+      res.json({ item, retentionDays: TRASH_RETENTION_DAYS })
+    } catch (error) { next(error) }
+  })
+  app.delete('/api/account/team/trash/:resourceId', async (req, res, next) => {
+    try {
+      const session = requireAuthSession(req, res)
+      if (!session) return
+      const organization = accountOrganizationForUser(session.user.id)
+      if (!organization) return res.status(404).json({ message: '你尚未加入团队空间' })
+      if (!isOrganizationManager(organization, session.user.id)) return res.status(403).json({ message: '仅团队所有者或管理员可以彻底删除团队文件' })
+      const item = await permanentlyDeleteTeamTrashResource(organization.id, req.params.resourceId)
+      persistMetadata()
+      recordAuditLog({ type: 'account', action: '彻底删除团队资源', userId: session.user.id, targetId: item.id, details: { organizationId: organization.id, deletedFileCount: item.fileCount, releasedBytes: item.totalSize } })
+      res.json({ ok: true, item, capacity: accountTeamUsageForOrganization(organization, session.user.id) })
     } catch (error) { next(error) }
   })
 

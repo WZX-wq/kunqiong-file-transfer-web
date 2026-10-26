@@ -428,8 +428,10 @@
 .code-input:focus { border-color: #7690b6; }
 .retrieve-hint { display: flex; align-items: center; gap: 6px; margin-top: 13px; color: #616d80; font-size: 11px; }
 .toast { position: fixed; z-index: 1000; animation: toastIn .18s ease-out both; right: 24px; bottom: 24px; display: flex; align-items: center; gap: 9px; max-width: min(460px, calc(100vw - 48px)); padding: 12px 16px; color: #27426b; background: #eff3fa; border: 1px solid #bfcee4; border-radius: 9px; box-shadow: 0 12px 30px rgba(32, 46, 67, .16); font-size: 13px; font-weight: 600; line-height: 1.5; }
+.toast.success { color: #0d7a4c; background: #f0fbf5; border-color: #cdeee0; box-shadow: 0 12px 30px rgba(14, 122, 76, .14); }
 .toast.error { color: #a64f45; background: #fff3f1; border-color: #efc8c2; box-shadow: 0 12px 30px rgba(140, 62, 51, .15); }
 .toast-icon { display: grid; place-items: center; flex: none; width: 24px; height: 24px; color: #fff; background: #2c5da7; border-radius: 50%; }
+.toast.success .toast-icon { background: #0e9f6e; }
 .toast.error .toast-icon { background: #d85f53; }
 .toast > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .upload-choice { display: flex; gap: 9px; }

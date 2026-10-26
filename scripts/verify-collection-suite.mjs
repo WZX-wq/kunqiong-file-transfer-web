@@ -161,9 +161,27 @@ try {
     fieldValues: JSON.stringify({ 'supplier-type': '生产商', 'contact-date': '2026-10-23' }),
   }) })
   check('提交成功后保存自定义字段值与所交材料', validFormSubmission.status === 201 && validFormSubmission.data.submission?.fieldValues?.['supplier-type'] === '生产商' && validFormSubmission.data.submission?.materialIds?.includes('business-license'), `status=${validFormSubmission.status} msg=${validFormSubmission.data.message}`)
+  const legacyBlankMapSubmission = await api(`/api/collections/${collectionFormToken}/submissions`, { method: 'POST', body: form([{ name: 'legacy-license.txt' }], {
+    participantName: '旧页面提交者',
+    materialIds: JSON.stringify(['business-license']),
+    fieldValues: JSON.stringify({ 'supplier-type': '生产商', 'contact-date': '2026-10-23' }),
+    fileMaterialIds: JSON.stringify(['']),
+  }) })
+  check('无命名规则的旧页面空映射占位不会阻止提交', legacyBlankMapSubmission.status === 201 && legacyBlankMapSubmission.data.submission?.materialIds?.includes('business-license'), `status=${legacyBlankMapSubmission.status} msg=${legacyBlankMapSubmission.data.message}`)
   const collectionFormManage = await api(`/api/collections/manage/${collectionFormTask.data.manageToken}`, { user: 'owner' })
   const managedFormSubmission = collectionFormManage.data.collection?.submissions?.find((item) => item.id === validFormSubmission.data.submission?.id)
   check('管理端可查看字段答案、已交材料和缺少的必交材料', managedFormSubmission?.fieldValues?.['supplier-type'] === '生产商' && managedFormSubmission?.materialIds?.includes('business-license') && managedFormSubmission?.missingMaterialIds?.includes('signed-contract'))
+
+  const customOnlyTask = await api('/api/collections', { user: 'owner', method: 'POST', body: {
+    title: '供应商信息收集', allowedTypes: ['文档'], maxFileSizeMb: 10, materials: [],
+    customFields: [{ id: 'supplier-type', label: '供应商类型', type: 'select', required: false, options: ['供应商', '客户'] }],
+  } })
+  const customOnlyToken = customOnlyTask.data.collection?.token
+  const customOnlySubmission = await api(`/api/collections/${customOnlyToken}/submissions`, { method: 'POST', body: form([{ name: '供应商.xlsx' }], {
+    participantName: '2795', fieldValues: JSON.stringify({ 'supplier-type': '供应商' }),
+    materialIds: JSON.stringify([]), fileMaterialIds: JSON.stringify(['']),
+  }) })
+  check('只有自定义字段且文件材料编号为空时允许提交并保存字段答案', customOnlySubmission.status === 201 && customOnlySubmission.data.submission?.fieldValues?.['supplier-type'] === '供应商' && customOnlySubmission.data.submission?.materialIds?.length === 0 && customOnlySubmission.data.submission?.files?.[0]?.name === '供应商.xlsx', `status=${customOnlySubmission.status} msg=${customOnlySubmission.data.message}`)
 
   console.log('\n=== COLL-014 材料文件命名规则 ===')
   const invalidNamingPattern = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '非法命名格式', materials: [{ id: 'license', name: '营业执照', required: true, namingPattern: '{未知字段}.pdf' }] } })
@@ -173,6 +191,8 @@ try {
   check('任务创建时保存材料命名格式', namingTaskResponse.status === 201 && namingTask.materials?.[0]?.namingPattern === '{提交人}/{材料项}.exe', `status=${namingTaskResponse.status}`)
   const namingMissingMap = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([{ name: '合同.pdf' }], { participantName: '张三', materialIds: JSON.stringify(['license']) }) })
   check('启用命名规则后缺少逐文件材料映射会被拒绝', namingMissingMap.status === 400 && /每个文件/.test(namingMissingMap.data.message || ''), `status=${namingMissingMap.status} msg=${namingMissingMap.data.message}`)
+  const namingEmptyMap = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([{ name: '合同.pdf' }], { participantName: '张三', materialIds: JSON.stringify(['license']), fileMaterialIds: JSON.stringify(['']) }) })
+  check('启用命名规则后空材料映射仍被拒绝', namingEmptyMap.status === 400 && /每个文件/.test(namingEmptyMap.data.message || ''), `status=${namingEmptyMap.status} msg=${namingEmptyMap.data.message}`)
   const namingBadMap = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([{ name: '合同.pdf' }], { participantName: '张三', materialIds: JSON.stringify(['license']), fileMaterialIds: JSON.stringify(['not-selected']) }) })
   check('服务端拒绝未选择或不存在的文件材料映射', namingBadMap.status === 400, `status=${namingBadMap.status} msg=${namingBadMap.data.message}`)
   const namingSubmit = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([{ name: '合同.pdf' }, { name: '补充合同.pdf' }], {

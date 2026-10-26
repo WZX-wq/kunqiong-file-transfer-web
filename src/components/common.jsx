@@ -72,6 +72,7 @@ export function PublicShell({ children, className = '' }) {
   const active = path === '/' ? (view === 'collect' ? 'collect' : view === 'records' ? 'records' : view === 'send' || !view ? 'send' : '')
     : path.startsWith('/workspace') || path.startsWith('/team') || path.startsWith('/e/') ? 'workspace' : ''
   const showMessages = !path.startsWith('/admin')
+  const showTrash = path.startsWith('/workspace') || path.startsWith('/team')
   return <div className={`app-shell public-shell ${className}`}>
     <header className="topbar public-topbar">
       <div className="public-topbar-content">
@@ -83,6 +84,7 @@ export function PublicShell({ children, className = '' }) {
           <a className={`nav-item${active === 'workspace' ? ' active' : ''}`} href="/workspace"><Crown size={17} /><span>会员与团队</span></a>
         </nav>
         <div className="topbar-actions public-topbar-actions">
+          {showTrash && <a className="public-message-link topbar-trash-link" href={path.startsWith('/team') ? '/trash?tab=team' : '/trash'} aria-label="回收站" title="回收站"><Trash2 size={17} /></a>}
           {showMessages && <a className="public-message-link" href="/?view=records&panel=messages" aria-label="打开消息中心" title="消息中心"><Bell size={17} /></a>}
           <PublicAccountActions />
         </div>

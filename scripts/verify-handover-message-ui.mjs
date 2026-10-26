@@ -16,7 +16,7 @@ async function mount({ fail = false } = {}) {
   virtualConsole.on('jsdomError', error => { if (!/navigation/.test(error.message)) errors.push(error) })
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://fixture.local/?panel=messages', pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole })
   const { window } = dom, document = window.document
-  let messages = [{ id: 'handover-message', title: '待确认的团队负责人交接', body: '原负责人邀请你接管测试团队，确认后生效', category: 'other', actionType: 'workspace_ownership_handover', actionId: 'handover-fixture', actionUrl: '/team?tab=handover', unread: true, createdAt: new Date().toISOString() }]
+  let messages = [{ id: 'handover-message', title: '待确认的团队负责人交接', body: '原负责人邀请你接管测试团队，确认后生效', category: 'other', actionType: 'workspace_ownership_handover', actionId: 'handover-fixture', actionUrl: '/team?tab=members', unread: true, createdAt: new Date().toISOString() }]
   let hold = false, release
   window.setInterval = () => 0; window.clearInterval = () => {}
   window.fetch = async (url, options = {}) => {

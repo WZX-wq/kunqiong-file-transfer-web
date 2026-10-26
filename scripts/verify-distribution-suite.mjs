@@ -43,11 +43,30 @@ try {
   assert.equal(published.res.status, 201); assert.equal(published.data.distribution.rowCount, 2)
   const shareId = published.data.share.id
   const ownerView = await api(`/api/shares/token/${shareId}`, { user: 'owner' }); assert.equal(ownerView.res.status, 200); assert.equal(ownerView.data.share.files.length, 2)
-  const aliceView = await api(`/api/shares/token/${shareId}`, { user: 'alice' }); assert.equal(aliceView.res.status, 200); assert.equal(aliceView.data.share.files.length, 1); assert.equal(aliceView.data.share.files[0].name, '001__alice.txt'); assert.equal(Object.hasOwn(aliceView.data.share.files[0], 'distributionRecipientUserId'), false)
+  const aliceView = await api(`/api/shares/token/${shareId}`, { user: 'alice' }); assert.equal(aliceView.res.status, 200); assert.equal(aliceView.data.share.files.length, 1); assert.equal(aliceView.data.share.files[0].name, 'alice.txt'); assert.equal(Object.hasOwn(aliceView.data.share.files[0], 'distributionRecipientUserId'), false)
   const strangerView = await api(`/api/shares/token/${shareId}`, { user: 'stranger' }); assert.equal(strangerView.res.status, 403)
   const aliceDownload = await fetch(`${base}/api/shares/${shareId}/files/0/download`, { headers: { cookie: 'kunqiong_session=alice-session' } }); assert.equal(aliceDownload.status, 200)
   const wrongDownload = await fetch(`${base}/api/shares/${shareId}/files/1/download`, { headers: { cookie: 'alice-session' } }); assert.notEqual(wrongDownload.status, 200)
   const reused = await api('/api/distributions', { user: 'owner', method: 'POST', body: form('distribution-suite-key') }); assert.equal(reused.res.status, 200); assert.equal(reused.data.reused, true); assert.equal(reused.data.share.id, shareId)
   console.log('PASS: 定向分发预览、阻断、发布、逐文件权限、错误领取和幂等重试')
+
+  // 新流程：文件保持原名，前端逐条核对后提交 assignments，不再要求改文件名。
+  result = await api('/api/distributions/preview', { user: 'owner', method: 'POST', body: { files: ['劳动合同.txt', '报价单.txt'], roster: 'alice\nbob' } })
+  assert.equal(result.data.preview.ok, true); assert.equal(result.data.preview.rows.length, 2); assert.equal(result.data.preview.rows[1].recipient, 'bob')
+  const friendly = new FormData()
+  friendly.append('files', new Blob(['contract']), '劳动合同.txt')
+  friendly.append('files', new Blob(['quote']), '报价单.txt')
+  friendly.append('assignments', JSON.stringify([{ fileIndex: 0, recipient: 'bob' }, { fileIndex: 1, recipient: 'alice' }]))
+  friendly.append('idempotencyKey', 'distribution-friendly-key')
+  const friendlyPublished = await api('/api/distributions', { user: 'owner', method: 'POST', body: friendly })
+  assert.equal(friendlyPublished.res.status, 201)
+  const friendlyShare = friendlyPublished.data.share.id
+  const bobView = await api(`/api/shares/token/${friendlyShare}`, { user: 'bob' })
+  assert.equal(bobView.res.status, 200); assert.equal(bobView.data.share.files.length, 1); assert.equal(bobView.data.share.files[0].name, '劳动合同.txt')
+  const aliceFriendly = await api(`/api/shares/token/${friendlyShare}`, { user: 'alice' })
+  assert.equal(aliceFriendly.data.share.files.length, 1); assert.equal(aliceFriendly.data.share.files[0].name, '报价单.txt')
+  result = await api('/api/distributions/preview', { user: 'owner', method: 'POST', body: { files: ['a.txt'], assignments: [{ fileIndex: 0, recipient: 'nobody' }] } })
+  assert.equal(result.data.preview.ok, false); assert.ok(result.data.preview.issues.some(issue => issue.code === 'recipient_not_found'))
+  console.log('PASS: 原名上传、顺序配对、逐条调整与收件人校验')
 } finally { if (child.exitCode === null) { const exited = once(child, 'exit'); child.kill(); await Promise.race([exited, delay(3000)]) } }
 
