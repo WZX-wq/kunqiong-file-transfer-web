@@ -91,7 +91,7 @@ export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
   )
 }
 
-export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, onDelete, onRename, onClear, onRefresh, onOpen, onOpenCollectionManager, onUpload, onManage, onCloseManaged, onReopenManaged, onSaveShareExpiry, onNotify }) {
+export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, onDelete, onRename, onClear, onRefresh, onOpen, onOpenCollectionManager, onUpload, onOpenTrash, onManage, onCloseManaged, onReopenManaged, onSaveShareExpiry, onNotify }) {
   const [viewMode, setViewMode] = useState(() => new URLSearchParams(window.location.search).get('center') === 'files' ? 'files' : 'records')
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
@@ -114,10 +114,6 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   const [previewItem, setPreviewItem] = useState(null)
   const [previewChoices, setPreviewChoices] = useState(null)
   const [qrPreview, setQrPreview] = useState(null)
-  const [trashOpen, setTrashOpen] = useState(false)
-  const [trashItems, setTrashItems] = useState([])
-  const [trashRetentionDays, setTrashRetentionDays] = useState(7)
-  const [trashLoading, setTrashLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [recordPage, setRecordPage] = useState(1)
   const [filePage, setFilePage] = useState(1)
@@ -230,39 +226,6 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     } finally {
       setRefreshing(false)
     }
-  }
-
-  const openTrash = async () => {
-    if (!user?.id) return onNotify?.('登录后才能查看回收站')
-    setTrashOpen(true)
-    setTrashLoading(true)
-    try {
-      const data = await apiRequest('/api/account/trash')
-      setTrashItems(data.items || [])
-      setTrashRetentionDays(Number(data.retentionDays) || 7)
-    } catch (error) {
-      setTrashOpen(false)
-      onNotify?.(error.message || '回收站加载失败')
-    } finally { setTrashLoading(false) }
-  }
-
-  const restoreTrash = async (item) => {
-    try {
-      await apiRequest(`/api/account/trash/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}/restore`, { method: 'POST' })
-      setTrashItems(current => current.filter(candidate => !(candidate.kind === item.kind && candidate.id === item.id)))
-      await handleRefresh({ silent: true })
-      onNotify?.('资源已恢复，公开链接保持关闭状态')
-    } catch (error) { onNotify?.(error.message || '恢复失败') }
-  }
-
-  const permanentlyDeleteTrash = async (item) => {
-    if (!window.confirm(`彻底删除“${item.name}”？删除后无法恢复。`)) return
-    try {
-      await apiRequest(`/api/account/trash/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
-      setTrashItems(current => current.filter(candidate => !(candidate.kind === item.kind && candidate.id === item.id)))
-      await handleRefresh({ silent: true })
-      onNotify?.('资源已彻底删除')
-    } catch (error) { onNotify?.(error.message || '彻底删除失败') }
   }
 
   const toggleMenu = (menuId, event, record) => {
@@ -505,7 +468,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
             </>
           )}
           {viewMode === 'records' && (
-            <><button type="button" className="secondary-button" onClick={openTrash}><ArchiveRestore size={15} /> 回收站</button><button type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空记录</button></>
+            <><button type="button" className="secondary-button" onClick={onOpenTrash}><ArchiveRestore size={15} /> 回收站</button><button type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空记录</button></>
           )}
         </div>
       </div>
@@ -697,8 +660,123 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
       {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startRecordPreviewDownload(config || previewItem.downloadConfig)} downloadDisabled={previewDownloadBusy} />}
       {qrPreview && <QrPreviewModal title={qrPreview.title} detail={qrPreview.detail || '扫码打开提交入口'} qrDataUrl={qrPreview.qrDataUrl} targetUrl={qrPreview.targetUrl} onClose={() => setQrPreview(null)} onCopyImage={() => onCopyQrImage?.(qrPreview.qrDataUrl, qrPreview.targetUrl)} onCopyLink={() => onCopy?.(qrPreview.targetUrl)} />}
       {openMenu && menuRecord && menuAnchor && createPortal(renderRecordMenu(menuRecord), document.body)}
-      {trashOpen && <div className="trash-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTrashOpen(false) }}><section className="trash-panel" role="dialog" aria-modal="true" aria-labelledby="trash-title"><div className="trash-panel-head"><div><h2 id="trash-title"><ArchiveRestore size={20} />回收站</h2><p>删除的个人资源保留 {trashRetentionDays} 天；恢复后公开链接不会自动重新开放。</p></div><button className="ghost-icon" type="button" aria-label="关闭回收站" onClick={() => setTrashOpen(false)}><X size={18} /></button></div>{trashLoading ? <div className="trash-empty">正在加载回收站...</div> : trashItems.length ? <div className="trash-list">{trashItems.map(item => <div className="trash-row" key={`${item.kind}-${item.id}`}><div className="trash-row-icon"><ArchiveRestore size={17} /></div><div className="trash-row-main"><strong>{item.name}</strong><span>{item.kind === 'share' ? '文件分享' : '收集任务'} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)}</span><small>删除于 {item.deletedAt ? new Date(item.deletedAt).toLocaleString('zh-CN') : '未知时间'} · 保留至 {item.trashExpiresAt ? new Date(item.trashExpiresAt).toLocaleString('zh-CN') : '未知'}</small></div><div className="trash-row-actions"><button className="secondary-button" type="button" onClick={() => restoreTrash(item)}><RotateCcw size={14} />恢复</button><button className="danger-button" type="button" onClick={() => permanentlyDeleteTrash(item)}><Trash2 size={14} />彻底删除</button></div></div>)}</div> : <div className="trash-empty"><ArchiveRestore size={28} /><strong>回收站为空</strong><span>删除的个人分享和收集任务会在这里保留一段时间。</span></div>}</section></div>}
       <div className="records-footnote"><HardDrive size={16} /> {syncing ? '账号记录同步中...' : user?.id ? '已登录，记录会同步到账号并可跨设备查看。' : '游客记录仅保留在当前设备，登录后可跨设备同步。'}</div>
+    </section>
+  )
+}
+
+export function TrashView({ user, authLoading = false, onLogin, onBack, onRefresh, onNotify }) {
+  const [items, setItems] = useState([])
+  const [retentionDays, setRetentionDays] = useState(7)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [busyAction, setBusyAction] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
+
+  useEffect(() => {
+    if (authLoading) return undefined
+    if (!user?.id) {
+      setItems([])
+      setLoading(false)
+      return undefined
+    }
+    let active = true
+    setLoading(true)
+    setLoadError('')
+    apiRequest('/api/account/trash')
+      .then(data => {
+        if (!active) return
+        setItems(data.items || [])
+        setRetentionDays(Number(data.retentionDays) || 7)
+      })
+      .catch(error => { if (active) setLoadError(error.message || '回收站加载失败') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [authLoading, user?.id, reloadKey])
+
+  const refreshTrash = () => setReloadKey(current => current + 1)
+  const refreshRecordsSafely = async () => {
+    try { await onRefresh?.({ silent: true }) } catch { /* The recycle-bin action already succeeded. */ }
+  }
+
+  const restoreItem = async (item) => {
+    const actionKey = `${item.kind}:${item.id}:restore`
+    setBusyAction(actionKey)
+    try {
+      await apiRequest(`/api/account/trash/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}/restore`, { method: 'POST' })
+      setItems(current => current.filter(candidate => !(candidate.kind === item.kind && candidate.id === item.id)))
+      await refreshRecordsSafely()
+      onNotify?.('资源已恢复，公开链接保持关闭状态')
+    } catch (error) {
+      onNotify?.(error.message || '恢复失败')
+    } finally { setBusyAction('') }
+  }
+
+  const permanentlyDeleteItem = async (item) => {
+    if (!window.confirm(`彻底删除“${item.name}”？删除后无法恢复。`)) return
+    const actionKey = `${item.kind}:${item.id}:delete`
+    setBusyAction(actionKey)
+    try {
+      await apiRequest(`/api/account/trash/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
+      setItems(current => current.filter(candidate => !(candidate.kind === item.kind && candidate.id === item.id)))
+      await refreshRecordsSafely()
+      onNotify?.('资源已彻底删除')
+    } catch (error) {
+      onNotify?.(error.message || '彻底删除失败')
+    } finally { setBusyAction('') }
+  }
+
+  return (
+    <section className="workspace-page trash-page">
+      <div className="workspace-heading trash-page-heading">
+        <div className="trash-page-title">
+          <span className="trash-page-title-icon"><ArchiveRestore size={21} /></span>
+          <div><h1>回收站</h1><p>管理已删除的文件分享和收集任务</p></div>
+        </div>
+        <div className="trash-page-actions">
+          <button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} />返回收发记录</button>
+          {user?.id && <button type="button" className="secondary-button" onClick={refreshTrash} disabled={loading}><RefreshCw size={15} className={loading ? 'trash-refresh-icon is-spinning' : ''} />刷新</button>}
+        </div>
+      </div>
+
+      <section className="trash-page-panel" aria-label="回收站内容">
+        <div className="trash-retention-note">
+          <div><strong>删除的个人资源保留 {retentionDays} 天</strong><span>恢复后公开链接不会自动重新开放；彻底删除后无法恢复。</span></div>
+          {user?.id && !loading && !loadError && <span className="trash-item-count">{items.length} 个项目</span>}
+        </div>
+        {authLoading ? (
+          <div className="trash-page-state"><RefreshCw size={22} className="trash-refresh-icon is-spinning" /><span>正在确认登录状态...</span></div>
+        ) : !user?.id ? (
+          <div className="trash-page-state"><ArchiveRestore size={30} /><strong>登录后查看回收站</strong><span>回收站保存的是账号下已删除的分享和收集任务。</span><button type="button" className="primary-button" onClick={onLogin}>登录后查看</button></div>
+        ) : loading ? (
+          <div className="trash-page-state"><RefreshCw size={22} className="trash-refresh-icon is-spinning" /><span>正在加载回收站...</span></div>
+        ) : loadError ? (
+          <div className="trash-page-state trash-page-error"><strong>回收站暂时无法加载</strong><span>{loadError}</span><button type="button" className="secondary-button" onClick={refreshTrash}><RefreshCw size={14} />重试</button></div>
+        ) : items.length ? (
+          <div className="trash-list">
+            {items.map(item => {
+              const restoreKey = `${item.kind}:${item.id}:restore`
+              const deleteKey = `${item.kind}:${item.id}:delete`
+              return (
+                <article className="trash-row" key={`${item.kind}-${item.id}`}>
+                  <div className="trash-row-icon"><ArchiveRestore size={18} /></div>
+                  <div className="trash-row-main">
+                    <strong title={item.name}>{item.name}</strong>
+                    <span>{item.kind === 'share' ? '文件分享' : '收集任务'} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)}</span>
+                    <small>删除于 {item.deletedAt ? new Date(item.deletedAt).toLocaleString('zh-CN') : '未知时间'} · 保留至 {item.trashExpiresAt ? new Date(item.trashExpiresAt).toLocaleString('zh-CN') : '未知'}</small>
+                  </div>
+                  <div className="trash-row-actions">
+                    <button type="button" className="secondary-button trash-restore-button" disabled={Boolean(busyAction)} onClick={() => restoreItem(item)}>{busyAction === restoreKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <RotateCcw size={15} />}{busyAction === restoreKey ? '恢复中' : '恢复'}</button>
+                    <button type="button" className="danger-button trash-permanent-delete" disabled={Boolean(busyAction)} onClick={() => permanentlyDeleteItem(item)}>{busyAction === deleteKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <Trash2 size={15} />}{busyAction === deleteKey ? '删除中' : '彻底删除'}</button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="trash-page-state"><ArchiveRestore size={32} /><strong>回收站为空</strong><span>删除的个人分享和收集任务会在这里保留一段时间。</span></div>
+        )}
+      </section>
     </section>
   )
 }

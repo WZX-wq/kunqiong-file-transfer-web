@@ -13,7 +13,7 @@ import { canReopenCollection, clearCloudRecords, collectionStatusText, createCol
 import { cancelUploadSession, canPreviewFile, clearUploadResume, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, readUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronRight, Clock3, CloudUpload, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
 import { SettingsPage } from './settings.jsx'
-import { RecordsView } from './records.jsx'
+import { RecordsView, TrashView } from './records.jsx'
 import { DistributionView } from './distribution.jsx'
 import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, ValueItem } from '../components/ui.jsx'
 import { ConfirmModal, ProductBrand, Toast } from '../components/common.jsx'
@@ -53,6 +53,7 @@ function collectionManagePath(value) {
 export function WorkspaceApp() {
   const [routePath, setRoutePath] = useState(() => window.location.pathname)
   const isSettingsRoute = routePath.startsWith('/settings')
+  const isTrashRoute = routePath === '/trash' || routePath.startsWith('/trash/')
   const inputRef = useRef(null)
   const folderInputRef = useRef(null)
   const uploadRef = useRef(createUploadSessionState())
@@ -60,7 +61,7 @@ export function WorkspaceApp() {
   const uploadCleanupRef = useRef(Promise.resolve())
   const recordSyncUserRef = useRef('')
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
-  const [activeView, setActiveView] = useState(() => normalizeMainView(new URLSearchParams(window.location.search).get('view')))
+  const [activeView, setActiveView] = useState(() => window.location.pathname.startsWith('/trash') ? 'records' : normalizeMainView(new URLSearchParams(window.location.search).get('view')))
   const [files, setFiles] = useState([])
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -112,7 +113,7 @@ export function WorkspaceApp() {
       setRoutePath(nextPath)
       setMessageOpen(new URLSearchParams(window.location.search).get('panel') === 'messages')
       if (!nextPath.startsWith('/settings')) {
-        setActiveView(normalizeMainView(new URLSearchParams(window.location.search).get('view')))
+        setActiveView(nextPath.startsWith('/trash') ? 'records' : normalizeMainView(new URLSearchParams(window.location.search).get('view')))
       }
     }
     window.addEventListener('popstate', syncRoute)
@@ -468,6 +469,12 @@ export function WorkspaceApp() {
     }
     setRoutePath('/')
     setActiveView(nextView)
+  }
+
+  const navigateTrash = () => {
+    if (window.location.pathname !== '/trash') window.history.pushState(null, '', '/trash')
+    setRoutePath('/trash')
+    setActiveView('records')
   }
 
   const navigateSettingsSection = (path) => {
@@ -1029,9 +1036,9 @@ export function WorkspaceApp() {
         </div>
       </header>
 
-      <main className={`page-content${!isSettingsRoute && activeView === 'send' ? ' send-content' : !isSettingsRoute && activeView === 'collect' ? ' collect-content' : !isSettingsRoute && activeView === 'records' ? ' records-content' : ''}`}>
+      <main className={`page-content${!isSettingsRoute && !isTrashRoute && activeView === 'send' ? ' send-content' : !isSettingsRoute && !isTrashRoute && activeView === 'collect' ? ' collect-content' : !isSettingsRoute && (isTrashRoute || activeView === 'records') ? ' records-content' : ''}`}>
         {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} onOpenWorkspace={() => { window.location.href = '/workspace' }} />}
-        {!isSettingsRoute && activeView === 'send' && (
+        {!isSettingsRoute && !isTrashRoute && activeView === 'send' && (
           <SendView
             maxSupportedFileSizeBytes={maxSupportedFileSizeBytes}
             batchLimit={batchLimit}
@@ -1063,7 +1070,7 @@ export function WorkspaceApp() {
             onLogin={startLogin}
           />
         )}
-        {!isSettingsRoute && activeView === 'collect' && (
+        {!isSettingsRoute && !isTrashRoute && activeView === 'collect' && (
           <CollectView
             entitlement={runtimeConfig?.upload}
             result={collectionResult}
@@ -1085,8 +1092,9 @@ export function WorkspaceApp() {
             onRefreshRecords={refreshRecords}
           />
         )}
-        {!isSettingsRoute && activeView === 'deliver' && <DistributionView user={authUser} onLogin={startLogin} onNotify={setToast} />}
-        {!isSettingsRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onUpload={() => navigateMainView('send')} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} onSaveShareExpiry={saveShareExpiry} onNotify={setToast} />}
+        {!isSettingsRoute && !isTrashRoute && activeView === 'deliver' && <DistributionView user={authUser} onLogin={startLogin} onNotify={setToast} />}
+        {!isSettingsRoute && !isTrashRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onUpload={() => navigateMainView('send')} onOpenTrash={navigateTrash} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} onSaveShareExpiry={saveShareExpiry} onNotify={setToast} />}
+        {!isSettingsRoute && isTrashRoute && <TrashView user={authUser} authLoading={authLoading} onLogin={startLogin} onBack={() => navigateMainView('records')} onRefresh={refreshRecords} onNotify={setToast} />}
       </main>
 
       <footer className="page-footer">
