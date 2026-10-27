@@ -65,7 +65,28 @@ try {
   const storedTeam = JSON.parse(fs.readFileSync(path.join(storage, 'metadata.json'), 'utf8')).shares.find(share => share.id === team.data.share.id)
   check('team multipart uses team capacity when member personal capacity is full', storedTeam.teamResource === true)
   check('team multipart binds the actual organization', storedTeam.teamOrganizationId === 'org' && storedTeam.ownerUserId === 'member')
+  const teamFile = storedTeam.files[0]
+  check('team file is stored under a UUID filename with its extension', /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.txt$/.test(teamFile.storedName))
+  check('team physical filename does not replace the displayed original name', teamFile.name === 'fixture.txt' && fs.existsSync(path.join(storage, 'files', storedTeam.id, teamFile.storedName)))
+  check('public share payload does not expose the physical storage filename', !Object.hasOwn(team.data.share.files[0], 'storedName'))
   check('mode cannot change after preflight', (await api('/api/shares?mode=team_resource', { body: form({ mode: 'share' }) })).status === 400)
+
+  const personalA = await api('/api/shares', { user: 'owner', body: form({ expiryDays: '0' }) })
+  const personalB = await api('/api/shares', { user: 'owner', body: form({ expiryDays: '0' }) })
+  assert.equal(personalA.status, 201, JSON.stringify(personalA.data))
+  assert.equal(personalB.status, 201, JSON.stringify(personalB.data))
+  const savedShares = JSON.parse(fs.readFileSync(path.join(storage, 'metadata.json'), 'utf8')).shares
+  const firstPersonal = savedShares.find(share => share.id === personalA.data.share.id)
+  const secondPersonal = savedShares.find(share => share.id === personalB.data.share.id)
+  check('same-name, same-content uploads get different UUID storage names', firstPersonal.files[0].storedName !== secondPersonal.files[0].storedName && firstPersonal.files[0].name === secondPersonal.files[0].name)
+  check('same content is not physically deduplicated across uploads', fs.existsSync(path.join(storage, 'files', firstPersonal.id, firstPersonal.files[0].storedName)) && fs.existsSync(path.join(storage, 'files', secondPersonal.id, secondPersonal.files[0].storedName)))
+  check('personal management access is isolated by owner account', (await api(`/api/shares/manage/${personalA.data.share.manageToken}`, { user: 'member' })).status === 403)
+
+  const collectionSubmit = await api('/api/collections/collection-token/submissions', { user: 'owner', body: form({ participantName: 'fixture' }) })
+  assert.equal(collectionSubmit.status, 201, JSON.stringify(collectionSubmit.data))
+  const submittedFile = collectionSubmit.data.submission.files[0]
+  const storedCollectionFile = JSON.parse(fs.readFileSync(path.join(storage, 'metadata.json'), 'utf8')).collections[0].submissions[0].files[0]
+  check('collection submission also uses UUID plus the original extension', submittedFile.name === 'fixture.txt' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.txt$/.test(storedCollectionFile.storedName))
   for (const collection of [false, true]) {
     await start()
     await api('/__fixture/fail', { body: {} })

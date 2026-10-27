@@ -1362,9 +1362,16 @@ export async function publishUploadedFiles(tempFiles, directory, { attach, detac
   let attemptedCommit = false
   try {
     fs.mkdirSync(directory, { recursive: true })
-    const files = tempFiles.map((file, index) => {
+    const files = tempFiles.map((file) => {
       const relativePath = safeRelativePath(file.relativePath || file.name)
-      const storedName = `${String(index + 1).padStart(2, '0')}-${crypto.randomBytes(4).toString('hex')}-${path.basename(relativePath)}`
+      // Keep the user-facing name in metadata, but never use it as the physical
+      // filename. UUIDs avoid collisions between repeated names/uploads; retain
+      // the final extension for filesystem tools and content-type diagnostics.
+      const extension = path.posix.extname(path.posix.basename(relativePath))
+      if (Buffer.byteLength(extension, 'utf8') > 200 || extension.length > 200) {
+        throw httpError(400, '文件扩展名过长，无法安全保存')
+      }
+      const storedName = `${crypto.randomUUID()}${extension}`
       const destination = path.join(directory, storedName)
       fs.renameSync(file.tempPath, destination)
       moves.push({ source: file.tempPath, destination })
