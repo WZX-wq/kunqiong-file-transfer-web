@@ -38,10 +38,25 @@ export function DistributionView({ user, onLogin, onNotify }) {
   const [publishing, setPublishing] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const idempotencyKeyRef = useRef({ signature: '', key: '' })
 
   const ready = Boolean(user) && items.length > 0 && items.every(item => item.recipient.trim())
   const signature = useMemo(() => JSON.stringify(items.map(item => [item.name, item.recipient.trim()])), [items])
   const assignments = useMemo(() => items.map((item, index) => ({ fileIndex: index, recipient: item.recipient.trim() })), [items])
+  const submissionSignature = useMemo(() => JSON.stringify(items.map(item => [item.name, item.size, item.file?.lastModified || 0, item.recipient.trim()])), [items])
+
+  const idempotencyKeyForCurrentSubmission = () => {
+    if (idempotencyKeyRef.current.signature === submissionSignature && idempotencyKeyRef.current.key) return idempotencyKeyRef.current.key
+    let key = ''
+    try {
+      const stored = JSON.parse(window.sessionStorage.getItem('kunqiong.distribution.pending.v1') || 'null')
+      if (stored?.signature === submissionSignature && typeof stored.key === 'string') key = stored.key
+    } catch {}
+    if (!key) key = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    idempotencyKeyRef.current = { signature: submissionSignature, key }
+    try { window.sessionStorage.setItem('kunqiong.distribution.pending.v1', JSON.stringify({ signature: submissionSignature, key })) } catch {}
+    return key
+  }
 
   useEffect(() => {
     if (!ready) { setPreview(null); setChecking(false); return undefined }
@@ -101,7 +116,7 @@ export function DistributionView({ user, onLogin, onNotify }) {
     if (!user) return onLogin?.()
     if (!items.length || !items.every(item => item.recipient.trim())) return
     setError(''); setResult(null)
-    const key = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const key = idempotencyKeyForCurrentSubmission()
     try {
       setPublishing(true)
       const body = new FormData()
@@ -116,6 +131,11 @@ export function DistributionView({ user, onLogin, onNotify }) {
       }
       setResult(data)
       setItems([]); setBulkOpen(false); setBulkText(''); setPreview(null)
+      idempotencyKeyRef.current = { signature: '', key: '' }
+      try {
+        const stored = JSON.parse(window.sessionStorage.getItem('kunqiong.distribution.pending.v1') || 'null')
+        if (stored?.key === key) window.sessionStorage.removeItem('kunqiong.distribution.pending.v1')
+      } catch {}
       onNotify?.(data.reused ? '已返回原分发结果' : '定向分发已发布')
     } catch (nextError) { setError(nextError.message) } finally { setPublishing(false) }
   }

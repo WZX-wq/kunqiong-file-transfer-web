@@ -47,8 +47,8 @@ async function mount({ allowedTypes = ['全部格式'], maxFileSizeMb = 500, mat
   }
   window.eval(code)
   const document = window.document
-  await waitFor(() => document.querySelector('.public-label input'), 'Anonymous collection page loads')
-  const input = document.querySelector('.public-label input')
+  await waitFor(() => document.querySelector('.collection-submit-name input'), 'Anonymous collection page loads')
+  const input = document.querySelector('.collection-submit-name input')
   Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, '测试提交者')
   input.dispatchEvent(new window.Event('input', { bubbles: true }))
   await delay(20)

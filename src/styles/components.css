@@ -547,7 +547,7 @@
 .empty-manage { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 120px; color: #626e81; font-size: 12px; }
 .verify-button { width: 100%; margin-top: 10px; }
 .public-files .file-row { padding-left: 0; padding-right: 0; }
-.primary-button:disabled { cursor: wait; opacity: .6; transform: none; }
+.primary-button:disabled { cursor: not-allowed; opacity: .6; transform: none; }
 
 @media (max-width: 1024px) {
   .merchant-button, .team-context-button { display: none; }

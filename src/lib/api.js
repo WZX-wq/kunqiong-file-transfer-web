@@ -263,8 +263,10 @@ export function isDownloadBusy(task) {
 
 export function downloadStatusText(task) {
   if (task.status === 'preparing') return '准备下载'
+  if (task.status === 'downloading') return '正在下载'
   if (task.status === 'saving') return '正在保存'
   if (task.status === 'complete') return '下载完成'
+  if (task.status === 'cancelled') return '已取消下载'
   if (task.status === 'failed') return '下载失败'
   return task.label || '正在下载'
 }
@@ -403,6 +405,8 @@ export function createShareFileDownloadConfig(share, file, fileIndex, { password
     filename: file.name || '下载文件',
     label: `下载 ${file.name || '文件'}`,
     totalBytes: Number(file.size || 0),
+    requiresPassword: Boolean(share.requiresPassword),
+    passwordVerified: Boolean(password),
     headers: password ? { 'x-share-password': password } : {},
     unlockUrl: share.code ? `/api/shares/lookup/${encodeURIComponent(share.code)}` : '',
   }
@@ -421,6 +425,64 @@ export function createSubmissionFileDownloadConfig(collection, submission, fileI
 export async function downloadBinaryWithProgress(config, onProgress) {
   onProgress({ status: 'preparing', label: config.label, filename: config.filename, error: '' })
   const headers = { ...config.headers }
+
+  // Supported browsers can stream directly to the chosen file and report real
+  // byte progress without buffering a large download in memory. Open the picker
+  // before the first await so it remains tied to the user's click gesture.
+  if (typeof window.showSaveFilePicker === 'function' && (!config.requiresPassword || config.passwordVerified)) {
+    let pickerPromise
+    try {
+      pickerPromise = window.showSaveFilePicker({ suggestedName: config.filename || '下载文件' })
+    } catch (error) {
+      throw error
+    }
+    const pickerResult = pickerPromise.then(handle => ({ handle }), error => ({ error }))
+    const { handle, error: pickerError } = await pickerResult
+    if (pickerError) throw pickerError
+
+    let writable
+    let reader
+    try {
+      if (config.unlockUrl && headers['x-share-password']) {
+        // Keep passwords in a same-origin JSON body, never in a download URL
+        // or header. The unlock endpoint issues a scoped HttpOnly cookie.
+        const unlocked = await fetch(config.unlockUrl, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: headers['x-share-password'] }) })
+        if (!unlocked.ok) throw await downloadResponseError(unlocked)
+        delete headers['x-share-password']
+      }
+      const response = await fetch(config.url, { method: 'GET', credentials: 'include', headers })
+      if (!response.ok) throw await downloadResponseError(response)
+      if (!response.body?.getReader) throw new Error('当前浏览器不支持流式下载，请更换浏览器后重试')
+      reader = response.body.getReader()
+      writable = await handle.createWritable()
+      const contentLength = Number(response.headers.get('content-length')) || 0
+      const totalBytes = contentLength || Number(response.headers.get('x-download-total-size')) || Number(config.totalBytes) || 0
+      const isEstimated = !contentLength && totalBytes > 0
+      const startedAt = Date.now()
+      let loadedBytes = 0
+      onProgress({ status: 'downloading', filename: config.filename, loadedBytes, totalBytes, progress: 0, speedBps: 0, etaSeconds: null, isEstimated })
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        await writable.write(value)
+        loadedBytes += value.byteLength
+        const speedBps = currentDownloadSpeed(startedAt, loadedBytes)
+        const progress = totalBytes ? Math.min(99, Math.floor(loadedBytes / totalBytes * 100)) : 0
+        const etaSeconds = totalBytes && speedBps > 0 ? Math.max(0, (totalBytes - loadedBytes) / speedBps) : null
+        onProgress({ status: 'downloading', filename: config.filename, loadedBytes, totalBytes, progress, speedBps, etaSeconds, isEstimated })
+      }
+      onProgress({ status: 'saving', filename: config.filename, loadedBytes, totalBytes, progress: 99, speedBps: currentDownloadSpeed(startedAt, loadedBytes), etaSeconds: 0, isEstimated })
+      await writable.close()
+      return { saved: true, loadedBytes, totalBytes, isEstimated }
+    } catch (error) {
+      await reader?.cancel().catch(() => {})
+      await writable?.abort().catch(() => {})
+      throw error
+    }
+  }
+
+  // Browsers without a save picker retain native downloads; their byte progress
+  // and final disk state are intentionally left to the browser download panel.
   if (config.unlockUrl && headers['x-share-password']) {
     // JSON 同时支持中文密码；解锁凭证供后续原生下载使用，密码不进入 URL。
     const unlocked = await fetch(config.unlockUrl, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: headers['x-share-password'] }) })

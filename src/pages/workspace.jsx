@@ -11,7 +11,7 @@ import { apiRequest, createShareFileDownloadConfig, createSubmissionFileDownload
 import { useConfirmDialog, useDownloadTask, useToast } from '../hooks.js'
 import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
 import { cancelUploadSession, canPreviewFile, clearUploadResume, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, readUploadResume, uploadShareInChunks } from '../lib/transfer.js'
-import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronRight, Clock3, CloudUpload, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock3, CloudUpload, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Layers, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
 import { SettingsPage } from './settings.jsx'
 import { RecordsView, TrashView } from './records.jsx'
 import { DistributionView } from './distribution.jsx'
@@ -1176,7 +1176,6 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
           <>
             <section className="send-prototype-hero">
               <div className="send-prototype-hero-copy">
-                <span className="send-prototype-pill"><i />临时传输 · 上传即分享</span>
                 <h1>轻松发送<em>大文件</em></h1>
                 <p>支持多种文件格式，安全快速，随时随地分享</p>
                 <div className="send-prototype-hero-actions">
@@ -1185,13 +1184,13 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
                     <div><b>{batchLimit} 个</b><span>单次文件数</span></div>
                     <div><b>{settings.expiry || '3 天'}</b><span>默认有效期</span></div>
                   </div>
-                  <button type="button" className="send-distribution-entry send-distribution-hero" onClick={onOpenDistribution}><Send size={15} />批量定向发布<ArrowRight size={14} /></button>
                 </div>
               </div>
               <div className="send-prototype-hero-art"><PrototypeAsset name="hero.png" width={400} height={300} alt="" /></div>
             </section>
 
             <section className={`upload-panel send-prototype-drop-card ${isDragging ? 'dragging' : ''}`}>
+              <button type="button" className="send-distribution-entry send-distribution-upload-entry" onClick={onOpenDistribution}><Send size={15} />批量定向发布<ArrowRight size={14} /></button>
               <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
               <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
               {guestQuota?.enabled ? <div className="send-prototype-guest-strip"><span><Gauge size={15} />游客模式 · 本次剩余 <b>{formatBytes(guestQuota.remainingBytes)}</b></span><button type="button" onClick={onLogin}>登录后同步记录与额度 <ChevronRight size={14} /></button></div> : null}
@@ -1470,9 +1469,14 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
   const [draftStatus, setDraftStatus] = useState(() => restoredDraftRef.current ? '已恢复上次未完成的草稿' : '')
   const [submitAttempted, setSubmitAttempted] = useState(false)
   const [structureMessage, setStructureMessage] = useState('')
+  // 材料清单与自定义字段整块默认收起；摘要会保留当前已配置的数量。
+  const [structureCollapsed, setStructureCollapsed] = useState(true)
   const collectionRecords = records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
   const validation = validateCollectionStructure(form.materials, form.customFields)
   const titleMissing = submitAttempted && !form.title.trim()
+  const structureSummary = (form.materials.length || form.customFields.length)
+    ? `${form.materials.length} 项材料 · ${form.customFields.length} 个字段`
+    : '可选 · 列出需要提交的文件和需要填写的信息'
   const update = (key, value) => {
     setStructureMessage('')
     setDraftStatus('正在保存草稿…')
@@ -1514,6 +1518,7 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
     const merged = mergeCollectionStructure(form, structure)
     if (merged.addedMaterials || merged.addedFields) {
       setForm(merged.form)
+      setStructureCollapsed(false)
       setDraftStatus('正在保存草稿…')
     }
     return merged
@@ -1531,6 +1536,8 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
     setSubmitAttempted(true)
     if (validation.hasErrors) {
       setStructureMessage('请先修正材料或字段下方的提示，再创建任务。')
+      // 收起状态下报错必须先把这块展开，否则看不到具体是哪一项要改。
+      setStructureCollapsed(false)
       return
     }
     setStructureMessage('')
@@ -1547,7 +1554,6 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
       <div className="collect-page-heading">
         <div className="collect-page-heading-row">
           <div><h1>创建收集任务</h1><p>生成一个提交链接，向多人收集文件，无需对方注册。</p></div>
-          {collectionRecords.length > 0 && <button className="secondary-button" type="button" onClick={() => document.getElementById('collection-history')?.scrollIntoView({ block: 'start' })}>管理已有收集 <ArrowRight size={14} /></button>}
         </div>
       </div>
       {manageLoading ? (
@@ -1579,18 +1585,39 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
                   <label>单文件大小限制<select value={Math.min(form.maxFileSizeMb, collectionMaxMb)} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}>{collectionSizeOptions(collectionMaxMb, form.maxFileSizeMb).map(size => <option key={size} value={size}>{formatBytes(size * 1024 ** 2)}</option>)}</select></label>
                 </div>
                 <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
-                <CollectionStructureAssistant form={form} onApplyStructure={applyStructure} copySources={copySources} onCopyStructure={copyStructureFromRecord} />
-                <div className="collection-builder-groups">
-                  <CollectionMaterialsEditor
-                    materials={form.materials}
-                    onChange={(materials) => update('materials', materials)}
-                    errors={validation.materialErrors}
-                  />
-                  <CollectionFieldsEditor
-                    customFields={form.customFields}
-                    onChange={(customFields) => update('customFields', customFields)}
-                    errors={validation.fieldErrors}
-                  />
+                <div className={`collection-structure-block${structureCollapsed ? ' is-collapsed' : ''}`}>
+                  <button
+                    type="button"
+                    className="collection-structure-summary"
+                    aria-expanded={!structureCollapsed}
+                    aria-controls="collection-structure-body"
+                    onClick={() => setStructureCollapsed((value) => !value)}
+                  >
+                    <span className="collection-structure-summary-icon"><Layers size={16} /></span>
+                    <span className="collection-structure-summary-text">
+                      <strong>材料清单与自定义字段</strong>
+                      <small>{structureSummary}</small>
+                    </span>
+                    <span className="collection-structure-summary-toggle">
+                      <span>{structureCollapsed ? '更多' : '收起'}</span>
+                      {structureCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                    </span>
+                  </button>
+                  {!structureCollapsed && <div id="collection-structure-body" className="collection-structure-body">
+                    <CollectionStructureAssistant form={form} onApplyStructure={applyStructure} copySources={copySources} onCopyStructure={copyStructureFromRecord} />
+                    <div className="collection-builder-groups">
+                      <CollectionMaterialsEditor
+                        materials={form.materials}
+                        onChange={(materials) => update('materials', materials)}
+                        errors={validation.materialErrors}
+                      />
+                      <CollectionFieldsEditor
+                        customFields={form.customFields}
+                        onChange={(customFields) => update('customFields', customFields)}
+                        errors={validation.fieldErrors}
+                      />
+                    </div>
+                  </div>}
                 </div>
                 {(structureMessage || (submitAttempted && validation.hasErrors)) && <div className="collection-builder-errors" role="alert">
                   <strong>{structureMessage || '请先完善收集设置'}</strong>

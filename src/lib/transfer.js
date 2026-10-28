@@ -33,6 +33,8 @@ export function createShareDownloadConfig(share, { password = '', managed = fals
     filename: files.length === 1 ? files[0].name : '鲲穹文件包.zip',
     label: files.length === 1 ? `下载 ${files[0]?.name || '文件'}` : `打包下载 ${files.length} 个文件`,
     totalBytes: totalFileSize(files),
+    requiresPassword: Boolean(share.requiresPassword),
+    passwordVerified: Boolean(password),
     headers: password ? { 'x-share-password': password } : {},
     unlockUrl: managed && share.manageToken ? `/api/shares/manage/${encodeURIComponent(share.manageToken)}/unlock` : share.code ? `/api/shares/lookup/${encodeURIComponent(share.code)}` : '',
   }

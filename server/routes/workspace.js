@@ -92,6 +92,7 @@ export function registerWorkspaceRoutes(app) {
         fileCount: item.files?.length || 0,
         totalSize: fileListSize(item.files),
         downloadCount: item.downloadCount || 0,
+        requiresPassword: Boolean(item.passwordHash),
         createdAt: item.createdAt,
         expiresAt: item.expiresAt || null,
         canDelete: item.ownerUserId === session.user.id || canManageTeam,

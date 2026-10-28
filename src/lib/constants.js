@@ -24,6 +24,10 @@ export const COLLECTION_TYPE_OPTIONS = ['全部格式', '图片', '文档', '视
 // 超长文本会把预览卡、管理页头部、公开提交页撑变形，两端同时设限并给出可理解的错误。
 export const COLLECTION_TITLE_MAX = 40
 export const COLLECTION_DESCRIPTION_MAX = 120
+export const COLLECTION_PARTICIPANT_NAME_MAX = 40
+export const COLLECTION_FIELD_TEXT_MAX = 100
+export const COLLECTION_FIELD_VALUE_MAX = 500
+export const COLLECTION_FIELD_SELECT_VALUE_MAX = 40
 export const COLLECTION_TYPE_EXTENSIONS = {
   图片: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif', 'ico'],
   文档: ['pdf', 'doc', 'docx', 'txt', 'rtf', 'xls', 'xlsx', 'csv', 'ppt', 'pptx', 'md'],

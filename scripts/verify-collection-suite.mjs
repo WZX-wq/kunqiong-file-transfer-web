@@ -8,6 +8,7 @@ import path from 'node:path'
 import net from 'node:net'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { inflateRawSync } from 'node:zlib'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
@@ -116,6 +117,34 @@ function zipEntryNames(buffer) {
   }
   return names
 }
+function zipEntryContents(buffer) {
+  let eocd = -1
+  for (let offset = buffer.length - 22; offset >= Math.max(0, buffer.length - 22 - 65536); offset--) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) { eocd = offset; break }
+  }
+  if (eocd < 0) return []
+  const count = buffer.readUInt16LE(eocd + 10)
+  let offset = buffer.readUInt32LE(eocd + 16)
+  const entries = []
+  for (let index = 0; index < count; index++) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) break
+    const method = buffer.readUInt16LE(offset + 10)
+    const compressedSize = buffer.readUInt32LE(offset + 20)
+    const nameLength = buffer.readUInt16LE(offset + 28)
+    const extraLength = buffer.readUInt16LE(offset + 30)
+    const commentLength = buffer.readUInt16LE(offset + 32)
+    const localOffset = buffer.readUInt32LE(offset + 42)
+    const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString('utf8')
+    const localNameLength = buffer.readUInt16LE(localOffset + 26)
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28)
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength
+    const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize)
+    const content = method === 0 ? Buffer.from(compressed) : method === 8 ? inflateRawSync(compressed) : null
+    entries.push({ name, content })
+    offset += 46 + nameLength + extraLength + commentLength
+  }
+  return entries
+}
 
 try {
   await start()
@@ -153,6 +182,9 @@ try {
   check('直接创建的任务保留材料清单和自定义字段', collectionFormTask.status === 201 && collectionFormTask.data.collection.materials?.length === 3 && collectionFormTask.data.collection.customFields?.length === 2 && !Object.hasOwn(collectionFormTask.data.collection, 'templateId'))
   const collectionFormAfterCreate = await api(`/api/collections/${collectionFormToken}`)
   check('提交入口可读取创建时配置的材料项和字段', collectionFormAfterCreate.status === 200 && collectionFormAfterCreate.data.collection.title === formConfig.title && collectionFormAfterCreate.data.collection.customFields?.[0]?.label === '供应商类型')
+  const refreshedMaterials = collectionFormAfterCreate.data.collection?.materials || []
+  const refreshedFields = collectionFormAfterCreate.data.collection?.customFields || []
+  check('COL-001 重新读取后完整保留必交/选交材料与字段配置', refreshedMaterials.map(item => `${item.id}:${item.required}`).join(',') === 'business-license:true,signed-contract:true,supplement:false' && refreshedFields.map(item => `${item.id}:${item.type}`).join(',') === 'supplier-type:select,contact-date:date')
   const missingCustomFields = await api(`/api/collections/${collectionFormToken}/submissions`, { method: 'POST', body: form([{ name: 'license.txt' }], { participantName: '表单提交者', materialIds: JSON.stringify(['business-license']) }) })
   check('服务端拒绝缺少必填自定义字段的提交', missingCustomFields.status === 400, `status=${missingCustomFields.status} msg=${missingCustomFields.data.message}`)
   const validFormSubmission = await api(`/api/collections/${collectionFormToken}/submissions`, { method: 'POST', body: form([{ name: 'license.txt' }], {
@@ -171,6 +203,100 @@ try {
   const collectionFormManage = await api(`/api/collections/manage/${collectionFormTask.data.manageToken}`, { user: 'owner' })
   const managedFormSubmission = collectionFormManage.data.collection?.submissions?.find((item) => item.id === validFormSubmission.data.submission?.id)
   check('管理端可查看字段答案、已交材料和缺少的必交材料', managedFormSubmission?.fieldValues?.['supplier-type'] === '生产商' && managedFormSubmission?.materialIds?.includes('business-license') && managedFormSubmission?.missingMaterialIds?.includes('signed-contract'))
+
+  const collectionSamples = path.join(root, 'test-kits', 'six-feature-acceptance-2026-10-27', '数据', '收集')
+  const roundTask = await api('/api/collections', { user: 'owner', method: 'POST', body: {
+    title: 'COL-002 分次提交文件一致性', materials: [
+      { id: 'business-license', name: '营业执照', required: true },
+      { id: 'signed-contract', name: '签字合同', required: true },
+      { id: 'supplement', name: '补充说明', required: false },
+    ],
+    customFields: [{ id: 'supplier-type', label: '供应商类型', type: 'select', required: true, options: ['生产商', '经销商'] }],
+  } })
+  const roundToken = roundTask.data.collection?.token
+  const roundFirst = await api(`/api/collections/${roundToken}/submissions`, { method: 'POST', body: form([
+    { name: 'TC-COL-材料-营业执照.pdf', content: fs.readFileSync(path.join(collectionSamples, 'TC-COL-材料-营业执照.pdf')) },
+    { name: 'TC-COL-材料-签字合同.docx', content: fs.readFileSync(path.join(collectionSamples, 'TC-COL-材料-签字合同.docx')) },
+  ], {
+    participantName: '测试供应商甲', materialIds: JSON.stringify(['business-license', 'signed-contract']),
+    fieldValues: JSON.stringify({ 'supplier-type': '生产商' }),
+  }) })
+  const participantCookie = (roundFirst.headers.get('set-cookie') || '').split(';')[0]
+  const roundSupplement = await api(`/api/collections/${roundToken}/submissions`, { method: 'POST', headers: { cookie: participantCookie }, body: form([
+    { name: 'TC-COL-选交材料-补充说明.txt', content: fs.readFileSync(path.join(collectionSamples, 'TC-COL-选交材料-补充说明.txt')) },
+  ], {
+    participantName: '测试供应商甲', materialIds: JSON.stringify(['supplement']),
+    fieldValues: JSON.stringify({ 'supplier-type': '生产商' }),
+  }) })
+  const roundManager = await api(`/api/collections/manage/${roundTask.data.manageToken}`, { user: 'owner' })
+  const roundSubmissions = roundManager.data.collection?.submissions || []
+  const roundFirstManaged = roundSubmissions.find(item => item.id === roundFirst.data.submission?.id)
+  const roundSupplementManaged = roundSubmissions.find(item => item.id === roundSupplement.data.submission?.id)
+  check('COL-002 同一提交人可分次补交选交材料且必交材料汇总完成', roundFirst.status === 201 && roundSupplement.status === 201 && participantCookie.startsWith('kq_guest_id=') && roundManager.data.collection?.participantCount === 1 && roundFirstManaged?.missingMaterialIds?.length === 0 && roundSupplementManaged?.missingMaterialIds?.length === 0 && roundSupplementManaged?.materialIds?.includes('supplement'))
+  const sampleDownloadChecks = [
+    [roundFirstManaged, 0, 'TC-COL-材料-营业执照.pdf'],
+    [roundFirstManaged, 1, 'TC-COL-材料-签字合同.docx'],
+    [roundSupplementManaged, 0, 'TC-COL-选交材料-补充说明.txt'],
+  ]
+  const sampleDownloads = await Promise.all(sampleDownloadChecks.map(async ([submission, index, filename]) => {
+    const response = await api(`/api/collections/manage/${roundTask.data.manageToken}/submissions/${submission.id}/files/${index}/download`, { user: 'owner', raw: true })
+    return response.status === 200 && response.buffer.equals(fs.readFileSync(path.join(collectionSamples, filename)))
+  }))
+  check('COL-002 管理端下载的PDF、DOCX和TXT与测试原件逐字节一致', sampleDownloads.every(Boolean))
+
+  const fullFormFields = [
+    { id: 'text-field', label: '单行文本', type: 'text', required: true },
+    { id: 'textarea-field', label: '多行文本', type: 'textarea', required: false },
+    { id: 'number-field', label: '数字', type: 'number', required: false },
+    { id: 'phone-field', label: '联系电话', type: 'phone', required: true },
+    { id: 'email-field', label: '邮箱', type: 'email', required: false },
+    { id: 'select-field', label: '供应商类别', type: 'select', required: true, options: ['生产商', '经销商'] },
+    { id: 'date-field', label: '资料日期', type: 'date', required: false },
+    { id: 'invoice-choice', label: '是否需要开票', type: 'select', required: true, options: ['是', '否'] },
+    { id: 'invoice-title', label: '发票抬头', type: 'text', required: true, showWhen: { fieldId: 'invoice-choice', value: '是' } },
+  ]
+  const comprehensiveTask = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '字段类型及条件验收', materials: [{ id: 'invoice-doc', name: '发票资料', required: true }], customFields: fullFormFields } })
+  const comprehensiveToken = comprehensiveTask.data.collection?.token
+  const publicComprehensive = await api(`/api/collections/${comprehensiveToken}`)
+  check('COL-001 七种字段类型和条件字段均保存并由提交页读取', comprehensiveTask.status === 201 && JSON.stringify(publicComprehensive.data.collection?.customFields?.map(field => field.type).slice(0, 7)) === JSON.stringify(['text', 'textarea', 'number', 'phone', 'email', 'select', 'date']))
+  const comprehensiveValues = { 'text-field': '测试供应商甲', 'textarea-field': '六项验收备注', 'number-field': '1280.50', 'phone-field': '13800138000', 'email-field': 'qa@example.test', 'select-field': '生产商', 'date-field': '2026-10-27', 'invoice-choice': '否', 'invoice-title': '隐藏值不得保存' }
+  const hiddenConditional = await api(`/api/collections/${comprehensiveToken}/submissions`, { method: 'POST', body: form([{ name: 'field-types.txt', content: 'fields' }], { participantName: '字段类型验收', materialIds: JSON.stringify(['invoice-doc']), fieldValues: JSON.stringify(comprehensiveValues) }) })
+  check('COL-004 条件不满足时隐藏必填字段不阻止提交且旧值不入库', hiddenConditional.status === 201 && !Object.hasOwn(hiddenConditional.data.submission?.fieldValues || {}, 'invoice-title'))
+  const missingVisibleConditional = await api(`/api/collections/${comprehensiveToken}/submissions`, { method: 'POST', body: form([{ name: 'invoice-missing.txt' }], { participantName: '条件必填验收', materialIds: JSON.stringify(['invoice-doc']), fieldValues: JSON.stringify({ ...comprehensiveValues, 'invoice-choice': '是', 'invoice-title': '' }) }) })
+  check('COL-004 条件满足后必填字段缺失由服务端拒绝', missingVisibleConditional.status === 400 && /发票抬头/.test(missingVisibleConditional.data.message || ''))
+  const visibleConditional = await api(`/api/collections/${comprehensiveToken}/submissions`, { method: 'POST', body: form([{ name: 'invoice-complete.txt' }], { participantName: '条件字段完整验收', materialIds: JSON.stringify(['invoice-doc']), fieldValues: JSON.stringify({ ...comprehensiveValues, 'invoice-choice': '是', 'invoice-title': '测试验收有限公司' }) }) })
+  check('COL-004 条件满足并填写后提交保存条件字段值', visibleConditional.status === 201 && visibleConditional.data.submission?.fieldValues?.['invoice-title'] === '测试验收有限公司')
+  const maxFieldValue = '甲'.repeat(100)
+  const maxFieldSubmission = await api(`/api/collections/${comprehensiveToken}/submissions`, { method: 'POST', body: form([{ name: 'text-exact-limit.txt' }], { participantName: '字段边界内', materialIds: JSON.stringify(['invoice-doc']), fieldValues: JSON.stringify({ ...comprehensiveValues, 'text-field': maxFieldValue }) }) })
+  check('COL-UI 单行文本恰好 100 字可提交且完整保存', maxFieldSubmission.status === 201 && maxFieldSubmission.data.submission?.fieldValues?.['text-field'] === maxFieldValue)
+  const fieldCountBeforeOverflow = diskCollections().find(item => item.token === comprehensiveToken)?.submissions.length || 0
+  const overFieldSubmission = await api(`/api/collections/${comprehensiveToken}/submissions`, { method: 'POST', body: form([{ name: 'text-over-limit.txt' }], { participantName: '字段边界外', materialIds: JSON.stringify(['invoice-doc']), fieldValues: JSON.stringify({ ...comprehensiveValues, 'text-field': '甲'.repeat(101) }) }) })
+  const fieldCountAfterOverflow = diskCollections().find(item => item.token === comprehensiveToken)?.submissions.length || 0
+  check('COL-UI 单行文本 101 字被拒绝且不生成提交记录', overFieldSubmission.status === 400 && /100/.test(overFieldSubmission.data.message || '') && fieldCountAfterOverflow === fieldCountBeforeOverflow)
+  const maxTextareaValue = '注'.repeat(500)
+  const maxTextareaSubmission = await api(`/api/collections/${comprehensiveToken}/submissions`, { method: 'POST', body: form([{ name: 'textarea-exact-limit.txt' }], { participantName: '备注边界内', materialIds: JSON.stringify(['invoice-doc']), fieldValues: JSON.stringify({ ...comprehensiveValues, 'textarea-field': maxTextareaValue }) }) })
+  check('COL-UI 多行备注 500 字仍可提交且完整保存', maxTextareaSubmission.status === 201 && maxTextareaSubmission.data.submission?.fieldValues?.['textarea-field'] === maxTextareaValue)
+  for (const [label, changes, messageFragment] of [
+    ['手机号', { 'phone-field': '12345' }, '联系电话'],
+    ['邮箱', { 'email-field': 'invalid-email' }, '邮箱'],
+    ['下拉', { 'select-field': '未配置选项' }, '有效选项'],
+    ['缺失必填', { 'text-field': '' }, '单行文本'],
+  ]) {
+    const beforeInvalidCount = diskCollections().find(item => item.token === comprehensiveToken)?.submissions.length || 0
+    const invalid = await api(`/api/collections/${comprehensiveToken}/submissions`, { method: 'POST', body: form([{ name: `invalid-${label}.txt` }], { participantName: `非法${label}验收`, materialIds: JSON.stringify(['invoice-doc']), fieldValues: JSON.stringify({ ...comprehensiveValues, ...changes }) }) })
+    const afterInvalidCount = diskCollections().find(item => item.token === comprehensiveToken)?.submissions.length || 0
+    check(`COL-003 服务端拦截非法${label}并指出字段错误且不生成记录`, invalid.status === 400 && (invalid.data.message || '').includes(messageFragment) && afterInvalidCount === beforeInvalidCount, `status=${invalid.status} message=${invalid.data.message} records=${beforeInvalidCount}->${afterInvalidCount}`)
+  }
+  const manyFields = Array.from({ length: 20 }, (_, index) => ({ id: `field-${index + 1}`, label: `字段${index + 1}`, type: 'text', required: false }))
+  const exactlyTwentyFields = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '字段20项上限', customFields: manyFields } })
+  const tooManyFields = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '字段21项拒绝', customFields: [...manyFields, { id: 'field-21', label: '字段21', type: 'text', required: false }] } })
+  check('COL-005 自定义字段20项允许而21项拒绝', exactlyTwentyFields.status === 201 && exactlyTwentyFields.data.collection?.customFields?.length === 20 && tooManyFields.status === 400)
+  const manyMaterials = Array.from({ length: 30 }, (_, index) => ({ id: `material-${index + 1}`, name: `材料${index + 1}`, required: false }))
+  const exactlyThirtyMaterials = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '材料30项上限', materials: manyMaterials } })
+  const tooManyMaterials = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '材料31项拒绝', materials: [...manyMaterials, { id: 'material-31', name: '材料31', required: false }] } })
+  check('COL-005 材料30项允许而31项拒绝', exactlyThirtyMaterials.status === 201 && exactlyThirtyMaterials.data.collection?.materials?.length === 30 && tooManyMaterials.status === 400)
+  const partialLimitTasks = diskCollections().filter(item => ['字段21项拒绝', '材料31项拒绝'].includes(item.title))
+  check('COL-005 超限请求被拒绝且不留下部分创建的任务', tooManyFields.status === 400 && tooManyMaterials.status === 400 && partialLimitTasks.length === 0)
 
   const customOnlyTask = await api('/api/collections', { user: 'owner', method: 'POST', body: {
     title: '供应商信息收集', allowedTypes: ['文档'], maxFileSizeMb: 10, materials: [],
@@ -195,7 +321,10 @@ try {
   check('启用命名规则后空材料映射仍被拒绝', namingEmptyMap.status === 400 && /每个文件/.test(namingEmptyMap.data.message || ''), `status=${namingEmptyMap.status} msg=${namingEmptyMap.data.message}`)
   const namingBadMap = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([{ name: '合同.pdf' }], { participantName: '张三', materialIds: JSON.stringify(['license']), fileMaterialIds: JSON.stringify(['not-selected']) }) })
   check('服务端拒绝未选择或不存在的文件材料映射', namingBadMap.status === 400, `status=${namingBadMap.status} msg=${namingBadMap.data.message}`)
-  const namingSubmit = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([{ name: '合同.pdf' }, { name: '补充合同.pdf' }], {
+  const namingSubmit = await api(`/api/collections/${namingTask.token}/submissions`, { method: 'POST', body: form([
+    { name: '合同.pdf', content: 'contract-content-not-overwritten' },
+    { name: '补充合同.pdf', content: 'supplement-content-not-overwritten' },
+  ], {
     participantName: '张/三', materialIds: JSON.stringify(['license']), fileMaterialIds: JSON.stringify(['license', 'license']),
   }) })
   const namedFiles = namingSubmit.data.submission?.files || []
@@ -205,6 +334,30 @@ try {
   const namingArchive = await api(`/api/collections/manage/${namingTaskResponse.data.manageToken}/download`, { user: 'owner', raw: true })
   const namingArchiveNames = zipEntryNames(namingArchive.buffer).map((entry) => entry.name)
   check('ZIP 使用生成后的安全文件名且含全部文件', namingArchive.status === 200 && namingArchiveNames.some((name) => name.endsWith('/张_三_营业执照.pdf')) && namingArchiveNames.some((name) => name.endsWith('/张_三_营业执照 (2).pdf')), `entries=${namingArchiveNames.join('|')}`)
+  const namingEntryContents = zipEntryContents(namingArchive.buffer)
+  check('NAME-004 ZIP 同名文件内容均保留且没有串换', namingEntryContents.some(entry => entry.name.endsWith('/张_三_营业执照.pdf') && entry.content?.equals(Buffer.from('contract-content-not-overwritten'))) && namingEntryContents.some(entry => entry.name.endsWith('/张_三_营业执照 (2).pdf') && entry.content?.equals(Buffer.from('supplement-content-not-overwritten'))))
+  const duplicateFileDownloads = await Promise.all(namedFiles.map((_, index) => api(`/api/collections/manage/${namingTaskResponse.data.manageToken}/submissions/${namingSubmit.data.submission.id}/files/${index}/download`, { user: 'owner', raw: true })))
+  check('NAME-004 单文件下载仍分别对应原上传内容', duplicateFileDownloads[0].status === 200 && duplicateFileDownloads[0].buffer.equals(Buffer.from('contract-content-not-overwritten')) && duplicateFileDownloads[1].status === 200 && duplicateFileDownloads[1].buffer.equals(Buffer.from('supplement-content-not-overwritten')))
+
+  const nameSamplePath = path.join(root, 'test-kits', 'six-feature-acceptance-2026-10-27', '数据', '命名', 'NAME-001-文件名生成样例.txt')
+  const nameSampleBytes = fs.readFileSync(nameSamplePath)
+  const exactNamingTask = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: 'NAME-001 精确样本命名', materials: [{ id: 'sample', name: '验收材料', required: true, namingPattern: '{提交人}_{材料项}_{原文件名}' }] } })
+  const exactNamingSubmit = await api(`/api/collections/${exactNamingTask.data.collection.token}/submissions`, { method: 'POST', body: form([{ name: path.basename(nameSamplePath), content: nameSampleBytes }], { participantName: '命名验收提交人', materialIds: JSON.stringify(['sample']), fileMaterialIds: JSON.stringify(['sample']) }) })
+  const exactNamingManage = await api(`/api/collections/manage/${exactNamingTask.data.manageToken}`, { user: 'owner' })
+  const exactNamingFile = exactNamingManage.data.collection?.submissions?.find(item => item.id === exactNamingSubmit.data.submission?.id)?.files?.[0]
+  const exactNamingZip = await api(`/api/collections/manage/${exactNamingTask.data.manageToken}/download`, { user: 'owner', raw: true })
+  const exactNamingEntries = zipEntryContents(exactNamingZip.buffer)
+  const expectedGeneratedName = '命名验收提交人_验收材料_NAME-001-文件名生成样例.txt'
+  check('NAME-001 生成名称保留提交人、材料项、原文件名和扩展名', exactNamingSubmit.status === 201 && exactNamingFile?.name === expectedGeneratedName && exactNamingFile?.originalName === path.basename(nameSamplePath))
+  check('NAME-001 ZIP 文件名及文件内容与原始测试样本一致', exactNamingZip.status === 200 && exactNamingEntries.some(entry => entry.name.endsWith(`/${expectedGeneratedName}`) && entry.content?.equals(nameSampleBytes)))
+
+  const originalNameTask = await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '未配置命名规则', materials: [{ id: 'plain-material', name: '项目材料', required: true }] } })
+  const originalNameSubmit = await api(`/api/collections/${originalNameTask.data.collection.token}/submissions`, { method: 'POST', body: form([{ name: '原始 文件名.txt', content: 'original file name' }], { participantName: '原名验收', materialIds: JSON.stringify(['plain-material']) }) })
+  const originalNameManage = await api(`/api/collections/manage/${originalNameTask.data.manageToken}`, { user: 'owner' })
+  const originalNameStored = originalNameManage.data.collection?.submissions?.find(item => item.id === originalNameSubmit.data.submission?.id)?.files?.[0]
+  const originalNameZip = await api(`/api/collections/manage/${originalNameTask.data.manageToken}/download`, { user: 'owner', raw: true })
+  const originalNameZipEntries = zipEntryNames(originalNameZip.buffer).map(entry => entry.name)
+  check('NAME-002 未配置命名时管理端保留原名且下载ZIP不改名', originalNameSubmit.status === 201 && originalNameStored?.name === '原始 文件名.txt' && originalNameZip.status === 200 && originalNameZipEntries.some(name => name.endsWith('/原始 文件名.txt')), JSON.stringify({ status: originalNameSubmit.status, stored: originalNameStored, archiveStatus: originalNameZip.status, entries: originalNameZipEntries }))
 
   console.log('\n=== COLL-002 表单校验 ===')
   const beforeCount = diskCollections().length
@@ -292,6 +445,11 @@ try {
   check('HTML 姓名按文本接受（存储原样，渲染层转义）', htmlSubmit.status === 201, `status=${htmlSubmit.status}`)
   const storedHtml = (await api(`/api/collections/manage/${diskCollections().find((item) => item.token === nameTask.token).manageToken}`, { user: 'owner' })).data.collection.submissions.find((item) => item.participantName === htmlName)
   check('管理数据中姓名按原文保留（不做 HTML 解析）', Boolean(storedHtml))
+  const maxParticipantName = '甲'.repeat(40)
+  const maxParticipantNameSubmit = await api(`/api/collections/${nameTask.token}/submissions`, { method: 'POST', body: form([{ name: 'participant-exact-limit.txt' }], { participantName: maxParticipantName }) })
+  check('COL-UI 提交人名称恰好 40 字可提交并完整保存', maxParticipantNameSubmit.status === 201 && maxParticipantNameSubmit.data.submission?.participantName === maxParticipantName)
+  const overParticipantNameSubmit = await api(`/api/collections/${nameTask.token}/submissions`, { method: 'POST', body: form([{ name: 'participant-over-limit.txt' }], { participantName: '甲'.repeat(41) }) })
+  check('COL-UI 提交人名称 41 字由服务端拒绝', overParticipantNameSubmit.status === 400 && /40/.test(overParticipantNameSubmit.data.message || ''))
   const longName = '很长的名字'.repeat(80)
   const longNameSubmit = await api(`/api/collections/${nameTask.token}/submissions`, { method: 'POST', body: form([{ name: 'c.txt' }], { participantName: longName }) })
   const longNameStored = diskCollections().find((item) => item.token === nameTask.token).submissions.find((item) => longName.startsWith(item.participantName) && item.participantName.length <= 40)
@@ -338,6 +496,9 @@ try {
   const projSub = diskCollections().find((item) => item.token === chunkTask.token).submissions.find((item) => item.id === complete.data.submission.id)
   const assembled = fs.readFileSync(path.join(fixture, 'storage', 'collections', chunkTask.token, projSub.id, projSub.files[0].storedName))
   check('组装后字节逐位一致（含跨片尾部）', assembled.equals(Buffer.concat([bigChunkA, bigChunkB])))
+  const repeatedCompletion = await api(`/api/upload-sessions/${sessionId}/complete`, { user: 'owner', method: 'POST', body: {} })
+  const chunkTaskAfterRetry = diskCollections().find(item => item.token === chunkTask.token)
+  check('COL-003 响应丢失后的完成请求重试不会重复创建提交', [404, 409, 410].includes(repeatedCompletion.status) && chunkTaskAfterRetry.submissions.filter(item => item.uploadSessionId === sessionId).length === 1)
 
   // 游客会话必须沿用服务端首次签发的签名身份；任意客户端自造的
   // kq_guest_id 会被拒绝，避免通过轮换 Cookie 绕过累计配额和会话归属。

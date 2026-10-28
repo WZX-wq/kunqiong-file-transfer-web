@@ -86,7 +86,7 @@ async function mount(s, storage = {}, token = 'resume-test') {
     abort() { if (!this.done) { this.done = true; this.onabort?.() } }
   }
   window.eval(code)
-  await waitFor(() => document.querySelector('.public-label input'), 'Collection page mounts')
+  await waitFor(() => document.querySelector('.collection-submit-name input'), 'Collection page mounts')
   const button = (text) => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === text || b.getAttribute('aria-label') === text)
   const click = async (text) => { const b = button(text); assert.ok(b, 'Button exists: ' + text); b.click(); await delay(30) }
   const choose = async (items) => {
@@ -94,7 +94,7 @@ async function mount(s, storage = {}, token = 'resume-test') {
     Object.defineProperty(picker, 'files', { configurable: true, value: items })
     picker.dispatchEvent(new window.Event('change', { bubbles: true })); await delay(30)
   }
-  const name = document.querySelector('.public-label input')
+  const name = document.querySelector('.collection-submit-name input')
   if (!name.value) {
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(name, '恢复提交者')
     name.dispatchEvent(new window.Event('input', { bubbles: true })); await delay(20)
@@ -174,7 +174,7 @@ try {
   await f.click('暂停上传')
   const saved = f.storage(); f.close(); f = await mount(refreshed, saved)
   await waitFor(() => refreshed.requests.some((r) => r.url === '/api/upload-sessions/session-1'), 'Refresh queries server progress')
-  check('Refresh restores participant name', f.document.querySelector('.public-label input').value === '恢复提交者')
+  check('Refresh restores participant name', f.document.querySelector('.collection-submit-name input').value === '恢复提交者')
   check('Refresh shows saved progress and original filename', /33%/.test(f.document.body.textContent) && f.document.body.textContent.includes('续传.bin'))
   check('Refresh requires the original files to continue', f.button('继续上传')?.disabled === true)
   await f.choose([new File(['wrong'], '其他.bin')])
