@@ -119,7 +119,7 @@ export function validateCollectionSubmissionInput(task, fieldValuesInput, materi
     // 条件字段只在条件成立时参与必填和类型校验；隐藏字段即使带了旧值也不会入库。
     if (!isCollectionFieldVisible(field, fields, fieldValues)) continue
     const raw = fieldValues[field.id]
-    const max = field.type === 'select' ? 40 : 500
+    const max = field.type === 'select' ? 40 : field.type === 'text' ? 100 : 500
     const value = raw === undefined || raw === null ? '' : textInput(raw, `字段「${field.label}」`, max, {
       optional: true,
       multiline: field.type === 'textarea' || field.type === 'text',

@@ -1,5 +1,5 @@
 import { COLLECTION_FILENAME_PATTERN_MAX, COLLECTION_FILENAME_TOKENS, renderCollectionFilename } from './collection-naming.js'
-import { normalizeCollectionFieldOptions } from './collection-fields.js'
+import { COLLECTION_FIELD_TYPES, normalizeCollectionFieldOptions } from './collection-fields.js'
 
 export const COLLECTION_DRAFT_KEY = 'kunqiong.collection.draft.v1'
 export const COLLECTION_STRUCTURE_KEY = 'kunqiong.collection.structures.v1'
@@ -29,10 +29,8 @@ export const COLLECTION_FIELD_TEMPLATES = Object.freeze([
 ])
 
 export const COLLECTION_NAMING_PRESETS = Object.freeze([
-  { label: '原文件名', pattern: '{原文件名}' },
   { label: '提交人_原文件名', pattern: '{提交人}_{原文件名}' },
   { label: '提交人_材料项_原文件名', pattern: '{提交人}_{材料项}_{原文件名}' },
-  { label: '材料项_提交人_原文件名', pattern: '{材料项}_{提交人}_{原文件名}' },
 ])
 
 export const COLLECTION_SCENARIOS = Object.freeze([
@@ -505,10 +503,11 @@ export function parseBulkFields(value) {
       const [labelPart, typePart, optionPart] = line.split('|').map((item) => item.trim())
       const label = String(labelPart || '').slice(0, 40)
       if (!label) return null
-      const type = typeAliases[typePart] || typePart || 'text'
+      const alias = typeAliases[typePart] || (COLLECTION_FIELD_TYPES.includes(typePart) ? typePart : '')
+      const type = alias || 'text'
       const options = optionPart ? normalizeCollectionFieldOptions(optionPart) : undefined
       return createCollectionField(label, {
-        type: type === 'select' ? 'select' : type,
+        type,
         options: type === 'select' ? options : undefined,
       })
     })

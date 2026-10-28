@@ -245,7 +245,7 @@ try {
   fs.unlinkSync(path.join(fixture, 'storage', 'files', pdfShare.id, stored().shares.find(item => item.id === pdfShare.id).files[0].storedName))
   check('Cleaned owner file returns explicit Gone', (await api(`/api/shares/manage/${pdfShare.manageToken}/files/0/preview`, { user: 'owner' })).status === 410)
   const source = fs.readFileSync(path.join(root, 'src', 'lib', 'api.js'), 'utf8').split('async function downloadBinaryWithProgress')[1].split('async function downloadResponseError')[0]
-  check('Client download never buffers file bodies', source.includes("method: 'HEAD'") && !source.includes('new Blob') && !source.includes('getReader') && !source.includes('.blob('))
+  check('Client download streams to the save picker without buffering file bodies', source.includes("method: 'GET'") && source.includes('showSaveFilePicker') && source.includes('getReader') && source.includes('writable.write(value)') && !source.includes('new Blob') && !source.includes('.blob(') && source.includes("method: 'HEAD'"))
   const retrievalUi = fs.readFileSync(path.join(root, 'src', 'pages', 'workspace.jsx'), 'utf8')
   check('取件码查找错误可触发收件账号登录并保留取件码', retrievalUi.includes('try { await onFind() } catch (err)') && retrievalUi.includes("setRequiresLogin(err.code === 'directed_login_required')") && retrievalUi.includes("searchParams.set('retrieve', code.trim().toUpperCase())"))
   const scannerConfig = fs.readFileSync(path.join(root, 'deployment', 'clamd.conf'), 'utf8')

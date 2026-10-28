@@ -121,8 +121,13 @@ export function registerDistributionRoutes(app) {
         return res.json({ distribution: publicDistribution(existing, req), share: share ? publicShare(share, req, true, true) : null, reused: true })
       }
       const config = normalizeSystemConfig(metadata.systemConfig)
+      // readShareOptions 需要接收原始手机号、邮箱或账号来做格式和本人校验。
+      // 不能把 preview.recipientUserIds（可能是纯数字的内部用户 ID）当作
+      // recipients 传入，否则像用户 ID「706」会被误判为非法手机号，导致
+      // 明明已经匹配成功的收件人仍提示“手机号或邮箱格式不正确”。
+      const matchedRecipients = preview.rows.map(row => row.recipient).filter(Boolean)
       const options = readShareOptions({
-        recipients: preview.recipientUserIds,
+        recipients: matchedRecipients,
         expiryDays: req.body?.expiryDays || config.defaultShareDays,
         downloadLimit: req.body?.downloadLimit || 'unlimited',
         codeLength: req.body?.codeLength || 6,

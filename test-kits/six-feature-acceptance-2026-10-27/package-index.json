@@ -1,0 +1,27 @@
+{
+  "included": [
+    "cases.json",
+    "manifest.json",
+    "数据/命名/NAME-001-文件名生成样例.txt",
+    "数据/命名/目录乙/同名文件.txt",
+    "数据/命名/目录甲/同名文件.txt",
+    "数据/品牌/BRAND-001-正常正方形Logo.png",
+    "数据/品牌/BRAND-002-正常宽幅Logo.webp",
+    "数据/品牌/BRAND-003-Logo上限409600字节.png",
+    "数据/品牌/BRAND-004-Logo超限409601字节.png",
+    "数据/品牌/BRAND-005-不支持类型.svg",
+    "数据/品牌/BRAND-006-损坏PNG.png",
+    "数据/定向发布/DIST-无匹配文件.txt",
+    "数据/定向发布/DIST-正常文件-收件人A.txt",
+    "数据/定向发布/DIST-正常文件-收件人B.txt",
+    "数据/收集/TC-COL-材料-签字合同.docx",
+    "数据/收集/TC-COL-材料-营业执照.pdf",
+    "数据/收集/TC-COL-选交材料-补充说明.txt",
+    "文件路径索引.csv",
+    "测试用例.md",
+    "生成规格.json"
+  ],
+  "excluded": [],
+  "uncompressed_bytes": 1139125,
+  "note": "本套件以 Markdown 用例为正式文档，包含15个测试样本及路径、哈希和用例映射。"
+}

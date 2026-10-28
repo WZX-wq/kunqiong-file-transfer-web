@@ -29,7 +29,8 @@
 
 * { box-sizing: border-box; }
 html, body, #root { min-height: 100%; }
-html { overflow-x: hidden; }
+/* 页签内容高度不同，预留滚动条槽位可避免切换时居中内容横向跳动。 */
+html { overflow-x: hidden; scrollbar-gutter: stable; }
 body { margin: 0; min-width: 320px; overflow-x: hidden; background: #f5f6f8; }
 button, input, select, textarea { font: inherit; }
 button { border: 0; cursor: pointer; white-space: nowrap; }
@@ -270,7 +271,7 @@ h1, h2, p { margin-top: 0; }
 .queue-heading h2 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
 .ghost-icon { display: grid; place-items: center; width: 32px; height: 32px; color: #626e81; background: transparent; border-radius: 7px; }
 .ghost-icon:hover { color: var(--accent-dark); background: #eef1f6; }
-.ghost-icon:disabled { cursor: wait; opacity: .45; transform: none; }
+.ghost-icon:disabled { cursor: not-allowed; opacity: .45; transform: none; }
 /* 「不可用」与「正在处理」是两种不同的禁用语义：
    前者是该操作对这个对象根本不适用（应显示 not-allowed），
    后者才是真的在跑（wait 光标）。
@@ -321,7 +322,7 @@ h1, h2, p { margin-top: 0; }
 @keyframes security-check-pulse { 50% { opacity: .4; } }
 @media (prefers-reduced-motion: reduce) { .security-check-pulse { animation: none; } }
 .upload-control-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 13px; }
-.secondary-button:disabled { cursor: wait; opacity: .58; transform: none; }
+.secondary-button:disabled { cursor: not-allowed; opacity: .58; transform: none; }
 .share-result { padding: 2px 12px; }
 .result-topline { display: flex; justify-content: space-between; align-items: center; color: #626e81; font-size: 11px; }
 .success-badge { display: inline-flex; align-items: center; gap: 5px; color: #154285; font-weight: 700; }

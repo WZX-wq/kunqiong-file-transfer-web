@@ -87,9 +87,13 @@ export function useDownloadTask() {
       const result = await downloadBinaryWithProgress(config, (patch) => {
         setDownloadTask((current) => ({ ...current, ...patch, retryConfig: config, retryCount }))
       })
-      setDownloadTask((current) => ({ ...current, status: result?.handedOff ? 'handed_off' : 'complete', progress: result?.handedOff ? 0 : 100, etaSeconds: 0, error: '', retryConfig: config, retryCount }))
+      setDownloadTask((current) => ({ ...current, status: result?.handedOff ? 'handed_off' : 'complete', loadedBytes: result?.loadedBytes ?? current.loadedBytes, totalBytes: result?.totalBytes || current.totalBytes, progress: result?.handedOff ? 0 : 100, etaSeconds: 0, error: '', retryConfig: config, retryCount }))
       return { ok: true }
     } catch (error) {
+      if (error.name === 'AbortError') {
+        setDownloadTask((current) => ({ ...current, status: 'cancelled', error: '', retryConfig: config, retryCount }))
+        return { ok: false, cancelled: true }
+      }
       const message = error.message || '下载失败'
       const needsPassword = [401, 403].includes(error.status) && /提取密码/.test(message)
       setDownloadTask((current) => ({ ...current, status: 'failed', needsPassword, error: message, retryConfig: config, retryCount }))

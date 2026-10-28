@@ -44,6 +44,8 @@ export function visibleCollectionFields(fields = [], values = {}) {
 export function collectionFieldValueError(field, raw) {
   const value = collectionFieldValue(field, raw)
   if (!value) return field.required ? `请填写必填项：${field.label}` : ''
+  const maxLength = field.type === 'text' ? 100 : field.type === 'select' ? 40 : field.type === 'date' ? 10 : 500
+  if (value.length > maxLength) return `字段「${field.label}」不能超过 ${maxLength} 个字符`
   if (field.type === 'number' && !/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(value)) return `字段「${field.label}」请填写有效数字`
   if (field.type === 'phone' && !/^(?:\+?86[-\s]?)?1[3-9]\d{9}$/.test(value.replace(/[\s-]/g, ''))) return `字段「${field.label}」请填写有效的手机号`
   if (field.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return `字段「${field.label}」请填写有效的邮箱地址`

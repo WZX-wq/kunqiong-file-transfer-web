@@ -35,7 +35,7 @@ app.post('/__brand_fixture', async (req, res) => {
 fs.writeFileSync(path.join(fixture, 'server.mjs'), fs.readFileSync(path.join(root, 'server.mjs'), 'utf8').replace('registerWorkspaceRoutes(app)', control + '\nregisterWorkspaceRoutes(app)'))
 const now = new Date().toISOString(), future = new Date(Date.now() + 30 * 86400000).toISOString()
 const users = { outsider: { id: 'outsider', nickname: '外部用户', status: 'active', planId: 'free' } }, organizations = {}, shares = [], collections = []
-for (const org of ['config', 'images', 'race', 'revoke', 'disabled', 'moved', 'expired', 'other']) {
+for (const org of ['config', 'images', 'size-boundary', 'race', 'revoke', 'disabled', 'moved', 'expired', 'other']) {
   const members = ['owner', 'admin', 'member'].map(role => {
     const id = `${org}-${role}`
     users[id] = { id, username: id, nickname: id, status: 'active', planId: role === 'owner' ? 'enterprise' : 'free', organizationId: org, organizationRole: role }
@@ -71,7 +71,7 @@ async function api(url, user = 'config-owner', method = 'GET', body) {
 const settings = '/api/account/workspace/branding'
 const save = (user, revision, extra = {}) => api(settings, user, 'PATCH', { revision, name: '鲲穹测试中心', introduction: '请核对资料后提交', ...extra })
 const controlFixture = body => api('/__brand_fixture', 'outsider', 'POST', body)
-function check(label, condition) { assert.ok(condition, label); passed++; console.log('PASS ' + label) }
+function check(label, condition, detail = '') { assert.ok(condition, detail ? `${label}: ${detail}` : label); passed++; console.log('PASS ' + label) }
 try {
   await start()
   check('游客不能读取配置', (await api(settings, '')).status === 401)
@@ -111,6 +111,15 @@ try {
     const result = await save('images-owner', 0, { logo })
     check('坏图拒绝且原配置不变 ' + (typeof logo === 'string' ? logo.slice(0, 22) : logo), result.status === 400 && !stored().organizations.images.branding.enabled)
   }
+  const limitPNGPath = path.join(root, 'test-kits', 'six-feature-acceptance-2026-10-27', '数据', '品牌', 'BRAND-003-Logo上限409600字节.png')
+  const limitPNG = fs.readFileSync(limitPNGPath)
+  check('BRAND-003 精确边界夹具为409600字节PNG', limitPNG.length === 409600 && (await sharp(limitPNG).metadata()).format === 'png')
+  const atLimit = await save('size-boundary-owner', 0, { logo: uri('png', limitPNG) })
+  const atLimitStored = stored().organizations['size-boundary'].branding
+  check('BRAND-003 恰好409600字节的有效PNG允许保存', atLimit.status === 200 && atLimit.data.branding.revision === 1 && atLimitStored?.enabled, JSON.stringify({ status: atLimit.status, data: atLimit.data, stored: atLimitStored ? { enabled: atLimitStored.enabled, revision: atLimitStored.revision } : null }))
+  const oneByteOver = Buffer.concat([limitPNG, Buffer.from([0])])
+  const overLimit = await save('size-boundary-admin', 1, { logo: uri('png', oneByteOver) })
+  check('BRAND-003 超出409600字节1字节时拒绝且保留原Logo', overLimit.status === 400 && stored().organizations['size-boundary'].branding.logo === atLimitStored.logo)
   for (const format of ['jpeg', 'webp']) {
     const before = (await api(settings, 'images-admin')).data.branding.revision
     const bytes = await sharp(png)[format]().toBuffer()

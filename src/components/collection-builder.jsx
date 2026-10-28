@@ -12,11 +12,24 @@ import {
   COLLECTION_FIELD_LIMIT, COLLECTION_FIELD_TEMPLATES, COLLECTION_MATERIAL_LIMIT,
   COLLECTION_MATERIAL_TEMPLATES, COLLECTION_NAMING_PRESETS, COLLECTION_SCENARIOS,
   appendNamingToken, createCollectionField, createCollectionMaterial, deleteSavedCollectionStructure,
-  generateCollectionStructure, namingExample, parseBulkFields, parseBulkMaterials,
+  generateCollectionStructure, namingExample, parseBulkMaterials,
   readSavedCollectionStructures, saveCollectionStructure,
 } from '../lib/collection-form.js'
 import { formatBytes } from '../lib/format.js'
 import { formatAllowedTypes } from '../lib/records.js'
+
+function CollectionPresetDisclosure({ label, count, children }) {
+  return (
+    <details className="collection-preset-disclosure">
+      <summary>
+        <span>{label}</span>
+        <small>{count} 项</small>
+        <ChevronDown size={14} aria-hidden="true" />
+      </summary>
+      <div className="collection-quick-presets">{children}</div>
+    </details>
+  )
+}
 
 function MaterialRow({
   material, index, total, error, onUpdate, onRemove, onCopy, onMove, dragId, setDragId,
@@ -78,33 +91,42 @@ function MaterialRow({
         </div>
       </div>
       {error?.name && <small className="collection-inline-error" role="alert">{error.name}</small>}
-      <div className="collection-material-naming-field">
-        <div className="collection-naming-heading">
-          <span>自动命名（可选）</span>
-          <span className="collection-naming-presets">
+      <details className={`collection-naming-details${material.namingPattern ? ' has-pattern' : ''}`}>
+        <summary>
+          <span>自动命名</span>
+          <small>{material.namingPattern ? '已设置' : '可选 · 默认保留原文件名'}</small>
+          <ChevronDown size={14} aria-hidden="true" />
+        </summary>
+        <div className="collection-material-naming-field">
+          <label className="collection-naming-input-label">
+            <span>命名格式</span>
+            <input
+              className="collection-material-naming"
+              aria-label={`${material.name || `材料 ${index + 1}`}命名格式`}
+              value={material.namingPattern || ''}
+              maxLength={COLLECTION_FILENAME_PATTERN_MAX}
+              onChange={(event) => onUpdate({ namingPattern: event.target.value })}
+              placeholder="例如：{提交人}_{材料项}_{原文件名}"
+            />
+          </label>
+          <div className="collection-naming-presets" aria-label="常用命名格式">
+            <small>常用格式</small>
             {COLLECTION_NAMING_PRESETS.map((preset) => (
               <button key={preset.pattern} type="button" onClick={() => onUpdate({ namingPattern: preset.pattern })}>{preset.label}</button>
             ))}
-          </span>
+          </div>
+          <div className="collection-naming-tokens">
+            <span>插入变量</span>
+            {COLLECTION_FILENAME_TOKENS.map((token) => (
+              <button key={token} type="button" onClick={() => onUpdate({ namingPattern: appendNamingToken(material.namingPattern, token) })}>{`{${token}}`}</button>
+            ))}
+          </div>
+          {material.namingPattern
+            ? <small className="collection-naming-example">示例：<code>{namingExample(material) || '示例文件.pdf'}</code></small>
+            : <small className="collection-material-naming-preview">留空则保留原文件名</small>}
+          {error?.namingPattern && <small className="collection-inline-error" role="alert">{error.namingPattern}</small>}
         </div>
-        <input
-          className="collection-material-naming"
-          aria-label={`${material.name || `材料 ${index + 1}`}命名格式`}
-          value={material.namingPattern || ''}
-          maxLength={COLLECTION_FILENAME_PATTERN_MAX}
-          onChange={(event) => onUpdate({ namingPattern: event.target.value })}
-          placeholder="例如：{提交人}_{材料项}_{原文件名}"
-        />
-        <div className="collection-naming-tokens">
-          <span>插入占位符</span>
-          {COLLECTION_FILENAME_TOKENS.map((token) => (
-            <button key={token} type="button" onClick={() => onUpdate({ namingPattern: appendNamingToken(material.namingPattern, token) })}>{`{${token}}`}</button>
-          ))}
-        </div>
-        <small className="collection-material-naming-preview">当前规则：<code>{material.namingPattern || '未设置，提交时使用原文件名'}</code></small>
-        {material.namingPattern && <small className="collection-naming-example">示例：<code>{namingExample(material) || '示例文件.pdf'}</code></small>}
-        {error?.namingPattern && <small className="collection-inline-error" role="alert">{error.namingPattern}</small>}
-      </div>
+      </details>
     </div>
   )
 }
@@ -158,7 +180,7 @@ export function CollectionMaterialsEditor({
     const existing = new Set(materials.map((material) => material.name.trim()).filter(Boolean))
     const fresh = names.filter((name) => !existing.has(name)).slice(0, Math.max(0, maxItems - materials.length))
     if (!fresh.length) { setBulkOpen(false); setBulkText(''); return }
-    const added = fresh.map((name) => ({ ...createCollectionMaterial(name, { required: true }), autoFocus: false }))
+    const added = fresh.map((name, index) => ({ ...createCollectionMaterial(name, { required: true }), autoFocus: index === 0 }))
     setFocusId(added[0].id)
     replace([...materials, ...added])
     setBulkOpen(false)
@@ -170,7 +192,7 @@ export function CollectionMaterialsEditor({
       <div className="collection-builder-section-heading">
         <div>
           <strong id={headingId}>材料清单</strong>
-          <small>{materials.length ? `${materials.length} 项材料 · ${requiredCount} 项必交 · 提交人至少选择一项` : '列出需要提交的文件，可设置必交和自动命名'}</small>
+          <small>{materials.length ? `${materials.length} 项 · ${requiredCount} 项必交 · 至少选 1 项` : '列出需要提交的材料，可设必交和命名规则'}</small>
         </div>
         <div className="collection-builder-section-actions">
           {materials.length > 0 && <button type="button" className="secondary-button collection-ghost-action" onClick={() => setBulkOpen((open) => !open)}>批量添加</button>}
@@ -189,10 +211,10 @@ export function CollectionMaterialsEditor({
       )}
       {!materials.length ? (
         <div className="collection-builder-empty collection-empty-state">
-          <p>还没有材料项。可以收集任意文件；也可以从下面常用材料一键添加。</p>
-          {showTemplates && <div className="collection-quick-presets">
+          <p>当前允许提交人上传任意文件。</p>
+          {showTemplates && <CollectionPresetDisclosure label="常用材料" count={COLLECTION_MATERIAL_TEMPLATES.slice(0, 8).length}>
             {COLLECTION_MATERIAL_TEMPLATES.slice(0, 8).map((name) => <button key={name} type="button" onClick={() => addMaterial(name)}><Plus size={12} />{name}</button>)}
-          </div>}
+          </CollectionPresetDisclosure>}
         </div>
       ) : (
         <>
@@ -350,8 +372,6 @@ export function CollectionFieldsEditor({
   customFields = [], onChange, errors = {}, compact = false, headingId = 'collection-fields-heading',
   maxItems = COLLECTION_FIELD_LIMIT, showTemplates = true,
 }) {
-  const [bulkOpen, setBulkOpen] = useState(false)
-  const [bulkText, setBulkText] = useState('')
   const [expanded, setExpanded] = useState(false)
   const [focusId, setFocusId] = useState('')
   const requiredCount = customFields.filter((field) => field.required).length
@@ -392,46 +412,23 @@ export function CollectionFieldsEditor({
     next.splice(toIndex, 0, item)
     replace(next)
   }
-  const applyBulk = () => {
-    const parsed = parseBulkFields(bulkText)
-    if (!parsed.length) return
-    const existing = new Set(customFields.map((field) => field.label.trim()).filter(Boolean))
-    const fresh = parsed.filter((field) => !existing.has(field.label)).slice(0, Math.max(0, maxItems - customFields.length))
-    if (!fresh.length) { setBulkOpen(false); setBulkText(''); return }
-    setFocusId(fresh[0].id)
-    replace([...customFields, ...fresh.map((field) => ({ ...field, autoFocus: false }))])
-    setBulkOpen(false)
-    setBulkText('')
-  }
-
   return (
     <section className={`collection-builder-section collection-field-editor-section ${customFields.length ? 'has-items' : ''} ${compact ? 'is-compact' : ''}`} aria-labelledby={headingId}>
       <div className="collection-builder-section-heading">
         <div>
           <strong id={headingId}>自定义字段</strong>
-          <small>{customFields.length ? `${customFields.length} 个字段 · ${requiredCount} 个必填 · 支持条件显示` : '设置提交人需要补充填写的信息，支持文本、数字、手机号、邮箱、下拉和日期'}</small>
+          <small>{customFields.length ? `${customFields.length} 项 · ${requiredCount} 项必填` : '按需收集联系人、电话等补充信息'}</small>
         </div>
         <div className="collection-builder-section-actions">
-          {customFields.length > 0 && <button type="button" className="secondary-button collection-ghost-action" onClick={() => setBulkOpen((open) => !open)}>批量添加</button>}
           <button type="button" className="secondary-button" disabled={customFields.length >= maxItems} onClick={() => addField()}><Plus size={14} /><span>添加字段</span></button>
         </div>
       </div>
-      {bulkOpen && (
-        <div className="collection-bulk-add">
-          <textarea aria-label="批量添加字段" value={bulkText} onChange={(event) => setBulkText(event.target.value)} rows={3} placeholder={'每行一个字段，可写：字段名|类型|选项\n联系人|文本\n供应商类型|下拉|生产商,经销商'} />
-          <div className="collection-bulk-actions">
-            <small>类型可填：文本、多行、数字、手机号、邮箱、下拉、日期</small>
-            <button type="button" className="secondary-button" onClick={() => setBulkOpen(false)}>取消</button>
-            <button type="button" className="primary-button" disabled={!bulkText.trim()} onClick={applyBulk}>添加到表单</button>
-          </div>
-        </div>
-      )}
       {!customFields.length ? (
         <div className="collection-builder-empty collection-empty-state">
-          <p>还没有补充字段。提交人只需上传文件；需要收集信息时，可从常用字段一键添加。</p>
-          {showTemplates && <div className="collection-quick-presets">
+          <p>不添加字段时，提交人只需上传文件。</p>
+          {showTemplates && <CollectionPresetDisclosure label="常用字段" count={COLLECTION_FIELD_TEMPLATES.length}>
             {COLLECTION_FIELD_TEMPLATES.map((template) => <button key={template.label} type="button" onClick={() => addField(template)}><Plus size={12} />{template.label}</button>)}
-          </div>}
+          </CollectionPresetDisclosure>}
         </div>
       ) : (
         <>
@@ -574,10 +571,10 @@ export function CollectionStructureAssistant({ form, onApplyStructure, copySourc
 
 function PreviewControl({ field }) {
   if (field.type === 'select') {
-    return <select disabled><option value="">{field.help || `请选择${field.label}`}</option>{(field.options || []).map((option) => <option key={option}>{option}</option>)}</select>
+    return <select disabled><option value="">{`请选择${field.label}`}</option>{(field.options || []).map((option) => <option key={option}>{option}</option>)}</select>
   }
-  if (field.type === 'textarea') return <textarea disabled rows={2} placeholder={field.help || `请填写${field.label}`} />
-  return <input type={collectionFieldInputType(field.type)} disabled placeholder={field.help || `请填写${field.label}`} />
+  if (field.type === 'textarea') return <textarea disabled rows={2} placeholder={`请填写${field.label}`} />
+  return <input type={collectionFieldInputType(field.type)} disabled placeholder={field.type === 'date' ? '' : `请填写${field.label}`} />
 }
 
 export function CollectionSubmitPreview({ form }) {
@@ -613,6 +610,7 @@ export function CollectionSubmitPreview({ form }) {
           {previewFields.map((field) => <label key={field.id} className="collection-preview-field">
             <span>{field.label || '未命名字段'}{field.required ? <em>必填</em> : <small>选填</small>}{field.showWhen?.fieldId && <small className="conditional">条件显示</small>}</span>
             <PreviewControl field={field} />
+            {field.help && <small className="collection-preview-field-help">{field.help}</small>}
           </label>)}
           {customFields.length > 5 && <small className="collection-preview-more">还有 {customFields.length - 5} 个字段</small>}
         </div>

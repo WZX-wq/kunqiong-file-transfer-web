@@ -18,12 +18,22 @@ import { limitInputText } from '../lib/input-limits.js'
 import { CollectionFieldsEditor, CollectionMaterialsEditor } from './collection-builder.jsx'
 import { validateCollectionStructure } from '../lib/collection-form.js'
 
-export function DownloadProgressPanel({ task, onRetry }) {
+export function DownloadProgressPanel({ task, onRetry, compact = false }) {
   if (!task || task.status === 'idle') return null
   if (task.status === 'handed_off') return <div className="progress-wrap download-progress"><div className="progress-label"><span className="download-progress-title"><PrototypeAsset name="act-download.png" size={22} />已交给浏览器下载</span><Download size={16} /></div>{task.filename && <small>{task.filename}</small>}</div>
+  if (compact && ['failed', 'cancelled'].includes(task.status)) return (
+    <div className={`download-stop-state ${task.status}`}>
+      {task.error && <p className="download-stop-error" role="alert">{task.error}</p>}
+      {task.needsPassword ? <DownloadPasswordForm onUnlock={onRetry} /> : (
+        <div className="download-stop-actions">
+          <button type="button" className="primary-button" onClick={() => onRetry()}><RotateCcw size={15} />{task.status === 'cancelled' ? '重新下载' : '重试下载'}</button>
+        </div>
+      )}
+    </div>
+  )
   const busy = ['preparing', 'downloading', 'saving'].includes(task.status)
   const statusText = task.needsPassword ? '需要提取密码' : downloadStatusText(task)
-  const remainingText = task.status === 'complete' ? '已完成' : formatDuration(task.etaSeconds)
+  const remainingText = task.status === 'complete' ? '已完成' : task.status === 'cancelled' ? '已取消' : formatDuration(task.etaSeconds)
   const progress = task.totalBytes ? Math.min(100, Math.max(0, task.progress || 0)) : task.status === 'complete' ? 100 : task.progress || 0
   const trackWidth = task.totalBytes || task.status === 'complete' ? progress : busy ? 18 : 0
   return (
@@ -39,10 +49,10 @@ export function DownloadProgressPanel({ task, onRetry }) {
       {task.canResume && <small>单文件服务端已开启 Range，可被浏览器用于断点续传。</small>}
       {task.isEstimated && <small>ZIP 为实时压缩生成，进度按原文件大小估算。</small>}
       {task.retryCount > 0 && <small>已重试 {task.retryCount} 次</small>}
-      {task.status === 'complete' && <small>已调用浏览器保存，请在下载列表查看。</small>}
+      {task.status === 'complete' && <small>文件已保存到你选择的位置。</small>}
       {task.error && <p className="upload-error">{task.error}</p>}
       {task.status === 'failed' && task.needsPassword && <DownloadPasswordForm onUnlock={onRetry} />}
-      {task.status === 'failed' && !task.needsPassword && (
+      {['failed', 'cancelled'].includes(task.status) && !task.needsPassword && (
         <div className="upload-control-row">
           <button className="primary-button" onClick={() => onRetry()}><RotateCcw size={15} /> 重试下载</button>
         </div>
@@ -784,12 +794,14 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
                   onChange={(materials) => updateCollection({ materials })}
                   errors={collectionValidation.materialErrors}
                   compact
+                  headingId="manage-collection-materials-heading"
                 />
                 <CollectionFieldsEditor
                   customFields={collectionForm.customFields || []}
                   onChange={(customFields) => updateCollection({ customFields })}
                   errors={collectionValidation.fieldErrors}
                   compact
+                  headingId="manage-collection-fields-heading"
                 />
               </div>
             </>

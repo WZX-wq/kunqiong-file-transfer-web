@@ -600,7 +600,6 @@ export function TeamPage() {
           <a className="secondary-button" href="/workspace"><ArrowLeft size={14} /> 返回会员空间</a>
           <a className="secondary-button" href="/"><Home size={14} /> 返回首页</a>
           {data.canManage && teamInviteLink && <button type="button" className="secondary-button" onClick={copyTeamInviteLink}><UserPlus size={15} /> 邀请成员</button>}
-          {data.canManage && <button type="button" className="secondary-button" onClick={() => changeTab('manage')}><Settings2 size={15} /> 团队设置</button>}
           {isOwner && !editingTeamName && <button type="button" className="ghost-icon team-edit-name" onClick={() => { setTeamName(organization.name || ''); setTeamNameError(''); setEditingTeamName(true) }} aria-label="编辑团队名称" title="编辑团队名称"><PencilLine size={15} /></button>}
           {!isOwner && <button type="button" className="secondary-button danger-lite" onClick={leaveTeam} disabled={leavingTeam}><LogOut size={14} /> {leavingTeam ? '正在退出' : '退出团队空间'}</button>}
         </div>

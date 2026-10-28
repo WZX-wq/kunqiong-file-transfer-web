@@ -15,7 +15,7 @@ import { useConfirmDialog, useDownloadTask, useToast } from '../hooks.js'
 import { canReopenCollection, collectionFileAccept, collectionStatusText, createCollectionRecord, createShareRecord, deleteCloudRecords, isAllowedCollectionFile, readRecords, saveAuthoritativeLocalRecord, savePublicRecord, shareStatusText, writeRecords } from '../lib/records.js'
 import { canPreviewFile, clearUploadResume, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, queryUploadResume, readCollectionUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { displayUserName, feedbackTone, formatBytes, formatDate, formatExpiry } from '../lib/format.js'
-import { MAX_FILES } from '../lib/constants.js'
+import { COLLECTION_FIELD_SELECT_VALUE_MAX, COLLECTION_FIELD_TEXT_MAX, COLLECTION_FIELD_VALUE_MAX, COLLECTION_PARTICIPANT_NAME_MAX, MAX_FILES } from '../lib/constants.js'
 import { limitInputText } from '../lib/input-limits.js'
 import { TeamBrand } from '../components/team-brand.jsx'
 
@@ -184,36 +184,41 @@ function ShareClosedCard() {
   )
 }
 
-// 正在下载文件：对齐原型 share.js · download-progress 的版式（hero + 发送人条 + 文件卡）。
-// 产品把传输交给浏览器下载管理器，前端拿不到字节级进度，因此这里只呈现真实状态：
-// 准备中/下载中/失败，以及文件清单；不编造百分比、速度和“暂停”（浏览器下载无法由页面暂停）。
+// 下载进度页：支持流式保存的浏览器显示真实进度；其他浏览器交给原生下载面板。
 function ShareDownloadingPage({ share, task, onBack, onRetry }) {
   const files = share.files || []
   const totalSize = files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
   const allApproved = files.length > 0 && files.every((file) => file.reviewStatus === 'approved')
   const archive = files.length > 1
   const failed = task.status === 'failed'
+  const handedOff = task.status === 'handed_off'
+  const cancelled = task.status === 'cancelled'
+  const transferring = ['preparing', 'downloading', 'saving'].includes(task.status)
+  const pageTracksProgress = typeof window.showSaveFilePicker === 'function' && (!share.requiresPassword || task.retryConfig?.passwordVerified)
   const activeName = task.filename || (archive ? '鲲穹文件包.zip' : files[0]?.name) || '下载文件'
-  const statusText = failed ? '下载失败' : task.status === 'preparing' ? '准备下载' : '下载中'
+  const statusText = failed ? '下载失败' : cancelled ? '已取消' : task.status === 'preparing' ? '准备下载' : task.status === 'downloading' ? '正在下载' : task.status === 'saving' ? '正在保存' : handedOff ? '浏览器下载' : task.status === 'complete' ? '已保存' : '等待开始'
+  const progress = Math.min(99, Math.max(0, Number(task.progress) || 0))
+  const totalBytes = Number(task.totalBytes) || totalSize
+  const stopped = failed || cancelled
   return (
     <div className="share-main download-page">
       <header className="share-hero">
         <span className="eyebrow">鲲穹临时分享</span>
-        <h1>正在下载文件</h1>
-        <p>下载已交给浏览器，进度和保存位置请在浏览器下载列表中查看。</p>
+        <h1>文件下载</h1>
+        <p>{failed ? '本次下载未能完成，请查看提示后重试。' : cancelled ? '你取消了保存操作，可以重新下载。' : handedOff ? '请在浏览器下载列表查看进度和结果。' : task.status === 'complete' ? '保存位置按你刚才选择的路径确定。' : transferring ? pageTracksProgress ? '下载进度会在此页面实时更新。' : '正在准备下载，随后可在浏览器下载列表查看进度。' : '准备好后即可开始下载。'}</p>
       </header>
       <div className="sender download-sender">
         <span className="avatar"><PrototypeAsset name="ico-user.png" size={28} /></span>
         <div className="who"><b>鲲穹文件传输</b><small>临时分享 · {formatDate(share.createdAt)}</small></div>
         {allApproved && <ProtoBadge tone="blue" dot={false}><ShieldCheck size={12} /> 安全检测通过</ProtoBadge>}
       </div>
-      <div className="public-card share-card download-card">
+      <div className="public-card share-card share-public-card download-card">
         <div className="card-bd">
           <div className="pkg-head">
             <div><h3>{files.length} 个文件</h3><p className="tiny">共 {formatBytes(totalSize)} · {share.requiresPassword ? '受提取密码保护' : '无需登录'}</p></div>
             <ProtoBadge tone={failed ? 'danger' : 'blue'}>{statusText}</ProtoBadge>
           </div>
-          {failed ? <DownloadProgressPanel task={task} onRetry={onRetry} /> : (
+          {stopped ? <DownloadProgressPanel compact task={task} onRetry={onRetry} /> : (
             <>
               <div className="download-task">
                 <div className="download-task-head">
@@ -221,15 +226,19 @@ function ShareDownloadingPage({ share, task, onBack, onRetry }) {
                   <b title={activeName}>{activeName}</b>
                   <span>{files.length} 个文件 · {formatBytes(totalSize)}</span>
                 </div>
-                <div className="download-track" role="progressbar" aria-label="浏览器正在下载，具体进度见浏览器下载列表"><span /></div>
-                <p className="download-task-note">{task.status === 'preparing' ? '正在准备下载链接，浏览器随后会提示保存位置。' : '浏览器已接管本次下载。若没有看到保存提示，请检查浏览器的下载列表或拦截提示。'}</p>
+                {transferring && <div className="download-task-meter">
+                  <div className="download-task-meter-label"><span>{formatBytes(task.loadedBytes || 0)} / {totalBytes ? `${formatBytes(totalBytes)}${task.isEstimated ? '（估算）' : ''}` : '已接收'}</span><b>{task.status === 'preparing' ? '准备中' : task.status === 'saving' ? '写入文件中' : `${progress}%`}</b></div>
+                  <div className="download-track" role="progressbar" aria-label="文件下载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress}><span style={{ width: `${task.status === 'preparing' ? 0 : progress}%` }} /></div>
+                  <p className="download-task-note">{task.status === 'preparing' ? '正在连接下载服务。' : task.status === 'saving' ? '数据接收完成，正在保存文件。' : `下载速度 ${task.speedBps ? `${formatBytes(task.speedBps)}/秒` : '计算中'}${task.etaSeconds != null && !task.isEstimated ? ` · 预计还需 ${Math.ceil(task.etaSeconds)} 秒` : ''}`}</p>
+                </div>}
+                {task.status === 'complete' && <div className="download-track is-complete" role="progressbar" aria-label="文件下载完成" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><span style={{ width: '100%' }} /></div>}
               </div>
               <div className="download-file-list">
                 {files.map((file, index) => (
                   <div className="download-file-row" key={file.relativePath || `${file.name}-${index}`}>
                     <span className="download-file-icon"><PrototypeFileIcon name={file.name} fallback={FileText} size={24} /></span>
                     <div className="download-file-copy"><strong title={file.name}>{file.name}</strong><small>{formatBytes(file.size)}</small></div>
-                    <span className="download-file-state">{archive ? '已包含' : '浏览器下载中'}</span>
+                    {archive && <span className="download-file-state">压缩包内</span>}
                   </div>
                 ))}
               </div>
@@ -873,10 +882,17 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                 </div>
               )
             )}
+            <div className={`collection-submit-workflow-grid${(!signedIn || !authChecked) && (collection.materials || []).length > 0 && visibleFields.length > 0 ? ' has-three-cards' : ''}`}>
             {(!signedIn || !authChecked) && (
-              <label className="public-label">提交人名称<input value={name} maxLength={40} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => setName(event.target.value)} placeholder="例如：张三 / 市场部" /></label>
+              <fieldset className="collection-submit-form-section collection-submit-name">
+                <legend>提交人名称</legend>
+                <label className="collection-submit-name-field-label" htmlFor="collection-submitter-name">
+                  <span>姓名或部门</span><small className="collection-field-count">{name.length}/{COLLECTION_PARTICIPANT_NAME_MAX}</small>
+                </label>
+                <input id="collection-submitter-name" aria-label="提交人名称" value={name} maxLength={COLLECTION_PARTICIPANT_NAME_MAX} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => setName(limitInputText(event.target.value, COLLECTION_PARTICIPANT_NAME_MAX))} placeholder="例如：张三 / 市场部" />
+              </fieldset>
             )}
-            {(collection.materials || []).length > 0 && <fieldset className="collection-submit-form-section">
+            {(collection.materials || []).length > 0 && <fieldset className="collection-submit-form-section collection-submit-material-card">
               <legend>本次提交材料</legend>
               <p>可分次提交；管理端会按提交人汇总必交材料。也可以直接上传到某一项材料。</p>
               <div className="collection-submit-materials">{collection.materials.map((material) => <div className="collection-submit-material-row" key={material.id}>
@@ -893,33 +909,35 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                 <button type="button" className="collection-material-upload" disabled={submitting || completionPending || Boolean(pendingUpload)} onClick={() => selectFilesForMaterial(material.id)}><UploadCloud size={13} /> 上传到此材料</button>
               </div>)}</div>
             </fieldset>}
-            {visibleFields.length > 0 && <fieldset className="collection-submit-form-section">
+            {visibleFields.length > 0 && <fieldset className="collection-submit-form-section collection-submit-fields-card">
               <legend>补充信息</legend>
               <div className="collection-submit-custom-fields">{visibleFields.map((field) => {
                 const error = fieldTouched[field.id] ? fieldErrors[field.id] : ''
                 const value = activeFieldValues[field.id] || ''
-                const updateValue = (next) => { setFieldValues((current) => ({ ...current, [field.id]: next })); setMessage('') }
+                const maxLength = field.type === 'select' ? COLLECTION_FIELD_SELECT_VALUE_MAX : field.type === 'date' ? 10 : field.type === 'text' ? COLLECTION_FIELD_TEXT_MAX : COLLECTION_FIELD_VALUE_MAX
+                const updateValue = (next) => { setFieldValues((current) => ({ ...current, [field.id]: limitInputText(next, maxLength) })); setMessage('') }
                 return <label key={field.id} className="public-label">
-                  <span>{field.label}{field.required ? <em>必填</em> : <small>选填</small>}{field.showWhen?.fieldId && <small className="collection-field-conditional">条件显示</small>}</span>
+                  <span>{field.label}{field.required ? <em>必填</em> : <small>选填</small>}{field.showWhen?.fieldId && <small className="collection-field-conditional">条件显示</small>}{['text', 'textarea'].includes(field.type) && <small className="collection-field-count">{value.length}/{maxLength}</small>}</span>
                   {field.type === 'select' ? <select value={value} aria-invalid={Boolean(error)} disabled={submitting || Boolean(pendingUpload)} onChange={(event) => updateValue(event.target.value)}>
                     <option value="">请选择</option>{field.options?.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select> : field.type === 'textarea' ? <textarea rows={3} maxLength={500} value={value} aria-invalid={Boolean(error)} disabled={submitting || Boolean(pendingUpload)} onBlur={() => setFieldTouched((current) => ({ ...current, [field.id]: true }))} onChange={(event) => updateValue(event.target.value)} placeholder={field.help || `请填写${field.label}`} /> : <input
+                  </select> : field.type === 'textarea' ? <textarea rows={3} maxLength={COLLECTION_FIELD_VALUE_MAX} value={value} aria-invalid={Boolean(error)} disabled={submitting || Boolean(pendingUpload)} onBlur={() => setFieldTouched((current) => ({ ...current, [field.id]: true }))} onChange={(event) => updateValue(event.target.value)} placeholder={`请填写${field.label}`} /> : <input
                     type={collectionFieldInputType(field.type)}
                     value={value}
-                    maxLength={field.type === 'text' ? 500 : undefined}
+                    maxLength={['text', 'email', 'phone'].includes(field.type) ? maxLength : undefined}
                     inputMode={field.type === 'number' ? 'decimal' : field.type === 'phone' ? 'tel' : undefined}
                     step={field.type === 'number' ? 'any' : undefined}
                     aria-invalid={Boolean(error)}
                     disabled={submitting || Boolean(pendingUpload)}
                     onBlur={() => setFieldTouched((current) => ({ ...current, [field.id]: true }))}
                     onChange={(event) => updateValue(event.target.value)}
-                    placeholder={field.help || (field.type === 'date' ? '' : `请填写${field.label}`)}
+                    placeholder={field.type === 'date' ? '' : `请填写${field.label}`}
                   />}
                   {field.help && <small className="collection-field-help">{field.help}</small>}
                   {error && <small className="collection-field-error" role="alert">{error}</small>}
                 </label>
               })}</div>
             </fieldset>}
+            </div>
             {pendingUpload && <div className="collection-resume-notice" role="status">
               <strong>发现未完成的上传 · {pendingUpload.files.length} 个文件</strong>
               <span>{pendingUpload.files.map((file) => file.relativePath || file.name).join('、')}</span>
@@ -1142,8 +1160,8 @@ export function CollectionManagePage({ token }) {
   const pageCount = Math.max(1, Math.ceil(submissions.length / pageSize))
   const safePage = Math.min(submissionPage, pageCount)
   const pageSubmissions = submissions.slice((safePage - 1) * pageSize, safePage * pageSize)
-  // 导出清单是客户端根据真实提交生成 CSV，不额外请求服务端。
-  // 导出清单：xlsx 而不是 csv —— CSV 无法携带列宽信息，WPS/Excel 打开后日期会被识别成日期值
+  // 导出清单由客户端根据真实提交生成 XLSX，不额外请求服务端。
+  // XLSX可携带列宽；手机号和日期按文本保存，WPS/Excel打开后不会被识别成数字或日期值
   // 显示成 ######、手机号账号会变科学计数法，且必须手动调列宽。xlsx 可按内容写入列宽，
   // 所有字段都按文本单元格写入，打开即可读。
   const exportSubmissionsSheet = async () => {
@@ -1179,7 +1197,7 @@ export function CollectionManagePage({ token }) {
           <div className="cm-head-actions">
             <button type="button" className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 收集设置</button>
             <button type="button" className="secondary-button" disabled={!data.publicUrl} onClick={() => copyPublicValue(data.publicUrl)}><Link2 size={15} /> 提交链接</button>
-            <button type="button" className="secondary-button" disabled={refreshing} onClick={refreshTask}><RefreshCw size={15} /> 刷新</button>
+            <button type="button" className="secondary-button" disabled={refreshing} onClick={refreshTask}><RefreshCw className={refreshing ? 'spinning' : ''} size={15} /> {refreshing ? '刷新中' : '刷新'}</button>
             <button type="button" className="secondary-button cm-danger-action" onClick={deleteCollection}><Trash2 size={15} /> 删除收集</button>
           </div>
         </div>
@@ -1224,7 +1242,10 @@ export function CollectionManagePage({ token }) {
                         {submission.files.map((file, fileIndex) => (
                           <div className="cm-file-row" key={`${submission.id}-${file.relativePath || file.name}`}>
                             <PrototypeFileIcon name={file.name} fallback={FileText} size={20} />
-                            <span title={file.name}>{file.name}</span>
+                            <span className="cm-file-name" title={file.name}>
+                              <strong>{file.name}</strong>
+                              {file.originalName && file.originalName !== file.name && <small className="cm-original-file-name">原文件名：{file.originalName}</small>}
+                            </span>
                             <small>{formatBytes(file.size)}</small>
                             <div className="cm-file-actions">
                               {canPreviewFile(file) ? (

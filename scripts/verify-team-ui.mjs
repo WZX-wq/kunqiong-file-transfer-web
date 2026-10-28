@@ -511,6 +511,8 @@ await scenario('TEAM-004',async()=>{const f=await mount();try{await f.input(f.do
 await scenario('TEAM-005',async()=>{for(const suffix of ['/share/','/collect/','/']){const f=await mount('/e/team-slug'+suffix,'');try{await waitFor(()=>f.document.body.textContent.includes('登录后申请加入'),'invite login');check('无token显示入团落地页 '+suffix,f.document.body.textContent.includes('你收到一个团队空间邀请')&&f.document.body.textContent.includes('隔离验证团队'));check('入口探测正确团队 '+suffix,f.calls.some(c=>c.url==='/api/organizations/team-slug/join-request'));check('未请求空token资源 '+suffix,!f.calls.some(c=>c.url.startsWith('/api/shares/')||c.url.startsWith('/api/collections/')))}finally{f.dom.window.close()}}const f=await mount('/e/wrong/');try{check('无效邀请明确提示',f.document.body.textContent.includes('这个邀请链接已失效'))}finally{f.dom.window.close()}})
 await scenario('TEAM-007',async()=>{for(const role of ['owner','admin','member']){const f=await mount('/team',role);try{const manager=['owner','admin'].includes(role);check(role+' 管理栏目权限一致',!![...f.document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.includes('团队成员'))===manager);check(role+' 搜索邀请权限一致',!!f.document.querySelector('input[placeholder*="直接邀请成员"]')===manager);if(manager){const tab=[...f.document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.includes('团队成员'));tab.click();await delay(30)}check(role+' 解散按钮权限一致',!!f.find('解散团队')===(role==='owner'));check(role+' 退出按钮权限一致',!!f.find('退出团队空间')===(role!=='owner'));check(role+' 无运行错误',f.errors.length===0)}finally{f.dom.window.close()}}})
 
+await scenario('TEAM-TAB-STABILITY',async()=>{const f=await mount('/team?tab=requests','owner','隔离验证团队',true,1,{includeResourceStyles:true});try{const rootStyle=f.window.getComputedStyle(f.document.documentElement);check('入团申请页签预留滚动条槽位',rootStyle.scrollbarGutter==='stable');const tabs=[...f.document.querySelectorAll('[role="tab"]')];const requests=tabs.find(b=>b.textContent.includes('入团申请'));const members=tabs.find(b=>b.textContent.includes('成员观察'));check('入团申请页签和成员页签均可切换',Boolean(requests&&members));requests.click();await delay(20);members.click();await delay(20);check('切换页签后仍停留在团队页且无脚本错误',new URL(f.window.location.href).pathname==='/team'&&!f.errors.length)}finally{f.dom.window.close()}})
+
 await scenario('TEAM-PASSWORD-AND-LIMIT',async()=>{
  for (const role of ['owner','admin','member','peer']) {
   const f=await mount('/team?tab=resources',role,'隔离验证团队',true,1,{resourcePassword:true})
@@ -589,7 +591,7 @@ await scenario('TEAM-009',async()=>{
   await f.click('取消');check('取消发起不发送请求',!f.calls.some(c=>c.url.endsWith('transfer-ownership')))
   await f.click('转让给普通成员');await f.click('发起交接')
   check('交接只提交一次',f.calls.filter(c=>c.url.endsWith('transfer-ownership')).length===1)
-   check('在团队成员页发起后显示待确认事项并保持所有者权限',!!f.document.querySelector('.team-handover-pending')&&new URL(f.window.location.href).searchParams.get('tab')==='manage'&&!!f.find('团队设置')&&!f.find('退出团队空间'))
+   check('在团队成员页发起后显示待确认事项且移除顶部团队设置按钮',!!f.document.querySelector('.team-handover-pending')&&new URL(f.window.location.href).searchParams.get('tab')==='manage'&&!f.find('团队设置')&&!!f.find('团队成员 2')&&!f.find('退出团队空间'))
    check('交接与成员列表共用团队成员页面',!!f.document.querySelector('.team-management-list')&&!!f.document.querySelector('.team-kpi-grid')&&!f.find('负责人交接 1'))
   check('所有者可取消待办且不能代确认',!!f.find('取消本次交接')&&!f.find('接受交接'))
    check('待确认时不显示第二次交接入口',!f.find('转让给普通成员'))
@@ -613,7 +615,7 @@ await scenario('TEAM-HANDOVER-RECIPIENT',async()=>{
    await waitFor(()=>f.calls.some(c=>c.url.includes('ownership-handovers/')),'decision submitted')
    check(decision+'处理中禁用按钮并防重复',f.find('接受交接').disabled&&f.calls.filter(c=>c.url.includes('ownership-handovers/')).length===1)
    f.releaseHandover();await waitFor(()=>!f.document.querySelector('.team-handover-pending')&&f.document.querySelector('.team-handover-history'),'decision resolved with history')
-   check(decision+'结果和授权正确',f.document.querySelector('.team-handover-history').textContent.includes(decision==='accept'?'已完成':'已拒绝')&&!!f.find('团队设置')===(decision==='accept'))
+   check(decision+'结果和授权正确',f.document.querySelector('.team-handover-history').textContent.includes(decision==='accept'?'已完成':'已拒绝')&&!f.find('团队设置'))
     check(decision+'留在团队成员页面且无运行错误',new URL(f.window.location.href).searchParams.get('tab')===(decision==='accept'?'manage':'members')&&!f.errors.length)
   }finally{f.releaseHandover();f.dom.window.close()}
  }
