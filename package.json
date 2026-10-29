@@ -29,6 +29,7 @@
     "test:collections": "node scripts/verify-collection-suite.mjs && node scripts/verify-collection-deadline-ui.mjs && node scripts/verify-collection-picker-ui.mjs && node scripts/verify-collection-form-ui.mjs && node scripts/verify-collection-resume-ui.mjs && node scripts/verify-collection-fields-ui.mjs && node scripts/verify-collection-layout.mjs",
     "test:distribution": "node scripts/verify-distribution-suite.mjs && node scripts/verify-distribution-ui.mjs",
     "test:trash": "node scripts/verify-trash-suite.mjs",
+    "test:file-storage": "node scripts/verify-user-file-storage.mjs && node scripts/verify-legacy-user-storage-startup.mjs && node scripts/verify-upload-publication.mjs",
     "test:six-features": "npm run test:collections && npm run test:handover && npm run test:distribution && npm run test:trash && npm run test:team && npm run test:branding && node scripts/verify-six-feature-e2e.mjs && npm run build",
     "verify:metadata-cas": "node scripts/verify-metadata-cas.mjs",
     "verify:docker-copy": "node scripts/refactor/check-docker-copy.mjs",

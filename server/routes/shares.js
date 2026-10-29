@@ -3,10 +3,11 @@
 // 依赖方向：routes → services → lib → state → config（单向）
 // 注册顺序即 Express 匹配顺序，调用点顺序不可调整。
 import path from 'node:path'
+import { resolveStoredFilePath } from '../lib/file-storage.js'
 import { relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
 
 import {
-  MAX_FILES, filesRoot
+  MAX_FILES, filesRoot, userFilesRoot
 } from '../config.js'
 import {
   metadata, persistMetadata
@@ -39,6 +40,10 @@ function validateManagedFileAccess(share, req) {
   if (!viewer) return { ok: false, status: 401, message: '请先登录文件所属账号' }
   if (viewer.id !== share.ownerUserId) return { ok: false, status: 403, message: '无权访问其他账号的文件' }
   return { ok: true }
+}
+
+function storedShareFilePath(share, file) {
+  return resolveStoredFilePath(file, path.join(filesRoot, share.id), userFilesRoot)
 }
 
 export function registerShareCreateRoutes(app) {
@@ -118,9 +123,9 @@ export function registerShareAccessRoutes(app) {
       }
       if (visibleFiles.length === 1) {
         const file = visibleFiles[0]
-        return sendDownloadFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
+        return sendDownloadFile(req, res, next, storedShareFilePath(share, file), file)
       }
-      await streamZip(res, next, '鲲穹文件包.zip', visibleFiles.map(file => ({ path: path.join(filesRoot, share.id, file.storedName), name: file.relativePath || file.name, size: file.size })))
+      await streamZip(res, next, '鲲穹文件包.zip', visibleFiles.map(file => ({ path: storedShareFilePath(share, file), name: file.relativePath || file.name, size: file.size })))
     } catch (error) { next(error) }
   })
   // 管理文件与公开提取使用不同入口；账号文件仍需本人登录，游客使用管理令牌。
@@ -143,7 +148,7 @@ export function registerShareAccessRoutes(app) {
           if (action === 'download') registerShareDownload(share, res)
         }
         const send = action === 'preview' ? sendPreviewFile : sendDownloadFile
-        send(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
+        send(req, res, next, storedShareFilePath(share, file), file)
       } catch (error) {
         next(error)
       }
@@ -253,11 +258,11 @@ app.get('/api/shares/lookup/:code', (req, res) => {
     const shareDirectory = path.join(filesRoot, share.id)
     if (visibleFiles.length === 1) {
       const file = visibleFiles[0]
-      sendDownloadFile(req, res, next, path.join(shareDirectory, file.storedName), file)
+      sendDownloadFile(req, res, next, storedShareFilePath(share, file), file)
       return
     }
     await streamZip(res, next, '鲲穹文件包.zip', visibleFiles.map((file) => ({
-      path: path.join(shareDirectory, file.storedName),
+      path: storedShareFilePath(share, file),
       name: file.relativePath,
       size: file.size,
     })))
@@ -280,7 +285,7 @@ app.get('/api/shares/lookup/:code', (req, res) => {
     if (!currentAccess.ok) return res.status(currentAccess.status).json({ message: currentAccess.message })
     if (req.method === 'HEAD') setShareAccessCookie(res, req, share)
     registerShareDownload(share, res)
-    sendDownloadFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
+    sendDownloadFile(req, res, next, storedShareFilePath(share, file), file)
   } catch (error) {
     next(error)
   }
@@ -299,7 +304,7 @@ app.get('/api/shares/lookup/:code', (req, res) => {
     const currentAccess = validateShareRequest(share, req, { allowOwner: true })
     if (!currentAccess.ok) return res.status(currentAccess.status).json({ message: currentAccess.message })
     if (req.method === 'HEAD') setShareAccessCookie(res, req, share)
-    sendPreviewFile(req, res, next, path.join(filesRoot, share.id, file.storedName), file)
+    sendPreviewFile(req, res, next, storedShareFilePath(share, file), file)
   } catch (error) {
     next(error)
   }

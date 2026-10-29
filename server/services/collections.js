@@ -9,11 +9,12 @@ import { assertActiveCollectionLimit, collectionFileLimitBytes, collectionPartic
 // 本模块从其 import。
 
 import {
-  COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, collectionsRoot
+  COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, collectionsRoot, userFilesRoot
 } from '../config.js'
 import {
   httpError
 } from '../lib/http.js'
+import { resolveStoredFilePath } from '../lib/file-storage.js'
 import {
   accountUserById, authSessionFromRequest, currentCollectionStatus, displayAccountName, fileListSize, getOrigin
 } from '../services/account.js'
@@ -121,7 +122,7 @@ export function collectionZipEntries(task, targetSubmission = null) {
   return submissions.flatMap((submission) => {
     const folder = targetSubmission ? '' : `${submission.participantName || '提交文件'}-${submission.id.slice(0, 6)}`
     return submission.files.map((file) => ({
-      path: path.join(collectionsRoot, task.id, submission.id, file.storedName),
+      path: resolveStoredFilePath(file, path.join(collectionsRoot, task.id, submission.id), userFilesRoot),
       name: zipEntryPath(folder, file.relativePath),
       size: file.size,
     }))

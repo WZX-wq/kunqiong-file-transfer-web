@@ -23,7 +23,7 @@ import {
   SHARE_ACCESS_TTL_SECONDS, UPLOAD_CHUNK_DEFAULT_BYTES, UPLOAD_CHUNK_MAX_BYTES,
   UPLOAD_CHUNK_MIN_BYTES, UPLOAD_SESSION_TTL_MS, UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS,
   clamavHost, clamavPort,
-  collectionsRoot, filesRoot, scanMode, scanTimeoutMs, scanConcurrency, scanLargeConcurrency, scanLargeFileBytes, shareEmailTemplatePath, smtpFrom, smtpFromName, tempRoot
+  collectionsRoot, filesRoot, userFilesRoot, scanMode, scanTimeoutMs, scanConcurrency, scanLargeConcurrency, scanLargeFileBytes, shareEmailTemplatePath, smtpFrom, smtpFromName, tempRoot
 } from '../config.js'
 
 import {
@@ -49,6 +49,7 @@ import {
 } from '../services/account.js'
 
 import { normalizeUploadFileName } from '../lib/file-name.js'
+import { createStoredFileName, resolveStoredFilePath, storedFileExists, userStorageDirectory } from '../lib/file-storage.js'
 import { applyCollectionNaming } from '../lib/collection-naming.js'
 import { createScanCoordinator, scanFileBatch } from '../lib/scan-coordinator.js'
 
@@ -544,8 +545,8 @@ export async function ensureStoredFilesScanned(files, directory) {
   assertFilesDownloadable(files)
   for (const file of files) {
     if (file.reviewStatus === 'approved' && file.scanEngine === 'clamav' && file.scannedAt) continue
-    const targetPath = path.join(directory, file.storedName)
-    if (!fs.existsSync(targetPath)) throw httpError(410, '文件已清理，无法读取')
+    const targetPath = resolveStoredFilePath(file, directory, userFilesRoot)
+    if (!targetPath || !fs.existsSync(targetPath)) throw httpError(410, '文件已清理，无法读取')
     try { Object.assign(file, await scanFileBytes(targetPath)) }
     catch (error) { if (error.code === 'scan_threat_detected') file.reviewStatus = 'blocked'; persistMetadata(); throw error }
   }
@@ -1357,26 +1358,23 @@ export function resolveCollectionSubmitter(req, res) {
   }
 }
 
-export async function publishUploadedFiles(tempFiles, directory, { attach, detach, persisted }) {
+export async function publishUploadedFiles(tempFiles, directory, { attach, detach, persisted, storageOwnerId: optionsStorageOwnerId = '' }) {
   const moves = []
   let attemptedCommit = false
   try {
-    fs.mkdirSync(directory, { recursive: true })
     const files = tempFiles.map((file) => {
       const relativePath = safeRelativePath(file.relativePath || file.name)
       // Keep the user-facing name in metadata, but never use it as the physical
       // filename. UUIDs avoid collisions between repeated names/uploads; retain
       // the final extension for filesystem tools and content-type diagnostics.
-      const extension = path.posix.extname(path.posix.basename(relativePath))
-      if (Buffer.byteLength(extension, 'utf8') > 200 || extension.length > 200) {
-        throw httpError(400, '文件扩展名过长，无法安全保存')
-      }
-      const storedName = `${crypto.randomUUID()}${extension}`
-      const destination = path.join(directory, storedName)
+      const storedName = createStoredFileName(relativePath)
+      const storageOwnerId = String(file.storageOwnerId || optionsStorageOwnerId || '')
+      const destination = storageOwnerId ? path.join(userStorageDirectory(storageOwnerId, userFilesRoot), storedName) : path.join(directory, storedName)
+      fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 })
       fs.renameSync(file.tempPath, destination)
-      moves.push({ source: file.tempPath, destination })
+      moves.push({ source: file.tempPath, destination, storageOwnerId })
       return {
-        name: file.name, relativePath, storedName, size: Number(file.size || 0), mimeType: file.mimeType || 'application/octet-stream',
+        name: file.name, relativePath, storedName, ...(storageOwnerId ? { storageOwnerId } : {}), size: Number(file.size || 0), mimeType: file.mimeType || 'application/octet-stream',
         reviewStatus: file.reviewStatus || 'unscanned', scanEngine: file.scanEngine || null, scannedAt: file.scannedAt || null,
         ...(file.originalName ? { originalName: file.originalName } : {}),
         ...(file.originalRelativePath ? { originalRelativePath: file.originalRelativePath } : {}),
@@ -1396,7 +1394,13 @@ export async function publishUploadedFiles(tempFiles, directory, { attach, detac
         try { fs.renameSync(move.destination, move.source) }
         catch (rollbackError) { console.error(JSON.stringify({ event: 'upload_rollback_failed', code: rollbackError.code || 'FILE_ROLLBACK_FAILED' })) }
       }
-      await fs.promises.rm(directory, { recursive: true, force: true })
+      const ownerIds = new Set(moves.map(move => move.storageOwnerId).filter(Boolean))
+      if (optionsStorageOwnerId) ownerIds.add(optionsStorageOwnerId)
+      for (const ownerId of ownerIds) {
+        try { fs.rmdirSync(userStorageDirectory(ownerId, userFilesRoot)) }
+        catch (cleanupError) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(cleanupError.code)) console.error(JSON.stringify({ event: 'upload_rollback_directory_cleanup_failed', code: cleanupError.code || 'FILE_ROLLBACK_CLEANUP_FAILED' })) }
+      }
+      if (!optionsStorageOwnerId) await fs.promises.rm(directory, { recursive: true, force: true })
     } else if (durable === null) {
       // Keep potentially committed bytes for recovery instead of deleting live data.
       error.publicationUncertain = true
@@ -1408,8 +1412,13 @@ export async function publishUploadedFiles(tempFiles, directory, { attach, detac
 
 export async function publishCollectionSubmission(task, tempFiles, submitter, req, { uploadSessionId = '', guestKey = '', fieldValues = submitter.fieldValues || {}, materialIds = submitter.materialIds || [] } = {}) {
   const id = createToken(12)
+  const storageOwnerId = submitter.submitterUserId
+    ? String(submitter.submitterUserId)
+    : submitter.participantKey
+      ? `collection-participant:${submitter.participantKey}`
+      : `collection-submission:${task.id}:${id}`
   const namedFiles = applyCollectionNaming(task, tempFiles, submitter.participantName, submitter.fileMaterialIds || [])
-  const submission = await publishUploadedFiles(namedFiles, path.join(collectionsRoot, task.id, id), {
+  const submission = await publishUploadedFiles(namedFiles, path.join(collectionsRoot, task.id, id), { storageOwnerId,
     attach(files) {
       const access = validateCollection(task)
       if (!access.ok) throw httpError(access.status, access.message)
@@ -1437,6 +1446,9 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
     const shareUrl = `${getOrigin(req)}/share/${shareToken}`
     const qrDataUrl = await QRCode.toDataURL(shareUrl, { width: 180, margin: 1 })
     const ownerSession = authSessionFromRequest(req)
+    const uploadSession = options.uploadSessionId ? uploadSessions.get(options.uploadSessionId) : null
+    const guestOwnerId = uploadSession?.ownerGuestId || validGuestId(readCookie(req, GUEST_ID_COOKIE)) || req.issuedGuestId || ''
+    const storageOwnerId = String(ownerSession?.user?.id || (guestOwnerId ? `guest:${keyedDigest(`storage-owner:${guestOwnerId}`)}` : `guest-share:${shareToken}`))
     assertConfiguredUploadLimits(req, tempFiles, { mode: options.teamResource ? 'team_resource' : 'share' })
     if (options.uploadSessionId) assertUploadSessionOwner(uploadSessions.get(options.uploadSessionId), req)
     // 断点恢复期间可能更换绑定，发布时仍需以当前用户资料校验收件人。
@@ -1452,11 +1464,11 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
     } else {
       assertAccountCapacity(ownerSession?.user, totalSize)
     }
-    const shareDirectory = path.join(filesRoot, shareToken)
+    const shareDirectory = userStorageDirectory(storageOwnerId, userFilesRoot)
     const expiryDays = String(options.expiryDays || '3')
     const downloadLimit = normalizeDownloadLimit(options.downloadLimit)
     reservedCode = createCode(options.codeLength)
-    const share = await publishUploadedFiles(tempFiles, shareDirectory, { attach: files => {
+    const share = await publishUploadedFiles(tempFiles, shareDirectory, { storageOwnerId, attach: files => {
       const item = {
       id: shareToken,
       ...(options.uploadSessionId ? { uploadSessionId: options.uploadSessionId } : {}),
@@ -1599,7 +1611,7 @@ function applyShareUpdateDraft(share, body = {}, ownerUser = null) {
     const status = textInput(body.status, '分享状态', 20)
     if (!['active', 'closed'].includes(status)) throw httpError(400, '分享状态不支持')
     if (status === 'active') {
-      if (!fs.existsSync(path.join(filesRoot, share.id))) {
+      if (!share.files?.length || !share.files.every(file => storedFileExists(file, path.join(filesRoot, share.id), userFilesRoot))) {
         throw httpError(410, '分享文件已清理，无法重新开启，请重新发送文件')
       }
       if (wasClosed && !hasMembership) {

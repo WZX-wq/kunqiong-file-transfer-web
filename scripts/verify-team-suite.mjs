@@ -18,11 +18,16 @@ fs.copyFileSync(path.join(root, 'package.json'), path.join(fixture, 'package.jso
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(fixture, 'node_modules'), 'junction')
 const control = `
 const { default: fixtureFs } = await import('node:fs');
-const fixtureRm = fixtureFs.promises.rm;
+const { metadata: fixtureMetadata } = await import('./server/lib/metadata-store.js');
+const fixtureUnlink = fixtureFs.unlinkSync;
 let failResourceRemoval = false;
-fixtureFs.promises.rm = async (directory, ...args) => {
- if (failResourceRemoval && String(directory).endsWith('delete-failure')) { failResourceRemoval = false; const error = new Error('fixture: storage cannot remove resource'); error.code = 'EACCES'; throw error; }
- return fixtureRm(directory, ...args);
+fixtureFs.unlinkSync = target => {
+ if (failResourceRemoval) {
+  const file = fixtureMetadata.shares.find(item => item.id === 'delete-failure')?.files?.[0];
+  const expected = file?.storageOwnerId && path.join(process.cwd(), 'storage', 'users', file.storageOwnerId, file.storedName);
+  if (expected && path.resolve(String(target)) === path.resolve(expected)) { failResourceRemoval = false; const error = new Error('fixture: storage cannot remove resource'); error.code = 'EACCES'; throw error; }
+ }
+ return fixtureUnlink(target);
 };
 app.post('/__team_fixture', async (req, res) => {
  const { metadata, persistMetadata } = await import('./server/lib/metadata-store.js');
@@ -66,6 +71,8 @@ const cleanEnv={...process.env};for(const key of Object.keys(cleanEnv))if(/^(KUN
 async function start(){const probe=net.createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));base='http://127.0.0.1:'+port;child=spawn(process.execPath,['server.mjs'],{cwd:fixture,windowsHide:true,env:{...cleanEnv,PORT:String(port),NODE_ENV:'production',KUNQIONG_DB_ENABLED:'false',KUNQIONG_HOST:'127.0.0.1',KUNQIONG_SCAN_MODE:'required',KUNQIONG_CLAMAV_HOST:'127.0.0.1',KUNQIONG_CLAMAV_PORT:String(scanner.address().port)},stdio:['ignore','ignore','pipe']});child.stderr.on('data',d=>stderr+=d);for(let i=0;i<100;i++){try{if((await fetch(base+'/api/health')).ok)return}catch{}await delay(50)}throw Error(stderr||'fixture did not start')}
 async function stop(){if(!child||child.exitCode!==null)return;const ended=once(child,'exit');child.kill();await Promise.race([ended,delay(3000)])}
 const stored=()=>readFixtureMetadata(metadataFile)
+const physicalFile=(shareId,index=0)=>{const file=stored().shares.find(item=>item.id===shareId)?.files?.[index];return file?.storageOwnerId?path.join(fixture,'storage/users',file.storageOwnerId,file.storedName):path.join(fixture,'storage/files',shareId,file?.storedName||'')}
+const physicalShareFilesExist=shareId=>{const share=stored().shares.find(item=>item.id===shareId);return Boolean(share?.files?.length)&&share.files.every((_,index)=>fs.existsSync(physicalFile(shareId,index)))}
 async function api(url,{user='owner',method='GET',body,headers={}}={}){const response=await fetch(base+url,{method,redirect:'manual',headers:{...(user?{cookie:`kunqiong_session=${user}-session`}:{}),...(body&&! (body instanceof FormData)?{'content-type':'application/json'}:{}),...headers},body:body instanceof FormData?body:body?JSON.stringify(body):undefined});const bytes=Buffer.from(await response.arrayBuffer());let data;try{data=JSON.parse(bytes.toString())}catch{data={bytes:bytes.length}}requests.push({case:currentCase,method,url,user:user||'anonymous',status:response.status,response:JSON.parse(JSON.stringify(data,(k,v)=>/Token|sessionId|invitationId/.test(k)?'[redacted]':v))});return {status:response.status,data,bytes}}
 function check(label,condition){if(condition){passed++;console.log('PASS '+currentCase+' '+label)}else{failures.push({id:currentCase,message:label});console.log('FAIL '+currentCase+' '+label)}}
 async function group(id,fn){currentCase=id;const before=failures.length;try{await fn()}catch(e){failures.push({id,message:e.message});console.log('ERROR '+id+' '+e.stack)}cases.push({id,status:failures.length===before?'PASS':'FAIL'})}
@@ -161,11 +168,11 @@ try{
    ['跨域来源', ownUrl, { user: 'owner', headers: { origin: 'https://evil.example.test', 'sec-fetch-site': 'cross-site' } }, 403],
   ]) check(label + '删除拒绝', (await api(url, { method: 'DELETE', ...options })).status === status)
   check('GET不执行删除', (await api(ownUrl)).status === 404)
-  check('非法请求不改变资源或文件', JSON.stringify(stored().shares) === snapshot && fs.existsSync(path.join(fixture, 'storage/files/delete-own/second.txt')))
+   check('非法请求不改变资源或文件', JSON.stringify(stored().shares) === snapshot && fs.existsSync(physicalFile('delete-own',1)))
   const own = await api(ownUrl, { user: 'member', method: 'DELETE' })
   check('上传者可将本人整组文件移入回收站', own.status === 200 && own.data.deletedResourceId === 'delete-own' && own.data.deletedFileCount === 2 && own.data.releasedBytes === 0 && own.data.retainedBytes === safe.length * 2)
   const trashedOwn = stored().shares.find(s => s.id === 'delete-own')
-  check('删除写入7天保留标记且保留文件', Boolean(trashedOwn?.deletedAt && trashedOwn?.trashExpiresAt) && Date.parse(trashedOwn.trashExpiresAt) - Date.parse(trashedOwn.deletedAt) === 7 * 86400000 && fs.existsSync(path.join(fixture, 'storage/files/delete-own/second.txt')))
+   check('删除写入7天保留标记且保留文件', Boolean(trashedOwn?.deletedAt && trashedOwn?.trashExpiresAt) && Date.parse(trashedOwn.trashExpiresAt) - Date.parse(trashedOwn.deletedAt) === 7 * 86400000 && fs.existsSync(physicalFile('delete-own',1)))
   const afterSoftDelete = (await api('/api/account/team/overview')).data
   check('移入回收站后仍占团队和成员容量', before.capacity.usedBytes === afterSoftDelete.capacity.usedBytes && before.memberUsage.find(m => m.userId === 'member').usedBytes === afterSoftDelete.memberUsage.find(m => m.userId === 'member').usedBytes)
   check('团队文件列表隐藏已删除资源', !afterSoftDelete.resources.some(r => r.id === 'delete-own') && own.data.capacity?.usedBytes === afterSoftDelete.capacity.usedBytes)
@@ -191,14 +198,14 @@ try{
   check('资源恢复后可再次移入回收站', ownTrashedAgain.status === 200)
   check('重复移入回收站拒绝', (await api(ownUrl, { user: 'member', method: 'DELETE' })).status === 404)
   const crossOriginPermanent = await api(`${trashUrl}/delete-own`, { user: 'owner', method: 'DELETE', headers: { origin: 'https://evil.example.test', 'sec-fetch-site': 'cross-site' } })
-  check('跨站永久删除请求拒绝且保留文件', crossOriginPermanent.status === 403 && fs.existsSync(path.join(fixture, 'storage/files/delete-own')))
+   check('跨站永久删除请求拒绝且保留文件', crossOriginPermanent.status === 403 && physicalShareFilesExist('delete-own'))
   const reusedPath = await api('/api/upload-sessions', { user: 'member', method: 'POST', body: { ...sessionBody('second.txt'), files: [{ name: 'second.txt', relativePath: 'folder/second.txt', size: 4, mimeType: 'text/plain' }] } })
   check('回收站内的完整文件路径可重新上传', reusedPath.status === 201)
   if (reusedPath.data.sessionId) await api('/api/upload-sessions/' + reusedPath.data.sessionId, { user: 'member', method: 'DELETE' })
-  check('资源上传者不能永久删除回收站内容', (await api(`${trashUrl}/delete-own`, { user: 'member', method: 'DELETE' })).status === 403 && fs.existsSync(path.join(fixture, 'storage/files/delete-own')))
+   check('资源上传者不能永久删除回收站内容', (await api(`${trashUrl}/delete-own`, { user: 'member', method: 'DELETE' })).status === 403 && physicalShareFilesExist('delete-own'))
   const permanentBefore = (await api('/api/account/team/overview')).data
   const permanent = await api(`${trashUrl}/delete-own`, { method: 'DELETE' })
-  check('团队管理者可永久删除并释放容量', permanent.status === 200 && !fs.existsSync(path.join(fixture, 'storage/files/delete-own')) && !stored().shares.some(s => s.id === 'delete-own') && permanent.data.capacity.usedBytes === permanentBefore.capacity.usedBytes - safe.length * 2)
+   check('团队管理者可永久删除并释放容量', permanent.status === 200 && !fs.existsSync(physicalFile('delete-own')) && !stored().shares.some(s => s.id === 'delete-own') && permanent.data.capacity.usedBytes === permanentBefore.capacity.usedBytes - safe.length * 2)
   check('彻底删除清理关联记录并保留其他资源', ['owner', 'member'].every(user => stored().records[user].length === 1 && stored().records[user][0].id.endsWith(':main-file')))
   const restoreOrphan = await api('/api/account/records', { user: 'member', method: 'POST', body: { record: { id: 'my_sent:share:delete-own' } } })
   check('客户端同步不能复活已彻底删除的记录', restoreOrphan.status === 201 && !restoreOrphan.data.records.some(r => r.id === 'my_sent:share:delete-own'))
@@ -206,7 +213,7 @@ try{
   check('管理者可将其他成员资源移入回收站', (await api('/api/account/team/resources/delete-peer', { method: 'DELETE' })).status === 200 && stored().shares.find(s => s.id === 'delete-peer')?.deletedAt)
   check('原上传者仍可恢复自己的资源', (await api(`${trashUrl}/delete-peer/restore`, { user: 'member2', method: 'POST' })).status === 200)
   const race = await Promise.all(['owner', 'member2'].map(user => api('/api/account/team/resources/delete-race', { user, method: 'DELETE' })))
-  check('并发移入回收站安全且文件保留', race.some(r => r.status === 200) && race.every(r => [200, 404].includes(r.status)) && stored().shares.find(s => s.id === 'delete-race')?.deletedAt && fs.existsSync(path.join(fixture, 'storage/files/delete-race/safe.txt')) && stored().shares.some(s => s.id === 'main-file') && fs.readFileSync(path.join(fixture, 'storage/files/main-file/safe.txt')).equals(safe))
+   check('并发移入回收站安全且文件保留', race.some(r => r.status === 200) && race.every(r => [200, 404].includes(r.status)) && stored().shares.find(s => s.id === 'delete-race')?.deletedAt && fs.existsSync(physicalFile('delete-race')) && stored().shares.some(s => s.id === 'main-file') && fs.readFileSync(physicalFile('main-file')).equals(safe))
   check('回收站操作记录操作者与组织审计', stored().auditLogs.some(log => log.action === '移入团队回收站' && log.userId === 'member' && log.targetId === 'delete-own' && log.details.organizationId === 'main'))
   const releasedPath = await api('/api/upload-sessions', { user: 'member', method: 'POST', body: { ...sessionBody('second.txt'), files: [{ name: 'second.txt', relativePath: 'folder/second.txt', size: 4, mimeType: 'text/plain' }] } })
   check('删除后的完整路径可以再次上传', releasedPath.status === 201)
@@ -215,9 +222,9 @@ try{
   check('将失败样例文件移入回收站', (await api('/api/account/team/resources/delete-failure', { user: 'member', method: 'DELETE' })).status === 200)
   await api('/__team_fixture', { method: 'POST', body: { failResourceRemoval: true } })
   const failedDelete = await api(`${trashUrl}/delete-failure`, { method: 'DELETE' })
-  check('存储删除失败不虚报成功或释放容量', failedDelete.status === 500 && stored().shares.some(s => s.id === 'delete-failure') && fs.existsSync(path.join(fixture, 'storage/files/delete-failure/safe.txt')) && (await api('/api/account/team/overview')).data.capacity.usedBytes === failureBefore)
-  check('永久删除失败后可重试', (await api(`${trashUrl}/delete-failure`, { method: 'DELETE' })).status === 200 && !stored().shares.some(s => s.id === 'delete-failure'))
-  check('已关闭资源可移入回收站且仍保留文件', (await api('/api/account/team/resources/delete-closed', { user: 'member', method: 'DELETE' })).status === 200 && stored().shares.find(s => s.id === 'delete-closed')?.deletedAt && fs.existsSync(path.join(fixture, 'storage/files/delete-closed')))
+   check('存储删除失败不虚报成功或释放容量', failedDelete.status === 500 && stored().shares.some(s => s.id === 'delete-failure') && fs.existsSync(physicalFile('delete-failure')) && (await api('/api/account/team/overview')).data.capacity.usedBytes === failureBefore)
+   check('永久删除失败后可重试', (await api(`${trashUrl}/delete-failure`, { method: 'DELETE' })).status === 200 && !stored().shares.some(s => s.id === 'delete-failure'))
+   check('已关闭资源可移入回收站且仍保留文件', (await api('/api/account/team/resources/delete-closed', { user: 'member', method: 'DELETE' })).status === 200 && stored().shares.find(s => s.id === 'delete-closed')?.deletedAt && physicalShareFilesExist('delete-closed'))
   await api('/__team_fixture', { method: 'POST', body: { expireTrashResourceId: 'delete-closed' } })
   check('过期资源不可恢复', (await api(`${trashUrl}/delete-closed/restore`, { user: 'member', method: 'POST' })).status === 410)
   await api('/__team_fixture', { method: 'POST', body: { purgeExpiredTrash: true } })
@@ -244,8 +251,8 @@ try{
   check('团队管理员可一键清空回收站并返回删除统计', emptied.status === 200 && emptied.data.deletedCount === 2 && emptied.data.deletedFileCount === 2 && emptied.data.releasedBytes === safe.length * 2)
   check('清空后释放团队容量', emptied.data.capacity.usedBytes === beforeEmpty - safe.length * 2)
   check('清空仅删除回收站资源并保留活动资源', !stored().shares.some(s => ['delete-peer', 'delete-race'].includes(s.id)) && stored().shares.some(s => s.id === 'main-file') && stored().shares.some(s => s.id === 'delete-ownership'))
-  check('清空移除回收站磁盘目录', !fs.existsSync(path.join(fixture, 'storage/files/delete-peer')) && !fs.existsSync(path.join(fixture, 'storage/files/delete-race')))
-  check('清空不影响个人回收站', stored().shares.find(s => s.id === 'delete-personal')?.deletedAt && fs.existsSync(path.join(fixture, 'storage/files/delete-personal')) && (await api('/api/account/trash', { user: 'member2' })).data.items.some(item => item.id === 'delete-personal'))
+   check('清空移除回收站文件', !fs.existsSync(physicalFile('delete-peer')) && !fs.existsSync(physicalFile('delete-race')))
+   check('清空不影响个人回收站', stored().shares.find(s => s.id === 'delete-personal')?.deletedAt && physicalShareFilesExist('delete-personal') && (await api('/api/account/trash', { user: 'member2' })).data.items.some(item => item.id === 'delete-personal'))
   check('清空后团队回收站为空', (await api(trashUrl)).data.items.length === 0)
   check('清空清理关联的收发记录', !stored().records.member2?.some(record => /delete-(peer|race)/.test(record.id)) && !stored().records.owner?.some(record => record.id === 'sent_to_me:share:delete-peer-manage') && stored().records.member?.some(record => record.id === 'my_sent:share:main-file'))
   check('清空团队回收站写入审计', stored().auditLogs.some(log => log.action === '清空团队回收站' && log.userId === 'owner' && log.details.organizationId === 'main' && log.details.deletedResourceCount === 2))
@@ -291,7 +298,7 @@ try{
   check('移除上传者后团队所有者可管理资源',(await api('/api/shares/manage/victim-team-manage',{user:'removeOwner'})).status===200)
   check('被移除上传者旧会话不能删除自己的团队资源', (await api('/api/account/team/resources/delete-removed', { user: 'victim', method: 'DELETE' })).status === 404 && stored().shares.some(s => s.id === 'delete-removed'))
   const removedMemberResource = await api('/api/account/team/resources/delete-removed', { user: 'removeOwner', method: 'DELETE' })
-  check('所有者可将已移除成员留下的资源移入团队回收站', removedMemberResource.status === 200 && stored().shares.find(s => s.id === 'delete-removed')?.deletedAt && fs.existsSync(path.join(fixture, 'storage/files/delete-removed')))
+   check('所有者可将已移除成员留下的资源移入团队回收站', removedMemberResource.status === 200 && stored().shares.find(s => s.id === 'delete-removed')?.deletedAt && physicalShareFilesExist('delete-removed'))
  })
  await group('TEAM-009',async()=>{const before=(await api('/api/account/team/overview')).data;const initiated=await api('/api/account/workspace/transfer-ownership',{method:'POST',body:{targetMemberId:'m-transfer'}});check('发起后原所有者不变',initiated.status===201&&stored().organizations.main.ownerUserId==='owner');const r=await api('/api/account/workspace/ownership-handovers/'+initiated.data.handover.id,{user:'transfer',method:'POST',body:{decision:'accept'}});const after=(await api('/api/account/team/overview',{user:'transfer'})).data;const transferredWorkspace=(await api('/api/account/workspace',{user:'transfer'})).data;check('转让成功',r.status===200&&stored().organizations.main.ownerUserId==='transfer');check('新所有者获取权限',after.canManage);check('原所有者降级',!(await api('/api/account/team/overview')).data.canManage);check('转让后团队套餐和容量保持不变',after.capacity.totalBytes===before.capacity.totalBytes&&after.capacity.totalBytes>0&&transferredWorkspace.teamEntitlement.teamSpaceBytes===before.capacity.totalBytes);check('新所有者个人套餐与团队套餐分开',transferredWorkspace.plan.id==='free'&&transferredWorkspace.teamEntitlement.canUseTeamSpace===true);check('旧请求不可再次转让',(await api('/api/account/workspace/transfer-ownership',{method:'POST',body:{targetMemberId:'m-member2'}})).status===403&&stored().organizations.main.ownerUserId==='transfer');check('仍只有一个所有者',stored().organizations.main.members.filter(m=>m.role==='owner').length===1)
   check('原所有者不能再删除他人成员资源', (await api('/api/account/team/resources/delete-ownership', { method: 'DELETE' })).status === 403 && stored().shares.some(s => s.id === 'delete-ownership'))

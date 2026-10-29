@@ -406,7 +406,7 @@ const checks = [
   ['分片默认 8MB', cfg.UPLOAD_CHUNK_DEFAULT_BYTES === 8 * 1024 * 1024],
   ['账号记录上限 200', cfg.MAX_ACCOUNT_RECORDS === 200],
   ['主站套餐默认映射 1/2/5', cfg.DEFAULT_WEB_MEMBER_PACKAGE_IDS.member === 1 && cfg.DEFAULT_WEB_MEMBER_PACKAGE_IDS.team === 2 && cfg.DEFAULT_WEB_MEMBER_PACKAGE_IDS.enterprise === 5],
-  ['存储目录已创建', fs.existsSync(cfg.storageRoot) && fs.existsSync(cfg.filesRoot) && fs.existsSync(cfg.collectionsRoot)],
+  ['存储目录已创建', fs.existsSync(cfg.storageRoot) && fs.existsSync(cfg.filesRoot) && fs.existsSync(cfg.collectionsRoot) && fs.existsSync(cfg.userFilesRoot)],
 ]
 console.log('常量不变量：')
 for (const [name, ok] of checks) console.log(`  ${ok ? '[常量OK]' : '[常量FAIL]'} ${name}`)

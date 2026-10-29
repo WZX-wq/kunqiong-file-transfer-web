@@ -11,6 +11,7 @@ import { once } from 'node:events'
 import { inflateRawSync } from 'node:zlib'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { storageOwnerDirectoryName } from '../server/lib/file-storage.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-coll-suite-'))
@@ -494,7 +495,7 @@ try {
   check('完成后文件完整且扫描通过', complete.status === 201 && submittedFile?.size === bigChunkA.length + bigChunkB.length && submittedFile?.scanEngine === 'clamav', `status=${complete.status} size=${submittedFile?.size} engine=${submittedFile?.scanEngine}`)
   check('分片重启后仍按冻结的材料映射生成提交名', submittedFile?.name === 'owner-分片材料-分段大文件.bin' && submittedFile?.originalName === '分段大文件.bin' && submittedFile?.materialId === 'chunk-material', `file=${JSON.stringify(submittedFile)}`)
   const projSub = diskCollections().find((item) => item.token === chunkTask.token).submissions.find((item) => item.id === complete.data.submission.id)
-  const assembled = fs.readFileSync(path.join(fixture, 'storage', 'collections', chunkTask.token, projSub.id, projSub.files[0].storedName))
+  const assembled = fs.readFileSync(path.join(fixture, 'storage', 'users', storageOwnerDirectoryName(projSub.files[0].storageOwnerId), projSub.files[0].storedName))
   check('组装后字节逐位一致（含跨片尾部）', assembled.equals(Buffer.concat([bigChunkA, bigChunkB])))
   const repeatedCompletion = await api(`/api/upload-sessions/${sessionId}/complete`, { user: 'owner', method: 'POST', body: {} })
   const chunkTaskAfterRetry = diskCollections().find(item => item.token === chunkTask.token)

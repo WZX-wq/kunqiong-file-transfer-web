@@ -4,11 +4,12 @@ import { assertActiveCollectionLimit, assertCollectionParticipant, personalEntit
 // 依赖方向：routes → services → lib → state → config（单向）
 // 注册顺序即 Express 匹配顺序，调用点顺序不可调整。
 import {
-  COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, MAX_FILES, collectionsRoot
+  COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, MAX_FILES, collectionsRoot, userFilesRoot
 } from '../config.js'
 import {
   createToken, httpError, removeDirectory
 } from '../lib/http.js'
+import { removeStoredFiles, resolveStoredFilePath } from '../lib/file-storage.js'
 import {
   metadata, persistMetadata
 } from '../lib/metadata-store.js'
@@ -41,6 +42,10 @@ import { integerInput, textInput } from '../lib/input-validation.js'
 import { relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
 import { collectionTypesInput } from '../services/shares.js'
 import { normalizeCollectionCustomFields, normalizeCollectionMaterials, validateCollectionSubmissionInput } from '../lib/collection-forms.js'
+
+function storedCollectionFilePath(task, submission, file) {
+  return resolveStoredFilePath(file, path.join(collectionsRoot, task.id, submission.id), userFilesRoot)
+}
 
 function assertCollectionManager(task, req) {
   // Anonymous collections intentionally remain bearer-link managed. Once a
@@ -215,6 +220,7 @@ export function registerCollectionRoutes(app) {
       if (index < 0) return res.status(404).json({ message: '管理链接不存在' })
       assertCollectionManager(metadata.collections[index], req)
       const [task] = metadata.collections.splice(index, 1)
+      for (const submission of task.submissions || []) removeStoredFiles(submission.files || [], path.join(collectionsRoot, task.id, submission.id), userFilesRoot)
       removeDirectory(path.join(collectionsRoot, task.id))
       persistMetadata()
       res.json({ ok: true })
@@ -230,6 +236,7 @@ export function registerCollectionRoutes(app) {
       const submissionIndex = task.submissions.findIndex((item) => item.id === req.params.submissionId)
       if (submissionIndex < 0) return res.status(404).json({ message: '提交记录不存在' })
       const [submission] = task.submissions.splice(submissionIndex, 1)
+      removeStoredFiles(submission.files || [], path.join(collectionsRoot, task.id, submission.id), userFilesRoot)
       removeDirectory(path.join(collectionsRoot, task.id, submission.id))
       task.updatedAt = new Date().toISOString()
       persistMetadata()
@@ -286,7 +293,7 @@ export function registerCollectionRoutes(app) {
       await ensureStoredFilesScanned([file], path.join(collectionsRoot, task.id, submission.id))
       assertCollectionStillManaged(task, req)
       if (!task.submissions.includes(submission) || submission.files?.[Number(req.params.fileIndex)] !== file) return res.status(404).json({ message: '文件不存在' })
-      sendDownloadFile(req, res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
+      sendDownloadFile(req, res, next, storedCollectionFilePath(task, submission, file), file)
     } catch (error) {
       next(error)
     }
@@ -304,7 +311,7 @@ export function registerCollectionRoutes(app) {
       await ensureStoredFilesScanned([file], path.join(collectionsRoot, task.id, submission.id))
       assertCollectionStillManaged(task, req)
       if (!task.submissions.includes(submission) || submission.files?.[Number(req.params.fileIndex)] !== file) return res.status(404).json({ message: '文件不存在' })
-      sendPreviewFile(req, res, next, path.join(collectionsRoot, task.id, submission.id, file.storedName), file)
+      sendPreviewFile(req, res, next, storedCollectionFilePath(task, submission, file), file)
     } catch (error) {
       next(error)
     }

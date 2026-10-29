@@ -15,6 +15,7 @@ export const storageRoot = path.join(projectRoot, 'storage')
 export const tempRoot = path.join(storageRoot, 'tmp')
 export const filesRoot = path.join(storageRoot, 'files')
 export const collectionsRoot = path.join(storageRoot, 'collections')
+export const userFilesRoot = path.join(storageRoot, 'users')
 export const distRoot = path.join(projectRoot, 'dist')
 export const metadataPath = path.join(storageRoot, 'metadata.json')
 export const shareEmailTemplatePath = path.join(projectRoot, 'email-templates', 'share-notification.html')
@@ -257,6 +258,6 @@ export const databasePassword = String(process.env.KUNQIONG_DB_PASSWORD || '')
 // 历史上这里曾有一份 databasePool，但引用了一个未定义的 databasePassword，
 // 导致 KUNQIONG_DB_ENABLED=true 时本模块 import 即抛 ReferenceError。已移除。
 
-for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
+for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot, userFilesRoot]) {
   fs.mkdirSync(directory, { recursive: true })
 }

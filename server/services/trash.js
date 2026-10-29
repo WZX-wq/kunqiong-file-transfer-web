@@ -1,9 +1,9 @@
-import fs from 'node:fs'
 import path from 'node:path'
-import { collectionsRoot, filesRoot } from '../config.js'
+import { collectionsRoot, filesRoot, userFilesRoot } from '../config.js'
 import { metadata, persistMetadata } from '../lib/metadata-store.js'
 import { httpError, removeDirectory } from '../lib/http.js'
 import { accountRecordOwnerKey, normalizeAccountRecord } from '../lib/metadata-normalizers.js'
+import { removeStoredFiles, storedFileExists } from '../lib/file-storage.js'
 import { accountRecordsForUser, fileListSize, mergeAccountRecords, parseAccountRecordResource } from './account.js'
 
 export const TRASH_RETENTION_DAYS = 7
@@ -20,13 +20,48 @@ function resourceByReference(kind, key) {
 }
 
 function resourceDirectory(kind, resource) {
-  return kind === 'collection' ? path.join(collectionsRoot, resource.id) : path.join(filesRoot, resource.id)
+  const root = kind === 'collection' ? collectionsRoot : filesRoot
+  const id = String(resource?.id || '')
+  if (!id || id === '.' || id === '..' || /[\\/\0]/.test(id)) throw httpError(500, '资源存储路径无效')
+  const target = path.resolve(root, id)
+  if (path.dirname(target) !== path.resolve(root)) throw httpError(500, '资源存储路径无效')
+  return target
+}
+
+function resourceFiles(kind, resource) {
+  return kind === 'collection'
+    ? (resource.submissions || []).flatMap(item => item?.files || [])
+    : resource.files || []
+}
+
+function removeResourceFiles(kind, resource) {
+  if (kind === 'collection') {
+    for (const submission of resource.submissions || []) {
+      const legacyDirectory = path.join(resourceDirectory(kind, resource), String(submission.id || ''))
+      removeStoredFiles(submission.files || [], legacyDirectory, userFilesRoot)
+    }
+  } else {
+    removeStoredFiles(resource.files || [], resourceDirectory(kind, resource), userFilesRoot)
+  }
+  removeDirectory(resourceDirectory(kind, resource))
+}
+
+function resourceFilesExist(kind, resource) {
+  if (kind === 'collection') {
+    const submissions = (resource.submissions || []).filter(item => item?.files?.length)
+    return submissions.length > 0 && submissions.every(submission => submission.files.every(file => storedFileExists(file, path.join(resourceDirectory(kind, resource), String(submission.id || '')), userFilesRoot)))
+  }
+  return (resource.files || []).length > 0 && resource.files.every(file => storedFileExists(file, resourceDirectory(kind, resource), userFilesRoot))
 }
 
 function teamShareDirectory(resource) {
-  const directory = path.resolve(filesRoot, String(resource?.id || ''))
-  if (path.dirname(directory) !== path.resolve(filesRoot)) throw httpError(500, '团队资源存储路径无效，无法删除')
-  return directory
+  try { return resourceDirectory('share', resource) }
+  catch { throw httpError(500, '团队资源存储路径无效，无法删除') }
+}
+
+function teamShareFilesExist(resource) {
+  return (resource.files || []).length > 0
+    && resource.files.every(file => storedFileExists(file, teamShareDirectory(resource), userFilesRoot))
 }
 
 function resourceSummary(kind, resource) {
@@ -233,7 +268,7 @@ export function restoreTeamTrashResource(organizationId, userId, canManage, reso
   if (!resource.trashExpiresAt || new Date(resource.trashExpiresAt).getTime() <= Date.now()) {
     throw httpError(410, '团队回收站保留期限已到，资源不可恢复')
   }
-  if (!resource.files?.length || !fs.existsSync(teamShareDirectory(resource))) {
+  if (!teamShareFilesExist(resource)) {
     throw httpError(410, '文件已被物理清理，资源不可恢复')
   }
   delete resource.deletedAt
@@ -248,7 +283,7 @@ export function restoreTeamTrashResource(organizationId, userId, canManage, reso
 export async function permanentlyDeleteTeamTrashResource(organizationId, resourceId) {
   const resource = findTeamTrashResource(organizationId, resourceId)
   if (!resource) throw httpError(404, '团队回收站资源不存在')
-  await fs.promises.rm(teamShareDirectory(resource), { recursive: true, force: true })
+  removeResourceFiles('share', resource)
   const index = metadata.shares.indexOf(resource)
   if (index < 0) throw httpError(404, '团队回收站资源不存在')
   metadata.shares.splice(index, 1)
@@ -264,7 +299,7 @@ export async function emptyTeamTrashForOrganization(organizationId) {
   try {
     for (const resource of resources) {
       const summary = teamTrashSummary(resource)
-      await fs.promises.rm(teamShareDirectory(resource), { recursive: true, force: true })
+      removeResourceFiles('share', resource)
       const index = metadata.shares.indexOf(resource)
       if (index < 0) continue
       metadata.shares.splice(index, 1)
@@ -300,7 +335,7 @@ export function restoreTrashResource(ownerUserId, kind, id) {
   const hasFiles = kind === 'share'
     ? Boolean(resource.files?.length)
     : Boolean((resource.submissions || []).some(item => item?.files?.length))
-  if (!hasFiles || !fs.existsSync(resourceDirectory(kind, resource))) throw httpError(410, '文件已被物理清理，资源不可恢复')
+  if (!hasFiles || !resourceFilesExist(kind, resource)) throw httpError(410, '文件已被物理清理，资源不可恢复')
   delete resource.deletedAt
   delete resource.trashExpiresAt
   resource.status = 'closed'
@@ -312,7 +347,7 @@ export function restoreTrashResource(ownerUserId, kind, id) {
 export async function permanentlyDeleteTrashResource(ownerUserId, kind, id) {
   const resource = findTrashResource(ownerUserId, kind, id)
   if (!resource) throw httpError(404, '回收站资源不存在')
-  await fs.promises.rm(resourceDirectory(kind, resource), { recursive: true, force: true })
+  removeResourceFiles(kind, resource)
   const list = kind === 'share' ? metadata.shares : metadata.collections
   const index = list.indexOf(resource)
   if (index >= 0) list.splice(index, 1)
@@ -332,7 +367,7 @@ export async function emptyTrashForOwner(ownerUserId) {
   try {
     for (const [kind, resource] of resources) {
       const summary = resourceSummary(kind, resource)
-      await fs.promises.rm(resourceDirectory(kind, resource), { recursive: true, force: true })
+      removeResourceFiles(kind, resource)
       const list = kind === 'share' ? metadata.shares : metadata.collections
       const index = list.indexOf(resource)
       if (index < 0) continue
@@ -353,7 +388,7 @@ export function purgeExpiredTrash(now = Date.now()) {
   for (const [kind, list] of [['share', metadata.shares || []], ['collection', metadata.collections || []]]) {
     for (const resource of [...list]) {
       if (!resource.deletedAt || !resource.trashExpiresAt || new Date(resource.trashExpiresAt).getTime() > now) continue
-      removeDirectory(resourceDirectory(kind, resource))
+      removeResourceFiles(kind, resource)
       const index = list.indexOf(resource)
       if (index >= 0) list.splice(index, 1)
       if (kind === 'share' && resource.teamResource) pruneTeamShareRecords(resource)

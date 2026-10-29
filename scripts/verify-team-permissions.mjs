@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { userStorageDirectory } from '../server/lib/file-storage.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-team-'))
@@ -59,6 +60,7 @@ const cleanEnv={...process.env};for(const key of Object.keys(cleanEnv))if(/^(KUN
 async function start(){const probe=net.createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));base='http://127.0.0.1:'+port;child=spawn(process.execPath,['server.mjs'],{cwd:fixture,windowsHide:true,env:{...cleanEnv,PORT:String(port),NODE_ENV:'production',KUNQIONG_DB_ENABLED:'false',KUNQIONG_HOST:'127.0.0.1',KUNQIONG_SCAN_MODE:'required',KUNQIONG_CLAMAV_HOST:'127.0.0.1',KUNQIONG_CLAMAV_PORT:String(scanner.address().port)},stdio:['ignore','ignore','pipe']});child.stderr.on('data',d=>stderr+=d);for(let i=0;i<100;i++){try{if((await fetch(base+'/api/health')).ok)return}catch{}await delay(50)}throw Error(stderr||'fixture did not start')}
 async function stop(){if(!child||child.exitCode!==null)return;const ended=once(child,'exit');child.kill();await Promise.race([ended,delay(3000)])}
 const stored=()=>readFixtureMetadata(metadataFile)
+function userStorageFileSnapshot(){const root=path.join(fixture,'storage/users');if(!fs.existsSync(root))return[];const files=[];for(const owner of fs.readdirSync(root,{withFileTypes:true})){if(!owner.isDirectory())continue;const directory=path.join(root,owner.name);for(const entry of fs.readdirSync(directory,{withFileTypes:true}))if(entry.isFile())files.push(`${owner.name}/${entry.name}`)}return files.sort()}
 async function api(url,{user='owner',method='GET',body,headers={}}={}){const response=await fetch(base+url,{method,redirect:'manual',headers:{...(user?{cookie:`kunqiong_session=${user}-session`}:{}),...(body&&! (body instanceof FormData)?{'content-type':'application/json'}:{}),...headers},body:body instanceof FormData?body:body?JSON.stringify(body):undefined});const bytes=Buffer.from(await response.arrayBuffer());let data;try{data=JSON.parse(bytes.toString())}catch{data={bytes:bytes.length}}requests.push({case:currentCase,method,url,user:user||'anonymous',status:response.status,response:JSON.parse(JSON.stringify(data,(k,v)=>/Token|sessionId|invitationId/.test(k)?'[redacted]':v))});return {status:response.status,data,bytes}}
 function check(label,condition){if(condition){passed++;console.log('PASS '+currentCase+' '+label)}else{failures.push({id:currentCase,message:label});console.log('FAIL '+currentCase+' '+label)}}
 async function group(id,fn){currentCase=id;const before=failures.length;try{await fn()}catch(e){failures.push({id,message:e.message});console.log('ERROR '+id+' '+e.stack)}cases.push({id,status:failures.length===before?'PASS':'FAIL'})}
@@ -178,7 +180,9 @@ try {
   await api('/api/account/workspace/members/m-victim',{user:'removeOwner',method:'DELETE'});
   const result=await api('/api/account/records',{user:'victim',method:'DELETE',body:{ids:['my_sent:share:victim-team']}});
   check('移除成员删除记录不清团队资源',result.status===200&&!result.data.purged.some(x=>x.id==='victim-team')&&stored().shares.some(s=>s.id==='victim-team'));
-  check('团队文件仍保留',fs.existsSync(path.join(fixture,'storage/files/victim-team')));
+  const retainedFile=stored().shares.find(share=>share.id==='victim-team')?.files?.[0];
+  const retainedPath=retainedFile?.storageOwnerId&&retainedFile?.storedName?path.join(userStorageDirectory(retainedFile.storageOwnerId,path.join(fixture,'storage/users')),retainedFile.storedName):'';
+  check('团队文件仍保留在上传者独立目录',Boolean(retainedPath)&&fs.existsSync(retainedPath));
  });
  await group('TEAM-ADMIN-ROLE',async()=>{
   const roleUrl='/api/account/workspace/members/m-transfer/role';
@@ -248,7 +252,7 @@ try {
  await group('TEAM-UPLOAD-REVOCATION',async()=>{
   const pending=await createUpload('member','revoked-upload.txt');assert.equal(pending.status,201);await chunks('member',pending.data.sessionId,[{name:'revoked-upload.txt',content:safe}]);
   const sharesBefore=stored().shares.length;
-  const directoriesBefore=fs.readdirSync(path.join(fixture,'storage/files')).sort();
+  const storedFilesBefore=userStorageFileSnapshot();
   await api('/__permission_upload_gate',{method:'POST',body:{arm:true}});
   const completing=api('/api/upload-sessions/'+pending.data.sessionId+'/complete',{user:'member',method:'POST',body:{}});
   let waiting=false;for(let n=0;n<50;n++){if((await api('/__permission_upload_gate',{method:'POST',body:{probe:true}})).data.waiting){waiting=true;break}await delay(20)}assert.ok(waiting);
@@ -257,7 +261,7 @@ try {
   const result=await completing;
   check('完成前撤权拒绝发布',result.status===403);
   check('撤权后没有新资源',stored().shares.length===sharesBefore);
-  check('撤权后没有孤立文件目录',JSON.stringify(fs.readdirSync(path.join(fixture,'storage/files')).sort())===JSON.stringify(directoriesBefore));
+  check('撤权后没有遗留用户目录文件',JSON.stringify(userStorageFileSnapshot())===JSON.stringify(storedFilesBefore));
  });
  await group('TEAM-DISABLED-TRANSFER',async()=>{
   await api('/__permission_fixture',{method:'POST',body:{userStatus:{id:'transfer',status:'disabled'}}});

@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { storageOwnerDirectoryName } from '../server/lib/file-storage.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-trash-suite-'))
@@ -64,6 +65,13 @@ async function trashShare(user, shareId) {
   const response = await api('/api/account/records', { user, method: 'DELETE', body: { ids: [`my_sent:share:${shareId}`] } })
   assert.equal(response.res.status, 200)
   return response
+}
+function storedPathForShare(shareId) {
+  const snapshot = JSON.parse(fs.readFileSync(path.join(fixture, 'storage/metadata.json'), 'utf8'))
+  const file = snapshot.shares.find(item => item.id === shareId)?.files?.[0]
+  return file?.storageOwnerId && file?.storedName
+    ? path.join(fixture, 'storage/users', storageOwnerDirectoryName(file.storageOwnerId), file.storedName)
+    : path.join(fixture, 'storage/files', shareId, file?.storedName || '')
 }
 try {
   const share = await uploadShare('owner', 'trash-test.txt')
@@ -146,7 +154,9 @@ try {
   assert.equal(recoveredSubmission?.fieldValues?.vendor, '回收站测试供应商有限公司', JSON.stringify({ recoveredSubmission, recoveredManage: recoveredManage.data.collection?.submissions, submitted: submittedCollection.data.submission }))
   assert.ok(recoveredSubmission?.materialIds?.includes('contract'))
   assert.equal(recoveredSubmission?.files?.[0]?.name, 'signed-contract.txt')
-  assert.ok(fs.existsSync(path.join(fixture, 'storage/collections', task.id)))
+  const persistedCollection = JSON.parse(fs.readFileSync(path.join(fixture, 'storage/metadata.json'), 'utf8')).collections.find(item => item.id === task.id)
+  const persistedFile = persistedCollection.submissions.find(item => item.id === submittedCollection.data.submission.id).files[0]
+  assert.ok(fs.existsSync(path.join(fixture, 'storage/users', storageOwnerDirectoryName(persistedFile.storageOwnerId), persistedFile.storedName)))
   const restoredCollectionRecord = (await api('/api/account/records', { user: 'owner' })).data.records.find(item => item.id === collectionRecord.id)
   assert.ok(restoredCollectionRecord, '恢复后任务回到个人收集记录')
   assert.equal(restoredCollectionRecord.kind, 'collection')
@@ -175,10 +185,10 @@ try {
   assert.equal(emptied.data.releasedBytes, 12)
   assert.equal((await api('/api/account/trash', { user: 'owner' })).data.items.length, 0)
   assert.equal((await api('/api/account/trash', { user: 'other' })).data.items.length, 1)
-  assert.ok(!fs.existsSync(path.join(fixture, 'storage/files', ownerTrashA.id)), '一键清空应移除已删除分享的磁盘目录')
-  assert.ok(!fs.existsSync(path.join(fixture, 'storage/files', ownerTrashB.id)), '一键清空应移除已删除分享的磁盘目录')
-  assert.ok(fs.existsSync(path.join(fixture, 'storage/files', otherTrash.id)), '其他账号的回收站不受影响')
-  assert.ok(fs.existsSync(path.join(fixture, 'storage/files', active.id)), '活动资源不受一键清空影响')
+  assert.ok(!fs.existsSync(storedPathForShare(ownerTrashA.id)), '一键清空应移除已删除分享的文件')
+  assert.ok(!fs.existsSync(storedPathForShare(ownerTrashB.id)), '一键清空应移除已删除分享的文件')
+  assert.ok(fs.existsSync(storedPathForShare(otherTrash.id)), '其他账号的回收站不受影响')
+  assert.ok(fs.existsSync(storedPathForShare(active.id)), '活动资源不受一键清空影响')
   assert.equal((await api('/api/shares/token/' + active.id, { user: 'owner' })).res.status, 200)
   const emptiedAgain = await api('/api/account/trash', { user: 'owner', method: 'DELETE' })
   assert.equal(emptiedAgain.res.status, 200)

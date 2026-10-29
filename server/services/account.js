@@ -26,7 +26,7 @@ import {
   JOIN_REQUEST_MAX_PER_WINDOW, JOIN_REQUEST_REJECT_COOLDOWN_MS, JOIN_REQUEST_WINDOW_MS,
   MAX_ACCOUNT_RECORDS, MAX_VERIFICATION_CODES, OAUTH_STATE_TTL_MS,
   PAYMENT_QUERY_RETENTION_MS, VERIFICATION_CODE_TTL_MS, WEB_MEMBER_PACKAGE_ENV_KEYS,
-  collectionsRoot, configuredCallbackUrls, filesRoot, oauthClientId,
+  collectionsRoot, configuredCallbackUrls, filesRoot, userFilesRoot, oauthClientId,
   oauthClientSecret, serverPort, smtpFrom, smtpHost, smtpPassword, smtpPort, smtpSecure,
   smtpUser, testEnforceEnterpriseAllowlist, tencentSmsBindTemplateId, tencentSmsRegion, tencentSmsSdkAppId,
   tencentSmsSecretId, tencentSmsSecretKey, tencentSmsSignName, webMemberApiBase,
@@ -52,6 +52,7 @@ import { contactMatchesUser } from '../lib/contact-input.js'
 import { booleanInput, dateInput, integerInput, objectInput } from '../lib/input-validation.js'
 
 import { normalizeUploadFileName } from '../lib/file-name.js'
+import { removeStoredFiles } from '../lib/file-storage.js'
 
 import {
   joinRequestAttempts, oauthStates, paymentReconcileAttempts, paymentSessionTokens, remotePricingCache, runtime,
@@ -593,6 +594,7 @@ export function purgeOwnedStaleResource(userId, recordId) {
     if (share.ownerUserId !== userId) return null
     if (currentShareStatus(share) === 'active') return null
     metadata.shares.splice(index, 1)
+    removeStoredFiles(share.files || [], path.join(filesRoot, share.id), userFilesRoot)
     removeDirectory(path.join(filesRoot, share.id))
     return { kind: 'share', id: share.id }
   }
@@ -602,6 +604,7 @@ export function purgeOwnedStaleResource(userId, recordId) {
   if (collection.ownerUserId !== userId) return null
   if (currentCollectionStatus(collection) === 'active') return null
   metadata.collections.splice(index, 1)
+  for (const submission of collection.submissions || []) removeStoredFiles(submission.files || [], path.join(collectionsRoot, collection.id, submission.id), userFilesRoot)
   removeDirectory(path.join(collectionsRoot, collection.id))
   return { kind: 'collection', id: collection.id }
 }
@@ -660,6 +663,7 @@ export function cleanupUserExpiredFiles(now = Date.now()) {
     const settings = normalizeFileCleanupSettings(owner?.fileCleanup)
     const expiresAt = new Date(share.expiresAt).getTime()
     if (!settings.enabled || !Number.isFinite(expiresAt) || now < expiresAt + settings.days * 86400000) continue
+    removeStoredFiles(share.files || [], path.join(filesRoot, share.id), userFilesRoot)
     removeDirectory(path.join(filesRoot, share.id))
     share.files = []
     share.cleanedAt = new Date(now).toISOString()
@@ -674,6 +678,7 @@ export function cleanupUserExpiredFiles(now = Date.now()) {
     const deadline = new Date(task.deadline).getTime()
     if (!settings.enabled || !Number.isFinite(deadline) || now < deadline + settings.days * 86400000) continue
     for (const submission of task.submissions) {
+      removeStoredFiles(submission.files || [], path.join(collectionsRoot, task.id, submission.id), userFilesRoot)
       removeDirectory(path.join(collectionsRoot, task.id, submission.id))
       submission.files = []
     }
@@ -757,6 +762,7 @@ export function cleanupExpiredFilesForOwner(ownerKey, now = Date.now()) {
     if (!Number.isFinite(expiresAt) || expiresAt > now) continue
     files += share.files.length
     shares += 1
+    removeStoredFiles(share.files || [], path.join(filesRoot, share.id), userFilesRoot)
     removeDirectory(path.join(filesRoot, share.id))
     share.files = []
     share.cleanedAt = new Date(now).toISOString()
@@ -770,6 +776,7 @@ export function cleanupExpiredFilesForOwner(ownerKey, now = Date.now()) {
     for (const submission of task.submissions) {
       if (!submission.files?.length) continue
       files += submission.files.length
+      removeStoredFiles(submission.files || [], path.join(collectionsRoot, task.id, submission.id), userFilesRoot)
       removeDirectory(path.join(collectionsRoot, task.id, submission.id))
       submission.files = []
     }
@@ -1793,7 +1800,7 @@ export function isSecureRequest(req) {
 }
 
 export function publicFile(file = {}) {
-  const { storedName, distributionRecipientUserId: _distributionRecipientUserId, ...safeFile } = file
+  const { storedName, storageOwnerId: _storageOwnerId, storageMigration: _storageMigration, distributionRecipientUserId: _distributionRecipientUserId, ...safeFile } = file
   return {
     ...safeFile,
     name: normalizeUploadFileName(safeFile.name || safeFile.relativePath || storedName || ''),

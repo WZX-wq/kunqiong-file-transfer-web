@@ -4,7 +4,7 @@
 // 注册顺序即 Express 匹配顺序，调用点顺序不可调整。
 import {
   ADMIN_ACCOUNT_PASSWORD, ADMIN_ACCOUNT_USERNAME, adminCredentialsConfigured, collectionsRoot,
-  filesRoot, ACCOUNT_PLANS
+  filesRoot, userFilesRoot, ACCOUNT_PLANS
 } from '../config.js'
 import {
   requestIp
@@ -12,6 +12,7 @@ import {
 import {
   firstValue, removeDirectory
 } from '../lib/http.js'
+import { removeStoredFiles } from '../lib/file-storage.js'
 import {
   configuredAccountPlan, normalizePlanId, normalizeRecordDate, normalizeSystemConfig, publicUser
 } from '../lib/metadata-normalizers.js'
@@ -184,6 +185,7 @@ export function registerAdminRoutes(app) {
       const index = metadata.shares.findIndex((item) => item.id === id)
       if (index < 0) return res.status(404).json({ message: '分享资源不存在' })
       const [share] = metadata.shares.splice(index, 1)
+      removeStoredFiles(share.files || [], path.join(filesRoot, share.id), userFilesRoot)
       removeDirectory(path.join(filesRoot, share.id))
       // 与「执行清理」同口径：资源已物理删除，用户收发记录里指向它的条目一并摘除，避免残留死条目
       const removedShareKeys = new Set([share.id])
@@ -194,6 +196,7 @@ export function registerAdminRoutes(app) {
       const index = metadata.collections.findIndex((item) => item.id === id || item.token === id || item.manageToken === id)
       if (index < 0) return res.status(404).json({ message: '收集资源不存在' })
       const [collection] = metadata.collections.splice(index, 1)
+      for (const submission of collection.submissions || []) removeStoredFiles(submission.files || [], path.join(collectionsRoot, collection.id, submission.id), userFilesRoot)
       removeDirectory(path.join(collectionsRoot, collection.id))
       const removedCollectionKeys = new Set([collection.id, collection.token, collection.manageToken].filter(Boolean))
       pruneRecordsForPurgedResources(new Set(), removedCollectionKeys)

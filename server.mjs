@@ -16,7 +16,7 @@ import express from 'express'
 import { limitResourceCreation } from './server/lib/resource-rate-limit.js'
 
 import {
-  MAX_FILE_SIZE, MAX_FILES, collectionsRoot, distRoot, filesRoot, releaseSha,
+  MAX_FILE_SIZE, MAX_FILES, collectionsRoot, distRoot, filesRoot, releaseSha, userFilesRoot,
   serverHost, serverPort, storageRoot, tempRoot, testEnterpriseForAllUsers, testVerificationDebugMode
 } from './server/config.js'
 
@@ -29,7 +29,7 @@ import {
 } from './server/state.js'
 
 import {
-  flushAuditPersistence, initMetadata, initializeAuditPersistence, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata
+  flushAuditPersistence, flushMetadataWrites, initMetadata, initializeAuditPersistence, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata
 } from './server/lib/metadata-store.js'
 
 // normalizeMetadata 的传递依赖闭包已移至 metadata-normalizers.js；
@@ -74,6 +74,7 @@ import {
   purgeExpiredAuditLogs
 } from './server/services/admin.js'
 import { purgeExpiredTrash } from './server/services/trash.js'
+import { migrateLegacyUserFiles } from './server/lib/file-storage.js'
 // 审计工具
 import {
   requestIp, sanitizeAuditPath
@@ -88,7 +89,7 @@ import {
 // 启动阶段就会调用 metadataIdSets，必须早于任何落盘动作完成初始化。
 // 连接池与限流/会话状态已移至 server/state.js（全进程共享同一实例，见该文件说明）。
 
-for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot]) {
+for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot, userFilesRoot]) {
   fs.mkdirSync(directory, { recursive: true })
 }
 
@@ -107,6 +108,13 @@ for (const share of metadata.shares) {
     share.recipientContacts = share.deliveryRecipients.filter((recipient) => normalizeContactTarget(recipient) && !resolveRecipientUserIds([recipient], true).length)
     runtime.metadataNeedsPersist = true
   }
+}
+const storageMigration = await migrateLegacyUserFiles(metadata, {
+  usersRoot: userFilesRoot, legacyFilesRoot: filesRoot, legacyCollectionsRoot: collectionsRoot,
+  persist: async () => { persistMetadata(); await flushMetadataWrites() },
+})
+if (storageMigration.migrated || storageMigration.resumed || storageMigration.failures.length) {
+  console.log(JSON.stringify({ event: 'legacy_file_storage_migration', ...storageMigration }))
 }
 runtime.metadataReady = metadata
 repairLegacyTestAdminPlans()

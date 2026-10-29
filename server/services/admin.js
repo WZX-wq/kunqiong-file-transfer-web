@@ -14,12 +14,13 @@ import { integerInput } from '../lib/input-validation.js'
 
 import {
   ADMIN_ACCOUNT_USERNAME, ADMIN_COOKIE_NAME, ADMIN_LOGIN_MAX_ATTEMPTS, ADMIN_LOGIN_WINDOW_MS,
-  ADMIN_SESSION_TTL_MS, AUTH_COOKIE_NAME, collectionsRoot, filesRoot, oauthClientId,
+  ADMIN_SESSION_TTL_MS, AUTH_COOKIE_NAME, collectionsRoot, filesRoot, userFilesRoot, oauthClientId,
   oauthClientSecret, oauthTokenUrl
 } from '../config.js'
 import {
   createToken, removeDirectory
 } from '../lib/http.js'
+import { removeStoredFiles, removeUnreferencedUserFiles } from '../lib/file-storage.js'
 import { keyedDigest } from '../lib/private-key.js'
 import {
   mergeLoginMethods, normalizeSystemConfig, publicUser, trimRecordString
@@ -263,7 +264,7 @@ export function cleanupStorageOrphans() {
   const cutoff = Date.now() - graceMs
   const validShareIds = new Set(metadata.shares.map((item) => item.id))
   const validCollectionIds = new Set(metadata.collections.map((item) => item.id))
-  const removed = { shares: 0, collections: 0 }
+  const removed = { shares: 0, collections: 0, userFiles: 0 }
   const statMtimeMs = (target) => {
     try { return fs.statSync(target).mtimeMs } catch { return 0 }
   }
@@ -281,6 +282,7 @@ export function cleanupStorageOrphans() {
       removed.collections += 1
     }
   }
+  removed.userFiles = removeUnreferencedUserFiles(metadata, cutoff, userFilesRoot, { legacyFilesRoot: filesRoot, legacyCollectionsRoot: collectionsRoot }).removed
   return removed
 }
 
@@ -317,6 +319,7 @@ export function purgeStaleResources() {
   if (staleShares.length) {
     const removedShareKeys = new Set()
     for (const share of staleShares) {
+      removeStoredFiles(share.files || [], path.join(filesRoot, share.id), userFilesRoot)
       removeDirectory(path.join(filesRoot, share.id))
       removedShareKeys.add(share.id)
       if (share.manageToken) removedShareKeys.add(share.manageToken)
@@ -330,6 +333,9 @@ export function purgeStaleResources() {
   if (staleCollections.length) {
     const removedCollectionKeys = new Set()
     for (const task of staleCollections) {
+      for (const submission of task.submissions || []) {
+        removeStoredFiles(submission.files || [], path.join(collectionsRoot, task.id, submission.id), userFilesRoot)
+      }
       removeDirectory(path.join(collectionsRoot, task.id))
       if (task.id) removedCollectionKeys.add(task.id)
       if (task.token) removedCollectionKeys.add(task.token)
