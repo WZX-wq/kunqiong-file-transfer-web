@@ -8,7 +8,7 @@ on:
 
 jobs:
   diagnose:
-    runs-on: linux
+    runs-on: ubuntu-latest
     steps:
       - name: Read-only container and host diagnostics
         run: |
