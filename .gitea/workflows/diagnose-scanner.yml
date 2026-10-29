@@ -1,0 +1,37 @@
+name: Diagnose Test Scanner
+
+on:
+  push:
+    branches:
+      - ops/diagnose-scanner-20261029
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: linux
+    steps:
+      - name: Read-only container and host diagnostics
+        run: |
+          set -eu
+          date -u
+          hostname
+          for name in kunqiong-file-transfer-web kunqiong-file-transfer-web-scanner-1; do
+            if docker inspect "$name" >/dev/null 2>&1; then
+              docker inspect -f 'Name={{.Name}} State={{json .State}} Healthcheck={{json .Config.Healthcheck}} Restart={{json .HostConfig.RestartPolicy}}' "$name"
+            fi
+          done
+          echo 'Scheduled service names'
+          systemctl list-timers --all --no-pager 2>/dev/null || true
+          echo 'Process names (no command arguments or environment)'
+          ps -eo pid,ppid,comm
+          echo 'Docker automation source paths (no file contents)'
+          for dir in /etc/cron.d /etc/cron.daily /etc/systemd/system /usr/local/bin /usr/local/sbin /opt; do
+            [ -d "$dir" ] || continue
+            find "$dir" -maxdepth 3 -type f \( -name '*.sh' -o -name '*.py' -o -name '*.js' -o -name '*.mjs' -o -name '*.service' -o -name '*.timer' -o -path '/etc/cron.d/*' \) -size -512k -exec grep -IlE 'docker.*(stop|kill|update)|health-(interval|retries|start-period)|Healthcheck|autoheal' {} + 2>/dev/null || true
+          done
+          echo 'Recent application container lifecycle events'
+          docker events --since 30m --until "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --filter container=kunqiong-file-transfer-web-scanner-1 --format '{{.Time}} {{.Action}}' || true
+          echo 'Current compose scanner health settings (no environment values)'
+          if [ -f /opt/kunqiong-file-transfer-web/docker-compose.test.yml ]; then
+            sed -n '/^  scanner:/,/^volumes:/p' /opt/kunqiong-file-transfer-web/docker-compose.test.yml
+          fi
