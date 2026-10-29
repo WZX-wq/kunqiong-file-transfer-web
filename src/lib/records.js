@@ -748,10 +748,11 @@ export function managedFileDetail(record, fileCount, size) {
 export function fileCategoryFromFile(file = {}) {
   const mimeType = String(file.mimeType || '').toLowerCase()
   const extension = fileExtension(file.name || file.relativePath)
+  const matchedType = collectionTypeForExtension(extension)
+  if (matchedType === '代码文件') return COLLECTION_TYPE_CATEGORY_KEYS[matchedType] || 'other'
   if (mimeType.startsWith('image/')) return 'image'
   if (mimeType.startsWith('video/')) return 'video'
   if (mimeType.startsWith('audio/')) return 'audio'
-  const matchedType = collectionTypeForExtension(extension)
   if (matchedType) return COLLECTION_TYPE_CATEGORY_KEYS[matchedType] || 'other'
   return 'other'
 }

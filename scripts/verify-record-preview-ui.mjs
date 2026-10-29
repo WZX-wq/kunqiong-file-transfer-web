@@ -25,9 +25,10 @@ const bundle = await build({
         import { FilePreviewModal, ManageItemModal } from '/src/components/ui.jsx';
         import { RecordsView } from '/src/pages/records.jsx';
         import { recordPreviewConfigs, createShareFilePreviewConfig } from '/src/lib/transfer.js';
-        import { syncShareRecord } from '/src/lib/records.js';
+        import { fileCategoryFromFile, managedFileItemsFromRecords, matchesManagedFileCategory, syncShareRecord } from '/src/lib/records.js';
         const root = createRoot(document.getElementById('root'));
         window.previewFixture = { recordPreviewConfigs, createShareFilePreviewConfig, syncShareRecord,
+          fileCategoryFromFile, managedFileItemsFromRecords, matchesManagedFileCategory,
           renderManage(data) { root.render(React.createElement(ManageItemModal, {target:{kind:'share',record:{kind:'share'},data},onSave:async payload=>{window.savedSettings=payload;return true},onClose:()=>root.render(null)})) },
           render(preview) { root.render(React.createElement(FilePreviewModal, {preview, onClose:()=>root.render(null), onDownload:()=>{window.downloadClicked=true}})) },
           renderRecords(records) { root.render(React.createElement(RecordsView, {records, onRefresh:async()=>{}, onNotify:()=>{}, onOpen:record=>{window.openedRecord=record}})) },
@@ -44,6 +45,17 @@ async function waitFor(condition, name) {
   for (let i = 0; i < 150; i++) { if (condition()) return; await delay(10) }
   assert.fail(name)
 }
+const classification = await fixture(() => ok('{}'))
+try {
+  const tsFile = { name: 'main.ts', mimeType: 'video/mp2t' }
+  const [tsItem] = classification.api.managedFileItemsFromRecords([{
+    id: 'typescript-share', kind: 'share', scope: 'my_sent', files: [tsFile], status: 'active',
+  }])
+  check('TypeScript extension overrides browser video/mp2t MIME', classification.api.fileCategoryFromFile(tsFile) === 'code')
+  check('File center code filter includes uploaded TypeScript files', tsItem.category === 'code' && classification.api.matchesManagedFileCategory(tsItem, 'code'))
+  check('TypeScript files do not also appear in the video filter', !classification.api.matchesManagedFileCategory(tsItem, 'video'))
+  check('MP4 files with video MIME remain in the video category', classification.api.fileCategoryFromFile({ name: 'clip.mp4', mimeType: 'video/mp4' }) === 'video')
+} finally { classification.close() }
 async function fixture(handler) {
   const errors = [], requests = []
   const virtualConsole = new VirtualConsole()
@@ -60,7 +72,7 @@ async function fixture(handler) {
 }
 const ok = body => new Response(body, { status: 200 })
 const failure = (status, message) => new Response(JSON.stringify({ message }), { status, headers: { 'x-error-message': encodeURIComponent(message), 'content-type': 'application/json' } })
-const record = { kind: 'share', scope: 'my_sent', shareId: 'share', code: 'ABC123', manageToken: 'manage', files: [{ name: 'records.pdf', size: 603 }], status: '已关闭' }
+const record = { kind: 'share', scope: 'my_sent', name: 'records.pdf', shareId: 'share', code: 'ABC123', manageToken: 'manage', files: [{ name: 'records.pdf', size: 603 }], status: '已关闭' }
 
 const recordsLayout = await fixture(() => ok('{}'))
 try {
@@ -91,6 +103,10 @@ try {
   await waitFor(() => recordsLayout.document.querySelectorAll('.file-center-row').length === 2, 'File management rows mount')
   const fileHeadings = [...recordsLayout.document.querySelectorAll('.file-head > span[role="columnheader"]')].map(item => item.textContent.trim())
   check('File center follows the prototype category rail and six-column table', fileHeadings.join('|') === '文件名|类型|来源|大小|状态|操作' && recordsLayout.document.querySelector('.files-layout .file-cats') && recordsLayout.document.querySelector('.file-center-card'))
+  const fileHeadingRule = recordsStyles.match(/\.records-page-files \.records-heading \{([^}]+)\}/)
+  check('File center heading aligns above the category rail', Boolean(fileHeadingRule) && !fileHeadingRule[1].includes('padding-left'))
+  const filename = recordsLayout.document.querySelector('.file-center-row .record-name-text[title="records.pdf"]')
+  check('File center keeps the extension attached to the filename while the basename can truncate', filename?.querySelector(':scope > span')?.textContent === 'records' && filename?.querySelector(':scope > em')?.textContent === '.pdf' && recordsStyles.includes('.records-page-files .file-row2 .rec-name .record-name-text { display: flex;') && recordsStyles.includes('justify-self: stretch; width: 100%;') && recordsStyles.includes('.records-page-files .file-row2 .rec-name .record-name-text > span { flex: 0 1 auto; }') && recordsStyles.includes('flex-wrap: nowrap'))
   check('File center keeps search, filter, upload, and return actions', !!recordsLayout.document.querySelector('.file-center-search input') && !!recordsLayout.document.querySelector('.file-filter-button') && [...recordsLayout.document.querySelectorAll('.records-heading button')].some(button => button.textContent.includes('上传文件')) && [...recordsLayout.document.querySelectorAll('.records-heading button')].some(button => button.textContent.includes('返回收发记录')))
   check('File center row actions preserve preview, download, delete, and management menu', recordsLayout.document.querySelectorAll('.file-center-row .file-row-actions .icon-act').length === 8 && recordsLayout.document.querySelectorAll('.file-center-row .file-more-button').length === 2)
   check('File center URL can restore its current view', new URLSearchParams(recordsLayout.window.location.search).get('center') === 'files')

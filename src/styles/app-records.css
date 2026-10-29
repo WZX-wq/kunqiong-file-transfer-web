@@ -161,7 +161,7 @@
 }
 
 /* File center follows the prototype's category rail and compact file table. */
-.records-page-files .records-heading { margin-bottom: 12px; padding-left: 228px; }
+.records-page-files .records-heading { margin-bottom: 12px; }
 .app-shell:not(.public-shell) > .page-content.records-content { width: 100%; max-width: none; padding: 18px 0 34px; }
 .app-shell:not(.public-shell):has(.records-page-files) > .page-content.records-content { background: #f6faff; }
 .workspace-page.records-page { width: min(1180px, calc(100% - 48px)); margin: 0 auto; }
@@ -305,7 +305,8 @@
 .records-page-files .file-row2 .record-icon { display: grid; width: 30px; height: 34px; place-items: center; background: transparent; }
 .records-page-files .file-row2 .record-icon img { display: block; width: 28px; height: 28px; object-fit: contain; }
 .records-page-files .file-row2 .rec-name > div { display: grid; min-width: 0; gap: 3px; }
-.records-page-files .file-row2 .rec-name .record-name-text { overflow: hidden; color: #263750; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.records-page-files .file-row2 .rec-name .record-name-text { display: flex; justify-self: stretch; width: 100%; min-width: 0; max-width: 100%; align-items: center; flex-wrap: nowrap; overflow: hidden; color: #263750; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.records-page-files .file-row2 .rec-name .record-name-text > span { flex: 0 1 auto; }
 .records-page-files .file-row2 .rec-name small { overflow: hidden; color: #8292a9; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .records-page-files .file-format-cell { display: block; justify-self: start; max-width: 100%; overflow: hidden; padding: 4px 7px; color: #61748f; background: #f1f5fa; border-radius: 5px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .records-page-files .file-source-cell { color: #72839b; font-size: 11px; white-space: nowrap; }
@@ -333,13 +334,11 @@
 .records-page-files .file-row-actions .record-menu { right: 0; }
 
 @media (max-width: 1024px) {
-  .records-page-files .records-heading { padding-left: 204px; }
   .records-page-files .files-layout { grid-template-columns: 190px minmax(0, 1fr); gap: 14px; }
   .records-page-files .file-center-card-heading { padding-right: 14px; padding-left: 14px; }
 }
 
 @media (max-width: 760px) {
-  .records-page-files .records-heading { padding-left: 0; }
   .records-page-files .files-layout { grid-template-columns: minmax(0, 1fr); }
   .records-page-files .file-cats { position: static; display: block; padding: 8px; overflow: hidden; }
   .records-page-files .file-cats h2,
