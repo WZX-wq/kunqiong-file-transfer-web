@@ -27,7 +27,8 @@ supersedes: ""           # plan_id this replaces, if any
 - [x] Local MySQL relational mode is enabled; managed rows load, source snapshot revision is recorded, audit source/mirror counts match, and upload-session manifests are stored in MySQL.
 - [x] Test deployment passes DB settings and requires relational mode; it cannot silently start in JSON mode.
 - [ ] Post-deploy verification confirms exact release, MySQL connectivity, relational revision, migrated data, audit parity, and core routes.
-- [x] Targeted tests/build pass; intended changes are committed and pushed to Gitea `main`.
+- [x] Targeted tests/build pass.
+- [ ] Intended changes are committed and pushed to Gitea `main`.
 
 ## Assumptions & Constraints
 
@@ -83,8 +84,9 @@ interface, non-overlapping file ownership); otherwise run it in the main thread 
 | T2 | Preserve/pass DB configuration and fail closed before deployment | `[main]` | T1 | [x] |
 | T3 | Extend deployment verification to require relational MySQL state | `[main]` | T2 | [x] |
 | T4 | Run deploy, migration, targeted feature tests and build | `[main]` | T2,T3 | [x] |
-| T5 | Stage intended work, commit, and push Gitea `main` | `[main]` | T4 | [ ] |
-| T6 | Verify test deployment release and database-backed state | `[main]` | T5 | [ ] |
+| T5 | Stage and commit only the intended deployment, responsive UI, test and plan files | `[main]` | T4 | [ ] |
+| T6 | Push the reviewed commit to Gitea `main` after remote DB settings are available | `[main]` | T5 | [ ] |
+| T7 | Verify test deployment release and database-backed state | `[main]` | T6 | [ ] |
 
 > A task that depends on an unfinished interface is NOT independent. Give it a `Deps`
 > entry on the task that stabilizes the interface, or lock the interface contract first
@@ -118,7 +120,7 @@ the replacement rather than reusing its identity._
 
 _Open questions or external dependencies stopping progress. Empty when unblocked._
 
-- Test runner has not claimed Gitea Actions run `#126` after the push; the remote 8045 service still reports the previous release `9303aedca8c0915578b6e1a365ab52c18b5b3595`. Keep the run queued and complete T6 after a runner is available.
+- The previous Gitea deployment failed with `Missing required environment variable: KUNQIONG_DB_HOST`. Server inspection found no app `.env` and no DB environment in the running app container; the only MySQL container is for another product. The local `.env` uses a loopback DB host, so it cannot be reused by the remote test server. Configure the test server's real DB connection as Gitea repository Secrets before pushing to `main`.
 
 ---
 
@@ -133,6 +135,7 @@ reported rows in here after reviewing the diff). Write it as you finish, never i
 | 2026-10-30 11:43 | T2 | `.gitea/workflows/deploy-test.yml`, `scripts/deploy-test.sh` | Passed DB settings through Gitea Secrets, required both database flags and validated connection parameters before replacing the running container. | main |
 | 2026-10-30 11:44 | T3 | `scripts/verify-test-deployment.mjs`, `scripts/verify-deploy-release.mjs` | Added relational revision, migrated-row, audit-parity, preserved-data, route, asset and exact-release checks; release gate fixture passed 5/5 cases. | main |
 | 2026-10-30 11:48 | T4 | Relational sync, responsive upload toolbar and regression suite | Fixed account-record replay to ignore database-managed `gmt_modified`; moved guest quota and batch distribution into an adaptive grid; database and UI/build checks passed. | main |
+| 2026-10-30 | T4 | `scripts/deploy-test.sh`, `scripts/verify-deploy-release.mjs` | Added a secret-safe fallback to the current app container's configuration and verified secret precedence/log redaction; 6 deployment checks pass. The remote app currently has no DB configuration, so fallback alone cannot unblock deployment. | main |
 
 ## Verification Evidence
 
@@ -156,7 +159,10 @@ rest deferred - list which), or `not-run` (nothing run - say why + residual risk
 | 2026-10-30 | `node scripts/verify-collection-layout.mjs`; `node scripts/verify-collection-fields-ui.mjs` | Passed; 38 passed, 0 failed | Existing collection layout and field regressions remain green. |
 | 2026-10-30 | `npm run build` | Passed | Manual generation/verification passed; existing large viewer chunk warning only. |
 | 2026-10-30 | Browser responsive viewport checks | Passed | 1440px, 1024px, 760px and 390px representative viewports; no toolbar overlap or horizontal overflow. |
-| 2026-10-30 | Gitea Actions `deploy-test.yml` run `#126` and remote `/api/health` | Pending | Commit `07fd31b` is on `main`; run remains queued and remote 8045 still serves `9303aed`, so post-deploy DB verification has not run. |
+| 2026-10-30 | Gitea Actions deployment and remote config inspection | Failed / blocked | Previous run failed before replacement with missing `KUNQIONG_DB_HOST`; the app container and deployment directories have no DB connection values. Local MySQL uses loopback and is not the test server DB. |
+| 2026-10-30 | `node scripts/verify-deploy-release.mjs` | 6 passed, 0 failed | Covers existing-container config inheritance and exact release/health gates; secret sentinel is absent from output. |
+| 2026-10-30 | `npm run test:db-schema`; `npm run test:db-upload-sessions`; `npm run test:db-relational-sync` | Passed | 9 schema/store tests, 1 upload-session test, and 5,000 synthetic-user transactional sync; no durable synthetic rows. |
+| 2026-10-30 | `node scripts/verify-collection-layout.mjs`; `npx vite build`; `git diff --check` | Passed | Responsive layout regression checks and production build; existing large viewer chunk warning remains. |
 
 ## Bug & Fix Log
 
@@ -172,11 +178,11 @@ here after fixing, so the same error logic is not repeated next time._
 _Leave empty until the acceptance pass is done. Then fill in: what was built, key
 decisions, what was verified (and how), verification_status rationale, anything deferred._
 
-Local migration, deployment gates, targeted tests, build, responsive checks, commit and push are complete. Remote deployment is pending because Gitea run `#126` remains queued; the post-deploy database and route verification must run after the test runner claims it.
+Local MySQL migration and transactional relational tests are verified. The deployment preflight now preserves an existing app container's configuration, but the remote test server has no DB settings to inherit and deployment has not been retried. The responsive and deployment changes are tested but not yet committed or pushed. Remote database configuration and post-deploy database verification remain outstanding.
 
 ## Next Steps
 
 _Always keep ONE explicit next action here so any agent resuming knows exactly where to
 start. Update it every time you stop._
 
-- Stage only the intended product, relational migration, test, plan and manual files; commit and push `HEAD:main` to Gitea, then inspect the workflow and run `verify-test-deployment.mjs` on the test runner.
+- Configure the real test-server MySQL host, database name, user and password as Gitea repository Secrets; then commit the tested files, push to Gitea `main`, and verify the deployed release and migrated relational data.

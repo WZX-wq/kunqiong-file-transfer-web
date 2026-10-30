@@ -1,0 +1,1124 @@
+/*
+ * 跨页面响应式适配层
+ *
+ * 页面级样式保留各自的视觉细节，本文件只收敛尺寸、溢出和浏览器兼容行为。
+ * 入口最后加载，确保同一组件在桌面、平板和手机端使用同一套边界规则。
+ */
+
+:root {
+  --responsive-gutter: clamp(14px, 3vw, 48px);
+  --responsive-control-height: 40px;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-wrap: break-word;
+}
+
+fieldset,
+form,
+table,
+pre {
+  min-width: 0;
+  max-width: 100%;
+}
+
+pre,
+code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+button,
+input,
+select,
+textarea {
+  max-width: 100%;
+}
+
+img,
+svg,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+}
+
+/* 旧版浏览器没有 dvh 时仍使用稳定的视口高度；支持 dvh 的浏览器再修正移动端地址栏变化。 */
+.app-shell,
+.collection-submit-shell {
+  min-height: 100vh;
+}
+
+.app-shell {
+  overflow: visible;
+}
+
+.topbar,
+.public-topbar-content,
+.topbar > *,
+.public-topbar-content > *,
+.main-nav,
+.topbar-actions {
+  min-width: 0;
+}
+
+.topbar {
+  padding-inline: max(14px, calc((100vw - 1180px) / 2));
+}
+
+.product-brand,
+.product-brand span,
+.nav-item,
+.login-button,
+.team-context-button,
+.topbar-actions > * {
+  min-width: 0;
+}
+
+.product-brand span,
+.team-context-copy,
+.login-button > span:not(.user-avatar) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-content,
+.workspace-page,
+.team-page,
+.admin-page,
+.settings-page,
+.workspace-overview-page,
+.distribution-page,
+.trash-page,
+.share-manage-page,
+.cm-page {
+  width: min(calc(100% - 32px), 1180px);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.page-content {
+  padding-inline: 0;
+}
+
+.workspace-page.collection-page {
+  width: min(calc(100% - 32px), 1240px);
+}
+
+.section-intro,
+.workspace-heading,
+.team-page-heading,
+.distribution-heading,
+.admin-heading,
+.settings-page-head,
+.workspace-page-head,
+.manage-title-row,
+.collection-files-header,
+.collection-submit-hero,
+.share-manage-heading,
+.cm-head {
+  min-width: 0;
+}
+
+.section-intro > *,
+.workspace-heading > *,
+.team-page-heading > *,
+.distribution-heading > *,
+.admin-heading > *,
+.settings-page-head > *,
+.workspace-page-head > *,
+.manage-title-row > *,
+.collection-files-header > *,
+.collection-submit-hero > *,
+.share-manage-heading > *,
+.cm-head > * {
+  min-width: 0;
+}
+
+.upload-panel,
+.collect-builder,
+.collection-files-card,
+.public-card,
+.team-panel,
+.admin-panel,
+.settings-panel,
+.settings-sidebar,
+.distribution-card,
+.trash-page-panel,
+.file-center-card,
+.cm-card,
+.workspace-side-card,
+.workspace-benefits-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.collect-builder,
+.collection-submit-workflow-grid,
+.collection-builder-groups,
+.workspace-grid,
+.cm-grid,
+.share-manage-grid,
+.manage-grid,
+.files-layout,
+.admin-columns,
+.settings-layout,
+.team-overview-grid,
+.team-bottom-grid,
+.distribution-card,
+.trash-page-panel {
+  min-width: 0;
+}
+
+.collection-submit-shell {
+  height: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.collection-submit-actions {
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+
+.collection-structure-block,
+.collection-structure-summary,
+.collection-structure-summary-text {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.collection-structure-summary-text {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.collection-structure-summary-text strong,
+.collection-structure-summary-text small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 上传卡片右上角的定向发布入口在桌面保持绝对定位，避免占用拖拽区的内容列；
+ * 窄屏再恢复为普通网格项，按钮会跟随额度提示自然换行。 */
+.send-prototype-upload-toolbar {
+  position: relative;
+}
+
+.send-distribution-upload-entry {
+  position: absolute;
+  top: 0;
+  right: 0;
+  grid-column: auto;
+  align-self: start;
+}
+
+.send-prototype-guest-strip {
+  min-width: 0;
+  width: 100%;
+  padding-right: 164px;
+  box-sizing: border-box;
+}
+
+/* 表格保留列信息，但在窄屏只让表格本身横向滚动，避免整页被撑宽。 */
+.file-table-scroll,
+.records-table-surface,
+.file-center-table-surface,
+.team-resource-table,
+.admin-table,
+.plan-catalog-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.records-table-surface,
+.file-center-table-surface,
+.team-resource-table,
+.admin-table {
+  scrollbar-width: thin;
+}
+
+.record-file-cell,
+.file-center-row,
+.record-row-enhanced,
+.team-resource-row,
+.admin-table-row,
+.manage-submission,
+.collection-submission,
+.download-file-row,
+.file-row {
+  min-width: 0;
+}
+
+.record-main,
+.record-title-line,
+.record-file-cell,
+.file-info,
+.file-copy,
+.team-resource-main,
+.team-resource-owner,
+.admin-user-identity,
+.manage-submission > div,
+.collection-submission > div,
+.download-file-copy {
+  min-width: 0;
+}
+
+.record-name-text,
+.record-main > span,
+.file-info strong,
+.team-resource-main strong,
+.admin-user-identity strong,
+.manage-file-chip button,
+.collection-file-naming-original,
+.download-file-copy strong {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.modal-backdrop,
+.preview-backdrop,
+.rename-backdrop,
+.content-backdrop,
+.orders-dialog-backdrop {
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.modal,
+.content-modal,
+.preview-modal,
+.rename-modal,
+.qr-modal,
+.upgrade-modal,
+.orders-dialog {
+  width: min(100%, 920px);
+  max-width: 100%;
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  min-width: 0;
+}
+
+.modal,
+.content-modal,
+.preview-modal,
+.rename-modal,
+.qr-modal,
+.upgrade-modal {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header,
+.modal-body,
+.modal-footer,
+.content-modal-header,
+.content-modal-body,
+.preview-modal-header,
+.preview-modal-body,
+.preview-modal-footer,
+.rename-modal-body,
+.rename-modal-footer,
+.qr-modal-body,
+.qr-modal-footer,
+.upgrade-modal-body {
+  min-width: 0;
+}
+
+.modal-header,
+.content-modal-header,
+.preview-modal-header {
+  flex: 0 0 auto;
+}
+
+.modal-body,
+.content-modal-body,
+.preview-modal-body,
+.rename-modal-body,
+.qr-modal-body,
+.upgrade-modal-body {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-footer,
+.preview-modal-footer,
+.rename-modal-footer,
+.qr-modal-footer,
+.upgrade-modal > .modal-header {
+  flex: 0 0 auto;
+}
+
+.preview-frame,
+.preview-video,
+.preview-image,
+.preview-audio,
+.document-preview,
+.spreadsheet-preview,
+.presentation-preview,
+.office-preview-overlay {
+  max-width: 100%;
+}
+
+.preview-image,
+.preview-video,
+.preview-frame {
+  width: 100%;
+  height: auto;
+  max-height: 68vh;
+  object-fit: contain;
+}
+
+.message-center,
+.auth-menu,
+.file-filter-popover,
+.record-menu-floating,
+.date-picker-popover {
+  max-width: calc(100vw - 24px);
+}
+
+.message-list,
+.collection-submissions,
+.collection-manage-list,
+.submission-files,
+.manage-file-names,
+.public-files,
+.file-list,
+.file-center-list,
+.trash-list {
+  max-width: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button,
+.team-resource-actions,
+.distribution-tools,
+.record-filter-actions,
+.record-bulk-actions,
+.team-page-actions,
+.settings-page-actions,
+.workspace-page-head-actions,
+.collection-files-actions,
+.manage-title-actions,
+.result-actions,
+.queue-actions,
+.upload-control-row {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .topbar {
+    gap: 14px;
+  }
+
+  .page-content,
+  .workspace-page,
+  .team-page,
+  .admin-page,
+  .settings-page,
+  .workspace-overview-page,
+  .distribution-page,
+  .trash-page,
+  .share-manage-page,
+  .cm-page {
+    width: min(calc(100% - 28px), 100%);
+  }
+
+  .workspace-page.collection-page {
+    width: min(calc(100% - 28px), 100%);
+  }
+
+  .send-prototype-inner {
+    width: min(calc(100% - 32px), 1180px);
+  }
+
+  .send-prototype-upload-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .send-distribution-upload-entry {
+    position: static;
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  .send-prototype-guest-strip {
+    padding-right: 13px;
+  }
+
+  .workspace-grid,
+  .share-manage-grid,
+  .manage-grid,
+  .cm-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-side-col,
+  .share-manage-aside,
+  .cm-aside {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-layout {
+    grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    padding-inline: 20px;
+  }
+
+  .main-nav {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .main-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-item {
+    flex: 0 0 auto;
+  }
+
+  .collect-builder,
+  .collection-submit-workflow-grid,
+  .collection-builder-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collection-submit-workflow-grid.has-three-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-plan-metrics,
+  .workspace-benefits-grid,
+  .team-kpi-grid,
+  .admin-kpi-grid,
+  .cm-stats,
+  .manage-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .file-cleanup-options,
+  .settings-form-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-form-body.is-inline {
+    display: flex;
+  }
+
+  .settings-form-body.is-inline .settings-form-hint {
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .distribution-heading,
+  .workspace-page-head,
+  .settings-page-head,
+  .admin-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .distribution-heading > .primary-button,
+  .workspace-page-head-actions,
+  .settings-page-actions,
+  .admin-heading-actions {
+    width: 100%;
+  }
+
+  .distribution-heading > .primary-button,
+  .workspace-page-head-actions > *,
+  .settings-page-actions > *,
+  .admin-heading-actions > * {
+    flex: 1 1 180px;
+    justify-content: center;
+  }
+
+  .collection-submit-form-section,
+  .collection-submit-material-card,
+  .collection-submit-fields-card {
+    min-width: 0;
+  }
+
+  .modal-backdrop,
+  .preview-backdrop,
+  .rename-backdrop,
+  .content-backdrop,
+  .orders-dialog-backdrop {
+    align-items: start;
+    padding-top: max(10px, env(safe-area-inset-top));
+  }
+
+  .modal,
+  .content-modal,
+  .preview-modal,
+  .rename-modal,
+  .qr-modal,
+  .upgrade-modal,
+  .orders-dialog {
+    border-radius: 12px;
+  }
+
+  .preview-modal-body {
+    min-height: 180px;
+  }
+
+  .records-page-records .records-table-surface,
+  .records-page-files .file-center-table-surface,
+  .team-resource-table,
+  .admin-table {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  html {
+    /* 移动端滚动条通常覆盖在内容上，不需要为它固定预留 15px 槽位。 */
+    scrollbar-gutter: auto;
+  }
+
+  .topbar,
+  .app-shell:not(.public-shell) .topbar,
+  .app-shell.public-shell .topbar {
+    padding-inline: 12px;
+  }
+
+  .page-content,
+  .workspace-page,
+  .team-page,
+  .admin-page,
+  .settings-page,
+  .workspace-overview-page,
+  .distribution-page,
+  .trash-page,
+  .share-manage-page,
+  .cm-page,
+  .workspace-page.collection-page {
+    width: calc(100% - 24px);
+    margin-inline: auto;
+  }
+
+  .page-content {
+    padding-top: 20px;
+  }
+
+  .send-prototype-inner {
+    width: calc(100% - 24px);
+    padding-top: 12px;
+  }
+
+  .section-intro,
+  .workspace-heading,
+  .team-page-heading,
+  .distribution-heading,
+  .settings-page-head,
+  .workspace-page-head,
+  .admin-heading,
+  .manage-title-row,
+  .collection-files-header,
+  .share-manage-heading,
+  .cm-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .section-intro > *,
+  .workspace-heading > *,
+  .team-page-heading > *,
+  .distribution-heading > *,
+  .settings-page-head > *,
+  .workspace-page-head > *,
+  .admin-heading > *,
+  .manage-title-row > *,
+  .collection-files-header > *,
+  .share-manage-heading > *,
+  .cm-head > * {
+    width: 100%;
+  }
+
+  .section-intro .retrieve-trigger,
+  .workspace-back-button,
+  .distribution-heading > .primary-button,
+  .team-page-actions > *,
+  .workspace-page-head-actions > *,
+  .settings-page-actions > *,
+  .admin-heading-actions > *,
+  .collection-files-actions > *,
+  .manage-title-actions > *,
+  .result-actions > *,
+  .queue-actions > *,
+  .upload-control-row > * {
+    flex: 1 1 0;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .section-intro .retrieve-trigger,
+  .workspace-back-button {
+    width: 100%;
+  }
+
+  .collection-submit-workflow-grid.has-three-cards,
+  .workspace-plan-hero,
+  .workspace-plan-metrics,
+  .workspace-benefits-grid,
+  .team-kpi-grid,
+  .admin-kpi-grid,
+  .cm-stats,
+  .manage-stats,
+  .share-manage-aside,
+  .cm-aside,
+  .workspace-side-col {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collect-builder,
+  .collection-files-card,
+  .team-panel,
+  .admin-panel,
+  .settings-card,
+  .public-card,
+  .distribution-card,
+  .trash-page-panel {
+    padding: 16px;
+  }
+
+  .collection-submit-card,
+  .share-public-card,
+  .share-locked-card,
+  .collection-state-card {
+    padding-inline: 16px;
+  }
+
+  .collection-submit-custom-fields,
+  .collection-submit-materials,
+  .collection-submit-form-section,
+  .collection-field-editor-main,
+  .collection-assistant-row,
+  .collection-file-naming-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collection-submit-material-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .collection-file-naming-row select {
+    width: 100%;
+  }
+
+  .message-center {
+    position: fixed;
+    top: calc(var(--topbar-height, 66px) + 8px);
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-width: none;
+  }
+
+  .message-center-header,
+  .message-item {
+    padding-inline: 12px;
+  }
+
+  .message-header-actions,
+  .message-code-actions,
+  .message-invite-actions {
+    flex-wrap: wrap;
+  }
+
+  .message-mark-all,
+  .message-code-chip,
+  .message-code-open,
+  .message-invite-actions > * {
+    flex: 1 1 140px;
+    justify-content: center;
+  }
+
+  .modal-backdrop,
+  .preview-backdrop,
+  .rename-backdrop,
+  .content-backdrop,
+  .orders-dialog-backdrop {
+    padding-inline: 8px;
+  }
+
+  .modal,
+  .content-modal,
+  .preview-modal,
+  .rename-modal,
+  .qr-modal,
+  .upgrade-modal,
+  .orders-dialog {
+    width: 100%;
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .modal-header,
+  .content-modal-header,
+  .preview-modal-header {
+    padding: 18px 16px 14px;
+  }
+
+  .modal-body,
+  .content-modal-body,
+  .preview-modal-body,
+  .rename-modal-body,
+  .qr-modal-body,
+  .upgrade-modal-body {
+    padding: 16px;
+  }
+
+  .modal-footer,
+  .preview-modal-footer,
+  .rename-modal-footer,
+  .qr-modal-footer {
+    padding: 12px 16px max(14px, env(safe-area-inset-bottom));
+  }
+
+  .modal-footer > *,
+  .preview-modal-footer > *,
+  .rename-modal-footer > *,
+  .qr-modal-footer > * {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .preview-modal-header h2,
+  .preview-meta {
+    max-width: calc(100vw - 92px);
+    overflow-wrap: anywhere;
+  }
+
+  .preview-frame,
+  .preview-video,
+  .preview-image {
+    max-height: 58vh;
+  }
+
+  .settings-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .settings-sidebar,
+  .settings-panel {
+    width: 100%;
+  }
+
+  .settings-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+  }
+
+  .settings-nav button {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .team-tabs,
+  .record-scope-tabs,
+  .admin-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .team-tabs button,
+  .record-scope-tabs button,
+  .admin-tabs button {
+    min-width: max-content;
+  }
+
+  .records-page-records .record-scope-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    overflow: visible;
+  }
+
+  .records-page-records .record-scope-tabs button {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+  }
+
+  .team-resource-toolbar,
+  .team-invite-form,
+  .admin-config-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .team-resource-actions {
+    width: auto;
+  }
+
+  .file-table-scroll,
+  .records-table-surface,
+  .file-center-table-surface,
+  .team-resource-table,
+  .admin-table,
+  .plan-catalog-table-wrap {
+    margin-inline: -4px;
+    padding-inline: 4px;
+  }
+
+  .records-page-records .records-table-head,
+  .records-page-files .records-table-head {
+    min-width: 680px;
+  }
+
+  .records-page-records .record-row-enhanced,
+  .records-page-files .file-center-row {
+    min-width: 680px;
+  }
+
+  .collection-submit-actions {
+    margin-inline: -16px;
+    padding-inline: 16px;
+  }
+
+}
+
+@media (max-width: 480px) {
+  .page-content,
+  .workspace-page,
+  .team-page,
+  .admin-page,
+  .settings-page,
+  .workspace-overview-page,
+  .distribution-page,
+  .trash-page,
+  .share-manage-page,
+  .cm-page,
+  .workspace-page.collection-page {
+    width: calc(100% - 20px);
+  }
+
+  .send-prototype-inner {
+    width: calc(100% - 20px);
+  }
+
+  .product-brand span {
+    max-width: 43vw;
+    font-size: 15px;
+  }
+
+  .product-brand span strong {
+    font-size: 16px;
+  }
+
+  .product-brand span em {
+    font-size: 14px;
+  }
+
+  .topbar-actions {
+    gap: 0;
+  }
+
+  .section-intro h1,
+  .workspace-heading h1,
+  .team-page-heading h1,
+  .distribution-heading h1,
+  .workspace-page-head h1,
+  .settings-page-title h1,
+  .admin-heading h1 {
+    font-size: 24px;
+    line-height: 1.3;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .danger-button {
+    min-height: 40px;
+    padding-inline: 12px;
+    font-size: 12px;
+  }
+
+  .send-prototype-hero h1 {
+    font-size: 30px;
+  }
+
+  .send-prototype-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 14px;
+  }
+
+  .send-prototype-actions,
+  .send-prototype-retrieve form,
+  .collection-submit-material-row,
+  .collection-submit-actions,
+  .result-actions,
+  .queue-actions,
+  .upload-control-row {
+    flex-direction: column;
+  }
+
+  .send-prototype-actions button,
+  .send-prototype-retrieve form button,
+  .collection-submit-actions > *,
+  .result-actions > *,
+  .queue-actions > *,
+  .upload-control-row > * {
+    width: 100%;
+  }
+
+  .send-prototype-retrieve form {
+    display: flex;
+  }
+
+  .value-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .value-item:nth-child(n) {
+    border-right: 0;
+    border-bottom: 1px solid #e2e6ec;
+    padding: 11px 4px;
+  }
+
+  .value-item:last-child {
+    border-bottom: 0;
+  }
+
+  .collection-submit-material-row {
+    display: grid;
+    align-items: stretch;
+  }
+
+  .collection-submit-material-row .secondary-button {
+    width: 100%;
+  }
+
+  .file-row,
+  .download-file-row {
+    align-items: flex-start;
+  }
+
+  .file-info strong,
+  .download-file-copy strong {
+    white-space: normal;
+    line-height: 1.4;
+  }
+
+  .message-center {
+    top: 8px;
+  }
+
+  .message-item-main {
+    gap: 7px;
+  }
+
+  .modal-header h2,
+  .preview-modal-header h2 {
+    font-size: 18px;
+  }
+
+  .modal-body,
+  .content-modal-body,
+  .preview-modal-body,
+  .rename-modal-body,
+  .qr-modal-body,
+  .upgrade-modal-body {
+    padding: 14px;
+  }
+
+  .modal-footer,
+  .preview-modal-footer,
+  .rename-modal-footer,
+  .qr-modal-footer {
+    flex-direction: column;
+  }
+
+  .settings-profile-head,
+  .settings-profile-actions,
+  .settings-form-foot,
+  .team-leave-card,
+  .team-handover-state,
+  .team-handover-history-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-profile-actions > *,
+  .settings-form-foot > *,
+  .team-leave-card .team-leave-button,
+  .team-handover-actions > * {
+    width: 100%;
+  }
+
+  .admin-tabs,
+  .team-tabs,
+  .record-scope-tabs {
+    scrollbar-width: none;
+  }
+
+  .admin-tabs::-webkit-scrollbar,
+  .team-tabs::-webkit-scrollbar,
+  .record-scope-tabs::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@supports (height: 100dvh) {
+  .app-shell,
+  .collection-submit-shell {
+    min-height: 100dvh;
+  }
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .modal-backdrop,
+  .preview-backdrop,
+  .rename-backdrop,
+  .content-backdrop,
+  .orders-dialog-backdrop {
+    background: rgba(27, 35, 46, .62);
+  }
+}
+
+@supports not (color: color-mix(in srgb, #000 10%, #fff)) {
+  .guest-quota-hint {
+    color: #566275;
+    background: #f4f8ff;
+    border-color: #dce6f5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal,
+  .content-modal,
+  .preview-modal,
+  .rename-modal,
+  .qr-modal,
+  .upgrade-modal {
+    scroll-behavior: auto;
+  }
+}

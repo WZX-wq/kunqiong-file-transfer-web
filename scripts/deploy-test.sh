@@ -93,8 +93,11 @@ mkdir -p "$DEPLOY_DIR" "$RUNTIME_DIR" "$LOG_DIR"
 
 preserve_existing_config() {
   local existing_file="$COMPOSE_DIR/.env"
+  local container_env=""
   [ -f "$existing_file" ] || existing_file="$DEPLOY_DIR/.env"
-  [ -f "$existing_file" ] || return 0
+  if command -v docker >/dev/null 2>&1; then
+    container_env="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$APP_NAME" 2>/dev/null || true)"
+  fi
   local name line
   for name in \
     KUNQIONG_ADMIN_USERNAME KUNQIONG_ADMIN_PASSWORD \
@@ -114,6 +117,14 @@ preserve_existing_config() {
     if [ -n "$line" ]; then
       export "$name=${line#*=}"
     fi
+    if [ -n "${!name:-}" ]; then
+      continue
+    fi
+    while IFS= read -r line; do
+      case "$line" in
+        "$name"=*) export "$name=${line#*=}"; break ;;
+      esac
+    done <<< "$container_env"
   done
 }
 
