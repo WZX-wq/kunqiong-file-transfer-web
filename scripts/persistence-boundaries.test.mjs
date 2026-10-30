@@ -20,6 +20,7 @@ function database() {
     },
     async execute(sql, values) {
       if (failed) throw Object.assign(new Error('fixture database unavailable'), { code: 'FIXTURE_DB_DOWN' })
+      if (sql.includes('information_schema.TABLES')) return [[{ found: 0 }], []]
       if (sql.includes('INSERT IGNORE')) {
         for (let i = 0; i < values.length; i += 4) rows.set(values[i], { critical: values[i + 1], createdAt: values[i + 2], log: JSON.parse(values[i + 3]) })
         return [{ affectedRows: 1 }]
@@ -92,6 +93,56 @@ test('database mode fails before any query when shared protection key is missing
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /KUNQIONG_DATA_KEY/)
   assert.doesNotMatch(result.stderr, /QUERY_MUST_NOT_RUN/)
+})
+
+test('first relational import records the revision of its local JSON source', t => {
+  const root = path.resolve(import.meta.dirname, '..')
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-json-relational-revision-'))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const copy = (from, to) => {
+    fs.mkdirSync(to, { recursive: true })
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      if (entry.isDirectory()) copy(path.join(from, entry.name), path.join(to, entry.name))
+      else fs.copyFileSync(path.join(from, entry.name), path.join(to, entry.name))
+    }
+  }
+  copy(path.join(root, 'server'), path.join(directory, 'server'))
+  fs.writeFileSync(path.join(directory, 'server/state.js'), `
+export const runtime = {};
+export const databasePool = { query: async () => [[], []], execute: async () => [{ affectedRows: 1 }, []] };
+`)
+  fs.writeFileSync(path.join(directory, 'server/db/relational-store.js'), `
+export async function ensureRelationalStoreSchema() {}
+export async function loadRelationalMetadata() { return null; }
+export function countRelationalModelRows(metadata) { return { kq_user: Object.keys(metadata.users || {}).length }; }
+export async function initializeRelationalMetadata(pool, metadata, sourceSnapshotRevision) {
+  return { metadata, revision: 1, state: { sourceSnapshotRevision, counts: {} } };
+}
+export async function commitRelationalMetadata() {}
+`)
+  fs.mkdirSync(path.join(directory, 'storage'), { recursive: true })
+  fs.writeFileSync(path.join(directory, 'storage/metadata.json'), JSON.stringify({ _localRevision: 7, users: { u1: { id: 'u1' } } }))
+  fs.writeFileSync(path.join(directory, 'storage/metadata.json.revision'), '42')
+
+  const env = { ...process.env }
+  for (const key of Object.keys(env)) if (/^(KUNQIONG_|OAUTH_)/.test(key)) delete env[key]
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    const {loadMetadata}=await import('./server/lib/metadata-store.js');
+    const {runtime}=await import('./server/state.js');
+    const metadata=await loadMetadata();
+    console.log(JSON.stringify({revision:runtime.metadataLocalRevision,users:Object.keys(metadata.users)}));
+  `], {
+    cwd: directory,
+    windowsHide: true,
+    encoding: 'utf8',
+    env: { ...env, KUNQIONG_DB_ENABLED: 'true', KUNQIONG_RELATIONAL_SCHEMA_ENABLED: 'true', KUNQIONG_DATA_KEY: '12'.repeat(32), KUNQIONG_DB_HOST: 'fixture', KUNQIONG_DB_NAME: 'fixture', KUNQIONG_DB_USER: 'fixture' },
+  })
+  assert.equal(result.status, 0, result.stderr)
+  const lines = result.stdout.trim().split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line))
+  const output = lines.at(-1)
+  assert.equal(lines.find(line => line.event === 'relational_metadata_migrated')?.sourceRevision, 42)
+  assert.equal(output.revision, 42)
+  assert.deepEqual(output.users, ['u1'])
 })
 
 test('a fresh database host can start without a copied local audit journal', () => {

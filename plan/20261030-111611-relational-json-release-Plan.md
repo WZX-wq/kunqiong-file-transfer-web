@@ -2,14 +2,14 @@
 plan_id: 20261030-111611-relational-json-release # stable unique id, e.g. 20260715-143005-user-auth-refactor
 title: relational-json-release # human-readable goal title (also rendered as the H1 below)
 goal: Ensure the test deployment runs on migrated MySQL relational data, then commit, push, and verify the deployed release. # one sentence: what "done" looks like
-status: paused # active | paused | blocked | completed | cancelled | superseded
+status: active # active | paused | blocked | completed | cancelled | superseded
 verification_status: partial # verified | partial | not-run
 owner: main-agent # who is driving: main-agent / a named sub-agent / a user
 repo_root: D:/demo/鲲穹文件传输/kunqiong-file-transfer-web-main/kunqiong-file-transfer-web-main # repo-relative or absolute path this plan applies to
 branch: deploy/user-file-isolation-20261029 # git branch the work happens on
 base_sha: 70a7670 # git short SHA the plan started from
 created: 2026-10-30 11:16 # YYYY-MM-DD HH:mm
-updated: 2026-10-30 12:04 # YYYY-MM-DD HH:mm  (bump on every edit)
+updated: 2026-10-30 15:05 # YYYY-MM-DD HH:mm  (bump on every edit)
 supersedes: ""           # plan_id this replaces, if any
 ---
 
@@ -84,7 +84,7 @@ interface, non-overlapping file ownership); otherwise run it in the main thread 
 | T2 | Preserve/pass DB configuration and fail closed before deployment | `[main]` | T1 | [x] |
 | T3 | Extend deployment verification to require relational MySQL state | `[main]` | T2 | [x] |
 | T4 | Run deploy, migration, targeted feature tests and build | `[main]` | T2,T3 | [x] |
-| T5 | Stage and commit only the intended deployment, responsive UI, test and plan files | `[main]` | T4 | [x] |
+| T5 | Stage and commit only the intended deployment, responsive UI, test and plan files | `[main]` | T4 | [ ] |
 | T6 | Push the reviewed commit to Gitea `main` after remote DB settings are available | `[main]` | T5 | [ ] |
 | T7 | Verify test deployment release and database-backed state | `[main]` | T6 | [ ] |
 
@@ -120,7 +120,7 @@ the replacement rather than reusing its identity._
 
 _Open questions or external dependencies stopping progress. Empty when unblocked._
 
-- The previous Gitea deployment failed with `Missing required environment variable: KUNQIONG_DB_HOST`. Server inspection found no app `.env` and no DB environment in the running app container; the only MySQL container is for another product. The local `.env` uses a loopback DB host, so it cannot be reused by the remote test server. Configure the test server's real DB connection as Gitea repository Secrets before pushing to `main`.
+- None. The five database connection values are now configured as repository Actions Secrets; the password is not stored in Git or this plan.
 
 ---
 
@@ -163,6 +163,9 @@ rest deferred - list which), or `not-run` (nothing run - say why + residual risk
 | 2026-10-30 | `node scripts/verify-deploy-release.mjs` | 6 passed, 0 failed | Covers existing-container config inheritance and exact release/health gates; secret sentinel is absent from output. |
 | 2026-10-30 | `npm run test:db-schema`; `npm run test:db-upload-sessions`; `npm run test:db-relational-sync` | Passed | 9 schema/store tests, 1 upload-session test, and 5,000 synthetic-user transactional sync; no durable synthetic rows. |
 | 2026-10-30 | `node scripts/verify-collection-layout.mjs`; `npx vite build`; `git diff --check` | Passed | Responsive layout regression checks and production build; existing large viewer chunk warning remains. |
+| 2026-10-30 | Read-only Gitea API permission check | Blocked | Repository push access works, but the current account cannot manage Actions Secrets (HTTP 403; owner required). No deployment was triggered. |
+| 2026-10-30 | Repository Actions Secrets page | Passed | `KUNQIONG_DB_HOST`, `KUNQIONG_DB_PORT`, `KUNQIONG_DB_NAME`, `KUNQIONG_DB_USER`, and `KUNQIONG_DB_PASSWORD` are present and masked. |
+| 2026-10-30 | Database, persistence, release-gate and packaging suite | Passed | 20 tests, 10 release-gate checks, 5,000-user transactional sync, upload-session test, shell syntax and Docker COPY startup check; no synthetic rows retained. |
 
 ## Bug & Fix Log
 
@@ -178,11 +181,11 @@ here after fixing, so the same error logic is not repeated next time._
 _Leave empty until the acceptance pass is done. Then fill in: what was built, key
 decisions, what was verified (and how), verification_status rationale, anything deferred._
 
-Paused by the user on 2026-10-30 while a separate bugfix-only release proceeds without database migration. Local MySQL migration and transactional relational tests are verified. The bugfix and deployment-preflight changes are committed locally in `dd8278a`; remote database configuration is absent, so pushing this plan's `main` migration release and post-deploy database verification remain outstanding.
+Migration work resumed on 2026-10-30 after the user supplied the test database connection details. The local migration, source-receipt checks, transactional relational tests, deployment preflight and build are verified. The reviewed release is ready to push; post-deployment migration verification remains outstanding until Actions completes.
 
 ## Next Steps
 
 _Always keep ONE explicit next action here so any agent resuming knows exactly where to
 start. Update it every time you stop._
 
-- Resume this paused migration plan only after the test server's real MySQL connection is configured in Gitea Secrets; do not infer database migration completion from the separate JSON-mode bugfix deployment.
+- Stage and commit the reviewed files, push `HEAD:main` to Gitea, then wait for Actions and verify the deployed release and migrated database evidence.

@@ -42,6 +42,8 @@ jobs:
       KUNQIONG_DB_USER: "${{ secrets.KUNQIONG_DB_USER }}"
       KUNQIONG_DB_PASSWORD: "${{ secrets.KUNQIONG_DB_PASSWORD }}"
       KUNQIONG_DB_CONNECTION_LIMIT: "${{ secrets.KUNQIONG_DB_CONNECTION_LIMIT }}"
+      # 可选：未设置时部署脚本沿用现有容器或持久卷的数据保护密钥。
+      KUNQIONG_DATA_KEY: "${{ secrets.KUNQIONG_DATA_KEY }}"
       KUNQIONG_VERIFICATION_DEBUG: "false"
       KUNQIONG_SMTP_HOST: "${{ secrets.KUNQIONG_SMTP_HOST }}"
       KUNQIONG_SMTP_PORT: "${{ secrets.KUNQIONG_SMTP_PORT }}"

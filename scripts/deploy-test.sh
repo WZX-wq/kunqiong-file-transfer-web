@@ -79,6 +79,7 @@ KUNQIONG_DB_NAME=${KUNQIONG_DB_NAME:-}
 KUNQIONG_DB_USER=${KUNQIONG_DB_USER:-}
 KUNQIONG_DB_PASSWORD=${KUNQIONG_DB_PASSWORD:-}
 KUNQIONG_DB_CONNECTION_LIMIT=${KUNQIONG_DB_CONNECTION_LIMIT:-5}
+KUNQIONG_DATA_KEY=${KUNQIONG_DATA_KEY:-}
 KUNQIONG_RELEASE_SHA=$RELEASE_SHA
 EOF
   chmod 600 "$target" 2>/dev/null || true
@@ -108,7 +109,7 @@ preserve_existing_config() {
     KUNQIONG_TENCENT_SMS_TEMPLATE_LOGIN_CODE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_PASSWORD_CODE_ID \
     KUNQIONG_TENCENT_SMS_TEMPLATE_WORKSPACE_INVITE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_FILE_SHARE_ID \
     KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_ACTIVATED_ID KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_EXPIRING_ID \
-    KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT
+    KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT KUNQIONG_DATA_KEY
   do
     if [ -n "${!name:-}" ]; then
       continue
@@ -141,7 +142,7 @@ normalize_gitea_env_values() {
     KUNQIONG_TENCENT_SMS_TEMPLATE_LOGIN_CODE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_PASSWORD_CODE_ID \
     KUNQIONG_TENCENT_SMS_TEMPLATE_WORKSPACE_INVITE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_FILE_SHARE_ID \
     KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_ACTIVATED_ID KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_EXPIRING_ID \
-    KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT
+    KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT KUNQIONG_DATA_KEY
   do
     value="${!name:-}"
     if [[ "$value" == "%!t(string="*")" ]]; then
@@ -153,6 +154,32 @@ normalize_gitea_env_values() {
 }
 
 normalize_gitea_env_values
+
+resolve_data_key() {
+  if [ -z "${KUNQIONG_DATA_KEY:-}" ] && command -v docker >/dev/null 2>&1; then
+    local old_image storage_volume
+    old_image="$(docker inspect -f '{{.Image}}' "$APP_NAME" 2>/dev/null || true)"
+    storage_volume="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/storage"}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}{{end}}' "$APP_NAME" 2>/dev/null || true)"
+    if [ -n "$old_image" ] && [ -n "$storage_volume" ]; then
+      # Never print or regenerate the key that protects the existing JSON data.
+      KUNQIONG_DATA_KEY="$(docker run --rm --network none --entrypoint node \
+        --mount "type=volume,src=$storage_volume,dst=/data,readonly" "$old_image" -e '
+const fs = require("fs");
+const filename = "/data/.private-key";
+if (!fs.existsSync(filename)) process.exit(1);
+const key = fs.readFileSync(filename);
+if (key.length !== 32) process.exit(1);
+process.stdout.write(key.toString("hex"));
+' )" || { echo "Existing data protection key is unavailable; configure KUNQIONG_DATA_KEY before deployment" >&2; return 1; }
+      export KUNQIONG_DATA_KEY
+    fi
+  fi
+  if ! [[ "${KUNQIONG_DATA_KEY:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then
+    echo "A valid KUNQIONG_DATA_KEY is required before database deployment" >&2
+    return 1
+  fi
+}
+
 KUNQIONG_DB_PORT="${KUNQIONG_DB_PORT:-3306}"
 KUNQIONG_DB_CONNECTION_LIMIT="${KUNQIONG_DB_CONNECTION_LIMIT:-5}"
 if [ "${KUNQIONG_DB_ENABLED:-false}" != "true" ]; then
@@ -173,6 +200,7 @@ if ! [[ "$KUNQIONG_DB_PORT" =~ ^[0-9]{1,5}$ ]] || [ "$KUNQIONG_DB_PORT" -lt 1 ] 
 fi
 require_var KUNQIONG_ADMIN_USERNAME
 require_var KUNQIONG_ADMIN_PASSWORD
+resolve_data_key
 write_env_file "$ENV_FILE"
 
 healthcheck_docker() {
@@ -241,7 +269,7 @@ verify_container_configuration() {
     echo "App container does not use the deployed image" >&2
     return 1
   fi
-  for name in KUNQIONG_ADMIN_USERNAME KUNQIONG_ADMIN_PASSWORD KUNQIONG_DB_ENABLED KUNQIONG_RELATIONAL_SCHEMA_ENABLED KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT; do
+  for name in KUNQIONG_ADMIN_USERNAME KUNQIONG_ADMIN_PASSWORD KUNQIONG_DB_ENABLED KUNQIONG_RELATIONAL_SCHEMA_ENABLED KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT KUNQIONG_DATA_KEY; do
     actual_value="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$APP_NAME" | sed -n "s/^${name}=//p")"
     if [ "$actual_value" != "${!name}" ]; then
       echo "App container configuration mismatch: $name" >&2
@@ -258,8 +286,27 @@ verify_container_configuration() {
 
 deploy_with_docker() {
   docker info >/dev/null 2>&1 || return 1
-  bash scripts/backup-test-deployment.sh "$APP_NAME" "$COMPOSE_DIR" "$RELEASE_SHA"
   docker build --label "org.opencontainers.image.revision=$RELEASE_SHA" -t "$IMAGE_NAME" .
+  # Check connectivity, decryptability and nonempty-target conflicts without DDL
+  # or data writes. A failure here leaves the current running container intact.
+  docker run --rm --env-file "$ENV_FILE" --entrypoint node "$IMAGE_NAME" --input-type=module -e '
+const { databasePool } = await import("/app/server/state.js");
+const { inspectRelationalMigrationTarget } = await import("/app/server/db/relational-store.js");
+try {
+  const connection = await databasePool.getConnection();
+  try { console.log(JSON.stringify({ event: "database_migration_preflight", ...await inspectRelationalMigrationTarget(connection), passed: true })); }
+  finally { connection.release(); }
+} catch (error) {
+  console.error(JSON.stringify({ event: "database_migration_preflight", passed: false, code: error.code || "MIGRATION_TARGET_REJECTED" }));
+  process.exitCode = 1;
+} finally { await databasePool.end(); }
+'
+  # Quiesce and flush the old writer before the final backup. Its storage volume
+  # is reused by the new release, so the migration and backup share one source.
+  if [ "$(docker inspect -f '{{.State.Running}}' "$APP_NAME" 2>/dev/null || true)" = true ]; then
+    docker stop --time 40 "$APP_NAME" >/dev/null
+  fi
+  bash scripts/backup-test-deployment.sh "$APP_NAME" "$COMPOSE_DIR" "$RELEASE_SHA"
 
   mkdir -p "$COMPOSE_DIR"
   write_compose_file "$COMPOSE_DIR/$COMPOSE_FILE"

@@ -116,6 +116,38 @@ export function buildRelationalModel(value = {}) {
   }
 }
 
+export function countRelationalModelRows(value = {}) {
+  const model = buildRelationalModel(value)
+  const shares = model.resources.filter(resource => resource.kind === 'share')
+  const collections = model.resources.filter(resource => resource.kind === 'collection')
+  const submissions = collections.flatMap(({ entity }) => Array.isArray(entity.submissions) ? entity.submissions : [])
+  const organizations = model.organizations
+  const counts = {
+    kq_submission_file: submissions.reduce((total, submission) => total + (Array.isArray(submission.files) ? submission.files.length : 0), 0),
+    kq_collection_submission: submissions.length,
+    kq_distribution_assignment: model.distributions.reduce((total, item) => total + (Array.isArray(item.rows) ? item.rows.length : 0), 0),
+    kq_distribution_batch: model.distributions.length,
+    kq_resource_file: shares.reduce((total, { entity }) => total + (Array.isArray(entity.files) ? entity.files.length : 0), 0)
+      + submissions.reduce((total, submission) => total + (Array.isArray(submission.files) ? submission.files.length : 0), 0),
+    kq_share_config: shares.length,
+    kq_collection_task: collections.length,
+    kq_resource: model.resources.length,
+    kq_ownership_handover: organizations.reduce((total, organization) => total + (Array.isArray(organization.ownershipHandovers) ? organization.ownershipHandovers.length : 0), 0),
+    kq_organization_member: organizations.reduce((total, organization) => total + (Array.isArray(organization.members) ? organization.members.length : 0), 0),
+    kq_organization: organizations.length,
+    kq_auth_session: model.sessions.length,
+    kq_verification_code: model.verificationCodes.length,
+    kq_upgrade_order: model.upgradeOrders.length,
+    kq_message: model.messages.length,
+    kq_user_setting: model.notificationSettings.length,
+    kq_account_record: model.records.length,
+    kq_guest_usage: model.guestUsage.length,
+    kq_system_setting: model.systemSettings.length,
+    kq_user: model.users.length,
+  }
+  return Object.fromEntries(MANAGED_TABLES.map(table => [table, Number(counts[table]) || 0]))
+}
+
 export async function ensureRelationalStoreSchema(pool) {
   const connection = await pool.getConnection()
   let locked = false
@@ -786,8 +818,32 @@ export async function loadRelationalMetadata(pool) {
 
 export async function replaceRelationalMetadata(connection, value) {
   // Full replacement is reserved for the one-time initial migration only.
+  await assertUninitializedRelationalTablesEmpty(connection)
   for (const table of DATA_TABLES) await connection.query(`DELETE FROM \`${table}\``)
   return insertAll(connection, value)
+}
+
+export async function assertUninitializedRelationalTablesEmpty(connection) {
+  for (const table of DATA_TABLES) {
+    const [rows] = await connection.query(`SELECT 1 AS present FROM \`${table}\` LIMIT 1`)
+    if (rows.length) throw new Error(`关系表 ${table} 已有记录但缺少迁移状态，已停止首次导入以避免覆盖数据`)
+  }
+}
+
+// Read-only deployment preflight, before the running container is replaced.
+export async function inspectRelationalMigrationTarget(connection) {
+  const [tables] = await connection.query('SELECT TABLE_NAME AS table_name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()')
+  const available = new Set(tables.map(row => row.table_name))
+  const state = available.has(STATE_TABLE) ? await readRelationalState(connection) : null
+  if (state) {
+    await loadRelationalMetadataFromConnection(connection, state)
+    return { initialized: true, revision: state.revision, managedTableCount: Object.keys(state.counts).length }
+  }
+  for (const table of DATA_TABLES.filter(name => available.has(name))) {
+    const [rows] = await connection.query(`SELECT 1 AS present FROM \`${table}\` LIMIT 1`)
+    if (rows.length) throw new Error(`关系表 ${table} 已有记录但缺少迁移状态，已停止部署以避免覆盖数据`)
+  }
+  return { initialized: false, managedTableCount: 0 }
 }
 
 export async function initializeRelationalMetadata(pool, source, sourceSnapshotRevision = 0) {
@@ -807,6 +863,10 @@ export async function initializeRelationalMetadata(pool, source, sourceSnapshotR
     await connection.beginTransaction()
     try {
       const counts = await replaceRelationalMetadata(connection, source)
+      const expectedCounts = countRelationalModelRows(source)
+      for (const [table, count] of Object.entries(expectedCounts)) {
+        if (Number(counts[table]) !== count) throw new Error(`关系迁移 ${table} 的源数据行数与导入结果不一致，已回滚`)
+      }
       const rowsByTable = await readRelationalSyncRows(connection, counts)
       await connection.execute(
         `INSERT INTO ${STATE_TABLE} (state_key, revision, schema_version, source_snapshot_revision, record_counts_json)

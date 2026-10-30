@@ -21,7 +21,7 @@ import {
 } from '../config.js'
 import { databasePool, runtime } from '../state.js'
 import {
-  commitRelationalMetadata, ensureRelationalStoreSchema, initializeRelationalMetadata, loadRelationalMetadata,
+  commitRelationalMetadata, countRelationalModelRows, ensureRelationalStoreSchema, initializeRelationalMetadata, loadRelationalMetadata,
 } from '../db/relational-store.js'
 
 // ── 元数据快照本体 ────────────────────────────────────────────
@@ -118,6 +118,14 @@ function persistedSnapshot() {
   // Once migrated, audit has its own durable snapshot/journal and does not inflate CAS writes.
   const value = auditStore ? { ...metadata, auditLogs: [], auditStorage: databasePool ? 'mysql-v1' : 'journal-v1' } : metadata
   return transformCredentials(value, true)
+}
+
+function stableSnapshotJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableSnapshotJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableSnapshotJson(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
 }
 
 // 由入口注入的领域规范化函数。注入前保持恒等，保证本模块可独立加载与测试。
@@ -257,8 +265,19 @@ export async function loadMetadata() {
 
     const legacy = await readRemoteMetadataRow()
     if (!legacy && localError) throw localError
-    const source = normalizeSnapshot(legacy?.metadata || localMetadata)
-    const migrated = await initializeRelationalMetadata(databasePool, source, legacy?.revision || 0)
+    const original = legacy?.metadata || localMetadata
+    const sourceCounts = countRelationalModelRows(original)
+    const source = normalizeSnapshot(original)
+    const sourceSnapshotRevision = legacy ? Number(legacy.revision) || 0 : runtime.metadataLocalRevision
+    source._relationalMigration = {
+      source: legacy ? 'kunqiong_app_state' : 'metadata.json',
+      sourceRevision: sourceSnapshotRevision,
+      sourceSha256: legacy || !fs.existsSync(metadataPath) ? null : crypto.createHash('sha256').update(stableSnapshotJson(JSON.parse(fs.readFileSync(metadataPath, 'utf8')))).digest('hex'),
+      sourceCounts,
+      importedCounts: countRelationalModelRows(source),
+      completedAt: new Date().toISOString(),
+    }
+    const migrated = await initializeRelationalMetadata(databasePool, source, sourceSnapshotRevision)
     runtime.metadataRevision = migrated.revision
     runtime.metadataBaseIds = metadataIdSets(migrated.metadata)
     console.log(JSON.stringify({
