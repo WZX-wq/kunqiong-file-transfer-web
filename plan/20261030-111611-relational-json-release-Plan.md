@@ -9,7 +9,7 @@ repo_root: D:/demo/鲲穹文件传输/kunqiong-file-transfer-web-main/kunqiong-f
 branch: deploy/user-file-isolation-20261029 # git branch the work happens on
 base_sha: 70a7670 # git short SHA the plan started from
 created: 2026-10-30 11:16 # YYYY-MM-DD HH:mm
-updated: 2026-10-30 15:12 # YYYY-MM-DD HH:mm  (bump on every edit)
+updated: 2026-10-30 16:05 # YYYY-MM-DD HH:mm  (bump on every edit)
 supersedes: ""           # plan_id this replaces, if any
 ---
 
@@ -138,6 +138,7 @@ reported rows in here after reviewing the diff). Write it as you finish, never i
 | 2026-10-30 | T4 | `scripts/deploy-test.sh`, `scripts/verify-deploy-release.mjs` | Added a secret-safe fallback to the current app container's configuration and verified secret precedence/log redaction; 6 deployment checks pass. The remote app currently has no DB configuration, so fallback alone cannot unblock deployment. | main |
 | 2026-10-30 15:06 | T5,T6 | Git release | Committed and pushed `4429b25` to Gitea `main`; Actions run 128 started. No SSH connection used. | main |
 | 2026-10-30 15:12 | T7 | Schema compatibility and deployment preflight | Run 128 reached MySQL but failed table-type validation on `kq_user`. Normalize integer display widths only, retain range/precision checks, and inspect existing tables before replacing the service. 14 DB tests and 10 deployment gates pass. | main |
+| 2026-10-30 16:05 | T7 | Legacy audit and upload-session startup repair | Runs 129/130 migrated the 20 managed tables but failed while reading the unbounded audit payload query and then stopped on an incompatible upload-session table. Paginate audit mirroring by primary-key batches, reuse canonical column types for upload-session checks, and include that table in the read-only deployment preflight. | main |
 
 ## Verification Evidence
 
@@ -177,6 +178,7 @@ here after fixing, so the same error logic is not repeated next time._
 | Time | Symptom | Root cause | Fix (files) | Guard added (test/assert/check) |
 | --- | --- | --- | --- | --- |
 | 2026-10-30 15:12 | Run 128 app restarts during schema bootstrap | Schema comparator treated MySQL integer display width metadata as a different type | Canonicalize integer display widths; add detailed mismatch errors and read-only schema preflight | MySQL 5.7 type fixtures, unsigned/range/precision rejection and SELECT-only preflight tests |
+| 2026-10-30 16:05 | Runs 129/130 fail after first relational import | Legacy audit mirroring selected the whole payload table; upload-session validation hid the actual existing field mismatch | Read audit rows with `id > cursor LIMIT 100`, report upload-session field names/types, and preflight all 21 relation tables plus `kq_upload_session` before replacement | 205-row paged mirror test, canonical type checks, upload-session DDL included in SELECT-only preflight |
 
 ## Completion Summary
 

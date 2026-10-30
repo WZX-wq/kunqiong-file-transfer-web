@@ -15,14 +15,16 @@ function fixture(limit = 5000) {
   return { directory, create, store: create() }
 }
 
-test('relational audit mirror avoids sorting the legacy audit table', async () => {
+test('relational audit mirror traverses large history in bounded primary-key pages', async () => {
   const queries = []
   const executions = []
-  const entries = [log('older'), log('newer', '2026-10-13T00:00:00.000Z')]
+  const entries = Array.from({ length: 205 }, (_, index) => log(`audit-${String(index).padStart(4, '0')}`))
   const pool = {
-    query: async sql => {
-      queries.push(sql)
-      return [entries.map(payload => ({ payload: JSON.stringify(payload) }))]
+    query: async (sql, values) => {
+      queries.push({ sql, values })
+      assert.match(sql, /ORDER BY id LIMIT 100$/)
+      assert.ok(!sql.includes('OFFSET'))
+      return [entries.filter(entry => !values.length || entry.id > values[0]).slice(0, 100).map(payload => ({ id: payload.id, payload: JSON.stringify(payload) }))]
     },
     execute: async (sql, values) => {
       executions.push({ sql, values })
@@ -34,9 +36,9 @@ test('relational audit mirror avoids sorting the legacy audit table', async () =
 
   await store.mirrorExistingLogs()
 
-  assert.deepEqual(queries, ['SELECT payload FROM kunqiong_audit_log'])
-  assert.equal(executions.length, 1)
-  assert.equal(executions[0].values.length, entries.length * 12)
+  assert.deepEqual(queries.map(item => item.values), [[], ['audit-0099'], ['audit-0199']])
+  assert.deepEqual(executions.map(item => item.values.length / 12), [100, 100, 5])
+  assert.deepEqual(executions.flatMap(item => item.values.filter((_, index) => index % 12 === 0)), entries.map(item => item.id))
 })
 
 test('purged history stays purged if rotation is interrupted before journal reset', () => {

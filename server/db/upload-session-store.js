@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import path from 'node:path'
 import { UPLOAD_SESSION_TTL_MS } from '../config.js'
 import { keyedDigest, protectCredential, revealCredential } from '../lib/private-key.js'
+import { canonicalColumnType } from './relational-schema.js'
 
 export const UPLOAD_SESSION_TABLE = 'kq_upload_session'
 const UPLOAD_SESSION_MIGRATION_KEY = '003-upload-session-storage'
@@ -89,10 +90,14 @@ export async function ensureUploadSessionTable(pool) {
       'SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
       [UPLOAD_SESSION_TABLE],
     )
-    const actualColumns = Object.fromEntries(columns.map(column => [column.COLUMN_NAME, String(column.COLUMN_TYPE).toLowerCase()]))
+    const actualColumns = Object.fromEntries(columns.map(column => [column.COLUMN_NAME, canonicalColumnType(column.COLUMN_TYPE)]))
     if (Object.keys(actualColumns).length !== Object.keys(REQUIRED_COLUMNS).length
-      || Object.entries(REQUIRED_COLUMNS).some(([name, type]) => actualColumns[name] !== type)) {
-      throw new Error('现有 kq_upload_session 字段与项目定义不一致，已停止启动')
+      || Object.keys(REQUIRED_COLUMNS).some(name => !(name in actualColumns))) {
+      throw new Error(`现有 kq_upload_session 字段与项目定义不一致，已停止启动：实际字段 ${Object.keys(actualColumns).join(', ')}`)
+    }
+    for (const [name, expected] of Object.entries(REQUIRED_COLUMNS)) {
+      if (actualColumns[name] === canonicalColumnType(expected)) continue
+      throw new Error(`现有 kq_upload_session 字段与项目定义不一致：${name} 实际为 ${actualColumns[name]}，需要 ${expected}`)
     }
     const [indexes] = await connection.execute(
       'SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',

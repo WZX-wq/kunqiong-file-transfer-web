@@ -86,10 +86,18 @@ export class DatabaseAuditStore {
   }
 
   async mirrorExistingLogs() {
-    const [rows] = await this.pool.query('SELECT payload FROM kunqiong_audit_log')
-    for (let offset = 0; offset < rows.length; offset += 100) {
-      const logs = rows.slice(offset, offset + 100).map(row => this.normalize(JSON.parse(row.payload))).filter(log => log.action)
+    // The legacy audit table can contain many large JSON payloads. Read it in
+    // bounded pages so MySQL statement execution limits and packet buffers do
+    // not abort startup during the one-time relational mirror.
+    const batchSize = 100
+    let cursor = null
+    while (true) {
+      const [rows] = await this.pool.query(`SELECT id, payload FROM kunqiong_audit_log${cursor === null ? '' : ' WHERE id > ?'} ORDER BY id LIMIT ${batchSize}`, cursor === null ? [] : [cursor])
+      if (!rows.length) break
+      const logs = rows.map(row => this.normalize(JSON.parse(row.payload))).filter(log => log.action)
       await this.insertRelational(logs)
+      cursor = rows.at(-1).id
+      if (rows.length < batchSize) break
     }
   }
 

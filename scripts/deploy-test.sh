@@ -296,11 +296,12 @@ const { databasePool } = await import("/app/server/state.js");
 const { inspectRelationalMigrationTarget } = await import("/app/server/db/relational-store.js");
 const { inspectExistingRelationalSchema } = await import("/app/server/db/apply-relational-schema.js");
 const { readFile } = await import("node:fs/promises");
+const { UPLOAD_SESSION_TABLE_SQL } = await import("/app/server/db/upload-session-store.js");
 try {
   const connection = await databasePool.getConnection();
   try {
     const schemaSql = await readFile("/app/docs/数据库设计-2026-10-29/03-现有功能关系表设计.sql", "utf8");
-    const schema = await inspectExistingRelationalSchema({ connection, schemaSql });
+    const schema = await inspectExistingRelationalSchema({ connection, schemaSql: schemaSql + ";\n" + UPLOAD_SESSION_TABLE_SQL });
     console.log(JSON.stringify({ event: "database_migration_preflight", ...schema, ...await inspectRelationalMigrationTarget(connection), passed: true }));
   }
   finally { connection.release(); }

@@ -123,7 +123,7 @@ export function makeIdempotentCreateStatement(statement) {
   return statement.replace(/^CREATE\s+TABLE\s+/i, 'CREATE TABLE IF NOT EXISTS ')
 }
 
-function canonicalColumnType(value) {
+export function canonicalColumnType(value) {
   // MySQL 5.7 reports integer display widths that MySQL 8 omits. They do not
   // change the integer range; retain unsigned/zerofill and all real precisions.
   return String(value).toLowerCase().trim().replace(/\s+/g, ' ')
