@@ -5,6 +5,7 @@ import { TeamPage } from './pages/team.jsx'
 import { WorkspacePage } from './pages/workspace-page.jsx'
 import { SharePage, ShareManagePage, CollectionSubmitPage, CollectionManagePage, TeamInvitePage } from './pages/public.jsx'
 import { WorkspaceApp } from './pages/workspace.jsx'
+import { LogIn, ShieldAlert, X } from 'lucide-react'
 import './styles.css'
 import { ACCOUNT_SESSION_EVENT, apiRequest, invalidateAccountSession } from './lib/api.js'
 import { setRecordOwner } from './lib/records.js'
@@ -40,6 +41,7 @@ function RoutePage() {
 
 function App() {
   const [sessionVersion, setSessionVersion] = React.useState(0)
+  const [sessionNotice, setSessionNotice] = React.useState('')
   React.useEffect(() => {
     // 后台使用独立管理员 Cookie，由 AdminPage 校验；普通账号过期不应重挂后台。
     if (window.location.pathname.startsWith('/admin')) return undefined
@@ -47,6 +49,8 @@ function App() {
     const changed = ({ detail }) => {
       userId = detail.userId
       setRecordOwner(userId)
+      if (detail.code === 'account_session_replaced') setSessionNotice(detail.message)
+      else if (userId) setSessionNotice('')
       window.clearTimeout(expiryTimer)
       if (userId && detail.expiresAt) {
         const remaining = new Date(detail.expiresAt).getTime() - Date.now()
@@ -76,7 +80,15 @@ function App() {
       document.removeEventListener('visibilitychange', refresh)
     }
   }, [])
-  return <RoutePage key={sessionVersion} />
+  return <>
+    <RoutePage key={sessionVersion} />
+    {sessionNotice && <div className="account-session-notice" role="alert">
+      <ShieldAlert size={17} aria-hidden="true" />
+      <span>{sessionNotice}</span>
+      <button type="button" className="secondary-button" onClick={() => { window.location.href = `/api/auth/login?return_to=${encodeURIComponent(window.location.href)}` }}><LogIn size={14} /> 重新登录</button>
+      <button type="button" className="ghost-icon" aria-label="关闭登录提示" onClick={() => setSessionNotice('')}><X size={16} /></button>
+    </div>}
+  </>
 }
 
 // Keep previously shared order links inside the account centre.

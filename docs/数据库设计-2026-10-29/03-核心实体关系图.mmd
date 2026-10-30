@@ -1,0 +1,18 @@
+erDiagram
+  kq_organizations |o--o{ kq_resources : owns
+  kq_resources ||--o{ kq_files : contains
+  kq_files ||--o{ kq_file_versions : versions
+  kq_resources ||--o| kq_collection_tasks : collection
+  kq_collection_tasks ||--o{ kq_collection_participants : roster
+  kq_collection_participants ||--o{ kq_collection_submissions : rounds
+  kq_collection_submissions ||--o{ kq_submission_items : materials
+  kq_submission_items ||--o{ kq_submission_files : attachments
+  kq_file_versions ||--o{ kq_submission_files : fixes_version
+  kq_submission_items ||--o{ kq_review_actions : review_history
+  kq_resources ||--o{ kq_delivery_releases : publishes
+  kq_delivery_releases ||--o{ kq_delivery_release_files : manifest
+  kq_resources ||--o{ kq_delivery_recipients : recipients
+  kq_distribution_batches ||--o{ kq_distribution_assignments : grants
+  kq_delivery_recipients ||--o{ kq_distribution_assignments : receives
+  kq_delivery_releases ||--o{ kq_delivery_events : events
+  kq_delivery_recipients |o--o{ kq_delivery_events : identifies

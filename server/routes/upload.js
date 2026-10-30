@@ -42,7 +42,7 @@ import { integerInput, textInput } from '../lib/input-validation.js'
 import { validateCollectionSubmissionInput } from '../lib/collection-forms.js'
 
 export function registerUploadRoutes(app) {
-  app.post('/api/upload-sessions', (req, res) => {
+  app.post('/api/upload-sessions', (req, res, next) => Promise.resolve().then(async () => {
   assertServiceWritable(req)
   const files = Array.isArray(req.body.files) ? req.body.files : []
   if (!files.length) return res.status(400).json({ message: '至少选择一个文件' })
@@ -134,17 +134,23 @@ export function registerUploadRoutes(app) {
     for (const [otherId, other] of [...uploadSessions]) {
       if (otherId !== sessionId && other.ownerGuestId === session.ownerGuestId && other.guestKey === session.guestKey && other.mode === session.mode && other.collectionToken === session.collectionToken && uploadSessionSignature(other.files) === signature) {
         if (other.completing) throw httpError(409, '相同文件正在进行安全检查，请等待原上传的结果')
-        if (other.completion?.status !== 'complete') discardUploadSession(other)
+        if (other.completion?.status !== 'complete') await discardUploadSession(other)
       }
     }
   }
   assertUploadCapacity(session)
   reserveUploadDisk(session)
   fs.mkdirSync(sessionDirectory, { recursive: true })
+  try {
+    await persistUploadSession(session)
+  } catch (error) {
+    releaseUploadDiskReservation(session)
+    removeDirectory(sessionDirectory)
+    throw error
+  }
   uploadSessions.set(sessionId, session)
-  persistUploadSession(session)
   res.status(201).json({ sessionId, chunkSize:session.chunkSize, uploaded: session.files.map((file) => ({ name: file.name, chunks: [] })) })
-})
+}).catch(next))
   app.post('/api/upload-sessions/:sessionId/chunks', requireUploadSessionOwner, prepareChunkUpload, chunkUpload.single('chunk'), async (req, res, next) => {
   let writing = false
   try {
@@ -208,13 +214,14 @@ export function registerUploadRoutes(app) {
     fs.writeFileSync(path.join(markerDirectory, `${chunkIndex}.done`), '')
     file.totalChunks = totalChunks
     file.chunks.add(chunkIndex)
+    await persistUploadSession(session)
     res.json({ ok: true, fileIndex, chunkIndex, uploadedChunks: file.chunks.size })
   } catch (error) {
     cleanupUploadedFiles(req.file ? [req.file] : [])
     next(error)
   } finally {
     if (writing) req.uploadSession.activeWrites = Math.max(0, (req.uploadSession.activeWrites || 0) - 1)
-    if (req.uploadSession.cancelled && !req.uploadSession.activeWrites) discardUploadSession(req.uploadSession)
+    if (req.uploadSession.cancelled && !req.uploadSession.activeWrites) discardUploadSession(req.uploadSession).catch(() => {})
   }
 })
   app.get('/api/upload-sessions/:sessionId', requireUploadSessionOwner, (req, res) => {
@@ -236,11 +243,11 @@ export function registerUploadRoutes(app) {
 })
   // 主动中止上传会话：客户端放弃/重开上传时调用，立即释放其预留额度，
   // 避免僵尸会话（中途失败后不再续传的会话）把游客配额占满到 TTL 过期。
-  app.delete('/api/upload-sessions/:sessionId', requireUploadSessionOwner, (req, res) => {
+  app.delete('/api/upload-sessions/:sessionId', requireUploadSessionOwner, (req, res, next) => Promise.resolve().then(async () => {
   if (req.uploadSession.completing) throw httpError(409, '文件正在处理，请等待处理结束后再操作')
-  discardUploadSession(req.uploadSession)
+  await discardUploadSession(req.uploadSession)
   res.status(204).end()
-})
+}).catch(next))
   app.post('/api/upload-sessions/:sessionId/complete', requireUploadSessionOwner, async (req, res, next) => {
   const session = req.uploadSession
   const background = req.body.background === true
@@ -255,7 +262,7 @@ export function registerUploadRoutes(app) {
     session.completing = true
     if (background) {
       session.completion = { status: 'scanning', startedAt: new Date().toISOString(), currentFile: '', fileIndex: 0, fileCount: session.files.length }
-      persistUploadSession(session)
+      await persistUploadSession(session)
       // Detach the lengthy scanner request from the browser's HTTP connection.
       // Repeated starts attach to the same job; GET only reports its state.
       void completeUpload(req, session, mergedFiles).then(() => {
@@ -277,15 +284,17 @@ export function registerUploadRoutes(app) {
         }
       }).finally(() => {
         session.completing = false
-        persistUploadSession(session)
+        return persistUploadSession(session)
+      }).catch(error => {
+        console.error(JSON.stringify({ event: 'upload_session_write_failed', code: error.code || 'DATABASE_WRITE_FAILED' }))
       })
       return res.status(202).json({ completion: publicUploadCompletion(session, req) })
     }
     try {
       const result = await completeUpload(req, session, mergedFiles)
-      releaseUploadDiskReservation(session)
-      uploadSessions.delete(session.id)
-      removeDirectory(session.directory)
+      session.completion = { status: 'complete', finishedAt: new Date().toISOString() }
+      await persistUploadSession(session)
+      await discardUploadSession(session)
       res.status(201).json(result)
     } finally { session.completing = false }
   } catch (error) { next(error) }
@@ -335,7 +344,7 @@ async function completeUpload(req, session, mergedFiles) {
   assertServiceWritable(req)
   if (session.completion) {
     session.completion = { ...session.completion, status: 'publishing', currentFile: '' }
-    persistUploadSession(session)
+    await persistUploadSession(session)
   }
   if (session.mode === 'collection') {
     const task = metadata.collections.find((item) => item.token === session.collectionToken)

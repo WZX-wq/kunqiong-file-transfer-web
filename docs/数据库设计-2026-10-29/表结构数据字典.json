@@ -1,0 +1,4388 @@
+{
+  "version": "2026-10-29",
+  "status": "proposed",
+  "current_tables": [
+    {
+      "name": "kunqiong_app_state",
+      "source": "server/lib/metadata-store.js",
+      "line": 266,
+      "ddl": "CREATE TABLE IF NOT EXISTS kunqiong_app_state (\n      state_key VARCHAR(64) NOT NULL PRIMARY KEY,\n      schema_version INT NOT NULL DEFAULT 1,\n      revision BIGINT NOT NULL DEFAULT 0,\n      payload LONGTEXT NOT NULL,\n      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    },
+    {
+      "name": "kunqiong_audit_log",
+      "source": "server/lib/audit-store.js",
+      "line": 37,
+      "ddl": "CREATE TABLE IF NOT EXISTS kunqiong_audit_log (\n      id VARCHAR(64) NOT NULL PRIMARY KEY,\n      critical TINYINT NOT NULL,\n      created_at VARCHAR(32) NOT NULL,\n      payload LONGTEXT NOT NULL,\n      INDEX audit_time (critical, created_at)\n    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    }
+  ],
+  "proposed_tables": [
+    {
+      "name": "kq_users",
+      "label": "用户",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "metadata.users",
+      "purpose": "保留现有外部账号标识，不重新分配用户 ID",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "沿用现有用户 ID，区分大小写",
+          "reference": null
+        },
+        {
+          "name": "username",
+          "sql": "VARCHAR(160) NOT NULL",
+          "description": "账号展示名，不作为授权凭据",
+          "reference": null
+        },
+        {
+          "name": "nickname",
+          "sql": "VARCHAR(80) NOT NULL",
+          "description": "昵称",
+          "reference": null
+        },
+        {
+          "name": "email",
+          "sql": "VARCHAR(254) NULL",
+          "description": "规范化邮箱，绑定验证后写入",
+          "reference": null
+        },
+        {
+          "name": "phone",
+          "sql": "VARCHAR(40) NULL",
+          "description": "规范化手机号码",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL DEFAULT 'active'",
+          "description": "active / disabled",
+          "reference": null
+        },
+        {
+          "name": "profile_json",
+          "sql": "JSON NOT NULL",
+          "description": "头像、登录来源、登录方式等现有资料",
+          "reference": null
+        },
+        {
+          "name": "plan_json",
+          "sql": "JSON NOT NULL",
+          "description": "个人套餐与起止时间快照，沿用现有权益语义",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间，UTC",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间，UTC",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "INDEX ix_user_email (email)",
+        "INDEX ix_user_phone (phone)"
+      ],
+      "checks": [],
+      "note": "不假设现有历史联系方式全局唯一；迁移前先检查重复。外部登录不新增本地密码字段。"
+    },
+    {
+      "name": "kq_organizations",
+      "label": "团队",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "metadata.organizations",
+      "purpose": "组织拥有团队套餐与品牌配置",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "现有组织 ID",
+          "reference": null
+        },
+        {
+          "name": "slug",
+          "sql": "VARCHAR(80) NOT NULL",
+          "description": "团队专属路径",
+          "reference": null
+        },
+        {
+          "name": "name",
+          "sql": "VARCHAR(80) NOT NULL",
+          "description": "团队名",
+          "reference": null
+        },
+        {
+          "name": "owner_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "当前所有者",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "plan_json",
+          "sql": "JSON NOT NULL",
+          "description": "组织套餐与有效期，不随所有权转让丢失",
+          "reference": null
+        },
+        {
+          "name": "branding_json",
+          "sql": "JSON NOT NULL",
+          "description": "品牌开关、名称、说明、Logo 引用与修订号",
+          "reference": null
+        },
+        {
+          "name": "row_version",
+          "sql": "BIGINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "并发控制版本",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_org_slug (slug)",
+        "INDEX ix_org_owner (owner_user_id)"
+      ],
+      "checks": [],
+      "note": ""
+    },
+    {
+      "name": "kq_organization_members",
+      "label": "团队成员与入团状态",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "organizations[].members[]",
+      "purpose": "保留邀请、申请、审核和正式成员状态",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "成员记录 ID",
+          "reference": null
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "所属组织",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "绑定账号，待邀请联系人可为空",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "identity_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "user:ID 或已规范化联系人的稳定摘要",
+          "reference": null
+        },
+        {
+          "name": "role",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "owner / admin / member",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "invited / requested / active / removed",
+          "reference": null
+        },
+        {
+          "name": "contact_snapshot_json",
+          "sql": "JSON NOT NULL",
+          "description": "邀请目标、显示名、来源及申请说明快照",
+          "reference": null
+        },
+        {
+          "name": "invitation_token_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL",
+          "description": "邀请凭据摘要",
+          "reference": null
+        },
+        {
+          "name": "expires_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "邀请到期时间",
+          "reference": null
+        },
+        {
+          "name": "requested_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "申请时间",
+          "reference": null
+        },
+        {
+          "name": "reviewed_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "处理时间",
+          "reference": null
+        },
+        {
+          "name": "joined_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "入团时间",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "记录创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_member_identity (organization_id, identity_key)",
+        "INDEX ix_member_user (user_id, status)"
+      ],
+      "checks": [],
+      "note": "组织所有者、owner 成员角色与交接结果必须在同一事务更新，保证仅有一个有效所有者。"
+    },
+    {
+      "name": "kq_ownership_handovers",
+      "label": "所有权交接",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "organizations[].ownershipHandovers[]",
+      "purpose": "保存发起、接收、取消和失效记录",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "交接 ID",
+          "reference": null
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "组织",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "from_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "原所有者",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "to_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "接收者",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "pending / accepted / declined / canceled / expired / invalidated",
+          "reference": null
+        },
+        {
+          "name": "initiated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "发起时间",
+          "reference": null
+        },
+        {
+          "name": "expires_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "待接收有效期",
+          "reference": null
+        },
+        {
+          "name": "resolved_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "处理时间",
+          "reference": null
+        },
+        {
+          "name": "resolved_by_user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "操作人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "reason",
+          "sql": "VARCHAR(240) NULL",
+          "description": "处理原因",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "INDEX ix_handover_pending (organization_id, status, expires_at)"
+      ],
+      "checks": [],
+      "note": ""
+    },
+    {
+      "name": "kq_auth_sessions",
+      "label": "登录会话",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "metadata.sessions",
+      "purpose": "替代全量快照中的登录会话",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "内部会话 ID，不能直接用作 Cookie 凭据",
+          "reference": null
+        },
+        {
+          "name": "token_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL",
+          "description": "Cookie 随机令牌摘要",
+          "reference": null
+        },
+        {
+          "name": "user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "账号",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "provider_credential_ciphertext",
+          "sql": "MEDIUMTEXT NULL",
+          "description": "确需保留的上游凭据密文与密钥版本封装",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "expires_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "过期时间",
+          "reference": null
+        },
+        {
+          "name": "revoked_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "撤销时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_session_token (token_hash)",
+        "INDEX ix_session_user (user_id, expires_at)",
+        "INDEX ix_session_expiry (expires_at)"
+      ],
+      "checks": [],
+      "note": "上游凭据使用应用现有加密体系迁移；文档不包含任何真实令牌或密钥。"
+    },
+    {
+      "name": "kq_verification_codes",
+      "label": "绑定与身份验证挑战",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "metadata.verificationCodes",
+      "purpose": "保留验证码哈希与尝试次数；新增领取验证按场景隔离",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "挑战 ID",
+          "reference": null
+        },
+        {
+          "name": "scene",
+          "sql": "VARCHAR(40) NOT NULL",
+          "description": "bind / claim / handoff，当前代码仅 bind",
+          "reference": null
+        },
+        {
+          "name": "target_type",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "email / phone",
+          "reference": null
+        },
+        {
+          "name": "target_digest",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL",
+          "description": "规范化目标的带密钥摘要",
+          "reference": null
+        },
+        {
+          "name": "target_ciphertext",
+          "sql": "TEXT NULL",
+          "description": "必要时加密保存发送目标",
+          "reference": null
+        },
+        {
+          "name": "code_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL",
+          "description": "验证码摘要",
+          "reference": null
+        },
+        {
+          "name": "attempts",
+          "sql": "SMALLINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "验证尝试次数",
+          "reference": null
+        },
+        {
+          "name": "expires_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "有效期",
+          "reference": null
+        },
+        {
+          "name": "consumed_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "消费时间",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "INDEX ix_challenge_target (target_digest, scene, expires_at)",
+        "INDEX ix_challenge_expiry (expires_at)"
+      ],
+      "checks": [],
+      "note": ""
+    },
+    {
+      "name": "kq_upgrade_orders",
+      "label": "套餐订单",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "metadata.upgradeOrders",
+      "purpose": "业务订单独立保存，支付成功处理保持幂等",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "订单内部 ID",
+          "reference": null
+        },
+        {
+          "name": "order_no",
+          "sql": "VARCHAR(80) NOT NULL",
+          "description": "本地业务订单号",
+          "reference": null
+        },
+        {
+          "name": "user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "购买账号",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "若订单直接对应团队",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "plan_id",
+          "sql": "VARCHAR(40) NOT NULL",
+          "description": "套餐标识",
+          "reference": null
+        },
+        {
+          "name": "amount_minor",
+          "sql": "BIGINT UNSIGNED NULL",
+          "description": "金额最小货币单位；未确定价格为空",
+          "reference": null
+        },
+        {
+          "name": "currency",
+          "sql": "CHAR(3) NOT NULL DEFAULT 'CNY'",
+          "description": "币种",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(30) NOT NULL",
+          "description": "沿用现有订单状态；迁移时明确状态映射",
+          "reference": null
+        },
+        {
+          "name": "provider",
+          "sql": "VARCHAR(40) NOT NULL",
+          "description": "支付提供方",
+          "reference": null
+        },
+        {
+          "name": "provider_order_no",
+          "sql": "VARCHAR(120) NULL",
+          "description": "第三方订单号",
+          "reference": null
+        },
+        {
+          "name": "plan_snapshot_json",
+          "sql": "JSON NOT NULL",
+          "description": "套餐、权益天数与来源快照",
+          "reference": null
+        },
+        {
+          "name": "provider_payload_json",
+          "sql": "JSON NULL",
+          "description": "脱敏支付响应，不保存支付密码",
+          "reference": null
+        },
+        {
+          "name": "query_credential_ciphertext",
+          "sql": "TEXT NULL",
+          "description": "有保留期限的查单凭据密文",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        },
+        {
+          "name": "paid_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "支付成功时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_order_no (order_no)",
+        "UNIQUE KEY uq_provider_order (provider, provider_order_no)",
+        "INDEX ix_order_user (user_id, created_at)"
+      ],
+      "checks": [],
+      "note": "现有浮点金额转换为最小单位需明确币种、精度与舍入规则，迁移不得直接乘 100 后静默截断。"
+    },
+    {
+      "name": "kq_messages",
+      "label": "站内消息",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "metadata.messages[userId][]",
+      "purpose": "保留现有消息分类、动作与已读状态",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "现有消息 ID，可能在不同账号重复",
+          "reference": null
+        },
+        {
+          "name": "user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "接收人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "category",
+          "sql": "VARCHAR(30) NOT NULL",
+          "description": "system / official / 业务分类",
+          "reference": null
+        },
+        {
+          "name": "event_type",
+          "sql": "VARCHAR(80) NULL",
+          "description": "事件类型",
+          "reference": null
+        },
+        {
+          "name": "title",
+          "sql": "VARCHAR(160) NOT NULL",
+          "description": "标题",
+          "reference": null
+        },
+        {
+          "name": "body",
+          "sql": "TEXT NOT NULL",
+          "description": "正文",
+          "reference": null
+        },
+        {
+          "name": "action_json",
+          "sql": "JSON NULL",
+          "description": "actionUrl / actionType / actionId",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "read_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "已读时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (user_id, id)",
+        "INDEX ix_message_unread (user_id, read_at, created_at)"
+      ],
+      "checks": [],
+      "note": ""
+    },
+    {
+      "name": "kq_settings",
+      "label": "用户与系统配置",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "notificationSettings / users[].fileCleanup / systemConfig",
+      "purpose": "小规模可变配置保留 JSON；系统配置与用户配置使用不同作用域",
+      "columns": [
+        {
+          "name": "scope_key",
+          "sql": "VARCHAR(160) NOT NULL",
+          "description": "system 或 user:ID，服务端构造",
+          "reference": null
+        },
+        {
+          "name": "setting_key",
+          "sql": "VARCHAR(80) NOT NULL",
+          "description": "notification / cleanup / runtime_config 等",
+          "reference": null
+        },
+        {
+          "name": "user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "用户配置所属账号，系统配置为空",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "value_json",
+          "sql": "JSON NOT NULL",
+          "description": "配置值，沿用默认值与规范化规则",
+          "reference": null
+        },
+        {
+          "name": "row_version",
+          "sql": "BIGINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "并发版本",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (scope_key, setting_key)"
+      ],
+      "checks": [],
+      "note": ""
+    },
+    {
+      "name": "kq_account_records",
+      "label": "账号收发记录投影",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "metadata.records[userId][]",
+      "purpose": "保留别名与历史入口，作为可重建列表投影",
+      "columns": [
+        {
+          "name": "user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "记录所属人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "record_id",
+          "sql": "VARCHAR(180) NOT NULL",
+          "description": "沿用现有记录 ID",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "可关联的业务资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "scope",
+          "sql": "VARCHAR(40) NOT NULL",
+          "description": "my_sent / my_collections 等现有视图范围",
+          "reference": null
+        },
+        {
+          "name": "alias",
+          "sql": "VARCHAR(160) NULL",
+          "description": "个人别名",
+          "reference": null
+        },
+        {
+          "name": "snapshot_json",
+          "sql": "JSON NOT NULL",
+          "description": "旧记录展示快照；管理令牌须脱敏或加密封装",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (user_id, record_id)",
+        "INDEX ix_record_view (user_id, scope, updated_at)"
+      ],
+      "checks": [],
+      "note": "投影中的文件统计、状态不能成为授权或容量计费的权威来源。"
+    },
+    {
+      "name": "kq_guest_usage",
+      "label": "游客使用量",
+      "group": "账号与团队",
+      "phase": "基础规范化",
+      "source": "metadata.guestUsage",
+      "purpose": "保留游客额度累计，独立于登录账号",
+      "columns": [
+        {
+          "name": "guest_key_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY",
+          "description": "游客稳定标识摘要",
+          "reference": null
+        },
+        {
+          "name": "bytes_used",
+          "sql": "BIGINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "累计字节数",
+          "reference": null
+        },
+        {
+          "name": "uploads",
+          "sql": "BIGINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "累计上传次数",
+          "reference": null
+        },
+        {
+          "name": "first_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "首次记录时间",
+          "reference": null
+        },
+        {
+          "name": "last_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "最近记录时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "INDEX ix_guest_last (last_at)"
+      ],
+      "checks": [],
+      "note": ""
+    },
+    {
+      "name": "kq_resources",
+      "label": "统一业务资源",
+      "group": "文件与交付",
+      "phase": "基础规范化",
+      "source": "metadata.shares / metadata.collections",
+      "purpose": "分享、收集和团队文件统一所有权、项目、状态与回收站",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "保留原资源 ID",
+          "reference": null
+        },
+        {
+          "name": "kind",
+          "sql": "VARCHAR(30) NOT NULL",
+          "description": "share / collection / team_file",
+          "reference": null
+        },
+        {
+          "name": "title",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "资源标题",
+          "reference": null
+        },
+        {
+          "name": "owner_user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "登录所有者",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "owner_guest_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL",
+          "description": "匿名所有者摘要，与账号所有者二选一",
+          "reference": null
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "资源归属团队；品牌团队不等于归属团队",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "branding_organization_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "展示品牌的团队",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "project_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "后续所属项目",
+          "reference": "kq_projects.id"
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "active / closed / deleted",
+          "reference": null
+        },
+        {
+          "name": "close_reason",
+          "sql": "VARCHAR(60) NULL",
+          "description": "expired / manual / trash / trash_restore 等",
+          "reference": null
+        },
+        {
+          "name": "access_policy_json",
+          "sql": "JSON NULL",
+          "description": "域名、组织范围、预览类型、水印等声明；服务端实施",
+          "reference": null
+        },
+        {
+          "name": "manage_token_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL",
+          "description": "匿名管理凭据摘要；账号资源仍需登录鉴权",
+          "reference": null
+        },
+        {
+          "name": "retention_until",
+          "sql": "DATETIME(3) NULL",
+          "description": "物理文件保留截止，与分享有效期分开",
+          "reference": null
+        },
+        {
+          "name": "deleted_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "手动移入回收站时间",
+          "reference": null
+        },
+        {
+          "name": "deleted_by_user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "删除操作者",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "trash_expires_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "可恢复窗口截止",
+          "reference": null
+        },
+        {
+          "name": "row_version",
+          "sql": "BIGINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "资源并发版本",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "INDEX ix_resource_owner (owner_user_id, status, updated_at)",
+        "INDEX ix_resource_org (organization_id, status, updated_at)",
+        "INDEX ix_resource_trash (status, trash_expires_at)",
+        "UNIQUE KEY uq_manage_token (manage_token_hash)"
+      ],
+      "checks": [
+        "CHECK ((owner_user_id IS NOT NULL AND owner_guest_hash IS NULL) OR (owner_user_id IS NULL AND owner_guest_hash IS NOT NULL))"
+      ],
+      "note": "迁移匿名资源须补充稳定所有者标识。恢复仅恢复数据与归属，资源保持关闭，避免自动重开公开访问。"
+    },
+    {
+      "name": "kq_files",
+      "label": "逻辑文件",
+      "group": "文件与交付",
+      "phase": "基础规范化",
+      "source": "shares[].files[] / collections[].submissions[].files[]",
+      "purpose": "分离用户看到的文件与物理版本，支持换稿",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "新增稳定逻辑文件 ID，现有数组索引需建立映射",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "所属业务资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "display_name",
+          "sql": "VARCHAR(512) NOT NULL",
+          "description": "展示名称",
+          "reference": null
+        },
+        {
+          "name": "relative_path",
+          "sql": "TEXT NOT NULL",
+          "description": "安全相对路径，仅用于展示与整理",
+          "reference": null
+        },
+        {
+          "name": "latest_version_no",
+          "sql": "INT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "已成功发布的最新版本号缓存",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_file_resource (id, resource_id)",
+        "INDEX ix_file_resource (resource_id)"
+      ],
+      "checks": [],
+      "note": ""
+    },
+    {
+      "name": "kq_file_versions",
+      "label": "不可变文件版本",
+      "group": "文件与交付",
+      "phase": "基础规范化",
+      "source": "嵌套文件对象；版本号为拟新增",
+      "purpose": "每个版本对应一份物理内容，原版本不被新稿覆盖",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "版本 ID",
+          "reference": null
+        },
+        {
+          "name": "file_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "逻辑文件 ID",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "资源 ID，用组合外键防止串资源",
+          "reference": null
+        },
+        {
+          "name": "version_no",
+          "sql": "INT UNSIGNED NOT NULL",
+          "description": "同一逻辑文件递增版本",
+          "reference": null
+        },
+        {
+          "name": "storage_backend",
+          "sql": "VARCHAR(30) NOT NULL DEFAULT 'local'",
+          "description": "local 或后续对象存储适配器",
+          "reference": null
+        },
+        {
+          "name": "storage_key",
+          "sql": "TEXT NOT NULL",
+          "description": "后端内部位置，不作为公开 URL",
+          "reference": null
+        },
+        {
+          "name": "storage_fingerprint",
+          "sql": "BINARY(32) NOT NULL",
+          "description": "SHA256(backend + 分隔符 + storage_key)，应用计算",
+          "reference": null
+        },
+        {
+          "name": "storage_owner_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "保留当前物理存储所有者语义",
+          "reference": null
+        },
+        {
+          "name": "original_name",
+          "sql": "VARCHAR(512) NOT NULL",
+          "description": "原文件名",
+          "reference": null
+        },
+        {
+          "name": "byte_size",
+          "sql": "BIGINT UNSIGNED NOT NULL",
+          "description": "实际字节数，按保留版本计容量",
+          "reference": null
+        },
+        {
+          "name": "mime_type",
+          "sql": "VARCHAR(160) NOT NULL",
+          "description": "检测或声明的 MIME",
+          "reference": null
+        },
+        {
+          "name": "content_sha256",
+          "sql": "BINARY(32) NULL",
+          "description": "内容完整性校验，不默认全局去重",
+          "reference": null
+        },
+        {
+          "name": "scan_status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "unscanned / approved / blocked / failed，安全扫描专用",
+          "reference": null
+        },
+        {
+          "name": "scan_meta_json",
+          "sql": "JSON NULL",
+          "description": "扫描引擎、时间与结果",
+          "reference": null
+        },
+        {
+          "name": "storage_state",
+          "sql": "VARCHAR(20) NOT NULL DEFAULT 'present'",
+          "description": "present / purge_pending / purged",
+          "reference": null
+        },
+        {
+          "name": "uploaded_by_user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "上传账号，匿名为空",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "版本创建时间",
+          "reference": null
+        },
+        {
+          "name": "purged_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "实际删除字节时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_file_version (file_id, version_no)",
+        "UNIQUE KEY uq_version_resource (id, resource_id)",
+        "UNIQUE KEY uq_storage_key (storage_fingerprint)",
+        "INDEX ix_version_purge (storage_state, created_at)"
+      ],
+      "checks": [
+        "CHECK (version_no > 0)"
+      ],
+      "note": "组合外键 (file_id, resource_id) → files(id, resource_id)。扫描通过不等于业务验收通过。"
+    },
+    {
+      "name": "kq_share_links",
+      "label": "分享入口与访问策略",
+      "group": "文件与交付",
+      "phase": "基础规范化",
+      "source": "metadata.shares",
+      "purpose": "保留原分享链接，后续切换交付发布版本",
+      "columns": [
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "分享资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "public_token_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL",
+          "description": "公开入口令牌摘要",
+          "reference": null
+        },
+        {
+          "name": "pickup_code_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL",
+          "description": "取件码带密钥摘要，输入限流仍需保留",
+          "reference": null
+        },
+        {
+          "name": "password_hash",
+          "sql": "VARCHAR(255) NULL",
+          "description": "提取密码的慢哈希封装",
+          "reference": null
+        },
+        {
+          "name": "access_mode",
+          "sql": "VARCHAR(30) NOT NULL",
+          "description": "public / recipients / organization",
+          "reference": null
+        },
+        {
+          "name": "expires_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "链接过期时间",
+          "reference": null
+        },
+        {
+          "name": "download_limit",
+          "sql": "BIGINT UNSIGNED NULL",
+          "description": "下载总次数上限，空表示不限",
+          "reference": null
+        },
+        {
+          "name": "download_count",
+          "sql": "BIGINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "成功下载计数",
+          "reference": null
+        },
+        {
+          "name": "row_version",
+          "sql": "BIGINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "修改与次数控制版本",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_share_token (public_token_hash)",
+        "UNIQUE KEY uq_pickup_code (pickup_code_hash)",
+        "INDEX ix_share_expiry (expires_at)"
+      ],
+      "checks": [],
+      "note": "下载次数预留与完成结算仍需应用事务；保存摘要后无法从摘要恢复原链接，分享给所有者展示可另用受控加密字段或延续可计算公开 ID。"
+    },
+    {
+      "name": "kq_delivery_releases",
+      "label": "一次对外交付的版本",
+      "group": "文件与交付",
+      "phase": "交付闭环",
+      "source": "D03；原分享文件集合深化",
+      "purpose": "整包文件发布快照，回执绑定此版本",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "交付版本 ID",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "分享资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "release_no",
+          "sql": "INT UNSIGNED NOT NULL",
+          "description": "整包版本号",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "draft / published / superseded / revoked",
+          "reference": null
+        },
+        {
+          "name": "manifest_digest",
+          "sql": "BINARY(32) NULL",
+          "description": "排序后的文件版本清单摘要",
+          "reference": null
+        },
+        {
+          "name": "created_by_user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "发起人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "published_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "发布时间",
+          "reference": null
+        },
+        {
+          "name": "revoked_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "撤销时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_release_no (resource_id, release_no)",
+        "UNIQUE KEY uq_release_resource (id, resource_id)",
+        "INDEX ix_release_current (resource_id, status)"
+      ],
+      "checks": [
+        "CHECK (release_no > 0)"
+      ],
+      "note": "同一资源只能有一个当前 published 版本，由锁定 resources 行的发布事务保证。正在下载的请求固定原版本。"
+    },
+    {
+      "name": "kq_delivery_release_files",
+      "label": "交付版本文件清单",
+      "group": "文件与交付",
+      "phase": "交付闭环",
+      "source": "D03 / D01",
+      "purpose": "固定整包版本包含哪些不可变文件版本",
+      "columns": [
+        {
+          "name": "release_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "交付版本",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "分享资源",
+          "reference": null
+        },
+        {
+          "name": "file_version_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "固定文件版本",
+          "reference": null
+        },
+        {
+          "name": "sort_order",
+          "sql": "INT NOT NULL DEFAULT 0",
+          "description": "显示顺序",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (release_id, file_version_id)"
+      ],
+      "checks": [],
+      "note": "组合外键分别限定 release 与 file_version 属于同一 resource。"
+    },
+    {
+      "name": "kq_delivery_recipients",
+      "label": "资源收件身份",
+      "group": "文件与交付",
+      "phase": "基础规范化",
+      "source": "shares[].recipientUserIds / recipientContacts",
+      "purpose": "定向授权身份，可绑定账号或经验证外部身份",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "收件授权 ID",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "分享资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "principal_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "user:ID 或 external:摘要；姓名不能作为此键",
+          "reference": null
+        },
+        {
+          "name": "user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "已绑定账号",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "external_identity_digest",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL",
+          "description": "外部身份带密钥摘要",
+          "reference": null
+        },
+        {
+          "name": "contact_ciphertext",
+          "sql": "TEXT NULL",
+          "description": "必要的联系方式密文",
+          "reference": null
+        },
+        {
+          "name": "display_name",
+          "sql": "VARCHAR(160) NULL",
+          "description": "发布时展示名快照",
+          "reference": null
+        },
+        {
+          "name": "verified_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "外部身份验证时间；每次访问仍查会话",
+          "reference": null
+        },
+        {
+          "name": "revoked_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "授权撤销时间",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_recipient_principal (resource_id, principal_key)",
+        "UNIQUE KEY uq_recipient_resource (id, resource_id)",
+        "INDEX ix_recipient_user (user_id, revoked_at)"
+      ],
+      "checks": [
+        "CHECK ((user_id IS NOT NULL AND external_identity_digest IS NULL) OR (user_id IS NULL AND external_identity_digest IS NOT NULL))"
+      ],
+      "note": "当前批量分发要求匹配已绑定账号；外部验证领取是规划扩展，不表示已经支持。"
+    },
+    {
+      "name": "kq_collection_templates",
+      "label": "收集模板版本",
+      "group": "收集工作流",
+      "phase": "收集闭环",
+      "source": "collectionTemplates；当前前端还使用 localStorage 结构复用",
+      "purpose": "版本化保存表单、材料清单、条件与整理规则",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "模板版本 ID",
+          "reference": null
+        },
+        {
+          "name": "template_key",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "跨版本稳定模板标识",
+          "reference": null
+        },
+        {
+          "name": "owner_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "模板所有者",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "团队模板范围",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "version_no",
+          "sql": "INT UNSIGNED NOT NULL",
+          "description": "模板版本号",
+          "reference": null
+        },
+        {
+          "name": "name",
+          "sql": "VARCHAR(160) NOT NULL",
+          "description": "模板名称",
+          "reference": null
+        },
+        {
+          "name": "schema_json",
+          "sql": "JSON NOT NULL",
+          "description": "字段、材料项、样例、简单条件与命名规则，保留稳定 item key",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "版本创建时间",
+          "reference": null
+        },
+        {
+          "name": "archived_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "停用时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_template_version (template_key, version_no)",
+        "INDEX ix_template_owner (owner_user_id, created_at)"
+      ],
+      "checks": [
+        "CHECK (version_no > 0)"
+      ],
+      "note": "schema_json 只保存变化频繁且随版本整体读取的定义；需按字段统计时再拆字段表。不能把当前本地模板等同云端跨设备模板。"
+    },
+    {
+      "name": "kq_collection_tasks",
+      "label": "收集任务",
+      "group": "收集工作流",
+      "phase": "收集闭环",
+      "source": "metadata.collections",
+      "purpose": "承接现有任务，并固定要求快照",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "等于所属 collection 资源 ID",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "template_version_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "来源模板版本",
+          "reference": "kq_collection_templates.id"
+        },
+        {
+          "name": "public_token_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL",
+          "description": "提交入口凭据摘要",
+          "reference": null
+        },
+        {
+          "name": "description",
+          "sql": "TEXT NOT NULL",
+          "description": "收集说明",
+          "reference": null
+        },
+        {
+          "name": "requirements_json",
+          "sql": "JSON NOT NULL",
+          "description": "材料项、表单字段、条件与命名要求快照",
+          "reference": null
+        },
+        {
+          "name": "requirements_version",
+          "sql": "INT UNSIGNED NOT NULL DEFAULT 1",
+          "description": "任务要求修订号",
+          "reference": null
+        },
+        {
+          "name": "allowed_types_json",
+          "sql": "JSON NOT NULL",
+          "description": "允许格式集合",
+          "reference": null
+        },
+        {
+          "name": "max_file_bytes",
+          "sql": "BIGINT UNSIGNED NOT NULL",
+          "description": "单文件限制",
+          "reference": null
+        },
+        {
+          "name": "capacity_bytes",
+          "sql": "BIGINT UNSIGNED NULL",
+          "description": "任务实际容量限制",
+          "reference": null
+        },
+        {
+          "name": "deadline",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "提交截止时间",
+          "reference": null
+        },
+        {
+          "name": "roster_mode",
+          "sql": "VARCHAR(20) NOT NULL DEFAULT 'open'",
+          "description": "open / roster",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_collection_token (public_token_hash)",
+        "INDEX ix_collection_deadline (deadline)"
+      ],
+      "checks": [
+        "CHECK (requirements_version > 0)",
+        "CHECK (max_file_bytes > 0)"
+      ],
+      "note": "材料和字段定义放快照 JSON；客户端 item key 在任务范围内唯一，由服务端校验引用、条件循环及必交规则。旧轮次保存采用时的要求快照。"
+    },
+    {
+      "name": "kq_collection_participants",
+      "label": "应交名单与参与身份",
+      "group": "收集工作流",
+      "phase": "收集闭环",
+      "source": "C03 新增名单；现有 participantKey / submitterUserId 可迁移",
+      "purpose": "按稳定身份汇总进度，匿名按独立凭据绑定",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "参与身份 ID",
+          "reference": null
+        },
+        {
+          "name": "task_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "任务",
+          "reference": "kq_collection_tasks.id"
+        },
+        {
+          "name": "principal_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "账号 ID 或游客稳定摘要，不使用姓名去重",
+          "reference": null
+        },
+        {
+          "name": "business_key",
+          "sql": "VARCHAR(120) NULL",
+          "description": "名单业务编号，空代表开放收集的非名单项",
+          "reference": null
+        },
+        {
+          "name": "user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "登录参与者",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "display_name",
+          "sql": "VARCHAR(160) NOT NULL",
+          "description": "姓名或展示名",
+          "reference": null
+        },
+        {
+          "name": "contact_ciphertext",
+          "sql": "TEXT NULL",
+          "description": "用于提醒的联系方式密文",
+          "reference": null
+        },
+        {
+          "name": "entry_token_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL",
+          "description": "个人入口凭据摘要",
+          "reference": null
+        },
+        {
+          "name": "assignee_json",
+          "sql": "JSON NULL",
+          "description": "外部角色供材分工，仅存受控的材料 key 与身份范围",
+          "reference": null
+        },
+        {
+          "name": "requirements_snapshot_json",
+          "sql": "JSON NULL",
+          "description": "按本人答案计算后的本轮要求，可重算核对",
+          "reference": null
+        },
+        {
+          "name": "completion_state",
+          "sql": "VARCHAR(30) NOT NULL DEFAULT 'not_submitted'",
+          "description": "not_submitted / incomplete / pending_review / returned / approved 缓存",
+          "reference": null
+        },
+        {
+          "name": "row_version",
+          "sql": "BIGINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "防并发覆盖",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "加入任务时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "最近变化",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_participant_principal (task_id, principal_key)",
+        "UNIQUE KEY uq_participant_business (task_id, business_key)",
+        "UNIQUE KEY uq_participant_task (id, task_id)",
+        "UNIQUE KEY uq_participant_entry (entry_token_hash)",
+        "INDEX ix_participant_progress (task_id, completion_state)"
+      ],
+      "checks": [],
+      "note": "进度是可重建缓存，统计分母来自应交名单；多次提交不重复计人数，查询仍检查具体任务授权。"
+    },
+    {
+      "name": "kq_collection_submissions",
+      "label": "个人草稿与提交轮次",
+      "group": "收集工作流",
+      "phase": "收集闭环",
+      "source": "collections[].submissions[]；跨端草稿和轮次为扩展",
+      "purpose": "草稿可修改，正式提交固定轮次，退回补交新建下一轮",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "提交或草稿 ID",
+          "reference": null
+        },
+        {
+          "name": "task_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "任务",
+          "reference": null
+        },
+        {
+          "name": "participant_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "当前任务参与者",
+          "reference": null
+        },
+        {
+          "name": "round_no",
+          "sql": "INT UNSIGNED NOT NULL",
+          "description": "个人提交轮次",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "draft / submitted / returned / approved / superseded",
+          "reference": null
+        },
+        {
+          "name": "answers_json",
+          "sql": "JSON NOT NULL",
+          "description": "本轮表单答案",
+          "reference": null
+        },
+        {
+          "name": "requirements_snapshot_json",
+          "sql": "JSON NOT NULL",
+          "description": "采用时的完整定义与实际适用项",
+          "reference": null
+        },
+        {
+          "name": "idempotency_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "提交幂等键",
+          "reference": null
+        },
+        {
+          "name": "row_version",
+          "sql": "BIGINT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "双端保存 CAS 版本",
+          "reference": null
+        },
+        {
+          "name": "submitted_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "正式提交时间",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_submission_round (participant_id, round_no)",
+        "UNIQUE KEY uq_submission_retry (task_id, participant_id, idempotency_key)",
+        "UNIQUE KEY uq_submission_task (id, task_id)",
+        "INDEX ix_submission_state (task_id, status, submitted_at)"
+      ],
+      "checks": [
+        "CHECK (round_no > 0)"
+      ],
+      "note": "组合外键 (participant_id, task_id) 限定同任务。正式提交后文件关联不可原位覆盖；审核改变状态而不改内容。每个参与者最多一份活动草稿由锁定 participant 行保证。"
+    },
+    {
+      "name": "kq_submission_items",
+      "label": "本轮逐项材料结果",
+      "group": "收集工作流",
+      "phase": "收集闭环",
+      "source": "C02 / C04 / C05",
+      "purpose": "材料清单项与业务审核状态独立于文件安全扫描",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "本轮材料项 ID",
+          "reference": null
+        },
+        {
+          "name": "task_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "任务",
+          "reference": null
+        },
+        {
+          "name": "submission_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "提交轮次",
+          "reference": null
+        },
+        {
+          "name": "material_key",
+          "sql": "VARCHAR(64) NOT NULL",
+          "description": "任务快照内材料项 key",
+          "reference": null
+        },
+        {
+          "name": "requirement_snapshot_json",
+          "sql": "JSON NOT NULL",
+          "description": "本项名称、必交、数量、格式、样例与条件快照",
+          "reference": null
+        },
+        {
+          "name": "completeness_state",
+          "sql": "VARCHAR(20) NOT NULL DEFAULT 'missing'",
+          "description": "missing / partial / complete",
+          "reference": null
+        },
+        {
+          "name": "review_state",
+          "sql": "VARCHAR(20) NOT NULL DEFAULT 'pending'",
+          "description": "pending / approved / returned",
+          "reference": null
+        },
+        {
+          "name": "review_due_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "退回补交期限",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_submission_material (submission_id, material_key)",
+        "UNIQUE KEY uq_item_task (id, task_id)",
+        "INDEX ix_item_review (task_id, review_state)"
+      ],
+      "checks": [],
+      "note": "组合外键 (submission_id, task_id) 限定同一任务；material_key 的快照存在性由服务端检查。"
+    },
+    {
+      "name": "kq_submission_files",
+      "label": "材料项文件关联",
+      "group": "收集工作流",
+      "phase": "收集闭环",
+      "source": "collections[].submissions[].files[].materialId",
+      "purpose": "一个材料项可含多个固定文件版本",
+      "columns": [
+        {
+          "name": "item_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "本轮材料项",
+          "reference": null
+        },
+        {
+          "name": "task_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "任务，亦为文件 resource_id",
+          "reference": null
+        },
+        {
+          "name": "file_version_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "不可变文件版本",
+          "reference": null
+        },
+        {
+          "name": "sort_order",
+          "sql": "INT NOT NULL DEFAULT 0",
+          "description": "文件顺序",
+          "reference": null
+        },
+        {
+          "name": "source_kind",
+          "sql": "VARCHAR(30) NOT NULL DEFAULT 'upload'",
+          "description": "upload / handoff / library",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (item_id, file_version_id)"
+      ],
+      "checks": [],
+      "note": "通过组合外键使材料项与文件版本属于同一任务。复用其他资源文件时须建立目标资源的授权版本记录，禁止绕过此约束直接跨任务挂接。"
+    },
+    {
+      "name": "kq_review_actions",
+      "label": "材料验收历史",
+      "group": "收集工作流",
+      "phase": "收集闭环",
+      "source": "C05 拟新增业务审核日志",
+      "purpose": "追加式保存每次通过或退回及当时文件快照",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "验收动作 ID",
+          "reference": null
+        },
+        {
+          "name": "item_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "本轮材料项",
+          "reference": null
+        },
+        {
+          "name": "task_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "任务",
+          "reference": null
+        },
+        {
+          "name": "reviewer_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "审核人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "decision",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "approved / returned",
+          "reference": null
+        },
+        {
+          "name": "reason",
+          "sql": "TEXT NULL",
+          "description": "退回原因，通过时可选备注",
+          "reference": null
+        },
+        {
+          "name": "reviewed_files_digest",
+          "sql": "BINARY(32) NOT NULL",
+          "description": "当时文件版本集合摘要",
+          "reference": null
+        },
+        {
+          "name": "due_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "补交截止",
+          "reference": null
+        },
+        {
+          "name": "idempotency_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "防重复审核请求",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "动作时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_review_retry (item_id, idempotency_key)",
+        "INDEX ix_review_item (item_id, created_at)"
+      ],
+      "checks": [
+        "CHECK (decision IN ('approved','returned'))",
+        "CHECK (decision <> 'returned' OR (reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason)) > 0))"
+      ],
+      "note": "审核动作、item 状态与人员进度在同一事务更新。退回缺少原因应被应用与数据库共同拒绝。"
+    },
+    {
+      "name": "kq_reminder_jobs",
+      "label": "精准催办队列",
+      "group": "收集工作流",
+      "phase": "收集闭环",
+      "source": "C03 / C07 拟新增",
+      "purpose": "先落库再发送，发送前重新核对未完成状态",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "催办任务 ID",
+          "reference": null
+        },
+        {
+          "name": "task_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "任务",
+          "reference": null
+        },
+        {
+          "name": "participant_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "应催对象",
+          "reference": null
+        },
+        {
+          "name": "channel",
+          "sql": "VARCHAR(30) NOT NULL",
+          "description": "in_app / email / 后续已接入渠道",
+          "reference": null
+        },
+        {
+          "name": "reason",
+          "sql": "VARCHAR(40) NOT NULL",
+          "description": "missing / returned / approaching_deadline",
+          "reference": null
+        },
+        {
+          "name": "payload_json",
+          "sql": "JSON NOT NULL",
+          "description": "文案与欠交项快照，不作为最终状态依据",
+          "reference": null
+        },
+        {
+          "name": "scheduled_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "计划发送时间",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "pending / sending / sent / skipped / failed",
+          "reference": null
+        },
+        {
+          "name": "attempts",
+          "sql": "INT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "尝试次数",
+          "reference": null
+        },
+        {
+          "name": "lease_until",
+          "sql": "DATETIME(3) NULL",
+          "description": "工作进程租约",
+          "reference": null
+        },
+        {
+          "name": "dedupe_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "规则、对象与提醒周期组成的幂等键",
+          "reference": null
+        },
+        {
+          "name": "sent_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "已发送时间",
+          "reference": null
+        },
+        {
+          "name": "last_error",
+          "sql": "TEXT NULL",
+          "description": "最近错误",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_reminder_dedupe (dedupe_key)",
+        "INDEX ix_reminder_schedule (status, scheduled_at)",
+        "INDEX ix_reminder_person (task_id, participant_id)"
+      ],
+      "checks": [],
+      "note": "租约与重试允许至少一次执行；发送前重查完成状态并限频，发送后保存渠道结果。短信/IM 只在真正接入后开启。"
+    },
+    {
+      "name": "kq_distribution_batches",
+      "label": "批量分发批次",
+      "group": "文件与交付",
+      "phase": "交付闭环",
+      "source": "metadata.distributions 已有基础",
+      "purpose": "逐人映射、发布与撤销的批次记录",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "沿用现有分发批次 ID",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "对应分享资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "release_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "发布后固定交付版本",
+          "reference": null
+        },
+        {
+          "name": "owner_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "发布者",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "idempotency_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "沿用当前请求幂等键",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "draft / published / revoked",
+          "reference": null
+        },
+        {
+          "name": "mapping_digest",
+          "sql": "BINARY(32) NULL",
+          "description": "经确认配对的摘要",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "frozen_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "映射冻结时间",
+          "reference": null
+        },
+        {
+          "name": "revoked_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "撤销时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_distribution_retry (owner_user_id, idempotency_key)",
+        "UNIQUE KEY uq_distribution_resource (id, resource_id)"
+      ],
+      "checks": [],
+      "note": "已发布映射保持不可变，纠错通过撤销旧授权并新建发布版本完成；撤销无法收回已下载副本。"
+    },
+    {
+      "name": "kq_distribution_assignments",
+      "label": "逐人文件授权映射",
+      "group": "文件与交付",
+      "phase": "交付闭环",
+      "source": "distributions[].rows[] / files[].distributionRecipientUserId",
+      "purpose": "按文件版本授权给具体收件身份，支持一人多份",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "映射 ID",
+          "reference": null
+        },
+        {
+          "name": "batch_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "批次",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "分享资源",
+          "reference": null
+        },
+        {
+          "name": "recipient_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "此资源下的收件身份",
+          "reference": null
+        },
+        {
+          "name": "file_version_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "具体文件版本",
+          "reference": null
+        },
+        {
+          "name": "business_key",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "映射业务编号；不作为访问凭据",
+          "reference": null
+        },
+        {
+          "name": "source_snapshot_json",
+          "sql": "JSON NOT NULL",
+          "description": "原名单行、文件名与人工修正结果",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "revoked_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "授权撤销时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_assignment_file (batch_id, recipient_id, file_version_id)",
+        "INDEX ix_assignment_recipient (resource_id, recipient_id, revoked_at)"
+      ],
+      "checks": [],
+      "note": "组合外键使 batch、recipient、file_version 属于同一 resource；发布事务还须检查文件确实在选定 release 中。"
+    },
+    {
+      "name": "kq_delivery_events",
+      "label": "访问、下载与主动回执",
+      "group": "文件与交付",
+      "phase": "交付闭环",
+      "source": "现有下载计数；D01 / D02 增量",
+      "purpose": "逐事件保存，已下载与主动确认分开统计",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "事件 ID",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "分享资源",
+          "reference": null
+        },
+        {
+          "name": "release_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "事件对应的交付版本",
+          "reference": null
+        },
+        {
+          "name": "recipient_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "匿名访问可空；确认必须有经验证身份",
+          "reference": null
+        },
+        {
+          "name": "actor_user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "已登录操作人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "event_type",
+          "sql": "VARCHAR(30) NOT NULL",
+          "description": "access / download_started / download_completed / confirmed",
+          "reference": null
+        },
+        {
+          "name": "identity_level",
+          "sql": "VARCHAR(30) NOT NULL",
+          "description": "anonymous / account / verified_external",
+          "reference": null
+        },
+        {
+          "name": "dedupe_key",
+          "sql": "VARCHAR(200) NULL",
+          "description": "确认重试与下载结算幂等键",
+          "reference": null
+        },
+        {
+          "name": "details_json",
+          "sql": "JSON NULL",
+          "description": "请求级事件资料，敏感字段按保留期脱敏",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "事件时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_delivery_dedupe (dedupe_key)",
+        "INDEX ix_delivery_timeline (resource_id, created_at)",
+        "INDEX ix_delivery_receipt (recipient_id, release_id, event_type)"
+      ],
+      "checks": [
+        "CHECK (event_type <> 'confirmed' OR (recipient_id IS NOT NULL AND identity_level IN ('account','verified_external')))"
+      ],
+      "note": "确认资格还需核对当前授权、验证会话与 release 状态。download_completed 只代表服务端传输事件，不证明已读或文件已保存。"
+    },
+    {
+      "name": "kq_projects",
+      "label": "项目分组",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "T01 新增实体",
+      "purpose": "个人或团队项目归类，不自动扩大已有资源权限",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "项目 ID",
+          "reference": null
+        },
+        {
+          "name": "owner_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "创建或负责人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "团队范围",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "name",
+          "sql": "VARCHAR(160) NOT NULL",
+          "description": "项目名",
+          "reference": null
+        },
+        {
+          "name": "client_key",
+          "sql": "VARCHAR(120) NULL",
+          "description": "同团队内稳定客户编号，不使用姓名做身份",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL DEFAULT 'active'",
+          "description": "active / archived",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "INDEX ix_project_org (organization_id, status)",
+        "INDEX ix_project_owner (owner_user_id, status)"
+      ],
+      "checks": [],
+      "note": ""
+    },
+    {
+      "name": "kq_tags",
+      "label": "标签",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "T01",
+      "purpose": "标签在个人或团队作用域内唯一",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "标签 ID",
+          "reference": null
+        },
+        {
+          "name": "scope_key",
+          "sql": "VARCHAR(160) NOT NULL",
+          "description": "user:ID 或 org:ID，由服务端生成",
+          "reference": null
+        },
+        {
+          "name": "name",
+          "sql": "VARCHAR(80) NOT NULL",
+          "description": "标签名",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_tag_name (scope_key, name)"
+      ],
+      "checks": [],
+      "note": "scope_key 是逻辑作用域，不是外键；创建与关联时必须检查账号或团队归属。"
+    },
+    {
+      "name": "kq_resource_tags",
+      "label": "资源标签关联",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "T01",
+      "purpose": "同一资源可有多个标签",
+      "columns": [
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "tag_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "标签",
+          "reference": "kq_tags.id"
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "关联时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (resource_id, tag_id)",
+        "INDEX ix_tag_resources (tag_id, resource_id)"
+      ],
+      "checks": [],
+      "note": "服务端验证标签作用域与资源所属账号/团队一致。"
+    },
+    {
+      "name": "kq_resource_permissions",
+      "label": "内部审核与外部供材授权",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "T05 / C01 深化 / F01",
+      "purpose": "针对资源与材料范围授权，撤权即时生效",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "授权 ID",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "业务资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "principal_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "user:ID / participant:ID / verified_external:摘要",
+          "reference": null
+        },
+        {
+          "name": "user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "内部账号授权可关联",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "permission",
+          "sql": "VARCHAR(40) NOT NULL",
+          "description": "view / submit / review / download / manage",
+          "reference": null
+        },
+        {
+          "name": "scope_json",
+          "sql": "JSON NOT NULL",
+          "description": "all 或限定的材料 key；空不代表全部",
+          "reference": null
+        },
+        {
+          "name": "granted_by_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "授权人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "expires_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "授权有效期",
+          "reference": null
+        },
+        {
+          "name": "revoked_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "撤权时间",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "授予时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_permission (resource_id, principal_key, permission)",
+        "INDEX ix_permission_user (user_id, revoked_at)"
+      ],
+      "checks": [],
+      "note": "此表记录当前授权；授权变动追加既有审计日志。principal_key 的类型、组织成员关系与材料范围由服务端校验，外键不替代鉴权。"
+    },
+    {
+      "name": "kq_intake_portals",
+      "label": "固定团队收件入口",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "T03",
+      "purpose": "长期 URL 路由到当前模板、项目与接收人",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "入口 ID",
+          "reference": null
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "团队",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "slug",
+          "sql": "VARCHAR(100) NOT NULL",
+          "description": "团队内固定入口路径",
+          "reference": null
+        },
+        {
+          "name": "template_version_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "默认模板版本",
+          "reference": "kq_collection_templates.id"
+        },
+        {
+          "name": "project_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "默认项目",
+          "reference": "kq_projects.id"
+        },
+        {
+          "name": "assignee_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "接收负责人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "routing_json",
+          "sql": "JSON NULL",
+          "description": "字段路由、开放方式与容量策略",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "active / closed",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_portal_slug (organization_id, slug)"
+      ],
+      "checks": [],
+      "note": "入口有效期与文件保留期不同；负责人离开或套餐失效需显式关闭/交接，不能继续路由给无权限账号。"
+    },
+    {
+      "name": "kq_recurrence_rules",
+      "label": "周期收集规则",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "C07",
+      "purpose": "周期调度保存时区与每期独立任务",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "周期规则 ID",
+          "reference": null
+        },
+        {
+          "name": "owner_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "负责人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "团队",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "template_version_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "模板版本",
+          "reference": "kq_collection_templates.id"
+        },
+        {
+          "name": "timezone",
+          "sql": "VARCHAR(80) NOT NULL DEFAULT 'Asia/Shanghai'",
+          "description": "业务时区",
+          "reference": null
+        },
+        {
+          "name": "schedule_json",
+          "sql": "JSON NOT NULL",
+          "description": "周/月规则、截止偏移与名单来源",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "active / paused / retired",
+          "reference": null
+        },
+        {
+          "name": "next_run_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "下一次 UTC 触发时间",
+          "reference": null
+        },
+        {
+          "name": "last_period_key",
+          "sql": "VARCHAR(80) NULL",
+          "description": "上次生成的业务周期",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "INDEX ix_recurrence_due (status, next_run_at)"
+      ],
+      "checks": [],
+      "note": "实际创建使用 outbox 的 dedupe_key=recurrence:规则:周期 幂等，并在事件 payload 固定新 task_id；上一期状态不得带入下一期。"
+    },
+    {
+      "name": "kq_handoff_sessions",
+      "label": "电脑手机接力会话",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "C08",
+      "purpose": "只授权指定草稿/材料项，上传后经确认合并",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "接力 ID",
+          "reference": null
+        },
+        {
+          "name": "token_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL",
+          "description": "短期接力码摘要",
+          "reference": null
+        },
+        {
+          "name": "task_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "任务",
+          "reference": null
+        },
+        {
+          "name": "submission_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "当前草稿",
+          "reference": null
+        },
+        {
+          "name": "item_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "指定材料项，可空表示草稿授权范围",
+          "reference": null
+        },
+        {
+          "name": "expected_row_version",
+          "sql": "BIGINT UNSIGNED NOT NULL",
+          "description": "发起时草稿 CAS 版本",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(30) NOT NULL",
+          "description": "pending / uploaded / merged / canceled / expired",
+          "reference": null
+        },
+        {
+          "name": "staged_files_json",
+          "sql": "JSON NULL",
+          "description": "待确认的临时文件引用；不含永久公开地址",
+          "reference": null
+        },
+        {
+          "name": "expires_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "短有效期",
+          "reference": null
+        },
+        {
+          "name": "revoked_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "撤销时间",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_handoff_token (token_hash)",
+        "INDEX ix_handoff_expiry (status, expires_at)"
+      ],
+      "checks": [],
+      "note": "组合外键限定 submission/item 同一 task；应用进一步保证 item 属于此 submission。合并使用 CAS，冲突交用户处理；接力码不代表整个账号权限。"
+    },
+    {
+      "name": "kq_material_library_entries",
+      "label": "客户材料库版本",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "T06",
+      "purpose": "同一团队与客户范围内的可复用材料版本",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "材料库版本 ID",
+          "reference": null
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "所属团队",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "client_key",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "团队内稳定客户标识",
+          "reference": null
+        },
+        {
+          "name": "material_key",
+          "sql": "VARCHAR(80) NOT NULL",
+          "description": "材料类型",
+          "reference": null
+        },
+        {
+          "name": "source_resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "来源资源",
+          "reference": null
+        },
+        {
+          "name": "source_file_version_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "来源固定版本",
+          "reference": null
+        },
+        {
+          "name": "business_valid_from",
+          "sql": "DATETIME(3) NULL",
+          "description": "业务生效时间",
+          "reference": null
+        },
+        {
+          "name": "business_valid_until",
+          "sql": "DATETIME(3) NULL",
+          "description": "业务到期时间",
+          "reference": null
+        },
+        {
+          "name": "authorized_by_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "确认复用授权的人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "active / revoked / retired",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "登记时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "INDEX ix_library_client (organization_id, client_key, material_key)",
+        "INDEX ix_library_expiry (status, business_valid_until)"
+      ],
+      "checks": [],
+      "note": "来源文件保留期独立管理；复用前检查权限、业务到期、实际字节存在。禁止跨团队/客户默认复用。"
+    },
+    {
+      "name": "kq_material_reuses",
+      "label": "材料复用采用记录",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "T06",
+      "purpose": "历史任务固定当时采用的材料版本",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "复用记录 ID",
+          "reference": null
+        },
+        {
+          "name": "library_entry_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "所采用材料库版本",
+          "reference": "kq_material_library_entries.id"
+        },
+        {
+          "name": "task_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "目标任务",
+          "reference": null
+        },
+        {
+          "name": "item_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "目标材料项",
+          "reference": null
+        },
+        {
+          "name": "target_file_version_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "复制到目标资源的独立不可变版本",
+          "reference": null
+        },
+        {
+          "name": "confirmed_by_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "本次采用确认人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "authorization_snapshot_json",
+          "sql": "JSON NOT NULL",
+          "description": "团队、客户、有效期与授权确认快照",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "采用时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_reuse_target (item_id, target_file_version_id)"
+      ],
+      "checks": [],
+      "note": "首版按物理复制与实际容量计费，避免共享对象误删与计费复杂度；未来内容寻址去重需另设计引用计数，不能直接共享路径。"
+    },
+    {
+      "name": "kq_file_annotations",
+      "label": "定位批注",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "D03 深化",
+      "purpose": "批注始终归属具体文件版本与可见范围",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "批注 ID",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "资源",
+          "reference": null
+        },
+        {
+          "name": "file_version_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "不可变版本",
+          "reference": null
+        },
+        {
+          "name": "reply_to_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "回复目标，同一文件版本",
+          "reference": null
+        },
+        {
+          "name": "author_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "作者",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "visibility",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "internal / external",
+          "reference": null
+        },
+        {
+          "name": "anchor_json",
+          "sql": "JSON NOT NULL",
+          "description": "PDF 页码与坐标、图片相对坐标等",
+          "reference": null
+        },
+        {
+          "name": "body",
+          "sql": "TEXT NOT NULL",
+          "description": "批注正文",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "open / resolved",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "resolved_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "解决时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_annotation_version (id, file_version_id)",
+        "INDEX ix_annotation_file (file_version_id, visibility, status)"
+      ],
+      "checks": [],
+      "note": "回复组合外键限定同文件版本；新版本不会继承旧批注已解决状态。视频与 Office 差异未默认纳入此结构的处理能力。"
+    },
+    {
+      "name": "kq_background_jobs",
+      "label": "导出、预检、扫描与 AI 作业",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "C02 / C06 / C08 / F04",
+      "purpose": "统一可重试作业外壳；结果带输入版本与规则版本",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "作业 ID",
+          "reference": null
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "业务资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "requested_by_user_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "发起人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "job_type",
+          "sql": "VARCHAR(40) NOT NULL",
+          "description": "export / precheck / ocr / scan_pdf / summary / naming / search_index",
+          "reference": null
+        },
+        {
+          "name": "input_json",
+          "sql": "JSON NOT NULL",
+          "description": "固定文件版本、规则与模型版本、输入摘要、外部处理许可依据",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "pending / running / succeeded / failed / canceled",
+          "reference": null
+        },
+        {
+          "name": "result_json",
+          "sql": "JSON NULL",
+          "description": "按项实际值、要求值、置信度或导出存储引用",
+          "reference": null
+        },
+        {
+          "name": "dedupe_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "输入版本与作业规则组合幂等键",
+          "reference": null
+        },
+        {
+          "name": "attempts",
+          "sql": "INT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "重试次数",
+          "reference": null
+        },
+        {
+          "name": "lease_until",
+          "sql": "DATETIME(3) NULL",
+          "description": "工作进程租约",
+          "reference": null
+        },
+        {
+          "name": "expires_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "临时结果保留截止",
+          "reference": null
+        },
+        {
+          "name": "last_error",
+          "sql": "TEXT NULL",
+          "description": "失败原因",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_job_dedupe (dedupe_key)",
+        "INDEX ix_job_worker (status, lease_until)",
+        "INDEX ix_job_resource (resource_id, created_at)"
+      ],
+      "checks": [],
+      "note": "AI/预检结果不等于验收。job payload 内的资源版本需逐项鉴权；语义检索索引在选定引擎、模型、权限过滤方案后另设计，本表不是向量数据库。"
+    },
+    {
+      "name": "kq_webhook_endpoints",
+      "label": "Webhook 订阅配置",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "F03",
+      "purpose": "订阅业务事件与签名密钥版本",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "订阅 ID",
+          "reference": null
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "所属团队",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "url",
+          "sql": "TEXT NOT NULL",
+          "description": "经过服务端校验的 HTTPS 接收地址",
+          "reference": null
+        },
+        {
+          "name": "events_json",
+          "sql": "JSON NOT NULL",
+          "description": "订阅事件类型集合",
+          "reference": null
+        },
+        {
+          "name": "signing_secret_ciphertext",
+          "sql": "TEXT NOT NULL",
+          "description": "签名密钥密文及密钥版本",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "active / paused / revoked",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        },
+        {
+          "name": "updated_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "更新时间",
+          "reference": null
+        }
+      ],
+      "indexes": [],
+      "checks": [],
+      "note": "发送时重新检查目标地址与网络边界；禁止把任意 URL 当作安全内网调用能力。密钥轮换保留有限兼容期。"
+    },
+    {
+      "name": "kq_outbox_events",
+      "label": "事务事件发件箱",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "F03 / 周期任务 / 通知可靠性",
+      "purpose": "业务提交与事件写入同一 MySQL 事务，避免提交后漏通知",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "事件 ID",
+          "reference": null
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "所属团队",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "resource_id",
+          "sql": "VARCHAR(120) NULL",
+          "description": "业务资源",
+          "reference": "kq_resources.id"
+        },
+        {
+          "name": "event_type",
+          "sql": "VARCHAR(80) NOT NULL",
+          "description": "submission.created / review.approved / delivery.confirmed 等",
+          "reference": null
+        },
+        {
+          "name": "aggregate_version",
+          "sql": "BIGINT UNSIGNED NOT NULL",
+          "description": "对象状态版本",
+          "reference": null
+        },
+        {
+          "name": "payload_json",
+          "sql": "JSON NOT NULL",
+          "description": "受控事件快照，不嵌入管理令牌",
+          "reference": null
+        },
+        {
+          "name": "dedupe_key",
+          "sql": "VARCHAR(200) NOT NULL",
+          "description": "业务操作幂等键",
+          "reference": null
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "pending / expanded / failed",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "事件创建时间",
+          "reference": null
+        },
+        {
+          "name": "processed_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "已生成投递记录时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_outbox_dedupe (dedupe_key)",
+        "INDEX ix_outbox_pending (status, created_at)"
+      ],
+      "checks": [],
+      "note": ""
+    },
+    {
+      "name": "kq_webhook_deliveries",
+      "label": "Webhook 投递尝试",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "F03",
+      "purpose": "按事件与订阅去重，保留重试与人工处理依据",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "投递 ID",
+          "reference": null
+        },
+        {
+          "name": "event_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "事务事件",
+          "reference": "kq_outbox_events.id"
+        },
+        {
+          "name": "endpoint_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "接收订阅",
+          "reference": "kq_webhook_endpoints.id"
+        },
+        {
+          "name": "status",
+          "sql": "VARCHAR(20) NOT NULL",
+          "description": "pending / sending / succeeded / failed / dead_letter",
+          "reference": null
+        },
+        {
+          "name": "attempts",
+          "sql": "INT UNSIGNED NOT NULL DEFAULT 0",
+          "description": "总尝试次数",
+          "reference": null
+        },
+        {
+          "name": "attempt_log_json",
+          "sql": "JSON NULL",
+          "description": "受大小和保留期限制的响应摘要与历史尝试",
+          "reference": null
+        },
+        {
+          "name": "next_attempt_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "下一次尝试时间",
+          "reference": null
+        },
+        {
+          "name": "lease_until",
+          "sql": "DATETIME(3) NULL",
+          "description": "工作进程租约",
+          "reference": null
+        },
+        {
+          "name": "last_http_status",
+          "sql": "SMALLINT UNSIGNED NULL",
+          "description": "最后响应码",
+          "reference": null
+        },
+        {
+          "name": "last_error",
+          "sql": "TEXT NULL",
+          "description": "最近错误摘要",
+          "reference": null
+        },
+        {
+          "name": "delivered_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "成功时间",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_webhook_event (event_id, endpoint_id)",
+        "INDEX ix_webhook_retry (status, next_attempt_at)"
+      ],
+      "checks": [],
+      "note": "至少一次投递，接收方按 event_id 幂等；响应正文限长且脱敏，不能无限增长在 attempt_log_json。"
+    },
+    {
+      "name": "kq_api_credentials",
+      "label": "开放 API 凭据",
+      "group": "团队与扩展",
+      "phase": "第二期及储备",
+      "source": "F03",
+      "purpose": "团队作用域、资源权限与配额边界",
+      "columns": [
+        {
+          "name": "id",
+          "sql": "VARCHAR(120) NOT NULL PRIMARY KEY",
+          "description": "凭据 ID",
+          "reference": null
+        },
+        {
+          "name": "organization_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "团队",
+          "reference": "kq_organizations.id"
+        },
+        {
+          "name": "created_by_user_id",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "创建人",
+          "reference": "kq_users.id"
+        },
+        {
+          "name": "name",
+          "sql": "VARCHAR(120) NOT NULL",
+          "description": "凭据名称",
+          "reference": null
+        },
+        {
+          "name": "token_hash",
+          "sql": "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL",
+          "description": "高熵令牌摘要，原值仅首次展示",
+          "reference": null
+        },
+        {
+          "name": "scopes_json",
+          "sql": "JSON NOT NULL",
+          "description": "允许的操作和项目/资源范围",
+          "reference": null
+        },
+        {
+          "name": "expires_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "到期时间",
+          "reference": null
+        },
+        {
+          "name": "revoked_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "撤销时间",
+          "reference": null
+        },
+        {
+          "name": "last_used_at",
+          "sql": "DATETIME(3) NULL",
+          "description": "最近调用时间",
+          "reference": null
+        },
+        {
+          "name": "created_at",
+          "sql": "DATETIME(3) NOT NULL",
+          "description": "创建时间",
+          "reference": null
+        }
+      ],
+      "indexes": [
+        "UNIQUE KEY uq_api_token (token_hash)",
+        "INDEX ix_api_org (organization_id, revoked_at)"
+      ],
+      "checks": [],
+      "note": "限流可先用数据库或现有单进程机制；跨实例 Redis 不是本次必选基础设施。"
+    }
+  ],
+  "foreign_keys": [
+    [
+      "kq_organizations",
+      [
+        "owner_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_organization_members",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_organization_members",
+      [
+        "user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_ownership_handovers",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_ownership_handovers",
+      [
+        "from_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_ownership_handovers",
+      [
+        "to_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_ownership_handovers",
+      [
+        "resolved_by_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_auth_sessions",
+      [
+        "user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_upgrade_orders",
+      [
+        "user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_upgrade_orders",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_messages",
+      [
+        "user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_settings",
+      [
+        "user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_account_records",
+      [
+        "user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_account_records",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resources",
+      [
+        "owner_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resources",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resources",
+      [
+        "branding_organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resources",
+      [
+        "project_id"
+      ],
+      "kq_projects",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resources",
+      [
+        "deleted_by_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_files",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_file_versions",
+      [
+        "uploaded_by_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_share_links",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_delivery_releases",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_delivery_releases",
+      [
+        "created_by_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_delivery_recipients",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_delivery_recipients",
+      [
+        "user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_collection_templates",
+      [
+        "owner_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_collection_templates",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_collection_tasks",
+      [
+        "id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_collection_tasks",
+      [
+        "template_version_id"
+      ],
+      "kq_collection_templates",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_collection_participants",
+      [
+        "task_id"
+      ],
+      "kq_collection_tasks",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_collection_participants",
+      [
+        "user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_review_actions",
+      [
+        "reviewer_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_distribution_batches",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_distribution_batches",
+      [
+        "owner_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_delivery_events",
+      [
+        "actor_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_projects",
+      [
+        "owner_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_projects",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resource_tags",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resource_tags",
+      [
+        "tag_id"
+      ],
+      "kq_tags",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resource_permissions",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resource_permissions",
+      [
+        "user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_resource_permissions",
+      [
+        "granted_by_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_intake_portals",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_intake_portals",
+      [
+        "template_version_id"
+      ],
+      "kq_collection_templates",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_intake_portals",
+      [
+        "project_id"
+      ],
+      "kq_projects",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_intake_portals",
+      [
+        "assignee_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_recurrence_rules",
+      [
+        "owner_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_recurrence_rules",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_recurrence_rules",
+      [
+        "template_version_id"
+      ],
+      "kq_collection_templates",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_material_library_entries",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_material_library_entries",
+      [
+        "authorized_by_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_material_reuses",
+      [
+        "library_entry_id"
+      ],
+      "kq_material_library_entries",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_material_reuses",
+      [
+        "confirmed_by_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_file_annotations",
+      [
+        "author_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_background_jobs",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_background_jobs",
+      [
+        "requested_by_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_webhook_endpoints",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_outbox_events",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_outbox_events",
+      [
+        "resource_id"
+      ],
+      "kq_resources",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_webhook_deliveries",
+      [
+        "event_id"
+      ],
+      "kq_outbox_events",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_webhook_deliveries",
+      [
+        "endpoint_id"
+      ],
+      "kq_webhook_endpoints",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_api_credentials",
+      [
+        "organization_id"
+      ],
+      "kq_organizations",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_api_credentials",
+      [
+        "created_by_user_id"
+      ],
+      "kq_users",
+      [
+        "id"
+      ]
+    ],
+    [
+      "kq_file_versions",
+      [
+        "file_id",
+        "resource_id"
+      ],
+      "kq_files",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_delivery_release_files",
+      [
+        "release_id",
+        "resource_id"
+      ],
+      "kq_delivery_releases",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_delivery_release_files",
+      [
+        "file_version_id",
+        "resource_id"
+      ],
+      "kq_file_versions",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_collection_submissions",
+      [
+        "participant_id",
+        "task_id"
+      ],
+      "kq_collection_participants",
+      [
+        "id",
+        "task_id"
+      ]
+    ],
+    [
+      "kq_submission_items",
+      [
+        "submission_id",
+        "task_id"
+      ],
+      "kq_collection_submissions",
+      [
+        "id",
+        "task_id"
+      ]
+    ],
+    [
+      "kq_submission_files",
+      [
+        "item_id",
+        "task_id"
+      ],
+      "kq_submission_items",
+      [
+        "id",
+        "task_id"
+      ]
+    ],
+    [
+      "kq_submission_files",
+      [
+        "file_version_id",
+        "task_id"
+      ],
+      "kq_file_versions",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_review_actions",
+      [
+        "item_id",
+        "task_id"
+      ],
+      "kq_submission_items",
+      [
+        "id",
+        "task_id"
+      ]
+    ],
+    [
+      "kq_reminder_jobs",
+      [
+        "participant_id",
+        "task_id"
+      ],
+      "kq_collection_participants",
+      [
+        "id",
+        "task_id"
+      ]
+    ],
+    [
+      "kq_distribution_batches",
+      [
+        "release_id",
+        "resource_id"
+      ],
+      "kq_delivery_releases",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_distribution_assignments",
+      [
+        "batch_id",
+        "resource_id"
+      ],
+      "kq_distribution_batches",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_distribution_assignments",
+      [
+        "recipient_id",
+        "resource_id"
+      ],
+      "kq_delivery_recipients",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_distribution_assignments",
+      [
+        "file_version_id",
+        "resource_id"
+      ],
+      "kq_file_versions",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_delivery_events",
+      [
+        "release_id",
+        "resource_id"
+      ],
+      "kq_delivery_releases",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_delivery_events",
+      [
+        "recipient_id",
+        "resource_id"
+      ],
+      "kq_delivery_recipients",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_handoff_sessions",
+      [
+        "submission_id",
+        "task_id"
+      ],
+      "kq_collection_submissions",
+      [
+        "id",
+        "task_id"
+      ]
+    ],
+    [
+      "kq_handoff_sessions",
+      [
+        "item_id",
+        "task_id"
+      ],
+      "kq_submission_items",
+      [
+        "id",
+        "task_id"
+      ]
+    ],
+    [
+      "kq_material_library_entries",
+      [
+        "source_file_version_id",
+        "source_resource_id"
+      ],
+      "kq_file_versions",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_material_reuses",
+      [
+        "item_id",
+        "task_id"
+      ],
+      "kq_submission_items",
+      [
+        "id",
+        "task_id"
+      ]
+    ],
+    [
+      "kq_material_reuses",
+      [
+        "target_file_version_id",
+        "task_id"
+      ],
+      "kq_file_versions",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_file_annotations",
+      [
+        "file_version_id",
+        "resource_id"
+      ],
+      "kq_file_versions",
+      [
+        "id",
+        "resource_id"
+      ]
+    ],
+    [
+      "kq_file_annotations",
+      [
+        "reply_to_id",
+        "file_version_id"
+      ],
+      "kq_file_annotations",
+      [
+        "id",
+        "file_version_id"
+      ]
+    ]
+  ],
+  "requirements": [
+    [
+      "C01",
+      "模板与自定义字段",
+      "已有字段配置、条件校验和本地结构复用；云端模板库需补充",
+      "collection_templates collection_tasks"
+    ],
+    [
+      "C02",
+      "清单与提交提示、内容预检",
+      "已有基础材料项、命名和缺项汇总；细化规则与内容预检需扩展",
+      "collection_tasks submission_items submission_files background_jobs"
+    ],
+    [
+      "C03",
+      "应交名单与精准催办",
+      "已有按稳定身份计算提交人数；名单导入与精准催办未见对应持久化流程",
+      "collection_participants reminder_jobs"
+    ],
+    [
+      "C04",
+      "个人入口与自助修改",
+      "已有前端草稿/续传基础；服务端业务草稿、个人材料修改与轮次需扩展",
+      "collection_submissions collection_participants submission_items"
+    ],
+    [
+      "C05",
+      "人工验收与退回补交",
+      "现有 reviewStatus 为安全扫描；独立人工业务验收需新增",
+      "review_actions submission_items"
+    ],
+    [
+      "C06",
+      "规则命名与结构化打包",
+      "已有材料命名、按提交人打包；最终版本选择和异步导出需深化",
+      "background_jobs submission_files file_versions"
+    ],
+    [
+      "C07",
+      "周期收集与通知汇总",
+      "周期生成与通知汇总按后续设计",
+      "recurrence_rules outbox_events reminder_jobs"
+    ],
+    [
+      "C08",
+      "手机扫描与跨设备补交",
+      "手机扫描/同一草稿接力按增量试点设计",
+      "handoff_sessions collection_submissions background_jobs"
+    ],
+    [
+      "D01",
+      "主动确认收到",
+      "已有下载次数与被下载通知；实名主动确认需扩展",
+      "delivery_events delivery_recipients delivery_releases"
+    ],
+    [
+      "D02",
+      "访问与下载看板",
+      "已有总下载计数；逐人、逐版本事件需扩展",
+      "delivery_events"
+    ],
+    [
+      "D03",
+      "原链接换稿、版本与批注",
+      "不可变文件版本、整包发布、版本定位批注按后续设计",
+      "files file_versions delivery_releases delivery_release_files file_annotations"
+    ],
+    [
+      "D04",
+      "批量定向分发",
+      "已有配对预览、幂等发布和账号逐文件授权；外部验证领取不是现有能力",
+      "distribution_batches distribution_assignments delivery_recipients"
+    ],
+    [
+      "T01",
+      "项目与标签",
+      "项目/标签持久化实体按规划新增",
+      "projects tags resource_tags"
+    ],
+    [
+      "T02",
+      "团队品牌",
+      "已实现组织 branding、Logo 与版本化展示",
+      "organizations"
+    ],
+    [
+      "T03",
+      "固定团队收件入口",
+      "已有团队专属路径；独立模板/项目/负责人路由入口需扩展",
+      "intake_portals"
+    ],
+    [
+      "T04",
+      "误删恢复",
+      "已有个人/团队回收站字段与恢复逻辑；关系化时迁移生命周期",
+      "resources file_versions"
+    ],
+    [
+      "T05",
+      "团队审核与交接",
+      "已有组织所有权交接与成员权限；收集协作审核范围需补充",
+      "ownership_handovers organization_members resource_permissions review_actions"
+    ],
+    [
+      "T06",
+      "客户材料复用与到期更新",
+      "按长期客户需求设计，暂不当作现有功能",
+      "material_library_entries material_reuses"
+    ],
+    [
+      "F01",
+      "企业访问与审计导出",
+      "已有审计落库和团队基础权限；细分范围和资源级导出需深化",
+      "resource_permissions resources background_jobs"
+    ],
+    [
+      "F02",
+      "仅预览与身份水印",
+      "已有类型预览；受控原件访问与身份水印需独立实现",
+      "resources delivery_recipients background_jobs"
+    ],
+    [
+      "F03",
+      "Webhook 与开放 API",
+      "按后续系统集成设计",
+      "webhook_endpoints outbox_events webhook_deliveries api_credentials"
+    ],
+    [
+      "F04",
+      "AI 辅助任务与内容处理",
+      "按需结果与任务外壳已设计；语义索引另作选型",
+      "background_jobs collection_templates"
+    ]
+  ]
+}

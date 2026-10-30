@@ -54,8 +54,11 @@ import { applyCollectionNaming } from '../lib/collection-naming.js'
 import { createScanCoordinator, scanFileBatch } from '../lib/scan-coordinator.js'
 
 import {
-  adminSessions, reservedShareCodes, shareLookupAttempts, uploadDiskReservations, uploadIntakeReservations, uploadReservations, uploadSessions
+  adminSessions, databasePool, reservedShareCodes, shareLookupAttempts, uploadDiskReservations, uploadIntakeReservations, uploadReservations, uploadSessions
 } from '../state.js'
+import {
+  ensureUploadSessionTable, importLegacyUploadSessionManifests, MySqlUploadSessionStore,
+} from '../db/upload-session-store.js'
 
 import { booleanInput, dateInput, integerInput, objectInput, textInput } from '../lib/input-validation.js'
 import fs from 'node:fs'
@@ -82,7 +85,7 @@ export function assertUploadSessionOwner(session, req) {
   if (!session || uploadSessions.get(session.id) !== session) throw httpError(404, '上传会话不存在，请重新开始上传')
   const created = new Date(session.createdAt).getTime()
   if (!Number.isFinite(created) || Date.now() - created >= UPLOAD_SESSION_TTL_MS) {
-    if (!session.completing) discardUploadSession(session)
+    if (!session.completing) discardUploadSession(session).catch(() => {})
     throw httpError(410, '上传会话已过期，请重新开始上传')
   }
   const userId = authSessionFromRequest(req)?.user?.id
@@ -126,37 +129,54 @@ export function normalizeUploadChunkSize(value) {
   return Math.min(UPLOAD_CHUNK_MAX_BYTES, Math.max(UPLOAD_CHUNK_MIN_BYTES, size))
 }
 
-// 会话清单落盘：重启后可从 session.json + {fileIndex}/{chunkIndex}.done 标记恢复
-// 续传状态（uploadSessions 是内存 Map，重启即失；清单让 12h TTL 真正跨重启生效）。
-export function persistUploadSession(session) {
+const databaseUploadSessionStore = databasePool ? new MySqlUploadSessionStore(databasePool) : null
+let uploadSessionPersistenceReady = !databasePool
+
+function uploadSessionManifest(session) {
   if (session.options?.password) {
     session.options.passwordHash = passwordDigest(session.options.password)
     delete session.options.password
   }
-  try {
-    const manifest = {
-      id: session.id,
-      chunkSize: session.chunkSize,
-      files: session.files.map((file) => ({ name: file.name, relativePath: file.relativePath, size: file.size, mimeType: file.mimeType })),
-      options: session.options,
-      mode: session.mode,
-      organizationId: session.organizationId,
-      collectionToken: session.collectionToken,
-      participantName: session.participantName,
-      participantKey: session.participantKey,
-      submitterUserId: session.submitterUserId,
-      submitterName: session.submitterName,
-      fieldValues: session.fieldValues || {},
-      materialIds: session.materialIds || [],
-      fileMaterialIds: session.fileMaterialIds || [],
-      guestKey: session.guestKey || '',
-      ownerUserId: session.ownerUserId || '',
-      ownerGuestId: session.ownerGuestId || '',
-      capacityOwnerUserId: session.capacityOwnerUserId || '',
-      relativePaths: session.relativePaths,
-      createdAt: session.createdAt,
-      completion: session.completion,
+  return {
+    id: session.id,
+    chunkSize: session.chunkSize,
+    files: session.files.map((file) => ({ name: file.name, relativePath: file.relativePath, size: file.size, mimeType: file.mimeType })),
+    options: session.options,
+    mode: session.mode,
+    organizationId: session.organizationId,
+    collectionToken: session.collectionToken,
+    participantName: session.participantName,
+    participantKey: session.participantKey,
+    submitterUserId: session.submitterUserId,
+    submitterName: session.submitterName,
+    fieldValues: session.fieldValues || {},
+    materialIds: session.materialIds || [],
+    fileMaterialIds: session.fileMaterialIds || [],
+    guestKey: session.guestKey || '',
+    ownerUserId: session.ownerUserId || '',
+    ownerGuestId: session.ownerGuestId || '',
+    capacityOwnerUserId: session.capacityOwnerUserId || '',
+    relativePaths: session.relativePaths,
+    createdAt: session.createdAt,
+    completion: session.completion,
+  }
+}
+
+// MySQL mode persists resumable upload metadata in an encrypted row. Chunk bytes
+// and completion markers stay on disk; standalone mode retains the JSON manifest.
+export async function persistUploadSession(session) {
+  const manifest = uploadSessionManifest(session)
+  if (databasePool) {
+    if (!uploadSessionPersistenceReady) throw httpError(503, '上传会话存储尚未就绪，请稍后重试')
+    try {
+      await databaseUploadSessionStore.save(manifest)
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'upload_session_write_failed', code: error.code || 'DATABASE_WRITE_FAILED' }))
+      throw httpError(503, '上传进度保存失败，请重试')
     }
+    return
+  }
+  try {
     const manifestPath = path.join(session.directory, 'session.json')
     const tmpPath = `${manifestPath}.tmp`
     fs.writeFileSync(tmpPath, JSON.stringify(manifest))
@@ -166,78 +186,112 @@ export function persistUploadSession(session) {
   }
 }
 
-export function restoreUploadSessions() {
-  const root = path.join(tempRoot, 'upload-sessions')
-  let entries = []
-  try {
-    entries = fs.readdirSync(root)
-  } catch {
-    return
+function restoreSessionFromManifest(raw, directory) {
+  const session = {
+    ...raw,
+    directory,
+    chunkSize: normalizeUploadChunkSize(raw.chunkSize),
+    files: raw.files.map((file) => ({ ...file, totalChunks: 0, chunks: new Set() })),
   }
-  for (const entry of entries) {
-    const directory = path.join(root, entry)
-    const manifestPath = path.join(directory, 'session.json')
+  const published = metadata.shares.some(item => item.uploadSessionId === session.id)
+    || metadata.collections.some(task => task.submissions.some(item => item.uploadSessionId === session.id))
+  if (published) {
+    session.completion = { ...raw.completion, status: 'complete', finishedAt: raw.completion?.finishedAt || new Date().toISOString() }
+  } else if (['scanning', 'publishing'].includes(raw.completion?.status)) {
+    session.completion = { ...raw.completion, status: 'failed', error: { status: 503, code: 'scan_interrupted', message: '服务重启中断了安全检查，请重试检查；已上传文件已保留' } }
+  }
+  let broken = false
+  session.files.forEach((file, fileIndex) => {
+    const targetPath = path.join(directory, `${fileIndex}.target`)
+    const markerDirectory = path.join(directory, String(fileIndex))
+    let markers = []
+    try { markers = fs.readdirSync(markerDirectory) } catch {}
+    for (const name of markers) {
+      const match = /^(\d+)\.done$/.exec(name)
+      if (match) file.chunks.add(Number(match[1]))
+    }
+    if (file.chunks.size && !fs.existsSync(targetPath) && !published) broken = true
+  })
+  const createdAt = new Date(raw.createdAt).getTime()
+  const age = Number.isFinite(createdAt) ? Date.now() - createdAt : 0
+  const hasProgress = session.files.some(file => file.chunks.size > 0)
+  const expired = age > UPLOAD_SESSION_TTL_MS || (!hasProgress && age > UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS)
+  return { session, published, broken, expired, completionChanged: JSON.stringify(session.completion) !== JSON.stringify(raw.completion) }
+}
+
+export async function restoreUploadSessions() {
+  const root = path.join(tempRoot, 'upload-sessions')
+  fs.mkdirSync(root, { recursive: true })
+  let entries = []
+  try { entries = fs.readdirSync(root).filter(entry => fs.statSync(path.join(root, entry)).isDirectory()) } catch {}
+
+  let manifests
+  if (databasePool) {
+    await ensureUploadSessionTable(databasePool)
+    const connection = await databasePool.getConnection()
+    let locked = false
     try {
-      if (!fs.existsSync(manifestPath)) {
-        removeDirectory(directory)
+      const [rows] = await connection.execute('SELECT GET_LOCK(?, 30) AS acquired', ['kunqiong-upload-session-migration-v1'])
+      if (Number(rows?.[0]?.acquired) !== 1) throw new Error('无法获得上传会话迁移锁')
+      locked = true
+      await importLegacyUploadSessionManifests(root, databaseUploadSessionStore)
+      manifests = await databaseUploadSessionStore.loadAll()
+      uploadSessionPersistenceReady = true
+    } catch (error) {
+      throw error
+    } finally {
+      if (locked) {
+        try { await connection.execute('SELECT RELEASE_LOCK(?)', ['kunqiong-upload-session-migration-v1']) } catch {}
+      }
+      connection.release()
+    }
+  } else {
+    manifests = []
+    for (const entry of entries) {
+      const filename = path.join(root, entry, 'session.json')
+      if (!fs.existsSync(filename)) {
+        removeDirectory(path.join(root, entry))
         continue
       }
-      const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
-      if (raw?.id !== entry || !Array.isArray(raw.files) || !Number.isFinite(Number(raw.chunkSize))) {
-        removeDirectory(directory)
-        continue
+      try {
+        const raw = JSON.parse(fs.readFileSync(filename, 'utf8'))
+        if (raw?.id !== entry || !Array.isArray(raw.files) || !Number.isFinite(Number(raw.chunkSize))) throw new Error('invalid manifest')
+        manifests.push(raw)
+      } catch {
+        removeDirectory(path.join(root, entry))
       }
-      const session = {
-        ...raw,
-        directory,
-        chunkSize: normalizeUploadChunkSize(raw.chunkSize),
-        files: raw.files.map((file) => ({ ...file, totalChunks: 0, chunks: new Set() })),
+    }
+  }
+
+  const restoredIds = new Set()
+  for (const raw of manifests) {
+    const directory = path.join(root, raw.id)
+    const { session, published, broken, expired, completionChanged } = restoreSessionFromManifest(raw, directory)
+    if (!fs.existsSync(directory)) {
+      if (databasePool && published && !expired) {
+        if (completionChanged) await persistUploadSession(session)
+        uploadSessions.set(session.id, session)
+        restoredIds.add(session.id)
+      } else if (databasePool) {
+        await databaseUploadSessionStore.delete(raw.id)
       }
-      const published = metadata.shares.some(item => item.uploadSessionId === session.id)
-        || metadata.collections.some(task => task.submissions.some(item => item.uploadSessionId === session.id))
-      if (published && raw.completion) {
-        session.completion = { ...raw.completion, status: 'complete', finishedAt: raw.completion.finishedAt || new Date().toISOString() }
-      } else if (['scanning', 'publishing'].includes(raw.completion?.status)) {
-        session.completion = { ...raw.completion, status: 'failed', error: { status: 503, code: 'scan_interrupted', message: '服务重启中断了安全检查，请重试检查；已上传文件已保留' } }
-      }
-      let broken = false
-      session.files.forEach((file, fileIndex) => {
-        const targetPath = path.join(directory, `${fileIndex}.target`)
-        const markerDirectory = path.join(directory, String(fileIndex))
-        let markers = []
-        try {
-          markers = fs.readdirSync(markerDirectory)
-        } catch {
-          markers = []
-        }
-        for (const name of markers) {
-          const match = /^(\d+)\.done$/.exec(name)
-          if (match) file.chunks.add(Number(match[1]))
-        }
-        // A paused session may not have uploaded its first chunk yet.
-        if (file.chunks.size && !fs.existsSync(targetPath) && !published) broken = true
-      })
-      if (broken) {
-        removeDirectory(directory)
-        continue
-      }
-      // 已过期会话不再恢复进内存：恢复只会让清扫器每分钟对它发起一次删除，
-      // 目录残余时反复产生无效 IO/日志。过期口径与 sweepStaleUploadSessions 一致：
-      // 超过 12h TTL，或零进度且超过 30min。
-      const createdAt = new Date(raw.createdAt).getTime()
-      const age = Number.isFinite(createdAt) ? Date.now() - createdAt : 0
-      const hasProgress = session.files.some((file) => file.chunks.size > 0)
-      if (age > UPLOAD_SESSION_TTL_MS || (!hasProgress && age > UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS)) {
-        removeDirectory(directory)
-        continue
-      }
-      // 目标文件已占用的空间在 statfs 中已经体现；恢复时仍保留完整会话
-      // 预留，阻止新会话把剩余未上传部分挤出物理盘容量。
-      reserveUploadDisk(session, { restore: true })
-      persistUploadSession(session)
-      uploadSessions.set(session.id, session)
-    } catch {
+      continue
+    }
+    if (broken || expired) {
+      if (databasePool) await databaseUploadSessionStore.delete(session.id)
       removeDirectory(directory)
+      continue
+    }
+    if (session.completion?.status !== 'complete') reserveUploadDisk(session, { restore: true })
+    if (databasePool && completionChanged) await persistUploadSession(session)
+    else if (!databasePool) await persistUploadSession(session)
+    uploadSessions.set(session.id, session)
+    restoredIds.add(session.id)
+  }
+
+  if (databasePool) {
+    for (const entry of entries) {
+      if (!restoredIds.has(entry)) removeDirectory(path.join(root, entry))
     }
   }
 }
@@ -1053,13 +1107,24 @@ export function releaseUploadDiskReservation(sessionOrId) {
 // 主动放弃上传会话：从内存移除并清理临时分片，立即释放其预留额度。
 // 客户端在「重置/重新选择文件/放弃续传开新会话」时调用，防止僵尸会话占满游客配额。
 export function discardUploadSession(session) {
-  if (!session) return
+  if (!session) return Promise.resolve(false)
   session.cancelled = true
   uploadSessions.delete(session.id)
   releaseUploadDiskReservation(session)
   // Active writes close their handles first and finish cleanup in their finally.
-  if (session.activeWrites) return
-  removeDirectory(session.directory)
+  if (session.activeWrites) return Promise.resolve(false)
+  const finalize = () => {
+    removeDirectory(session.directory)
+    return true
+  }
+  if (!databasePool) return Promise.resolve(finalize())
+  return databaseUploadSessionStore.delete(session.id).then(finalize).catch(error => {
+    session.cancelled = false
+    uploadSessions.set(session.id, session)
+    reserveUploadDisk(session, { restore: true })
+    console.error(JSON.stringify({ event: 'upload_session_delete_failed', code: error.code || 'DATABASE_WRITE_FAILED' }))
+    throw httpError(503, '上传会话取消失败，请重试')
+  })
 }
 
 // 上传会话文件清单指纹：同一游客重复上传相同文件时，用于识别「该被替换的旧会话」。
@@ -1083,7 +1148,7 @@ export function listGuestPendingUploads(guestKey) {
 
 // 上传会话定时清扫：TTL 过期的会话、以及创建后长期零进度（一个分片都没传成功）的
 // 会话。零进度会话没有续传价值，却占着容量预留，是「看不见的占用」的主要来源。
-export function sweepStaleUploadSessions(now = Date.now()) {
+export async function sweepStaleUploadSessions(now = Date.now()) {
   const swept = []
   for (const [, item] of [...uploadSessions]) {
     if (item.completing) continue
@@ -1093,7 +1158,7 @@ export function sweepStaleUploadSessions(now = Date.now()) {
     const expired = age > UPLOAD_SESSION_TTL_MS
     const idleZeroProgress = !hasProgress && age > UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS
     if (expired || idleZeroProgress) {
-      discardUploadSession(item)
+      await discardUploadSession(item)
       swept.push(item.id)
     }
   }

@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
-import { LocalAuditStore } from '../server/lib/audit-store.js'
+import { DatabaseAuditStore, LocalAuditStore } from '../server/lib/audit-store.js'
 
 const normalize = entry => ({ ...entry })
 const log = (id, createdAt = '2026-10-12T00:00:00.000Z') => ({ id, action: id, createdAt })
@@ -14,6 +14,30 @@ function fixture(limit = 5000) {
   const create = () => new LocalAuditStore(directory, normalize, limit)
   return { directory, create, store: create() }
 }
+
+test('relational audit mirror avoids sorting the legacy audit table', async () => {
+  const queries = []
+  const executions = []
+  const entries = [log('older'), log('newer', '2026-10-13T00:00:00.000Z')]
+  const pool = {
+    query: async sql => {
+      queries.push(sql)
+      return [entries.map(payload => ({ payload: JSON.stringify(payload) }))]
+    },
+    execute: async (sql, values) => {
+      executions.push({ sql, values })
+      return [{ affectedRows: entries.length }]
+    },
+  }
+  const store = new DatabaseAuditStore(pool, normalize, 5000)
+  store.relationalAuditEnabled = true
+
+  await store.mirrorExistingLogs()
+
+  assert.deepEqual(queries, ['SELECT payload FROM kunqiong_audit_log'])
+  assert.equal(executions.length, 1)
+  assert.equal(executions[0].values.length, entries.length * 12)
+})
 
 test('purged history stays purged if rotation is interrupted before journal reset', () => {
   const { directory, store, create } = fixture()

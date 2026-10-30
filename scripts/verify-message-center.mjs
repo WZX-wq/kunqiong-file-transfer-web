@@ -76,7 +76,7 @@ window.eval(code)
 await waitFor(() => document.querySelector('.app-shell'), 'Workspace initially renders')
 
 // 打开消息中心
-const trigger = document.querySelector('.message-trigger')
+const trigger = document.querySelector('.message-center-wrap .message-trigger')
 assert.ok(trigger, 'Message trigger exists')
 trigger.click()
 await waitFor(() => document.querySelector('.message-center'), 'Message center opens')

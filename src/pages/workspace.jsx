@@ -1190,10 +1190,12 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
             </section>
 
             <section className={`upload-panel send-prototype-drop-card ${isDragging ? 'dragging' : ''}`}>
-              <button type="button" className="send-distribution-entry send-distribution-upload-entry" onClick={onOpenDistribution}><Send size={15} />批量定向发布<ArrowRight size={14} /></button>
               <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
               <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
-              {guestQuota?.enabled ? <div className="send-prototype-guest-strip"><span><Gauge size={15} />游客模式 · 本次剩余 <b>{formatBytes(guestQuota.remainingBytes)}</b></span><button type="button" onClick={onLogin}>登录后同步记录与额度 <ChevronRight size={14} /></button></div> : null}
+              <div className="send-prototype-upload-toolbar">
+                {guestQuota?.enabled ? <div className="send-prototype-guest-strip"><span><Gauge size={15} />游客模式 · 本次剩余 <b>{formatBytes(guestQuota.remainingBytes)}</b></span><button type="button" onClick={onLogin}>登录后同步记录与额度 <ChevronRight size={14} /></button></div> : null}
+                <button type="button" className="send-distribution-entry send-distribution-upload-entry" onClick={onOpenDistribution}><Send size={15} />批量定向发布<ArrowRight size={14} /></button>
+              </div>
               <div className={`send-prototype-dropzone ${isDragging ? 'dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
                 <PrototypeAsset className="send-prototype-cloud" name="ico-cloud.png" width={64} height={54} />
                 <h2>{isDragging ? '松开即可添加文件' : '拖拽文件或文件夹到这里'}</h2>

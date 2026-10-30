@@ -46,7 +46,7 @@ for (const name of ['accept', 'decline', 'cancel', 'expire', 'disabled-target', 
 }
 const metadataFile = path.join(fixture, 'storage', 'metadata.json')
 fs.mkdirSync(path.dirname(metadataFile), { recursive: true })
-fs.writeFileSync(metadataFile, JSON.stringify({ users, organizations, shares, collections, messages: {}, notificationSettings: { 'accept-target': { inApp: false } }, sessions: Object.values(users).flatMap(user => [1, 2].map(index => ({ id: `${user.id}-session-${index}`, user, expiresAt: future }))) }))
+fs.writeFileSync(metadataFile, JSON.stringify({ users, organizations, shares, collections, messages: {}, notificationSettings: { 'accept-target': { inApp: false } }, sessions: Object.values(users).map(user => ({ id: `${user.id}-session-1`, user, expiresAt: future })) }))
 for (const share of shares) {
   const directory = path.join(fixture, 'storage', 'files', share.id)
   fs.mkdirSync(directory, { recursive: true }); fs.writeFileSync(path.join(directory, 'fixture.txt'), 'fixture')
@@ -101,10 +101,8 @@ try {
     const accepted = await decide(id, 'accept-target', 'accept'), after = stored()
     check('指定成员确认后完成交接', accepted.status === 200 && accepted.data.transferred && after.organizations.accept.ownerUserId === 'accept-target')
     check('团队恰好一位所有者', after.organizations.accept.members.filter(member => member.role === 'owner').length === 1)
-    for (const session of [1, 2]) {
-      check(`旧所有者会话${session}立即失去团队管理权`, !(await api('/api/account/team/overview', 'accept-owner', 'GET', undefined, session)).data.canManage)
-      check(`新所有者会话${session}获得管理权`, (await api('/api/account/team/overview', 'accept-target', 'GET', undefined, session)).data.canManage)
-    }
+    check('旧所有者会话立即失去团队管理权', !(await api('/api/account/team/overview', 'accept-owner')).data.canManage)
+    check('新所有者会话获得管理权', (await api('/api/account/team/overview', 'accept-target')).data.canManage)
     check('旧所有者不能管理他人团队文件', (await api('/api/shares/manage/accept-manage', 'accept-owner')).status === 403)
     check('新所有者可管理团队文件', (await api('/api/shares/manage/accept-manage', 'accept-target')).status === 200)
     check('团队文件归属和组织标识保持', JSON.stringify(after.shares.find(item => item.id === 'accept-file')) === JSON.stringify(before.shares.find(item => item.id === 'accept-file')))

@@ -65,6 +65,11 @@ try {
       if (route === '/api/auth/me') body = {user: null};
       else if (route === '/api/runtime-config') body = {upload: {singleFileLimitBytes: 1024 ** 3}};
       else if (route === '/api/guest/quota') body = {enabled: false};
+      else if (route === '/api/collections/manage/layout-fixture') body = {collection: {
+        id: 'layout-fixture', token: 'layout-fixture', title: '布局验收', status: 'active',
+        deadline: '2026-11-07T15:59:00.000Z', allowedTypes: ['PDF', 'Word'], maxFileSizeMb: 500,
+        materials: [{id: 'material-0', name: '营业执照', required: true}], customFields: [], submissions: []
+      }};
       else if (route === '/api/collections/layout-fixture') body = {collection: {
         id: 'layout-fixture', token: 'layout-fixture', title: '布局验收', status: 'active',
         deadline: '2026-11-07T15:59:00.000Z', allowedTypes: ['PDF', 'Word', 'Excel', 'PPT', '图片', '压缩包'], maxFileSizeMb: 500,
@@ -103,6 +108,58 @@ try {
   assert.ok(mobile.pageWidth <= mobile.viewport, 'Mobile page has no horizontal overflow')
   for (const pill of mobile.pills) assert.ok(pill.scrollWidth <= pill.width, 'Mobile file type labels stay inside their pill')
   console.log('PASS mobile layout at 390px')
+
+  for (const viewport of [
+    { width: 1280, height: 620, mobile: false, label: 'short desktop' },
+    { width: 390, height: 620, mobile: true, label: 'mobile' },
+  ]) {
+    await send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1 })
+    await send('Page.navigate', { url: `http://127.0.0.1:${vitePort}/collect/manage/layout-fixture` })
+    await waitFor(() => evaluate("document.querySelector('.cm-head-actions button')?.textContent.includes('收集设置')"), 'Collection management page did not render')
+    await evaluate("[...document.querySelectorAll('.cm-head-actions button')].find(button => button.textContent.includes('收集设置')).click()")
+    await waitFor(() => evaluate("Boolean(document.querySelector('.manage-modal'))"), 'Manage collection modal did not open')
+    await evaluate("[...document.querySelectorAll('.manage-modal button')].find(button => button.textContent.includes('添加字段')).click()")
+    await waitFor(() => evaluate("Boolean(document.querySelector('.manage-collection-structure .collection-field-name > input'))"), 'Custom field did not render')
+    if (!viewport.mobile) {
+      const fieldAlignment = await evaluate(`(() => {
+        const name = document.querySelector('.manage-collection-structure .collection-field-name > input').getBoundingClientRect();
+        const typeLabel = document.querySelector('.manage-collection-structure .collection-field-type-label').getBoundingClientRect();
+        const type = document.querySelector('.manage-collection-structure .collection-field-type > select').getBoundingClientRect();
+        return {nameTop: name.top, typeTop: type.top, nameHeight: name.height, typeHeight: type.height, typeLabelHeight: typeLabel.height};
+      })()`)
+      assert.ok(Math.abs(fieldAlignment.nameTop - fieldAlignment.typeTop) <= 1, `${viewport.label}: field name and type controls should align (${JSON.stringify(fieldAlignment)})`)
+      assert.ok(Math.abs(fieldAlignment.nameHeight - fieldAlignment.typeHeight) <= 1, `${viewport.label}: field name and type controls should have equal heights`)
+    }
+    for (let index = 0; index < 8; index++) {
+      await evaluate("[...document.querySelectorAll('.manage-modal button')].find(button => button.textContent.includes('添加材料')).click()")
+    }
+    await waitFor(() => evaluate("document.querySelectorAll('.manage-collection-structure .collection-rule-row').length >= 9"), 'Added materials did not render')
+    const scrollState = await evaluate(`(() => {
+      const body = document.querySelector('.manage-modal .manage-form');
+      const footer = document.querySelector('.manage-modal .modal-footer');
+      const modal = document.querySelector('.manage-modal');
+      const box = node => { const rect = node.getBoundingClientRect(); return {top: rect.top, bottom: rect.bottom, height: rect.height}; };
+      return {body: box(body), header: box(document.querySelector('.manage-modal .modal-header')), footer: box(footer), modal: box(modal), scrollHeight: body.scrollHeight, clientHeight: body.clientHeight,
+        overflowY: getComputedStyle(body).overflowY, contentBottom: box(document.querySelector('.manage-collection-structure')).bottom};
+    })()`)
+    assert.ok(scrollState.scrollHeight > scrollState.clientHeight, `${viewport.label}: manage settings body should overflow after adding materials`)
+    assert.equal(scrollState.overflowY, 'auto', `${viewport.label}: manage settings body should use vertical scrolling`)
+    assert.ok(scrollState.modal.bottom <= viewport.height + 1, `${viewport.label}: modal stays within viewport`)
+    assert.ok(scrollState.header.top >= -1, `${viewport.label}: modal title stays visible`)
+    assert.ok(scrollState.footer.bottom <= viewport.height + 1, `${viewport.label}: save and cancel actions stay visible`)
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: Math.floor(viewport.width / 2), y: Math.floor((scrollState.body.top + scrollState.body.bottom) / 2), deltaY: 5000, deltaX: 0 })
+    await delay(120)
+    const bottomState = await evaluate(`(() => {
+      const body = document.querySelector('.manage-modal .manage-form');
+      return {scrollTop: body.scrollTop, maxScroll: body.scrollHeight - body.clientHeight,
+        contentBottom: document.querySelector('.manage-collection-structure').getBoundingClientRect().bottom,
+        bodyBottom: body.getBoundingClientRect().bottom};
+    })()`)
+    assert.ok(bottomState.scrollTop > 0, `${viewport.label}: wheel input scrolls the manage settings body`)
+    assert.ok(bottomState.maxScroll - bottomState.scrollTop <= 2, `${viewport.label}: content can scroll to its end`)
+    assert.ok(bottomState.contentBottom <= bottomState.bodyBottom + 1, `${viewport.label}: last settings section is visible at the scroll end`)
+    console.log(`PASS manage collection settings scroll at ${viewport.label}`)
+  }
 } finally {
   cdp?.close()
   if (chrome && chrome.exitCode === null) {

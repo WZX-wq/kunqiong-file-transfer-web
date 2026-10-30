@@ -9,6 +9,7 @@ import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import assert from 'node:assert/strict'
 import sharp from 'sharp'
+import { storageOwnerDirectoryName } from '../server/lib/file-storage.js'
 
 const root = path.resolve(import.meta.dirname, '..')
 const output = path.join(root, '.workbuddy/boundary-regression')
@@ -68,7 +69,12 @@ async function request(url, {method='GET',body,user='owner',headers={},form,raw}
   let data;try{data=JSON.parse(text)}catch{data=text.slice(0,180)}
   return {status:response.status,data,headers:Object.fromEntries(response.headers)}
 }
-async function reset(next=seed) { const response=await request('/__boundary/reset',{method:'POST',body:next});if(response.status!==200)throw new Error('Reset failed'); }
+async function reset(next=seed) {
+  const response=await request('/__boundary/reset',{method:'POST',body:next});if(response.status!==200)throw new Error('Reset failed')
+  const restoreFiles=(files,directory)=>{for(const file of files||[]){const root=file.storageOwnerId?path.join(fixture,'storage/users',storageOwnerDirectoryName(file.storageOwnerId)):directory;const filename=path.join(root,file.storedName);fs.mkdirSync(path.dirname(filename),{recursive:true});if(!fs.existsSync(filename))fs.writeFileSync(filename,'safe')}}
+  for(const share of next.shares||[])restoreFiles(share.files,path.join(fixture,'storage/files',share.id))
+  for(const task of next.collections||[])for(const submission of task.submissions||[])restoreFiles(submission.files,path.join(fixture,'storage/collections',task.id,submission.id))
+}
 async function snapshot(){return (await request('/__boundary/snapshot')).data}
 async function probe(id, label, fn) {
   try { const evidence=await fn();results.push({id,label,...evidence}); }
@@ -118,7 +124,7 @@ try {
   for(const file of [{name:'a\u0000.txt',size:4},{name:'a'.repeat(270)+'.txt',size:4},{name:'a\ud800.txt',size:4},{name:'a.txt',size:4,mimeType:'text/plain\r\nX-Test: bad'}])await test('BND-008 reject unusable metadata before uploading '+JSON.stringify(file).slice(0,70),async()=>{assert.equal((await upload({files:[file]})).status,400)})
   for(const recipients of ['123456','user@example.com123'])await test('BND-010 invalid recipient rejected before uploading '+recipients,async()=>{assert.equal((await upload({recipients})).status,400)})
   for(const downloadLimit of [0,-1,0.5,1.9,10000,'invalid',true,[5]])await test('BND-011 invalid download limit '+JSON.stringify(downloadLimit),async()=>{await reject('/api/shares/manage/manage-a',{downloadLimit},'PATCH')})
-  for(const maxFileSizeMb of [0.5,5121,true,[5],'1e12'])await test('BND-012 invalid collection size '+JSON.stringify(maxFileSizeMb),async()=>{await reject('/api/collections',{title:'audit',maxFileSizeMb})})
+  for(const maxFileSizeMb of [0.5,20481,true,[5],'1e12'])await test('BND-012 invalid collection size '+JSON.stringify(maxFileSizeMb),async()=>{await reject('/api/collections',{title:'audit',maxFileSizeMb})})
   for(const allowedTypes of [['bad'],{},'图片',[],['图片','bad']])await test('BND-013 invalid types cannot open all extensions '+JSON.stringify(allowedTypes),async()=>{await reject('/api/collections/manage/task-manage',{allowedTypes},'PATCH');assert.deepEqual((await snapshot()).metadata.collections[0].allowedTypes,['图片'])})
   for(const deadline of ['2027-02-30','2027-13-01',0])await test('BND-014 invalid calendar date '+deadline,async()=>{await reject('/api/collections',{title:'audit',deadline})})
   for(const nickname of [{},['alice'],true,'x\u202Ey'])await test('BND-015/023 invalid nickname '+JSON.stringify(nickname),async()=>{await reject('/api/auth/profile',{nickname},'PATCH')})
@@ -157,7 +163,7 @@ try {
   for(const chunkSize of [true,[],0,-1,1.5,'bad'])await test('invalid negotiated chunk type '+JSON.stringify(chunkSize),async()=>{assert.equal((await upload({chunkSize})).status,400)})
   await test('legal direct folder preserves names and bytes',async()=>{const form=new FormData();form.append('files',new Blob(['safe']),'safe.txt');form.append('relativePaths','["folder/safe.txt"]');const c=await request('/api/shares',{method:'POST',form});assert.equal(c.status,201);assert.equal(c.data.share.files[0].relativePath,'folder/safe.txt');assert.equal((await request(`/api/shares/manage/${c.data.share.manageToken}/files/0/download`)).data,'safe')})
   for(const downloadLimit of [1,9999])await test('legal download limit '+downloadLimit,async()=>{assert.equal((await request('/api/shares/manage/manage-a',{method:'PATCH',body:{downloadLimit}})).status,200);assert.equal((await snapshot()).metadata.shares[0].downloadLimit,downloadLimit)})
-  for(const maxFileSizeMb of [1,5120])await test('legal collection file limit '+maxFileSizeMb,async()=>{assert.equal((await request('/api/collections',{method:'POST',body:{title:'legal',maxFileSizeMb}})).status,201)})
+  for(const maxFileSizeMb of [1,20480])await test('legal collection file limit '+maxFileSizeMb,async()=>{assert.equal((await request('/api/collections',{method:'POST',body:{title:'legal',maxFileSizeMb}})).status,201)})
   const avatar='data:image/png;base64,'+(await sharp({create:{width:1,height:1,channels:3,background:'#4488ff'}}).png().toBuffer()).toString('base64')
   for(const revoke of [false,true])await test('profile decoding rechecks '+(revoke?'revoked session':'concurrent nickname'),async()=>{await request('/__boundary/avatar-gate',{method:'POST',body:{enabled:true}});const pending=request('/api/auth/profile',{method:'PATCH',body:{avatar}});try {let started=false;for(let i=0;i<100;i++){if((await request('/__boundary/avatar-gate')).data.started){started=true;break}await delay(10)}assert.ok(started);if(revoke)await request('/api/auth/logout',{method:'POST',body:{}});else assert.equal((await request('/api/auth/profile',{method:'PATCH',body:{nickname:'new-name'}})).status,200);}finally{await request('/__boundary/avatar-gate',{method:'POST',body:{enabled:false}})}const r=await pending;assert.equal(r.status,revoke?401:200);const s=await snapshot();if(!revoke)assert.equal(s.metadata.users.owner.nickname,'new-name');else assert.equal(s.metadata.users.owner.avatar,null)})
   await test('legal zero-byte file publishes',async()=>{const u=await upload({files:[{name:'empty.txt',size:0}]});assert.equal((await chunk(u.data.sessionId,{bytes:''})).status,200);const c=await request(`/api/upload-sessions/${u.data.sessionId}/complete`,{method:'POST',body:{}});assert.equal(c.status,201);assert.equal(c.data.share.files[0].size,0)})

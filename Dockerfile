@@ -22,6 +22,7 @@ COPY --from=build /app/server.mjs ./server.mjs
 COPY --from=build /app/server ./server
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/email-templates ./email-templates
+COPY --from=build /app/docs/数据库设计-2026-10-29/03-现有功能关系表设计.sql ./docs/数据库设计-2026-10-29/03-现有功能关系表设计.sql
 
 EXPOSE 8045
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

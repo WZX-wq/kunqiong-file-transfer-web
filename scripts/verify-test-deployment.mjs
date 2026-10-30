@@ -32,6 +32,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import net from 'node:net';
+import mysql from 'mysql2/promise';
+import {databaseEnabled, relationalSchemaEnabled, databaseHost, databasePort, databaseName, databaseUser, databasePassword} from '/app/server/config.js';
+import {readRelationalState, loadRelationalMetadataFromConnection} from '/app/server/db/relational-store.js';
 const manifest = ${JSON.stringify(manifest)};
 const expected = ${JSON.stringify(expected)};
 const previous = ${JSON.stringify(previous)};
@@ -43,6 +46,26 @@ const healthResponse = await fetch(base + '/api/health');
 assert.equal(healthResponse.status, 200);
 const health = await healthResponse.json();
 assert.equal(health.release, expected, 'Live health release must match the full commit');
+assert.equal(databaseEnabled, true, 'Deployed application must use MySQL');
+assert.equal(relationalSchemaEnabled, true, 'Deployed application must use relational metadata tables');
+assert.ok(databaseHost && databaseName && databaseUser, 'Deployed MySQL connection must be configured');
+const databasePool = mysql.createPool({host:databaseHost, port:databasePort, database:databaseName, user:databaseUser, password:databasePassword, connectionLimit:1, charset:'utf8mb4'});
+let relationalState, relationalMetadata, databaseEvidence;
+try {
+  const connection = await databasePool.getConnection();
+  try {
+    relationalState = await readRelationalState(connection);
+    relationalMetadata = await loadRelationalMetadataFromConnection(connection, relationalState);
+    const [auditCounts] = await connection.query('SELECT (SELECT COUNT(*) FROM kunqiong_audit_log) AS source_count, (SELECT COUNT(*) FROM kq_audit_log) AS relational_count');
+    const [uploadSessionRows] = await connection.query('SELECT COUNT(*) AS total FROM kq_upload_session');
+    databaseEvidence = {revision:relationalState.revision, sourceSnapshotRevision:relationalState.sourceSnapshotRevision, managedRows:Object.values(relationalMetadata.state.counts).reduce((total, count) => total + Number(count || 0), 0), sourceAuditRows:Number(auditCounts[0].source_count), relationalAuditRows:Number(auditCounts[0].relational_count), uploadSessions:Number(uploadSessionRows[0].total)};
+  } finally { connection.release(); }
+  assert.ok(databaseEvidence.sourceSnapshotRevision > 0, 'A legacy snapshot revision must be recorded in MySQL');
+  assert.ok(databaseEvidence.managedRows > 0, 'Migrated business records must exist in relational tables');
+  assert.equal(relationalMetadata.metadata.auditStorage, 'mysql-v1', 'MySQL audit persistence must be active');
+  assert.equal(relationalMetadata.metadata.auditLogs.length, 0, 'Business metadata must not embed audit history');
+  assert.equal(databaseEvidence.sourceAuditRows, databaseEvidence.relationalAuditRows, 'Audit source and relational mirror counts must match');
+} finally { await databasePool.end(); }
 const html = fs.readFileSync('/app/dist/index.html', 'utf8');
 const seoStart = html.indexOf('<!--seo:start-->');
 const seoEnd = html.indexOf('<!--seo:end-->');
@@ -91,11 +114,10 @@ await new Promise(resolve => setTimeout(resolve, 1500));
 const metadataPath = '/app/storage/metadata.json';
 const stored = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
 if (previous) {
-  const current = {users:new Set(Object.keys(stored.users || {})), shares:new Set(stored.shares.map(item=>item.id)), collections:new Set(stored.collections.map(item=>item.id)), organizations:new Set(Object.values(stored.organizations || {}).map(item=>item.id))};
+  const active = relationalMetadata.metadata;
+  const current = {users:new Set(Object.keys(active.users || {})), shares:new Set(active.shares.map(item=>item.id)), collections:new Set(active.collections.map(item=>item.id)), organizations:new Set(Object.values(active.organizations || {}).map(item=>item.id))};
   for (const [kind, ids] of Object.entries(previous)) assert.ok(ids.every(id=>current[kind].has(id)), 'Pre-deployment data must remain: '+kind);
 }
-assert.equal(stored.auditStorage, 'journal-v1', 'Independent audit migration must be active');
-assert.equal(stored.auditLogs.length, 0, 'Business snapshot must not embed audit history');
 const before = {hash:hash(metadataPath),mtime:fs.statSync(metadataPath).mtimeMs};
 const requestIds = [];
 for (let index = 0; index < 20; index++) {
@@ -105,10 +127,18 @@ for (let index = 0; index < 20; index++) {
 }
 assert.equal(hash(metadataPath), before.hash, 'Reads must not rewrite business metadata');
 assert.equal(fs.statSync(metadataPath).mtimeMs, before.mtime, 'Reads must not save the business snapshot');
-const snapshot = JSON.parse(fs.readFileSync('/app/storage/audit/snapshot.json','utf8'));
-const journal = fs.readFileSync('/app/storage/audit/events.jsonl','utf8');
-const evidence = JSON.stringify(snapshot) + journal;
-assert.ok(requestIds.every(id => id && evidence.includes(id)), 'All verification reads must persist independent audit');
+const auditPlaceholders = requestIds.map(() => '?').join(',');
+let requestAuditRows;
+const auditPool = mysql.createPool({host:databaseHost, port:databasePort, database:databaseName, user:databaseUser, password:databasePassword, connectionLimit:1, charset:'utf8mb4'});
+try {
+  const connection = await auditPool.getConnection();
+  try {
+    [requestAuditRows] = await connection.execute('SELECT COUNT(DISTINCT JSON_UNQUOTE(JSON_EXTRACT(details_json, \'$.requestId\'))) AS total FROM kq_audit_log WHERE JSON_UNQUOTE(JSON_EXTRACT(details_json, \'$.requestId\')) IN (' + auditPlaceholders + ')', requestIds);
+    const [auditCounts] = await connection.query('SELECT (SELECT COUNT(*) FROM kunqiong_audit_log) AS source_count, (SELECT COUNT(*) FROM kq_audit_log) AS relational_count');
+    assert.equal(Number(auditCounts[0].source_count), Number(auditCounts[0].relational_count), 'Audit source and relational mirror counts must match after verification requests');
+  } finally { connection.release(); }
+} finally { await auditPool.end(); }
+assert.equal(Number(requestAuditRows[0].total), requestIds.length, 'Every verification read must be persisted in the relational audit table');
 assert.equal(process.env.KUNQIONG_SCAN_MODE, 'required', 'Required scanning must stay enabled');
 await new Promise((resolve,reject) => {
   const socket = net.connect(Number(process.env.KUNQIONG_CLAMAV_PORT || 3310), process.env.KUNQIONG_CLAMAV_HOST || '127.0.0.1');
@@ -116,7 +146,7 @@ await new Promise((resolve,reject) => {
   socket.on('data',data=>{body+=data; if(body.includes('PONG')){socket.destroy();resolve();}});
   socket.once('error',reject); socket.once('timeout',()=>{socket.destroy();reject(new Error('Scanner timeout'));});
 });
-console.log(JSON.stringify({release:health.release,sourceFiles:Object.keys(manifest).length,pages:4,assets,workerAssets,avatarDecoder:'WebP 1x1; corrupt input rejected',auditStorage:stored.auditStorage,readRequests:requestIds.length,businessSnapshotUnchanged:true,auditRequestsPersisted:true,previousDataVerified:Boolean(previous),preservedCounts:previous?Object.fromEntries(Object.entries(previous).map(([kind,ids])=>[kind,ids.length])):null,scanner:'PONG',passed:true}));
+console.log(JSON.stringify({release:health.release,sourceFiles:Object.keys(manifest).length,pages:4,assets,workerAssets,avatarDecoder:'WebP 1x1; corrupt input rejected',database:databaseEvidence,auditStorage:relationalMetadata.metadata.auditStorage,readRequests:requestIds.length,businessSnapshotUnchanged:true,auditRequestsPersisted:true,previousDataVerified:Boolean(previous),preservedCounts:previous?Object.fromEntries(Object.entries(previous).map(([kind,ids])=>[kind,ids.length])):null,scanner:'PONG',passed:true}));
 `
 const result = spawnSync('docker', ['exec', '-i', app, 'node', '--input-type=module'], { input: probe, encoding: 'utf8', windowsHide: true, timeout: 60000, maxBuffer: 4 * 1024 ** 2 })
 if (result.status !== 0) throw new Error(`Deployment verification failed (${result.status}): ${result.stderr || result.error?.message || ''}`)

@@ -55,7 +55,7 @@ const html = `<!doctype html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="manual-version" content="${manualVersion}">
-<meta name="description" content="鲲穹文件传输当前界面使用手册，含发文件、收集文件、收发记录、文件管理、个人中心、会员与团队操作图解。">
+<meta name="description" content="鲲穹文件传输当前界面使用手册，含材料清单、自定义字段、提交命名、批量定向发布、团队交接与品牌展示、个人和团队回收站操作说明。">
 <title>鲲穹文件传输 · 使用手册</title>
 <link rel="icon" type="image/png" href="${logo}">
 <style>
@@ -72,7 +72,7 @@ const html = `<!doctype html>
 </head>
 <body id="top">
 <header class="topbar"><div class="top-inner"><a class="brand" href="/"><img src="${logo}" width="48" height="48" alt="鲲穹文件传输软件图标"><span>鲲穹文件传输<small>使用手册 · 当前界面图解</small></span></a><div class="tools"><a href="/">返回产品</a><button type="button" class="print-action">打印手册</button></div></div></header>
-<div class="layout"><aside class="sidebar"><h2>操作目录</h2><nav aria-label="手册章节">${nav}</nav></aside><main><div class="intro"><p class="eyebrow">使用手册</p><h1>按当前页面，完成每一步操作</h1><p>从发送文件、参与收集到管理资源、会员与团队，每个图解都对应实际页面中的入口与按钮。点击配图可放大查看原始截图。</p><div class="version"><span>界面核对 ${manualVersion}</span><span>${sections.length} 个章节</span><span>${screenshots.size} 张当前界面截图</span></div></div>${rendered}<footer>鲲穹文件传输 · 使用手册 · 更新于 ${manualVersion}<br><a class="back-top" href="#top">回到顶部 ↑</a></footer></main></div>
+<div class="layout"><aside class="sidebar"><h2>操作目录</h2><nav aria-label="手册章节">${nav}</nav></aside><main><div class="intro"><p class="eyebrow">使用手册</p><h1>按当前页面，完成每一步操作</h1><p>从发送文件、参与收集到管理团队与回收站，各章节说明功能入口、操作步骤和需要注意的事项；配图对应实际界面，点击可放大查看。</p><div class="version"><span>界面核对 ${manualVersion}</span><span>${sections.length} 个章节</span><span>${screenshots.size} 张当前界面截图</span></div></div>${rendered}<footer>鲲穹文件传输 · 使用手册 · 更新于 ${manualVersion}<br><a class="back-top" href="#top">回到顶部 ↑</a></footer></main></div>
 <dialog class="image-dialog" aria-labelledby="image-title"><div class="dialog-heading"><p id="image-title"></p><form method="dialog"><button type="submit" aria-label="关闭大图">关闭</button></form></div><div class="dialog-image"><img alt=""></div><p class="dialog-hint">按原始尺寸显示，可滚动查看；按 Esc 或点击关闭返回正文</p></dialog>
 <script>
 const dialog = document.querySelector('.image-dialog');

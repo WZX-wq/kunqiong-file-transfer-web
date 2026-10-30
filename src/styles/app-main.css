@@ -117,13 +117,22 @@
   transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
 }
 .send-prototype-drop-card.dragging { background: rgba(255, 255, 255, .98); border-color: #4a83ed; box-shadow: 0 18px 44px -28px rgba(24, 72, 160, .4); }
+.send-prototype-upload-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
 .send-prototype-guest-strip {
   display: flex;
+  min-width: 0;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 14px;
   min-height: 38px;
-  margin-bottom: 10px;
+  margin: 0;
   padding: 7px 13px;
   color: #5b7191;
   background: #f4f9ff;
@@ -132,12 +141,13 @@
   font-size: 12px;
 }
 .send-distribution-entry { display: inline-flex; align-items: center; justify-self: end; gap: 6px; min-height: 34px; padding: 0 10px; color: #1768dc; background: #fff; border: 1px solid #d6e4f7; border-radius: 8px; font-size: 12px; font-weight: 650; white-space: nowrap; transition: color .16s ease, border-color .16s ease, background .16s ease, transform .16s ease, box-shadow .16s ease; }
-.send-distribution-upload-entry { position: absolute; top: 17px; right: 17px; z-index: 2; }
+.send-distribution-upload-entry { position: static; grid-column: 2; align-self: start; }
 .send-distribution-entry:hover { color: #0d56c5; background: #f4f8ff; border-color: #a9c7f2; box-shadow: 0 4px 12px rgba(31, 91, 170, .08); transform: translateY(-1px); }
 .send-distribution-entry:active { transform: scale(.98); }
 .send-distribution-entry:focus-visible { outline: 3px solid rgba(31, 107, 255, .22); outline-offset: 2px; }
 .send-prototype-guest-strip span,
 .send-prototype-guest-strip button { display: inline-flex; align-items: center; gap: 6px; }
+.send-prototype-guest-strip span { min-width: 0; flex-wrap: wrap; }
 .send-prototype-guest-strip b { color: #0f5bea; }
 .send-prototype-guest-strip button { color: #1f6bff; background: none; font-weight: 500; }
 .send-prototype-dropzone {
@@ -218,6 +228,9 @@
   .send-prototype-hero h1 { margin-top: 12px; font-size: 36px; }
   .send-prototype-hero-copy > p { font-size: 14px; }
   .send-prototype-stats { column-gap: 20px; }
+  .send-prototype-upload-toolbar { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .send-prototype-guest-strip,
+  .send-distribution-upload-entry { grid-column: 1; }
   .send-prototype-dropzone { min-height: 0; padding: 18px 14px 14px; }
   .send-prototype-drop-copy { max-width: 440px; }
   .send-prototype-values { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 0; padding: 14px 8px; }
@@ -231,8 +244,8 @@
   .send-prototype-hero h1 { font-size: 32px; }
   .send-prototype-stats { column-gap: 20px; }
   .send-prototype-stats b { font-size: 16px; }
-  .send-prototype-guest-strip { flex-wrap: wrap; gap: 4px 8px; padding: 6px 8px; font-size: 11px; }
-  .send-prototype-guest-strip button { gap: 2px; white-space: nowrap; }
+  .send-prototype-guest-strip { gap: 4px 8px; padding: 6px 8px; font-size: 11px; }
+  .send-prototype-guest-strip button { gap: 2px; white-space: normal; text-align: left; }
   .send-distribution-hero::before { display: none; }
   .send-distribution-entry { gap: 4px; min-height: 32px; padding: 0 8px; font-size: 11px; }
   .send-prototype-dropzone h2 { font-size: 17px; }
@@ -836,8 +849,10 @@
 .collection-field-name { display: grid; gap: 4px; min-width: 0; }
 .collection-field-name > input { width: 100%; min-width: 0; height: 38px; box-sizing: border-box; padding: 0 10px; color: #24364d; background: #fbfdff; border: 1px solid #dce8f7; border-radius: 7px; outline: 0; font: inherit; font-size: 14px; }
 .collection-field-name > input:focus { border-color: #79a4ed; box-shadow: 0 0 0 3px rgba(31, 107, 255, .1); }
-.collection-field-editor-main > select { min-width: 0; height: 38px; padding: 0 8px; color: #2c4564; background: #fbfdff; border: 1px solid #dce8f7; border-radius: 7px; outline: 0; font: inherit; font-size: 13px; }
-.collection-field-editor-main > select:focus { border-color: #79a4ed; box-shadow: 0 0 0 3px rgba(31, 107, 255, .1); }
+.collection-field-type { display: grid; gap: 0; min-width: 0; }
+.collection-field-type-label { display: none; }
+.collection-field-type > select { width: 100%; min-width: 0; height: 38px; padding: 0 8px; color: #2c4564; background: #fbfdff; border: 1px solid #dce8f7; border-radius: 7px; outline: 0; font: inherit; font-size: 13px; }
+.collection-field-type > select:focus { border-color: #79a4ed; box-shadow: 0 0 0 3px rgba(31, 107, 255, .1); }
 .collection-field-editor .collection-rule-required { min-height: 38px; font-size: 12.5px; }
 .collection-field-actions { padding-bottom: 4px; }
 /* 创建页的「材料清单 / 自定义字段」是双列卡片，单卡内容宽约 335px：
@@ -850,7 +865,7 @@
   gap: 8px;
 }
 .collection-page .collection-builder-groups .collection-field-editor .collection-field-name { flex: 1 1 100%; }
-.collection-page .collection-builder-groups .collection-field-editor .collection-field-editor-main > select { flex: 1 1 120px; }
+.collection-page .collection-builder-groups .collection-field-editor .collection-field-type { flex: 1 1 120px; }
 .collection-page .collection-builder-groups .collection-field-editor .collection-rule-required { flex: 0 0 auto; }
 .collection-page .collection-builder-groups .collection-field-editor .collection-field-actions { flex: 0 0 auto; }
 /* 卡片内的行内标签左对齐，避免被 .builder-form label 的纵向 flex 居中。 */
@@ -943,9 +958,11 @@
 .manage-collection-structure .collection-rule-actions { grid-column: 1 / -1; justify-content: flex-end; padding-top: 1px; }
 .manage-collection-structure .collection-rule-name > input,
 .manage-collection-structure .collection-field-name > input,
-.manage-collection-structure .collection-field-editor-main > select { height: 36px; font-size: 13px; }
+.manage-collection-structure .collection-field-type > select { height: 36px; font-size: 13px; }
 .manage-collection-structure .collection-page .collection-field-editor .collection-field-editor-main,
-.manage-collection-structure .collection-field-editor .collection-field-editor-main { grid-template-columns: minmax(0, 1fr) 116px max-content; }
+.manage-collection-structure .collection-field-editor .collection-field-editor-main { grid-template-columns: minmax(0, 1fr) 116px max-content; align-items: end; }
+.manage-collection-structure .collection-field-type { gap: 4px; }
+.manage-collection-structure .collection-field-type-label { display: flex; }
 .manage-collection-structure .collection-field-actions { grid-column: 1 / -1; justify-content: flex-end; padding-top: 1px; }
 .manage-collection-structure .collection-field-help-input,
 .manage-collection-structure .collection-field-option-input,

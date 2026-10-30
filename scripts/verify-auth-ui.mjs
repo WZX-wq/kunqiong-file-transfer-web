@@ -10,13 +10,13 @@ const bundle=await build({root,configFile:false,logLevel:'silent',worker:{format
 const code=bundle.output.find(x=>x.type==='chunk').code
 let passed=0,failures=[],cases=[]
 function check(name,value){assert.ok(value,name);passed++;console.log('PASS '+name)}
-async function waitFor(fn,name){for(let i=0;i<200;i++){if(fn())return;await delay(10)}assert.fail(name)}
+async function waitFor(fn,name,timeoutMs=2000){for(let i=0;i<Math.ceil(timeoutMs/10);i++){if(fn())return;await delay(10)}assert.fail(name)}
 async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,displayName=userId,contacts={}) {
  const errors=[],virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',e=>errors.push(e))
  const dom=new JSDOM('<div id="root"></div>',{url:'http://fixture.local'+route,pretendToBeVisual:true,runScripts:'outside-only',virtualConsole})
  const {window}=dom,document=window.document
  for(const [key,value]of Object.entries(storage))window.localStorage.setItem(key,value)
- let currentUser=userId,calls=[]
+ let currentUser=userId,calls=[],sessionReplaced=false
  let holdProfile=false,releaseProfile=null
  let codeResponse={status:201,data:{message:'验证码已发送'}}
  const expiresAt=ttl?Date.now()+ttl:0
@@ -24,10 +24,10 @@ async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,d
  window.fetch=async(url,options={})=>{
   const method=options.method||'GET';calls.push({url,method,body:options.body});let status=200,data={}
   if(expiresAt&&Date.now()>=expiresAt)currentUser=''
-  if(url==='/api/auth/me') data={user:currentUser?{id:currentUser,nickname:displayName,email:'',...contacts,notificationSettings:{},fileCleanup:{enabled:false,days:3}}:null,sessionExpiresAt:expiresAt?new Date(expiresAt).toISOString():null}
+  if(url==='/api/auth/me') {if(sessionReplaced){status=401;data={message:'你的账号已在其他设备登录，请重新登录',code:'account_session_replaced'}}else data={user:currentUser?{id:currentUser,nickname:displayName,email:'',...contacts,notificationSettings:{},fileCleanup:{enabled:false,days:3}}:null,sessionExpiresAt:expiresAt?new Date(expiresAt).toISOString():null}}
   else if(url==='/api/auth/code'){status=codeResponse.status;data=codeResponse.data}
   else if(url==='/api/account/bind'){const target=JSON.parse(options.body).target;data={user:{id:currentUser,nickname:displayName,...contacts,[target.includes('@')?'email':'phone']:target}}}
-  else if(url==='/api/auth/profile'&&!currentUser){status=401;data={message:'请先登录'}}
+  else if(url==='/api/auth/profile'&&!currentUser){status=401;data=sessionReplaced?{message:'你的账号已在其他设备登录，请重新登录',code:'account_session_replaced'}:{message:'请先登录'}}
   else if(url==='/api/auth/profile'){
    data={user:{id:currentUser,nickname:displayName,fileCleanup:{enabled:false,days:3}}}
    if(holdProfile)await new Promise(resolve=>releaseProfile=resolve)
@@ -49,7 +49,7 @@ async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,d
  window.eval(code)
  await waitFor(()=>document.querySelector('.app-shell,.public-shell'), 'app mounts')
  await delay(80)
- return {dom,window,document,calls,errors,setCodeResponse:response=>codeResponse=response,expire:()=>currentUser='',holdProfile:()=>holdProfile=true,profilePending:()=>Boolean(releaseProfile),releaseProfile:()=>releaseProfile?.(),storage:()=>Object.fromEntries(Array.from({length:window.localStorage.length},(_,i)=>{const key=window.localStorage.key(i);return[key,window.localStorage.getItem(key)]})),click:async(text)=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===text||b.getAttribute('aria-label')===text);assert.ok(b,'button '+text);b.click();await delay(40)}}
+ return {dom,window,document,calls,errors,setCodeResponse:response=>codeResponse=response,expire:()=>currentUser='',replaceSession:()=>{currentUser='';sessionReplaced=true},holdProfile:()=>holdProfile=true,profilePending:()=>Boolean(releaseProfile),releaseProfile:()=>releaseProfile?.(),storage:()=>Object.fromEntries(Array.from({length:window.localStorage.length},(_,i)=>{const key=window.localStorage.key(i);return[key,window.localStorage.getItem(key)]})),click:async(text)=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===text||b.getAttribute('aria-label')===text);assert.ok(b,'button '+text);b.click();await delay(40)}}
 }
 async function scenario(id,fn){try{await fn();cases.push({id,status:'PASS'});console.log('CASE '+id+' PASS')}catch(e){failures.push({id,message:e.message});cases.push({id,status:'FAIL',message:e.message});console.log('CASE '+id+' FAIL: '+e.message)}}
 async function input(f,element,value){assert.ok(element,'input found');Object.getOwnPropertyDescriptor(f.window.HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new f.window.Event('input',{bubbles:true}));await delay(30)}
@@ -85,6 +85,13 @@ await scenario('AUTH-live-phone-format',async()=>{
   await input(f,codeInput,'123456');check('complete verification enables binding',!submit().disabled)
   await input(f,target,'13800001111');check('changing phone clears previous code',codeInput.value===''&&submit().disabled&&!f.document.body.textContent.includes('验证码已发送'))
   check('no phone binding runtime errors',f.errors.length===0)
+ }finally{f.dom.window.close()}
+})
+await scenario('AUTH-profile-email-bind-shortcut',async()=>{
+ const f=await mount('/settings/profile');try{
+  await f.click('去绑定')
+  check('profile shortcut opens the email binding dialog',f.document.querySelector('.account-bind-modal')?.textContent.includes('绑定邮箱')&&f.document.querySelector('.account-bind-modal .settings-input-field input')?.type==='email')
+  check('email shortcut remains keyboard accessible',f.document.querySelector('.settings-email-control button')?.getAttribute('type')==='button'&&f.errors.length===0)
  }finally{f.dom.window.close()}
 })
 await scenario('AUTH-live-email-format',async()=>{
@@ -148,6 +155,9 @@ await scenario('AUTH-011',async()=>{
 await scenario('AUTH-012-settings',async()=>{
  const f=await mount();try{check('signed-in profile shown',f.document.querySelector('input[placeholder="请输入昵称"]')?.value==='alice');f.expire();f.window.dispatchEvent(new f.window.Event('focus'));await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'expired profile clears on focus');check('private data removed',!f.document.querySelector('.settings-nav')&&!f.document.body.textContent.includes('alice'))}finally{f.dom.window.close()}
 })
+await scenario('AUTH-single-session-replaced-notice',async()=>{
+ const f=await mount();try{f.replaceSession();await f.click('保存资料');await waitFor(()=>f.document.querySelector('.account-session-notice')?.textContent.includes('其他设备登录'),'replacement notice is shown from a protected API response');check('replacement notice offers re-login',f.document.querySelector('.account-session-notice button.secondary-button')?.textContent.includes('重新登录'));check('replacement notice is not duplicated in account header',!f.document.querySelector('.public-account-error'));check('replaced session clears private settings',!f.document.querySelector('.settings-nav'));check('replacement notice has no runtime errors',f.errors.length===0)}finally{f.dom.window.close()}
+})
 await scenario('AUTH-012-team',async()=>{
  const f=await mount('/team');try{await waitFor(()=>f.document.body.textContent.includes('机密团队'),'team shown');f.expire();f.window.dispatchEvent(new f.window.Event('focus'));await waitFor(()=>!f.document.body.textContent.includes('机密团队'),'expired team removed');check('team cleared on session expiry',!f.document.body.textContent.includes('机密团队'))}finally{f.dom.window.close()}
 })
@@ -155,7 +165,7 @@ await scenario('AUTH-012-share',async()=>{
  const f=await mount('/share/private');try{await waitFor(()=>f.document.body.textContent.includes('private.txt'),'private share shown');await waitFor(()=>f.calls.some(c=>c.url==='/api/account/records'&&c.method==='POST'),'received share saved to server');check('received share record stored on server',f.calls.some(c=>c.url==='/api/account/records'&&c.method==='POST'&&c.body.includes('sent_to_me')));f.expire();f.window.dispatchEvent(new f.window.Event('focus'));await waitFor(()=>f.document.body.textContent.includes('使用收件账号登录'),'expired private share removed');check('private share requests login again',!f.document.body.textContent.includes('private.txt'))}finally{f.dom.window.close()}
 })
 await scenario('AUTH-012-short-TTL',async()=>{
- const f=await mount('/settings/profile','alice',{},500);try{check('short TTL initially has session',f.document.body.textContent.includes('alice'));await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'short TTL expires without navigation');check('expiry removes old profile without user action',!f.document.querySelector('.settings-nav'))}finally{f.dom.window.close()}
+ const f=await mount('/settings/profile','alice',{},2500);try{await waitFor(()=>f.document.body.textContent.includes('alice'),'short TTL initially has session',1000);check('short TTL initially has session',f.document.body.textContent.includes('alice'));await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'short TTL expires without navigation',2000);check('expiry removes old profile without user action',!f.document.querySelector('.settings-nav'))}finally{f.dom.window.close()}
 })
 await scenario('AUTH-012-401',async()=>{
  const f=await mount();try{f.expire();await f.click('保存资料');await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'401 clears account');check('mutation 401 removes account data',!f.document.body.textContent.includes('alice'))}finally{f.dom.window.close()}

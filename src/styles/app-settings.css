@@ -127,6 +127,11 @@
 .settings-form-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 16px; align-items: start; padding: 10px 0; border-bottom: 1px solid #f1f5fb; }
 .settings-form-row > label { color: #3f5169; font-size: 13.2px; line-height: 36px; }
 .settings-form-body { display: grid; grid-template-columns: minmax(0, 1fr) 172px; gap: 4px 16px; align-items: start; }
+.settings-form-body.settings-email-body { align-items: center; }
+.settings-email-control { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.settings-email-control .settings-field { flex: 1 1 auto; min-width: 0; }
+.settings-email-control .secondary-button { display: inline-flex; flex: none; min-height: 34px; align-items: center; gap: 3px; padding: 0 10px 0 12px; font-size: 12.4px; white-space: nowrap; }
+.settings-email-body .settings-form-hint { padding-top: 0; }
 .settings-form-body.is-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
 .settings-form-body.is-inline .settings-field { flex: 1 1 200px; max-width: 240px; }
 .settings-form-body.is-inline .settings-form-hint { flex: 1 1 120px; min-width: 110px; padding-top: 0; margin-left: auto; text-align: right; }

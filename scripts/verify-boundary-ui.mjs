@@ -23,7 +23,7 @@ function Controls() {
 }
 createRoot(document.getElementById('root')).render(<Controls/>);
 `
-const bundle = await build({root,configFile:false,logLevel:'silent',plugins:[{name:'boundary-entry',resolveId(id){if(id==='boundary-controls')return entry},async load(id){if(id===entry)return (await transformWithEsbuild(source,'boundary-controls.jsx',{loader:'jsx'})).code}}],build:{write:false,minify:false,rollupOptions:{input:'boundary-controls',output:{format:'iife',inlineDynamicImports:true}}}})
+const bundle = await build({root,configFile:false,logLevel:'silent',worker:{format:'es'},plugins:[{name:'boundary-entry',resolveId(id){if(id==='boundary-controls')return entry},async load(id){if(id===entry)return (await transformWithEsbuild(source,'boundary-controls.jsx',{loader:'jsx'})).code}}],build:{write:false,minify:false,rollupOptions:{input:'boundary-controls',output:{format:'iife',inlineDynamicImports:true}}}})
 const code = bundle.output.find(item=>item.type==='chunk').code
 let passed = 0
 async function test(name,run){await run();passed++;console.log('PASS '+name)}

@@ -12,7 +12,11 @@ export function PublicAccountActions() {
   useEffect(() => {
     const controller = new AbortController()
     const sessionChanged = ({ detail }) => {
-      if (!detail.userId) { setUser(null); setMenuOpen(false) }
+      if (!detail.userId) {
+        setUser(null)
+        setMenuOpen(false)
+        setError('')
+      } else setError('')
     }
     window.addEventListener(ACCOUNT_SESSION_EVENT, sessionChanged)
     apiRequest('/api/auth/me', { signal: controller.signal }).then(data => {

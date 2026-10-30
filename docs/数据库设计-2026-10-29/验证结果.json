@@ -1,0 +1,26 @@
+{
+  "status": "PASS",
+  "date": "2026-10-29",
+  "engine": "MySQL Community 8.0.41",
+  "mode": "isolated temporary instance; existing DB never connected",
+  "actual_tables": 2,
+  "proposed_tables": 44,
+  "proposed_columns": 433,
+  "foreign_keys": 86,
+  "checks": [
+    "Current source DDL created exactly 2 tables in an isolated empty database",
+    "Proposed DDL created 44 tables, 433 columns and 86 foreign keys on MySQL 8.0.41",
+    "Valid task/submission/file/review/receipt fixtures accepted",
+    "Cross-task participant reference correctly rejected (1452)",
+    "Cross-resource version reference correctly rejected (1452)",
+    "Returned review without a reason correctly rejected (3819)",
+    "Anonymous confirmation correctly rejected (3819)",
+    "Resource missing owner principal correctly rejected (3819)",
+    "Repeated batch idempotency key correctly rejected (1062)"
+  ],
+  "limits": [
+    "No application migration or production data test",
+    "No performance or capacity benchmark",
+    "No claim that v4 features have been implemented"
+  ]
+}

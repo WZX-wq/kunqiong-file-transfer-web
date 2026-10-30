@@ -266,8 +266,11 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
                   </div>
                   <div className="settings-form-row">
                     <label htmlFor="settings-email">邮箱</label>
-                    <div className="settings-form-body">
-                      <div className="settings-field"><input id="settings-email" value={user.email || ''} readOnly placeholder="未绑定邮箱" /></div>
+                    <div className="settings-form-body settings-email-body">
+                      <div className="settings-email-control">
+                        <div className="settings-field"><input id="settings-email" value={user.email || ''} readOnly placeholder="未绑定邮箱" /></div>
+                        <button type="button" className="secondary-button" onClick={() => setBindingType('email')}>{user.email ? '更换绑定' : '去绑定'}<ChevronRight size={14} /></button>
+                      </div>
                       <p className="settings-form-hint">用于接收取件通知与安全提醒</p>
                     </div>
                   </div>

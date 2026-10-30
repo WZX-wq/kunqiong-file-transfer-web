@@ -16,17 +16,20 @@ import express from 'express'
 import { limitResourceCreation } from './server/lib/resource-rate-limit.js'
 
 import {
-  MAX_FILE_SIZE, MAX_FILES, collectionsRoot, distRoot, filesRoot, releaseSha, userFilesRoot,
+  AUTH_COOKIE_NAME, MAX_FILE_SIZE, MAX_FILES, collectionsRoot, distRoot, filesRoot, relationalSchemaEnabled, releaseSha, userFilesRoot,
   serverHost, serverPort, storageRoot, tempRoot, testEnterpriseForAllUsers, testVerificationDebugMode
 } from './server/config.js'
 
 import {
   createToken, firstHeader
 } from './server/lib/http.js'
+import { keyedDigest } from './server/lib/private-key.js'
+import { readRelationalAuthSessionState } from './server/lib/relational-auth-session.js'
 
 import {
   databasePool, runtime
 } from './server/state.js'
+import { initializeRelationalSchemaOnStartup } from './server/db/startup.js'
 
 import {
   flushAuditPersistence, flushMetadataWrites, initMetadata, initializeAuditPersistence, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata
@@ -50,8 +53,8 @@ import {
 } from './server/routes/account.js'
 // 账号域业务逻辑（路由仍在本文件注册，按域逐步迁移）
 import {
-  authSessionFromRequest, cleanupExpired, configuredAccountPlans, isSmtpConfigured,
-  isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog, repairLegacyTestAdminPlans, repairLegacyTestPaidPlans, restoreAdminPlanRestrictions
+  authSessionFailure, authSessionFromRequest, cleanupExpired, configuredAccountPlans, isSmtpConfigured,
+  isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog, readCookie, repairLegacyTestAdminPlans, repairLegacyTestPaidPlans, restoreAdminPlanRestrictions
 } from './server/services/account.js'
 
 import { registerAdminRoutes } from './server/routes/admin.js'
@@ -93,12 +96,20 @@ for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot, user
   fs.mkdirSync(directory, { recursive: true })
 }
 
+const relationalSchemaResult = await initializeRelationalSchemaOnStartup()
+if (relationalSchemaResult) {
+  console.log(`关系表结构已就绪：${relationalSchemaResult.tableCount} 张表。`)
+}
+
 // ① 先注入领域规范化函数，之后 loadMetadata / mergeMetadataSnapshots 才会真正做规范化
 //    （顺序不可颠倒：loadMetadata 内部就要调用它）
 installNormalizer(normalizeMetadata)
 // ② 再载入并就地填充 metadata 快照
 initMetadata(normalizeMetadata(await loadMetadata()))
 await initializeAuditPersistence(normalizeAuditLog)
+if (databasePool && relationalSchemaResult) {
+  console.log(`业务数据已从 MySQL 关系表载入：revision ${runtime.metadataRevision}。`)
+}
 runtime.metadataBaseIds = metadataIdSets(metadata)
 runtime.metadataLocalBaseIds = runtime.metadataBaseIds
 for (const share of metadata.shares) {
@@ -160,6 +171,47 @@ app.use((_req, res, next) => {
       res.setHeader('x-error-message', encodeURIComponent(String(payload.message)))
     }
     return originalJson(payload)
+  }
+  next()
+})
+app.use('/api', async (req, _res, next) => {
+  const sessionId = readCookie(req, AUTH_COOKIE_NAME)
+  if (!sessionId || !databasePool) return next()
+  try {
+    let sessionState = null
+    if (relationalSchemaEnabled) {
+      sessionState = await readRelationalAuthSessionState(databasePool, keyedDigest(`session-cookie:${sessionId}`))
+    } else {
+      const search = "JSON_SEARCH(CAST(payload AS JSON), 'one', ?, NULL, '$.sessions[*].id')"
+      const base = `SUBSTRING_INDEX(${search}, '.id', 1)`
+      const [rows] = await databasePool.execute(
+        `SELECT ${search} AS session_path,
+          JSON_UNQUOTE(JSON_EXTRACT(CAST(payload AS JSON), CONCAT(${base}, '.expiresAt'))) AS expires_at,
+          JSON_UNQUOTE(JSON_EXTRACT(CAST(payload AS JSON), CONCAT(${base}, '.revokedAt'))) AS revoked_at
+         FROM kunqiong_app_state WHERE state_key = ? LIMIT 1`,
+        [sessionId, sessionId, sessionId, 'metadata'],
+      )
+      if (rows[0]?.session_path) {
+        sessionState = {
+          expired: new Date(rows[0].expires_at).getTime() <= Date.now(),
+          revoked: Boolean(rows[0].revoked_at),
+        }
+      }
+    }
+    if (!sessionState || sessionState.revoked || sessionState.expired) {
+      req.accountSessionInvalidationReason = sessionState?.revoked ? 'replaced' : sessionState ? 'expired' : 'invalid'
+      req.headers.cookie = String(req.headers.cookie || '').split(';').filter((part) => part.trim().split('=', 1)[0] !== AUTH_COOKIE_NAME).join('; ')
+    }
+    next()
+  } catch (error) { next(error) }
+})
+app.use('/api', (req, res, next) => {
+  const json = res.json.bind(res)
+  res.json = (body) => {
+    if (res.statusCode === 401 && req.accountSessionInvalidationReason === 'replaced' && !req.path.startsWith('/admin/')) {
+      return json(authSessionFailure(req))
+    }
+    return json(body)
   }
   next()
 })
@@ -372,7 +424,7 @@ const auditLogTimer = setInterval(() => {
   }
 }, 24 * 60 * 60 * 1000)
 auditLogTimer.unref()
-restoreUploadSessions()
+await restoreUploadSessions()
 cleanupExpired()
 purgeExpiredTrash()
 cleanupUploadSessions()
@@ -410,7 +462,9 @@ process.once('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1))
 function cleanupUploadSessions() {
   // 委托给 services 层统一清扫：TTL 12h 过期 + 创建后 30min 零进度
   // （零进度会话没有续传价值，却占着容量预留，挡住后续上传）。
-  sweepStaleUploadSessions()
+  return sweepStaleUploadSessions().catch(error => {
+    console.warn('[upload-session-cleanup] failed:', error?.message || error)
+  })
 }
 
 function qrDataUrlAttachment(value) {

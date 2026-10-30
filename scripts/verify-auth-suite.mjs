@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { resolveStoredFilePath } from '../server/lib/file-storage.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-auth-'))
@@ -51,7 +52,7 @@ app.post('/__auth_fixture', async (req, res) => {
 `
 fs.writeFileSync(path.join(fixture, 'server.mjs'), fs.readFileSync(path.join(root, 'server.mjs'), 'utf8').replace('registerAccountRoutes(app)', control + '\nregisterAccountRoutes(app)'))
 const future = new Date(Date.now() + 86400000 * 30).toISOString()
-const users = Object.fromEntries(['alice','bob','logout','expire','disabled'].map(id => [id, { id, username:id, nickname:id, planId:'free', status:id==='disabled'?'disabled':'active', providerAvatar:'https://example.invalid/avatar.png' }]))
+const users = Object.fromEntries(['alice','bob','logout','expire','disabled','oauth-fixture'].map(id => [id, { id, username:id, nickname:id, planId:'free', status:id==='disabled'?'disabled':'active', providerAvatar:'https://example.invalid/avatar.png' }]))
 users.bob.email = 'occupied@example.test'
 users.bob.phone = '13800009999'
 const share = (id, owner, expiry) => ({ id, code:id.toUpperCase(), ownerUserId:owner, status:'active', createdAt:new Date().toISOString(), expiresAt:expiry, files:[{ name:'safe.txt', storedName:'safe.txt', size:4, scanStatus:'clean' }] })
@@ -64,6 +65,8 @@ const metadataFile = path.join(fixture,'storage','metadata.json')
 fs.writeFileSync(metadataFile,JSON.stringify({users,sessions:Object.values(users).map(user=>({id:user.id+'-session',user,apiWebToken:'PRIVATE_FIXTURE_TOKEN',expiresAt:future})),shares,collections,messages:{alice:[{id:'alice-message',title:'test',body:'fixture',category:'system',unread:true,createdAt:new Date().toISOString()}],bob:[{id:'bob-message',title:'other',category:'system',unread:true,createdAt:new Date().toISOString()}]},records:{},upgradeOrders:[]}))
 for (const s of shares) { const dir=path.join(fixture,'storage','files',s.id);fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'safe.txt'),'safe') }
 const cdir=path.join(fixture,'storage','collections','task','submission');fs.mkdirSync(cdir,{recursive:true});fs.writeFileSync(path.join(cdir,'safe.txt'),'safe')
+const shareFilePath=id=>resolveStoredFilePath(stored().shares.find(share=>share.id===id)?.files?.[0],path.join(fixture,'storage','files',id),path.join(fixture,'storage','users'))
+const collectionFilePath=()=>resolveStoredFilePath(stored().collections.find(task=>task.id==='task')?.submissions?.[0]?.files?.[0],cdir,path.join(fixture,'storage','users'))
 let exchanges=[]
 const oauth=http.createServer(async(req,res)=>{
   let raw='';for await(const part of req)raw+=part
@@ -71,7 +74,7 @@ const oauth=http.createServer(async(req,res)=>{
   res.setHeader('content-type','application/json')
   if(data.code==='fail') res.end(JSON.stringify({code:400,message:'secret=FIXTURE_CLIENT_SECRET token=PRIVATE_FIXTURE_TOKEN'}))
   else {
-    const user=data.code==='contact-conflict'?{...users.alice,id:'duplicate-oauth',email:'occupied@example.test',phone:'13800009999'}:data.code==='stale-contact'?{...users.alice,email:'stale@example.test',phone:'13500003333'}:data.code==='disabled'?{...users.disabled,status:'active'}:users.alice
+    const user=data.code==='contact-conflict'?{...users.alice,id:'duplicate-oauth',email:'occupied@example.test',phone:'13800009999'}:data.code==='stale-contact'?{...users.alice,email:'stale@example.test',phone:'13500003333'}:data.code==='disabled'?{...users.disabled,status:'active'}:users['oauth-fixture']
     res.end(JSON.stringify({code:200,data:{access_token:'PRIVATE_FIXTURE_TOKEN',expires_in:3600,user}}))
   }
 })
@@ -103,8 +106,9 @@ async function start(mail=false,smsError='') {
  for(let i=0;i<100;i++){try{if((await fetch(base+'/api/health')).ok)return}catch{}await delay(50)}throw new Error('Fixture did not start '+stderr)
 }
 async function stop(){if(!child||child.exitCode!==null)return;const ended=once(child,'exit');child.kill();await Promise.race([ended,delay(3000)])}
+let currentAliceCookie='kunqiong_session=alice-session'
 async function api(url,{user='alice',cookie,method='GET',body,headers={}}={}) {
- const response=await fetch(base+url,{method,redirect:'manual',headers:{...(cookie!==undefined?{cookie}:user?{cookie:`kunqiong_session=${user}-session`}:{}),...(body?{'content-type':'application/json'}:{}),...headers},body:body?JSON.stringify(body):undefined})
+ const response=await fetch(base+url,{method,redirect:'manual',headers:{...(cookie!==undefined?{cookie}:user?{cookie:user==='alice'?currentAliceCookie:`kunqiong_session=${user}-session`}:{}),...(body?{'content-type':'application/json'}:{}),...headers},body:body?JSON.stringify(body):undefined})
  const data=await response.json().catch(()=>({}))
  requests.push({method,url,user:user||'anonymous',status:response.status,request:safeEvidence(body),response:safeEvidence(data)})
  return {status:response.status,data,response}
@@ -215,11 +219,12 @@ try {
   check('restore provider avatar',(await api('/api/auth/profile',{method:'PATCH',body:{avatar:null}})).data.user.avatar==='https://example.invalid/avatar.png')
  })
  await group('AUTH-009',async()=>{
-  await api('/api/account/file-cleanup-settings',{method:'PUT',body:{settings:{enabled:false,days:1}}});check('disabled cleanup retains expired file',fs.existsSync(path.join(fixture,'storage/files/past/safe.txt')))
+  const expiredSharePath=shareFilePath('past'),expiredCollectionPath=collectionFilePath()
+  await api('/api/account/file-cleanup-settings',{method:'PUT',body:{settings:{enabled:false,days:1}}});check('disabled cleanup retains expired file',fs.existsSync(expiredSharePath)&&fs.existsSync(expiredCollectionPath))
   const r=await api('/api/account/file-cleanup-settings',{method:'PUT',body:{settings:{enabled:true,days:1}}});check('cleanup settings saved',r.data.settings.enabled&&stored().users.alice.fileCleanup.days===1)
-  for(let i=0;i<100&&fs.existsSync(path.join(cdir,'safe.txt'));i++)await delay(10)
-  check('expired share and collection deleted',!fs.existsSync(path.join(fixture,'storage/files/past/safe.txt'))&&!fs.existsSync(path.join(cdir,'safe.txt')))
-  check('active, grace and other account files retained',['live','grace','other'].every(id=>fs.existsSync(path.join(fixture,`storage/files/${id}/safe.txt`))))
+  for(let i=0;i<100&&(fs.existsSync(expiredSharePath)||fs.existsSync(expiredCollectionPath));i++)await delay(10)
+  check('expired share and collection deleted',!fs.existsSync(expiredSharePath)&&!fs.existsSync(expiredCollectionPath))
+  check('active, grace and other account files retained',['live','grace','other'].every(id=>fs.existsSync(shareFilePath(id))))
   await api('/api/account/file-cleanup-settings',{method:'PUT',body:{settings:{enabled:false,days:3}}})
  })
  await group('AUTH-010',async()=>{
@@ -271,10 +276,28 @@ try {
   check('cleanup preference restored',!(await api('/api/account/file-cleanup-settings')).data.settings.enabled)
  })
  await group('AUTH-binding-relogin',async()=>{
+  const first = await callback(await login(),'stale-contact')
+  currentAliceCookie = cookieOf(first)
+  check('fresh login establishes one active session for this account',new URL(first.headers.get('location')).searchParams.get('login')==='success'&&stored().sessions.filter(session=>session.user?.id==='alice'&&!session.revokedAt&&new Date(session.expiresAt).getTime()>Date.now()).length===1)
+  const previousCookie = currentAliceCookie
+  const concurrentLogins = await Promise.all([login(),login()])
+  const concurrentCallbacks = await Promise.all(concurrentLogins.map(state=>callback(state,'stale-contact')))
+  const concurrentCookies = concurrentCallbacks.map(cookieOf)
+  const concurrentChecks = await Promise.all(concurrentCookies.map(cookie=>api('/api/auth/me',{user:'',cookie})))
+  check('parallel logins leave exactly one usable cookie',concurrentChecks.filter(result=>result.status===200&&result.data.user?.id==='alice').length===1&&concurrentChecks.filter(result=>result.status===401&&result.data.code==='account_session_replaced').length===1)
+  check('parallel logins persist exactly one active account session',stored().sessions.filter(session=>session.user?.id==='alice'&&!session.revokedAt&&new Date(session.expiresAt).getTime()>Date.now()).length===1)
+  currentAliceCookie = concurrentCookies[concurrentChecks.findIndex(result=>result.status===200)]
+  check('previous session is rejected with a replacement reason',(await api('/api/auth/me',{user:'',cookie:previousCookie})).status===401)
+  const replacedApi=await api('/api/account/records',{user:'',cookie:previousCookie})
+  check('protected API explains when its session was replaced',replacedApi.status===401&&replacedApi.data.code==='account_session_replaced')
   await api('/__auth_fixture',{method:'POST',body:{seedCode:'13700002222'}})
   check('phone binding succeeds',(await api('/api/account/bind',{method:'POST',body:{target:'13700002222',type:'phone',code:'123456'}})).status===200)
+  const replacedCookie = currentAliceCookie
   const response=await callback(await login(),'stale-contact')
+  currentAliceCookie = cookieOf(response)
   check('login remains usable after local binding',new URL(response.headers.get('location')).searchParams.get('login')==='success')
+  const replaced = await api('/api/auth/me',{user:'',cookie:replacedCookie})
+  check('new login expires the previous device session',replaced.status===401&&replaced.data.code==='account_session_replaced')
   check('relogin preserves verified contacts instead of stale provider values',stored().users.alice.email==='bind@example.test'&&stored().users.alice.phone==='13700002222')
   const next='13900004444';await api('/__auth_fixture',{method:'POST',body:{seedCode:next}})
   check('explicit replacement of verified phone remains available',(await api('/api/account/bind',{method:'POST',body:{target:next,type:'phone',code:'123456'}})).status===200&&stored().users.alice.phone===next)

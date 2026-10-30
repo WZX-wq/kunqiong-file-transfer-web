@@ -329,12 +329,15 @@ function FieldRow({
             placeholder="字段名称，例如：供应商类型"
           />
         </label>
-        <select aria-label={`字段类型 ${index + 1}`} value={field.type} onChange={(event) => {
-          const type = event.target.value
-          onUpdate({ type, ...(type === 'select' ? { options: field.options?.length >= 2 ? field.options : ['选项一', '选项二'] } : {}) })
-        }}>
-          {COLLECTION_FIELD_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
+        <label className="collection-field-type">
+          <span className="collection-inline-label collection-field-type-label">字段类型</span>
+          <select aria-label={`字段类型 ${index + 1}`} value={field.type} onChange={(event) => {
+            const type = event.target.value
+            onUpdate({ type, ...(type === 'select' ? { options: field.options?.length >= 2 ? field.options : ['选项一', '选项二'] } : {}) })
+          }}>
+            {COLLECTION_FIELD_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
         <label className="collection-rule-required">
           <input type="checkbox" checked={field.required} onChange={(event) => onUpdate({ required: event.target.checked })} />
           必填

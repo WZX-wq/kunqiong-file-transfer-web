@@ -26,7 +26,7 @@ import {
 } from '../lib/metadata-store.js'
 
 import {
-  accountMessagesForUser, accountNotificationSettingsForUser, accountRecordsForUser,
+  accountMessagesForUser, accountNotificationSettingsForUser, accountRecordsForUser, authSessionFailure,
   accountUserById, alignReturnUrlWithAuthHost, appendAuthResult, authRedirectUri,
   authSessionFromRequest, boundMethodForTargetType, cleanupExpiredFilesForOwner, cleanupOAuthStates, clearAuthCookie,
   createVerificationCode, discardVerificationCode, assertContactAvailable,
@@ -84,6 +84,7 @@ export function registerAccountRoutes(app) {
 
   app.get('/api/auth/me', (req, res) => {
     const session = authSessionFromRequest(req)
+    if (!session && req.accountSessionInvalidationReason === 'replaced') return res.status(401).json(authSessionFailure(req))
     res.json({ user: session ? publicAccountUser(session.user) : null, sessionExpiresAt: session?.expiresAt || null })
   })
 

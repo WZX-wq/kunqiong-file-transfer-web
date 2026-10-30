@@ -97,7 +97,9 @@ npm start
 
 短信模板文案位于 `notification-templates/sms-templates.json`，包括绑定验证码、登录验证码、团队邀请、文件分享、会员开通和到期提醒六类。提交腾讯云审核后，把对应模板 ID 填入 `.env`。支付结果文案位于 `notification-templates/payment-messages.json`，支付接入时用于站内消息和支付结果提示。
 
-数据库模式使用 MySQL 配置 `KUNQIONG_DB_*`。首次启动时，如果 `kunqiong_app_state` 表为空，服务会把本地 `storage/metadata.json` 迁移进去；后续账号、分享、团队、消息和订单元数据会同步保存到数据库。文件内容仍保存于 `storage/files` 和 `storage/collections`，部署测试服和正式服时需要同步这两个目录或改接对象存储。
+数据库模式使用 MySQL 配置 `KUNQIONG_DB_*`。启用 `KUNQIONG_RELATIONAL_SCHEMA_ENABLED=true` 后，首次启动会先保留 `kunqiong_app_state` 作为迁移/恢复来源，再将业务数据导入关系表；关系状态写入 `kq_relational_store_state` 后，后续启动和业务保存都以关系表为准。文件内容仍保存在 `storage/users` 等本地目录，部署测试服和正式服时需要同步文件目录或改接对象存储。
+
+已实现功能的关系表结构和运行时适配位于 `docs/数据库设计-2026-10-29/03-现有功能关系表设计.md` 与 `server/db/relational-store.js`。运行 `npm run db:schema:check` 可本地检查 DDL；显式运行 `npm run db:schema:apply` 只创建/校验 21 张关系表，不回填数据。配置 `KUNQIONG_RELATIONAL_SCHEMA_ENABLED=true` 后启动服务，会执行结构升级并在关系状态尚不存在时回填快照；后续业务读写以关系表为准。该模式当前会在应用内装配兼容元数据对象，并在事务中重建受管关系记录，尚未做到每个业务实体独立增量写入。切换前应确认数据库目标并备份。
 
 会员支付使用 `web_member_subsite_api.md` 中的主站接口。配置 `KUNQIONG_WEB_MEMBER_API_BASE` 和 `KUNQIONG_WEB_MEMBER_SUBSITE_NAME`，可选填三个主站 `package_id`。用户重新登录后，系统会用统一登录返回的会话 Token 创建微信扫码或支付宝订单，并轮询主站支付状态；支付成功后自动开通本地对应权益。支付回调仍由主站处理，本项目不模拟回调。
 

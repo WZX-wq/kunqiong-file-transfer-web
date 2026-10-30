@@ -97,6 +97,29 @@ export function normalizeMetadata(value = {}) {
         return sanitized
       })
     : []
+  const activeSessionsByUser = new Map()
+  const now = Date.now()
+  for (const session of sessions) {
+    const userId = String(session.user?.id || session.userId || '')
+    const expiresAt = new Date(session.expiresAt).getTime()
+    if (!userId || session.revokedAt || !Number.isFinite(expiresAt) || expiresAt <= now) continue
+    const previous = activeSessionsByUser.get(userId)
+    const createdAt = new Date(session.createdAt).getTime() || 0
+    const previousCreatedAt = previous ? new Date(previous.createdAt).getTime() || 0 : -1
+    if (!previous || createdAt > previousCreatedAt || (createdAt === previousCreatedAt && String(session.id) > String(previous.id))) {
+      activeSessionsByUser.set(userId, session)
+    }
+  }
+  for (const session of sessions) {
+    const userId = String(session.user?.id || session.userId || '')
+    if (!userId || session.revokedAt) continue
+    const expiresAt = new Date(session.expiresAt).getTime()
+    if (Number.isFinite(expiresAt) && expiresAt > now && activeSessionsByUser.get(userId) !== session) {
+      session.revokedAt = new Date(now).toISOString()
+      session.revokeReason = 'replaced'
+      runtime.metadataNeedsPersist = true
+    }
+  }
   const users = normalizeAccountUserStore(value.users, sessions)
   return {
     ...value,
@@ -384,14 +407,14 @@ export function normalizeAccountUserStore(value = {}, sessions = []) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     for (const user of Object.values(value)) {
       const normalized = normalizeAccountUser(user)
-      if (normalized?.id) store[normalized.id] = mergeAccountUser(store[normalized.id], user)
+      if (normalized?.id) store[normalized.id] = mergeAccountUser(store[normalized.id], user, { touchUpdatedAt: false })
     }
   }
   for (const session of sessions) {
     const normalized = normalizeAccountUser(session.user)
     if (!normalized?.id) continue
     // 传原始快照（而非归一化结果），保留 mergeAccountUser 需要的意图标记。
-    store[normalized.id] = mergeAccountUser(store[normalized.id], session.user)
+    store[normalized.id] = mergeAccountUser(store[normalized.id], session.user, { touchUpdatedAt: false })
     session.user = publicUser(store[normalized.id])
   }
   return store
@@ -435,7 +458,7 @@ export function normalizeAccountUser(user = {}) {
   }
 }
 
-export function mergeAccountUser(existing = null, incoming = {}) {
+export function mergeAccountUser(existing = null, incoming = {}, { touchUpdatedAt = true } = {}) {
   // 即便还没有既有记录，也要走完整合并流程：否则「首次保存 = 恢复登录头像」
   // 这类只靠 avatarRestoreRequested 表达意图的调用会被 normalizeAccountUser 直接吞掉标记。
   const normalized = normalizeAccountUser(incoming)
@@ -486,7 +509,7 @@ export function mergeAccountUser(existing = null, incoming = {}) {
     status: base.status === 'disabled' ? 'disabled' : normalized.status || base.status || 'active',
     fileCleanup: normalized.fileCleanup || base.fileCleanup || DEFAULT_FILE_CLEANUP_SETTINGS,
     createdAt: base.createdAt || normalized.createdAt,
-    updatedAt: new Date().toISOString(),
+    updatedAt: touchUpdatedAt ? new Date().toISOString() : (base.updatedAt || normalized.updatedAt),
   }
   // 意图标记只在合并过程中有意义，绝不能落库/下发。
   delete merged.avatarRestoreRequested

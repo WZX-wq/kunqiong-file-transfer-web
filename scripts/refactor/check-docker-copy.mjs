@@ -143,7 +143,7 @@ const port = await freePort()
 console.log(`按 COPY 清单物化到：${stage}`)
 console.log(`启动 server.mjs（端口 ${port}），等待 /api/health ...`)
 
-const env = { ...process.env, PORT: String(port), KUNQIONG_SCAN_MODE: 'optional', KUNQIONG_DB_ENABLED: 'false' }
+const env = { ...process.env, PORT: String(port), KUNQIONG_SCAN_MODE: 'optional', KUNQIONG_DB_ENABLED: 'false', KUNQIONG_RELATIONAL_SCHEMA_ENABLED: 'false' }
 for (const k of Object.keys(env)) if (k.startsWith('KUNQIONG_OAUTH') || k.startsWith('OAUTH_')) delete env[k]
 
 const child = spawn(process.execPath, [entry], { cwd: stage, env, stdio: ['ignore', 'pipe', 'pipe'] })

@@ -1,0 +1,55 @@
+{
+  "checkedAt": "2026-10-29T10:50:29.750Z",
+  "engine": "MySQL Community 8.0.41",
+  "database": "kunqiong_file_transfer",
+  "runtime": {
+    "serviceUrl": "http://localhost:8045",
+    "health": "PASS",
+    "sourceSnapshotRevision": 43,
+    "relationalRevision": 3,
+    "physicalTableCount": 25,
+    "managedBusinessTableCount": 20,
+    "managedBusinessRowCount": 591,
+    "normalizedSnapshotMatchesRelational": true,
+    "legacyAuditRows": 5605,
+    "relationalAuditRows": 5605
+  },
+  "businessTableCounts": {
+    "kq_account_record": 41,
+    "kq_auth_session": 1,
+    "kq_collection_submission": 10,
+    "kq_collection_task": 7,
+    "kq_distribution_assignment": 1,
+    "kq_distribution_batch": 1,
+    "kq_guest_usage": 1,
+    "kq_message": 52,
+    "kq_organization": 1,
+    "kq_organization_member": 2,
+    "kq_ownership_handover": 0,
+    "kq_resource": 113,
+    "kq_resource_file": 221,
+    "kq_share_config": 106,
+    "kq_submission_file": 10,
+    "kq_system_setting": 3,
+    "kq_upgrade_order": 15,
+    "kq_user": 3,
+    "kq_user_setting": 3,
+    "kq_verification_code": 0
+  },
+  "validation": {
+    "dryRunWriteReadRollback": "PASS",
+    "databaseSchemaTests": "6 passed",
+    "authenticationApiTests": "121 passed",
+    "authenticationUiTests": "87 passed",
+    "sixFeatureEndToEnd": "14 passed",
+    "sixFeatureBuild": "PASS",
+    "knownBuildWarning": "Vite reports existing chunks larger than 500 kB"
+  },
+  "backup": "storage/db-migration-backup/final-before-relational-2026-10-29T10-26-00-247Z",
+  "limitations": [
+    "Application assembles an in-memory compatibility metadata object from relation tables.",
+    "Each business save transactionally rebuilds managed relation records; per-entity incremental repositories are not implemented.",
+    "kunqiong_app_state and kunqiong_audit_log remain as retained compatibility/recovery sources.",
+    "Production capacity, multi-instance contention, backup restore, and recovery drills remain to be measured."
+  ]
+}

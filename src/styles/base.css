@@ -806,7 +806,14 @@ h1, h2, p { margin-top: 0; }
 .modal-close { width: 34px; height: 34px; margin: -5px -7px 0 0; color: #616d80; }
 .modal-close:hover { color: var(--accent-dark); background: #eef2f7; }
 .modal-body { padding: 24px 27px; }
-.manage-modal { width: min(540px, 100%); }
+.manage-modal { width: min(540px, 100%); max-height: calc(100vh - 40px); max-height: calc(100dvh - 40px); display: flex; flex-direction: column; overflow: hidden; }
+.manage-modal > .modal-header, .manage-modal > .modal-footer { flex: none; }
+.manage-modal > .manage-form { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.account-session-notice { position: fixed; z-index: 40; top: 76px; left: 50%; display: flex; align-items: center; gap: 10px; width: min(620px, calc(100vw - 28px)); padding: 11px 12px; color: #773e35; background: #fff; border: 1px solid #ead2cd; border-radius: 9px; box-shadow: 0 8px 28px rgba(49, 45, 43, .14); transform: translateX(-50%); }
+.account-session-notice > svg { flex: none; color: #a34e42; }
+.account-session-notice > span { min-width: 0; flex: 1; font-size: 13px; line-height: 1.45; }
+.account-session-notice .secondary-button { flex: none; min-height: 34px; }
+.account-session-notice .ghost-icon { flex: none; }
 .share-expiry-modal { width: min(520px, 100%); }
 .share-expiry-form { display: flex; flex-direction: column; gap: 18px; }
 .share-expiry-form .setting-block { display: flex; flex-direction: column; gap: 14px; }

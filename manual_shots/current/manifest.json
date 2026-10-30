@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-22.2",
+  "version": "2026-10-29.2",
   "screenshots": [
     {
       "name": "home",
@@ -515,6 +515,91 @@
         "成员观察",
         "团队资源",
         "团队成员视图"
+      ]
+    },
+    {
+      "name": "collection-structure",
+      "file": "collection-structure.png",
+      "sha256": "1cfb06310eb17ea46c64f5f440695a0fcd95c2caa413732f0272f7e99a5d01db",
+      "width": 1600,
+      "height": 1000,
+      "url": "http://127.0.0.1:8118/?view=collect",
+      "labels": [
+        "材料清单与自定义字段",
+        "材料清单",
+        "添加材料",
+        "自定义字段",
+        "添加字段"
+      ]
+    },
+    {
+      "name": "collection-naming",
+      "file": "collection-naming.png",
+      "sha256": "a1999b5049557eb60504b7ddeceae6477bdba45f5767442b561b271f016e28ff",
+      "width": 1600,
+      "height": 1000,
+      "url": "http://127.0.0.1:8118/?view=collect",
+      "labels": [
+        "自动命名",
+        "命名格式",
+        "插入变量",
+        "示例"
+      ]
+    },
+    {
+      "name": "distribution",
+      "file": "distribution.png",
+      "sha256": "c6936a7fe56be98231fa460b1c9e4620032f68c1f020fbbc218db4ff47f0f315",
+      "width": 1600,
+      "height": 1000,
+      "url": "http://127.0.0.1:8118/?view=deliver",
+      "labels": [
+        "批量分发给指定收件人",
+        "文件与收件人",
+        "批量填入",
+        "确认发布"
+      ]
+    },
+    {
+      "name": "team-handover",
+      "file": "team-handover.png",
+      "sha256": "afdd7ab5e62d5a9a6aaac9c4b4e7a33c6a63d68a0b4f238262bdf119a21a7c7e",
+      "width": 1600,
+      "height": 1000,
+      "url": "http://127.0.0.1:8118/team?tab=manage",
+      "labels": [
+        "负责人交接",
+        "等待接收者确认",
+        "交接记录"
+      ]
+    },
+    {
+      "name": "team-branding",
+      "file": "team-branding.png",
+      "sha256": "d76f32566928c1eccf80575bb647715a40c593dae9a90264aac452759baf3917",
+      "width": 1600,
+      "height": 1000,
+      "url": "http://127.0.0.1:8118/team?tab=branding",
+      "labels": [
+        "团队品牌展示",
+        "对外展示名称",
+        "简短介绍",
+        "效果预览",
+        "保存并启用"
+      ]
+    },
+    {
+      "name": "trash",
+      "file": "trash.png",
+      "sha256": "267ebb92e8fb7d85ffb4734a4f2a728272ab8da07e17c6956262cb73675e3125",
+      "width": 1600,
+      "height": 1000,
+      "url": "http://127.0.0.1:8118/trash",
+      "labels": [
+        "回收站",
+        "个人回收站",
+        "团队回收站",
+        "恢复"
       ]
     }
   ]

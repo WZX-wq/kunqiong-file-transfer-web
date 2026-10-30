@@ -242,7 +242,11 @@ try {
   check('Closed public preview stays blocked with readable error', closedPublic.status === 410 && decodeURIComponent(closedPublic.response.headers.get('x-error-message')) === '分享已关闭' && closedPublic.response.headers.get('x-frame-options') === 'DENY')
   const closedOwner = await fetch(base + `/api/shares/manage/${pdfShare.manageToken}/files/0/preview`, { headers: { cookie: 'kunqiong_session=owner-session' } })
   check('Owner can preview own file after closing public link', closedOwner.status === 200 && await closedOwner.text() === pdfBytes)
-  fs.unlinkSync(path.join(fixture, 'storage', 'files', pdfShare.id, stored().shares.find(item => item.id === pdfShare.id).files[0].storedName))
+  const pdfFile = stored().shares.find(item => item.id === pdfShare.id).files[0]
+  const pdfPath = pdfFile.storageOwnerId
+    ? path.join(fixture, 'storage', 'users', pdfFile.storageOwnerId, pdfFile.storedName)
+    : path.join(fixture, 'storage', 'files', pdfShare.id, pdfFile.storedName)
+  fs.unlinkSync(pdfPath)
   check('Cleaned owner file returns explicit Gone', (await api(`/api/shares/manage/${pdfShare.manageToken}/files/0/preview`, { user: 'owner' })).status === 410)
   const source = fs.readFileSync(path.join(root, 'src', 'lib', 'api.js'), 'utf8').split('async function downloadBinaryWithProgress')[1].split('async function downloadResponseError')[0]
   check('Client download streams to the save picker without buffering file bodies', source.includes("method: 'GET'") && source.includes('showSaveFilePicker') && source.includes('getReader') && source.includes('writable.write(value)') && !source.includes('new Blob') && !source.includes('.blob(') && source.includes("method: 'HEAD'"))

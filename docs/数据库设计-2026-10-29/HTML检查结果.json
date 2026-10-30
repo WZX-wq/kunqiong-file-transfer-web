@@ -1,0 +1,32 @@
+[
+  {
+    "file": "01-当前实际数据库结构.html",
+    "status": "PASS",
+    "cards": 2,
+    "checks": [
+      "unique anchors",
+      "local download links",
+      "offline resources",
+      "encoding",
+      "search/module/expansion where applicable",
+      "print state restoration where applicable",
+      "schema dictionary counts"
+    ],
+    "errors": []
+  },
+  {
+    "file": "02-v4拟议数据库设计.html",
+    "status": "PASS",
+    "cards": 44,
+    "checks": [
+      "unique anchors",
+      "local download links",
+      "offline resources",
+      "encoding",
+      "search/module/expansion where applicable",
+      "print state restoration where applicable",
+      "schema dictionary counts"
+    ],
+    "errors": []
+  }
+]

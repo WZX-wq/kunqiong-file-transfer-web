@@ -406,6 +406,13 @@ export function createAuthSession(tokenData) {
     apiWebToken: trimRecordString(tokenData.api_web_token || tokenData.apiWebToken || tokenData.access_token, 300),
     user: publicUser(user),
   }
+  const replacedAt = now.toISOString()
+  for (const existing of metadata.sessions) {
+    if (String(existing.user?.id || existing.userId || '') !== String(user.id) || existing.revokedAt) continue
+    retainUserPaymentQueryCredentials(existing)
+    existing.revokedAt = replacedAt
+    existing.revokeReason = 'replaced'
+  }
   metadata.sessions.push(session)
   paymentSessionTokens.set(user.id, session.apiWebToken)
   retainUserPaymentQueryCredentials(session, true)

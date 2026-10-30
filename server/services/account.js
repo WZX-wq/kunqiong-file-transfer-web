@@ -47,7 +47,7 @@ import {
   publicUser, trimRecordString,
 } from '../lib/metadata-normalizers.js'
 
-import { metadata, persistMetadata, persistAuditLog, readAuditLogs } from '../lib/metadata-store.js'
+import { metadata, persistMetadata, persistAuditLog, readAuditLogs, refreshLocalMetadataForAuthentication } from '../lib/metadata-store.js'
 import { contactMatchesUser } from '../lib/contact-input.js'
 import { booleanInput, dateInput, integerInput, objectInput } from '../lib/input-validation.js'
 
@@ -1251,8 +1251,18 @@ export function displayAccountName(user = {}) {
 
 export function requireAuthSession(req, res) {
   const session = authSessionFromRequest(req)
-  if (!session) res.status(401).json({ message: '请先登录' })
+  if (!session) res.status(401).json(authSessionFailure(req))
   return session
+}
+
+export function authSessionFailure(req) {
+  if (req.accountSessionInvalidationReason === 'replaced') {
+    return { message: '你的账号已在其他设备登录，请重新登录', code: 'account_session_replaced' }
+  }
+  if (req.accountSessionInvalidationReason === 'expired') {
+    return { message: '登录状态已过期，请重新登录', code: 'account_session_expired' }
+  }
+  return { message: '请先登录' }
 }
 
 export function accountRecordsForUser(userId) {
@@ -1669,11 +1679,17 @@ export function authRedirectUri(req) {
 }
 
 export function authSessionFromRequest(req) {
+  refreshLocalMetadataForAuthentication()
   const sessionId = readCookie(req, AUTH_COOKIE_NAME)
   if (!sessionId) return null
   const session = metadata.sessions.find((item) => item.id === sessionId)
   if (!session) return null
+  if (session.revokedAt) {
+    req.accountSessionInvalidationReason = session.revokeReason === 'replaced' ? 'replaced' : 'invalid'
+    return null
+  }
   if (!Number.isFinite(new Date(session.expiresAt).getTime()) || new Date(session.expiresAt).getTime() <= Date.now()) {
+    req.accountSessionInvalidationReason = 'expired'
     removeAuthSession(sessionId)
     return null
   }
@@ -1696,10 +1712,14 @@ export function removeAuthSession(sessionId) {
 
 export function cleanupExpiredAuthSessions() {
   const now = Date.now()
+  const revokedRetentionCutoff = now - 30 * 86400000
   for (const session of metadata.sessions) {
     if (new Date(session.expiresAt).getTime() <= now) retainUserPaymentQueryCredentials(session)
   }
-  const nextSessions = metadata.sessions.filter((session) => new Date(session.expiresAt).getTime() > now)
+  const nextSessions = metadata.sessions.filter((session) => {
+    if (new Date(session.expiresAt).getTime() <= now) return false
+    return !session.revokedAt || new Date(session.revokedAt).getTime() > revokedRetentionCutoff
+  })
   if (nextSessions.length !== metadata.sessions.length) {
     metadata.sessions = nextSessions
     persistMetadata()

@@ -247,6 +247,7 @@ export const MAX_GUEST_USAGE_ENTRIES = 20000
 // 重试上限用于兜住持续的写竞争，超过后放弃本次落盘并告警，由下一次业务写入重试。
 export const MAX_METADATA_WRITE_ATTEMPTS = 5
 export const databaseEnabled = parseBooleanEnv(process.env.KUNQIONG_DB_ENABLED, false)
+export const relationalSchemaEnabled = parseBooleanEnv(process.env.KUNQIONG_RELATIONAL_SCHEMA_ENABLED, false)
 export const databaseHost = String(process.env.KUNQIONG_DB_HOST || '').trim()
 export const databasePort = Number(process.env.KUNQIONG_DB_PORT || 3306)
 export const databaseName = String(process.env.KUNQIONG_DB_NAME || '').trim()

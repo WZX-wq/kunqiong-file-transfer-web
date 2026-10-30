@@ -176,15 +176,15 @@ export function accountSessionKey() {
   return `${sessionGeneration}:${sessionUserId}`
 }
 
-function reportSession(userId = '', expiresAt = '') {
+function reportSession(userId = '', expiresAt = '', message = '', code = '') {
   const previousId = sessionUserId
   sessionUserId = userId
   if (previousId && previousId !== userId) sessionGeneration += 1
-  window.dispatchEvent(new CustomEvent(ACCOUNT_SESSION_EVENT, { detail: { userId, previousId, expiresAt } }))
+  window.dispatchEvent(new CustomEvent(ACCOUNT_SESSION_EVENT, { detail: { userId, previousId, expiresAt, message, code } }))
 }
 
-export function invalidateAccountSession() {
-  if (sessionUserId) reportSession('')
+export function invalidateAccountSession(message = '', code = '') {
+  if (sessionUserId || code) reportSession('', '', message, code)
 }
 
 export async function apiRequest(url, options = {}) {
@@ -200,7 +200,7 @@ export async function apiRequest(url, options = {}) {
   if (url === '/api/auth/me' && response.ok) reportSession(data.user?.id || '', data.sessionExpiresAt || '')
   if (url === '/api/auth/logout' && response.ok) invalidateAccountSession()
   if (!response.ok) {
-    if (response.status === 401 && data.code !== 'share_password_invalid' && !String(url).startsWith('/api/admin/')) invalidateAccountSession()
+    if (response.status === 401 && data.code !== 'share_password_invalid' && !String(url).startsWith('/api/admin/')) invalidateAccountSession(data.message || '', data.code || '')
     const error = new Error(data.message || ([502, 504].includes(response.status) ? '服务连接暂时中断，请稍后重试' : '请求失败'))
     error.status = response.status
     error.code = data.code || ''

@@ -229,6 +229,7 @@ export function registerAdminRoutes(app) {
         return res.redirect(appendAuthResult(returnTo, 'failed', '该账号已被后台禁用，暂时无法登录，请联系管理员。'))
       }
       const session = createAuthSession(tokenData)
+      await flushMetadataWrites()
       setAuthCookie(res, session.id, session.expiresAt, req)
       setOAuthStateCookie(res, req, state, '')
       res.redirect(appendAuthResult(returnTo, 'success'))

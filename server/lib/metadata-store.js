@@ -17,9 +17,12 @@ import path from 'node:path'
 import { DatabaseAuditStore, LocalAuditStore } from './audit-store.js'
 import {
   metadataPath, MAX_METADATA_WRITE_ATTEMPTS, DEFAULT_SYSTEM_CONFIG, MAX_AUDIT_LOGS,
-  databaseHost, databaseName, databaseUser,
+  databaseHost, databaseName, databaseUser, relationalSchemaEnabled,
 } from '../config.js'
 import { databasePool, runtime } from '../state.js'
+import {
+  commitRelationalMetadata, ensureRelationalStoreSchema, initializeRelationalMetadata, loadRelationalMetadata,
+} from '../db/relational-store.js'
 
 // ── 元数据快照本体 ────────────────────────────────────────────
 // 全进程唯一实例。**只在启动时就地填充一次，之后只做属性级修改，绝不整体替换** ——
@@ -73,7 +76,11 @@ export async function flushMetadataWrites() {
 // File rollback must never delete bytes that a durable resource already references.
 export async function publicationExists(predicate) {
   try {
-    const snapshot = databasePool ? (await readRemoteMetadataRow())?.metadata : loadLocalMetadata()
+    const snapshot = databasePool
+      ? relationalSchemaEnabled
+        ? (await loadRelationalMetadata(databasePool))?.metadata
+        : (await readRemoteMetadataRow())?.metadata
+      : loadLocalMetadata()
     return Boolean(snapshot && predicate(snapshot))
   } catch { return null }
 }
@@ -205,6 +212,19 @@ export function readLocalMetadataRevision() {
   }
 }
 
+export function refreshLocalMetadataForAuthentication() {
+  if (databasePool) return false
+  const diskRevision = readLocalMetadataRevision()
+  if (diskRevision <= runtime.metadataLocalRevision) return false
+  const exactBase = diskRevision === runtime.metadataLocalRevision + 1
+  applyMergedMetadata(mergeMetadataSnapshots(loadLocalMetadata(), metadata, exactBase ? runtime.metadataLocalBaseIds : null))
+  runtime.metadataLocalRevision = diskRevision
+  runtime.metadataLocalBaseIds = metadataIdSets(metadata)
+  runtime.metadataBaseIds = runtime.metadataLocalBaseIds
+  runtime.metadataConflictCount += 1
+  return true
+}
+
 export async function loadMetadata() {
   if (databasePool) requireSharedDataKey()
   let localMetadata
@@ -226,6 +246,31 @@ export async function loadMetadata() {
     throw new Error('数据库模式已开启，但数据库连接参数不完整')
   }
   await ensureDatabaseStateTable()
+  if (relationalSchemaEnabled) {
+    await ensureRelationalStoreSchema(databasePool)
+    const current = await loadRelationalMetadata(databasePool)
+    if (current) {
+      runtime.metadataRevision = current.revision
+      runtime.metadataBaseIds = metadataIdSets(current.metadata)
+      return current.metadata
+    }
+
+    const legacy = await readRemoteMetadataRow()
+    if (!legacy && localError) throw localError
+    const source = normalizeSnapshot(legacy?.metadata || localMetadata)
+    const migrated = await initializeRelationalMetadata(databasePool, source, legacy?.revision || 0)
+    runtime.metadataRevision = migrated.revision
+    runtime.metadataBaseIds = metadataIdSets(migrated.metadata)
+    console.log(JSON.stringify({
+      event: 'relational_metadata_migrated',
+      source: legacy ? 'kunqiong_app_state' : 'metadata.json',
+      sourceRevision: migrated.state.sourceSnapshotRevision,
+      revision: migrated.revision,
+      tables: Object.keys(migrated.state.counts).length,
+      counts: migrated.state.counts,
+    }))
+    return migrated.metadata
+  }
   const remote = await readRemoteMetadataRow()
   if (remote) {
     runtime.metadataRevision = remote.revision
@@ -402,8 +447,11 @@ export function rememberMetadataBaseIds() {
 // ── 持久化 ───────────────────────────────────────────────────
 export function persistMetadata() {
   if (runtime.persistenceError) throw runtime.persistenceError
-  persistLocalMetadata()
-  if (!databasePool) return
+  if (!databasePool) {
+    persistLocalMetadata()
+    return
+  }
+  if (!relationalSchemaEnabled) persistLocalMetadata()
   runtime.metadataWriteQueue = runtime.metadataWriteQueue
     .catch(() => {})
     .then(() => writeMetadataToDatabase())
@@ -468,6 +516,23 @@ export function persistLocalMetadata() {
 }
 
 export async function writeMetadataToDatabase() {
+  if (relationalSchemaEnabled) {
+    const value = relationalSnapshot()
+    const result = await commitRelationalMetadata(
+      databasePool,
+      value,
+      runtime.metadataRevision,
+      (remote, local, exactBase) => mergeMetadataSnapshots(remote, local, exactBase ? runtime.metadataBaseIds : null),
+    )
+    if (result.conflict) {
+      applyMergedMetadata(result.metadata)
+      runtime.metadataConflictCount += 1
+      console.warn(`[metadata-cas] 关系表写入冲突，已在事务中合并（本地 rev ${runtime.metadataRevision}，提交 rev ${result.revision}）`)
+    }
+    runtime.metadataRevision = result.revision
+    runtime.metadataBaseIds = metadataIdSets(metadata)
+    return
+  }
   for (let attempt = 0; attempt < MAX_METADATA_WRITE_ATTEMPTS; attempt++) {
     const expected = runtime.metadataRevision
     const [result] = await databasePool.execute(
@@ -510,4 +575,10 @@ export async function writeMetadataToDatabase() {
     console.warn(`[metadata-cas] 实例 ${instanceTag} 写入冲突，已合并重试（本地 rev ${expected}，远端 rev ${remote.revision}${exactBase ? '，删除可识别' : '，基线不可比按并集处理'}）`)
   }
   throw new Error(`元数据写入连续 ${MAX_METADATA_WRITE_ATTEMPTS} 次与其他实例冲突`)
+}
+
+function relationalSnapshot() {
+  return auditStore
+    ? { ...metadata, auditLogs: [], auditStorage: 'mysql-v1' }
+    : { ...metadata, auditLogs: [] }
 }

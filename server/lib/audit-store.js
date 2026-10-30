@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { removeFile } from './file-lock.js'
+import { protectCredential } from './private-key.js'
 
 function mergeAuditEntries(logs, normalize, limit) {
   const byId = new Map()
@@ -31,6 +32,7 @@ export class DatabaseAuditStore {
     this.queue = Promise.resolve()
     this.error = null
     this.pending = new Map()
+    this.relationalAuditEnabled = false
   }
 
   async initialize(legacy = []) {
@@ -41,8 +43,20 @@ export class DatabaseAuditStore {
       payload LONGTEXT NOT NULL,
       INDEX audit_time (critical, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+    const [auditTableRows] = await this.pool.execute(
+      'SELECT COUNT(*) AS found FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+      ['kq_audit_log'],
+    )
+    if (Number(auditTableRows?.[0]?.found)) {
+      const [payloadColumns] = await this.pool.execute(
+        'SELECT COUNT(*) AS found FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+        ['kq_audit_log', 'entity_payload_json'],
+      )
+      this.relationalAuditEnabled = Number(payloadColumns?.[0]?.found) > 0
+    }
     const logs = mergeAuditEntries(legacy, this.normalize, this.limit)
     for (let offset = 0; offset < logs.length; offset += 100) await this.insert(logs.slice(offset, offset + 100))
+    if (this.relationalAuditEnabled) await this.mirrorExistingLogs()
     return this.refresh()
   }
 
@@ -50,6 +64,33 @@ export class DatabaseAuditStore {
     if (!logs.length) return
     await this.pool.execute(`INSERT IGNORE INTO kunqiong_audit_log (id, critical, created_at, payload) VALUES ${logs.map(() => '(?, ?, ?, ?)').join(', ')}`,
       logs.flatMap(log => [log.id, log.type === 'access' ? 0 : 1, log.createdAt, JSON.stringify(log)]))
+    if (this.relationalAuditEnabled) await this.insertRelational(logs)
+  }
+
+  async insertRelational(logs) {
+    if (!logs.length) return
+    const toDateTime = value => {
+      const date = new Date(value)
+      return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 23).replace('T', ' ') : new Date().toISOString().slice(0, 23).replace('T', ' ')
+    }
+    await this.pool.execute(`INSERT IGNORE INTO kq_audit_log
+      (legacy_id, event_type, action, result_status, duration_ms, user_legacy_id, target_legacy_id, ip_address,
+       details_json, gmt_create, gmt_modified, entity_payload_json)
+      VALUES ${logs.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+    logs.flatMap(log => [
+      log.id, log.type, String(log.action || '').slice(0, 120), log.status === null || log.status === undefined ? null : String(log.status),
+      log.durationMs, log.userId || null, log.targetId || null, String(log.ip || '').slice(0, 45) || null,
+      JSON.stringify(log.details || {}), toDateTime(log.createdAt), toDateTime(log.createdAt),
+      JSON.stringify(protectCredential(JSON.stringify(log), `audit:${log.id}`)),
+    ]))
+  }
+
+  async mirrorExistingLogs() {
+    const [rows] = await this.pool.query('SELECT payload FROM kunqiong_audit_log')
+    for (let offset = 0; offset < rows.length; offset += 100) {
+      const logs = rows.slice(offset, offset + 100).map(row => this.normalize(JSON.parse(row.payload))).filter(log => log.action)
+      await this.insertRelational(logs)
+    }
   }
 
   async flushPendingRows() {
@@ -109,7 +150,11 @@ export class DatabaseAuditStore {
     if (this.error) throw this.error
     const before = this.logs.length
     this.logs = this.logs.filter(log => new Date(log.createdAt).getTime() >= cutoff)
-    this.enqueue(() => this.pool.execute('DELETE FROM kunqiong_audit_log WHERE created_at < ?', [new Date(cutoff).toISOString()]))
+    this.enqueue(async () => {
+      const at = new Date(cutoff).toISOString()
+      await this.pool.execute('DELETE FROM kunqiong_audit_log WHERE created_at < ?', [at])
+      if (this.relationalAuditEnabled) await this.pool.execute('DELETE FROM kq_audit_log WHERE gmt_create < ?', [at.slice(0, 23).replace('T', ' ')])
+    })
     return { logs: this.logs, removed: before - this.logs.length }
   }
 }

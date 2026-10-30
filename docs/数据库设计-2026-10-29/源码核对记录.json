@@ -1,0 +1,76 @@
+{
+  "date": "2026-10-29",
+  "method": "source-only; no existing database connection",
+  "files": [
+    {
+      "file": "server/lib/metadata-store.js",
+      "line": 150,
+      "sha256": "434d69f76989f109181f101200b0b1788b4a24780739abc41d779a851ce672d7"
+    },
+    {
+      "file": "server/lib/metadata-store.js",
+      "line": 264,
+      "sha256": "434d69f76989f109181f101200b0b1788b4a24780739abc41d779a851ce672d7"
+    },
+    {
+      "file": "server/lib/audit-store.js",
+      "line": 36,
+      "sha256": "fce94736f221d26598fbedc70c66ccaaffafbd51b9e2a19af4d3176ee7e04666"
+    },
+    {
+      "file": "server/lib/metadata-normalizers.js",
+      "line": 34,
+      "sha256": "d6ade2f69e143764b3abc4406d6a16d2aa8479b098a78a1d00feab9376c0ad02"
+    },
+    {
+      "file": "server/services/shares.js",
+      "line": 1413,
+      "sha256": "478d97b0851a4c69b55c1b849b670f08337c2792ee585452ce19cdc0872d1b31"
+    },
+    {
+      "file": "server/services/shares.js",
+      "line": 1441,
+      "sha256": "478d97b0851a4c69b55c1b849b670f08337c2792ee585452ce19cdc0872d1b31"
+    },
+    {
+      "file": "server/routes/distributions.js",
+      "line": 137,
+      "sha256": "e772925902a75d165243c983ddc0158a9f2733693b706ec7e4d22930c05adb24"
+    },
+    {
+      "file": "server/services/trash.js",
+      "line": 238,
+      "sha256": "af65969662e604f8168657a824802d1dd0cec50d617e0522dc4518569c4ae290"
+    },
+    {
+      "file": "server/lib/file-storage.js",
+      "line": 69,
+      "sha256": "0efea44c78e2ff235aa29ee0c3da18950a27e81c45465cad0dcc82aa5b0c7dc8"
+    },
+    {
+      "file": "server/services/shares.js",
+      "line": 131,
+      "sha256": "478d97b0851a4c69b55c1b849b670f08337c2792ee585452ce19cdc0872d1b31"
+    },
+    {
+      "file": "src/lib/collection-form.js",
+      "line": 254,
+      "sha256": "7885bbbf6d09b8371c5d4cbb2031f93d6e4e07c6615762f11623d90d718e1ea9"
+    },
+    {
+      "file": "server/lib/team-branding.js",
+      "line": 8,
+      "sha256": "b2d9f3946a08847845304f9ad2f5c8f50464df95192b2011cbc99e00c8b8b65a"
+    },
+    {
+      "file": "server/state.js",
+      "line": 18,
+      "sha256": "c4a464b3dce04d70994dd492670701f1a4d4cc6ed30355fd1a9710fb5f5e3eff"
+    },
+    {
+      "file": "server/config.js",
+      "line": 14,
+      "sha256": "7545bb89a231de28002c9588813648c7365ed33e03ad6432721f5edcf0a768f6"
+    }
+  ]
+}
