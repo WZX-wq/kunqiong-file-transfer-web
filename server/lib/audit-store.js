@@ -6,7 +6,7 @@ import crypto from 'node:crypto'
 import { removeFile } from './file-lock.js'
 import { protectCredential } from './private-key.js'
 
-function mergeAuditEntries(logs, normalize, limit) {
+export function mergeAuditEntries(logs, normalize, limit) {
   const byId = new Map()
   for (const entry of logs) {
     const log = normalize(entry)

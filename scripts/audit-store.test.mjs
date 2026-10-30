@@ -5,7 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
-import { DatabaseAuditStore, LocalAuditStore } from '../server/lib/audit-store.js'
+import { DatabaseAuditStore, LocalAuditStore, mergeAuditEntries } from '../server/lib/audit-store.js'
+import { normalizeAuditLog } from '../server/lib/metadata-normalizers.js'
+import { listValidAuditIds, restoreFixtureAudit } from './lib/read-audit-fixture.mjs'
 
 const normalize = entry => ({ ...entry })
 const log = (id, createdAt = '2026-10-12T00:00:00.000Z') => ({ id, action: id, createdAt })
@@ -39,6 +41,57 @@ test('relational audit mirror traverses large history in bounded primary-key pag
   assert.deepEqual(queries.map(item => item.values), [[], ['audit-0099'], ['audit-0199']])
   assert.deepEqual(executions.map(item => item.values.length / 12), [100, 100, 5])
   assert.deepEqual(executions.flatMap(item => item.values.filter((_, index) => index % 12 === 0)), entries.map(item => item.id))
+})
+
+test('deployment audit evidence counts unique logs accepted by the runtime normalizer', () => {
+  const entries = [
+    { id: 'audit-valid-1', action: ' 文件上传 ' },
+    { id: 'audit-invalid', action: '   ' },
+    { id: 'audit-valid-1', action: '重复 ID' },
+    { id: 'audit-valid-2', action: '文件下载' },
+    { action: '缺失稳定 ID' },
+  ]
+
+  assert.deepEqual(listValidAuditIds(entries, normalizeAuditLog), ['audit-valid-1', 'audit-valid-2'])
+})
+
+test('fixture audit verification uses the runtime priority retention rule', () => {
+  const critical = Array.from({ length: 180 }, (_, index) => ({
+    id: `critical-${index}`,
+    type: 'security',
+    action: 'security event',
+    createdAt: new Date(Date.UTC(2020, 0, 1, 0, index)).toISOString(),
+  }))
+  const snapshotAccess = Array.from({ length: 4820 }, (_, index) => ({
+    id: `snapshot-access-${index}`,
+    type: 'access',
+    action: 'read request',
+    createdAt: new Date(Date.UTC(2021, 0, 1, 0, index)).toISOString(),
+  }))
+  const journalAccess = Array.from({ length: 180 }, (_, index) => ({
+    id: `journal-access-${index}`,
+    type: 'access',
+    action: 'read request',
+    createdAt: new Date(Date.UTC(2022, 0, 1, 0, index)).toISOString(),
+  }))
+  const header = JSON.stringify({ version: 1, journalId: 'current-journal' }) + '\n'
+  const journal = Buffer.from(header + journalAccess.map(item => JSON.stringify(item)).join('\n') + '\n')
+  const snapshot = { logs: [...critical, ...snapshotAccess], appliedJournalId: 'previous-journal', appliedJournalOffset: 0 }
+  const restored = restoreFixtureAudit({}, snapshot, journal, { normalize: normalizeAuditLog })
+  const expected = mergeAuditEntries([...critical, ...snapshotAccess, ...journalAccess], normalizeAuditLog, 5000)
+  const timeOnly = [...critical, ...snapshotAccess, ...journalAccess]
+    .sort((first, second) => second.createdAt.localeCompare(first.createdAt))
+    .slice(0, 5000)
+  const expectedIds = new Set(expected.map(item => item.id))
+  const timeOnlyIds = new Set(timeOnly.map(item => item.id))
+  const overlap = [...timeOnlyIds].filter(id => expectedIds.has(id))
+
+  assert.equal(expected.length, 5000)
+  assert.deepEqual(restored.auditLogs.map(item => item.id), expected.map(item => item.id))
+  assert.equal(timeOnly.length, 5000)
+  assert.equal(overlap.length, 4820)
+  assert.equal(expected.filter(item => item.type === 'security').length, 180)
+  assert.equal(timeOnly.filter(item => item.type === 'security').length, 0)
 })
 
 test('purged history stays purged if rotation is interrupted before journal reset', () => {

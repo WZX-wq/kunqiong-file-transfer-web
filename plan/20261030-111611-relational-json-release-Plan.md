@@ -9,7 +9,7 @@ repo_root: D:/demo/鲲穹文件传输/kunqiong-file-transfer-web-main/kunqiong-f
 branch: deploy/user-file-isolation-20261029 # git branch the work happens on
 base_sha: 70a7670 # git short SHA the plan started from
 created: 2026-10-30 11:16 # YYYY-MM-DD HH:mm
-updated: 2026-10-30 16:05 # YYYY-MM-DD HH:mm  (bump on every edit)
+updated: 2026-10-30 16:12 # YYYY-MM-DD HH:mm  (bump on every edit)
 supersedes: ""           # plan_id this replaces, if any
 ---
 
@@ -139,6 +139,7 @@ reported rows in here after reviewing the diff). Write it as you finish, never i
 | 2026-10-30 15:06 | T5,T6 | Git release | Committed and pushed `4429b25` to Gitea `main`; Actions run 128 started. No SSH connection used. | main |
 | 2026-10-30 15:12 | T7 | Schema compatibility and deployment preflight | Run 128 reached MySQL but failed table-type validation on `kq_user`. Normalize integer display widths only, retain range/precision checks, and inspect existing tables before replacing the service. 14 DB tests and 10 deployment gates pass. | main |
 | 2026-10-30 16:05 | T7 | Legacy audit and upload-session startup repair | Runs 129/130 migrated the 20 managed tables but failed while reading the unbounded audit payload query and then stopped on an incompatible upload-session table. Paginate audit mirroring by primary-key batches, reuse canonical column types for upload-session checks, and include that table in the read-only deployment preflight. | main |
+| 2026-10-30 16:12 | T7 | Audit backup retention verification | Run 131 has 4,820 matching IDs out of the verifier's 5,000 expected IDs. A focused fixture reproduces that exact overlap when the backup reader selects the latest 5,000 by timestamp but LocalAuditStore retains 180 older critical entries ahead of 5,000 access entries. Make verification use the shared runtime merge policy; rerun deployment to confirm against the retained server backup. | main |
 
 ## Verification Evidence
 
@@ -166,6 +167,7 @@ rest deferred - list which), or `not-run` (nothing run - say why + residual risk
 | 2026-10-30 | `node scripts/verify-deploy-release.mjs` | 6 passed, 0 failed | Covers existing-container config inheritance and exact release/health gates; secret sentinel is absent from output. |
 | 2026-10-30 | `npm run test:db-schema`; `npm run test:db-upload-sessions`; `npm run test:db-relational-sync` | Passed | 9 schema/store tests, 1 upload-session test, and 5,000 synthetic-user transactional sync; no durable synthetic rows. |
 | 2026-10-30 | `node scripts/verify-collection-layout.mjs`; `npx vite build`; `git diff --check` | Passed | Responsive layout regression checks and production build; existing large viewer chunk warning remains. |
+| 2026-10-30 16:12 | `npm run test:audit`; `npm run test:db-schema`; `node scripts/verify-deploy-release.mjs`; `node scripts/verify-team-handover.mjs`; syntax checks; `git diff --check` | Passed: 10 audit tests, 11 audit persistence checks, 14 database tests, 10 deployment gates and 65 handover cases | New retention regression reproduces the 4,820 overlap locally. The actual server backup still needs the next post-deploy verification run. |
 | 2026-10-30 | Read-only Gitea API permission check | Blocked | Repository push access works, but the current account cannot manage Actions Secrets (HTTP 403; owner required). No deployment was triggered. |
 | 2026-10-30 | Repository Actions Secrets page | Passed | `KUNQIONG_DB_HOST`, `KUNQIONG_DB_PORT`, `KUNQIONG_DB_NAME`, `KUNQIONG_DB_USER`, and `KUNQIONG_DB_PASSWORD` are present and masked. |
 | 2026-10-30 | Database, persistence, release-gate and packaging suite | Passed | 20 tests, 10 release-gate checks, 5,000-user transactional sync, upload-session test, shell syntax and Docker COPY startup check; no synthetic rows retained. |
@@ -179,6 +181,7 @@ here after fixing, so the same error logic is not repeated next time._
 | --- | --- | --- | --- | --- |
 | 2026-10-30 15:12 | Run 128 app restarts during schema bootstrap | Schema comparator treated MySQL integer display width metadata as a different type | Canonicalize integer display widths; add detailed mismatch errors and read-only schema preflight | MySQL 5.7 type fixtures, unsigned/range/precision rejection and SELECT-only preflight tests |
 | 2026-10-30 16:05 | Runs 129/130 fail after first relational import | Legacy audit mirroring selected the whole payload table; upload-session validation hid the actual existing field mismatch | Read audit rows with `id > cursor LIMIT 100`, report upload-session field names/types, and preflight all 21 relation tables plus `kq_upload_session` before replacement | 205-row paged mirror test, canonical type checks, upload-session DDL included in SELECT-only preflight |
+| 2026-10-30 16:12 | Run 131 verification reports 4820/5000 audit IDs | Probable root cause: backup verification used timestamp-only truncation while runtime prioritizes critical entries; a focused fixture reproduces the exact 4,820 overlap | Reconstruct deployment evidence with the same exported `mergeAuditEntries` policy; emit safe ID-length/type counts if records are still missing | Regression test applies runtime selection to the snapshot+journal fixture and reproduces the old 4,820 overlap |
 
 ## Completion Summary
 
@@ -192,4 +195,4 @@ Migration work resumed on 2026-10-30 after the user supplied the test database c
 _Always keep ONE explicit next action here so any agent resuming knows exactly where to
 start. Update it every time you stop._
 
-- Push the schema compatibility repair, then verify the new Actions run, running release and migrated database evidence.
+- Commit and push the audit verification repair, then confirm the next Actions run reports complete source and relational audit counts against the real server backup.

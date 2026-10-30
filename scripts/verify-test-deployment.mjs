@@ -5,7 +5,8 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { countRelationalModelRows } from '../server/db/relational-store.js'
-import { readFixtureMetadata } from './lib/read-audit-fixture.mjs'
+import { normalizeAuditLog } from '../server/lib/metadata-normalizers.js'
+import { listValidAuditIds, readFixtureMetadata } from './lib/read-audit-fixture.mjs'
 
 const app = process.env.KUNQIONG_DEPLOY_APP_NAME || 'kunqiong-file-transfer-web'
 const image = app + ':test'
@@ -30,13 +31,18 @@ if (fs.existsSync(backupMarker)) {
     .find(filename => fs.existsSync(filename))
   if (metadataFile) {
     assert.ok(fs.existsSync(path.join(backup, 'backup-complete.json')), 'Data backup must finish before deployment')
-    const data = readFixtureMetadata(metadataFile)
+    const data = readFixtureMetadata(metadataFile, { normalize: normalizeAuditLog })
     const revisionFile = path.join(backup, 'metadata.json.revision')
     previous = {
       sourceSha256: crypto.createHash('sha256').update(stableSnapshotJson(JSON.parse(fs.readFileSync(metadataFile, 'utf8')))).digest('hex'),
       sourceRevision: Math.max(Number(data._localRevision) || 0, fs.existsSync(revisionFile) ? Number(fs.readFileSync(revisionFile, 'utf8').trim()) || 0 : 0),
       rowCounts: countRelationalModelRows(data),
-      auditIds: [...new Set((data.auditLogs || []).filter(item => item?.id && item.action).map(item => String(item.id)))],
+      auditRetainedRows: Array.isArray(data.auditLogs) ? data.auditLogs.length : 0,
+      auditIds: listValidAuditIds(data.auditLogs, normalizeAuditLog),
+      auditTypesById: Object.fromEntries(data.auditLogs.filter(item => String(item?.id || '').trim()).map(item => {
+        const log = normalizeAuditLog(item)
+        return [String(log.id), log.type]
+      })),
       users: Object.keys(data.users || {}),
       shares: (data.shares || []).map(item => item.id),
       collections: (data.collections || []).map(item => item.id),
@@ -85,10 +91,15 @@ try {
       const [[relationalMatches]] = await connection.execute('SELECT COUNT(DISTINCT legacy_id) AS total FROM kq_audit_log WHERE legacy_id IN (' + placeholders + ')', expectedAuditIds);
       importedSourceAuditRows = Number(sourceMatches.total);
       importedRelationalAuditRows = Number(relationalMatches.total);
-      assert.equal(importedSourceAuditRows, expectedAuditIds.length, 'Every backed-up audit log must be imported into the MySQL source table');
-      assert.equal(importedRelationalAuditRows, expectedAuditIds.length, 'Every backed-up audit log must be mirrored into the relational audit table');
+      const [[sourceMatchedRows]] = await connection.execute('SELECT id FROM kunqiong_audit_log WHERE id IN (' + placeholders + ')', expectedAuditIds);
+      const sourceMatchedIds = new Set(sourceMatchedRows.map(row => String(row.id)));
+      const missingSourceIds = expectedAuditIds.filter(id => !sourceMatchedIds.has(id));
+      const missingSourceIdLengths = Object.groupBy(missingSourceIds, id => String(id).length);
+      const missingSourceTypes = Object.groupBy(missingSourceIds, id => previous.auditTypesById[id] || 'unknown');
+      assert.equal(importedSourceAuditRows, expectedAuditIds.length, 'Every valid backed-up audit log must be imported into the MySQL source table (valid=' + expectedAuditIds.length + ', retained_backup_rows=' + previous.auditRetainedRows + ', missing_id_lengths=' + JSON.stringify(Object.fromEntries(Object.entries(missingSourceIdLengths).map(([length, ids]) => [length, ids.length]))) + ', missing_types=' + JSON.stringify(Object.fromEntries(Object.entries(missingSourceTypes).map(([type, ids]) => [type, ids.length]))) + ')');
+      assert.equal(importedRelationalAuditRows, expectedAuditIds.length, 'Every valid backed-up audit log must be mirrored into the relational audit table (valid=' + expectedAuditIds.length + ', backup_rows=' + previous.auditBackupRows + ')');
     }
-    databaseEvidence = {revision:relationalState.revision, sourceSnapshotRevision:relationalState.sourceSnapshotRevision, managedRows:Object.values(relationalMetadata.state.counts).reduce((total, count) => total + Number(count || 0), 0), migratedTableCount:Object.keys(relationalMetadata.state.counts).length, sourceAuditRows:Number(auditCounts[0].source_count), relationalAuditRows:Number(auditCounts[0].relational_count), importedSourceAuditRows, importedRelationalAuditRows, uploadSessions:Number(uploadSessionRows[0].total)};
+    databaseEvidence = {revision:relationalState.revision, sourceSnapshotRevision:relationalState.sourceSnapshotRevision, managedRows:Object.values(relationalMetadata.state.counts).reduce((total, count) => total + Number(count || 0), 0), migratedTableCount:Object.keys(relationalMetadata.state.counts).length, sourceAuditRows:Number(auditCounts[0].source_count), relationalAuditRows:Number(auditCounts[0].relational_count), importedSourceAuditRows, importedRelationalAuditRows, retainedBackupAuditRows:previous?.auditRetainedRows ?? null, expectedValidAuditRows:previous?.auditIds.length ?? null, uploadSessions:Number(uploadSessionRows[0].total)};
   } finally { connection.release(); }
   assert.ok(databaseEvidence.managedRows > 0, 'Migrated business records must exist in relational tables');
   const migrationReceipt = relationalMetadata.metadata._relationalMigration;
