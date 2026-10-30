@@ -87,17 +87,19 @@ try {
     let importedSourceAuditRows = 0, importedRelationalAuditRows = 0;
     if (expectedAuditIds.length) {
       const placeholders = expectedAuditIds.map(() => '?').join(',');
-      const [[sourceMatches]] = await connection.execute('SELECT COUNT(DISTINCT id) AS total FROM kunqiong_audit_log WHERE id IN (' + placeholders + ')', expectedAuditIds);
-      const [[relationalMatches]] = await connection.execute('SELECT COUNT(DISTINCT legacy_id) AS total FROM kq_audit_log WHERE legacy_id IN (' + placeholders + ')', expectedAuditIds);
-      importedSourceAuditRows = Number(sourceMatches.total);
-      importedRelationalAuditRows = Number(relationalMatches.total);
-      const [[sourceMatchedRows]] = await connection.execute('SELECT id FROM kunqiong_audit_log WHERE id IN (' + placeholders + ')', expectedAuditIds);
+      const [sourceMatchedRows] = await connection.execute('SELECT id FROM kunqiong_audit_log WHERE id IN (' + placeholders + ')', expectedAuditIds);
       const sourceMatchedIds = new Set(sourceMatchedRows.map(row => String(row.id)));
+      const [relationalMatchedRows] = await connection.execute('SELECT legacy_id FROM kq_audit_log WHERE legacy_id IN (' + placeholders + ')', expectedAuditIds);
+      const relationalMatchedIds = new Set(relationalMatchedRows.map(row => String(row.legacy_id)));
+      importedSourceAuditRows = sourceMatchedIds.size;
+      importedRelationalAuditRows = relationalMatchedIds.size;
       const missingSourceIds = expectedAuditIds.filter(id => !sourceMatchedIds.has(id));
       const missingSourceIdLengths = Object.groupBy(missingSourceIds, id => String(id).length);
       const missingSourceTypes = Object.groupBy(missingSourceIds, id => previous.auditTypesById[id] || 'unknown');
       assert.equal(importedSourceAuditRows, expectedAuditIds.length, 'Every valid backed-up audit log must be imported into the MySQL source table (valid=' + expectedAuditIds.length + ', retained_backup_rows=' + previous.auditRetainedRows + ', missing_id_lengths=' + JSON.stringify(Object.fromEntries(Object.entries(missingSourceIdLengths).map(([length, ids]) => [length, ids.length]))) + ', missing_types=' + JSON.stringify(Object.fromEntries(Object.entries(missingSourceTypes).map(([type, ids]) => [type, ids.length]))) + ')');
-      assert.equal(importedRelationalAuditRows, expectedAuditIds.length, 'Every valid backed-up audit log must be mirrored into the relational audit table (valid=' + expectedAuditIds.length + ', backup_rows=' + previous.auditBackupRows + ')');
+      const missingRelationalIds = expectedAuditIds.filter(id => !relationalMatchedIds.has(id));
+      const missingRelationalTypes = Object.groupBy(missingRelationalIds, id => previous.auditTypesById[id] || 'unknown');
+      assert.equal(importedRelationalAuditRows, expectedAuditIds.length, 'Every valid backed-up audit log must be mirrored into the relational audit table (valid=' + expectedAuditIds.length + ', retained_backup_rows=' + previous.auditRetainedRows + ', missing_types=' + JSON.stringify(Object.fromEntries(Object.entries(missingRelationalTypes).map(([type, ids]) => [type, ids.length]))) + ')');
     }
     databaseEvidence = {revision:relationalState.revision, sourceSnapshotRevision:relationalState.sourceSnapshotRevision, managedRows:Object.values(relationalMetadata.state.counts).reduce((total, count) => total + Number(count || 0), 0), migratedTableCount:Object.keys(relationalMetadata.state.counts).length, sourceAuditRows:Number(auditCounts[0].source_count), relationalAuditRows:Number(auditCounts[0].relational_count), importedSourceAuditRows, importedRelationalAuditRows, retainedBackupAuditRows:previous?.auditRetainedRows ?? null, expectedValidAuditRows:previous?.auditIds.length ?? null, uploadSessions:Number(uploadSessionRows[0].total)};
   } finally { connection.release(); }

@@ -9,7 +9,7 @@ repo_root: D:/demo/鲲穹文件传输/kunqiong-file-transfer-web-main/kunqiong-f
 branch: deploy/user-file-isolation-20261029 # git branch the work happens on
 base_sha: 70a7670 # git short SHA the plan started from
 created: 2026-10-30 11:16 # YYYY-MM-DD HH:mm
-updated: 2026-10-30 16:25 # YYYY-MM-DD HH:mm  (bump on every edit)
+updated: 2026-10-30 16:50 # YYYY-MM-DD HH:mm  (bump on every edit)
 supersedes: ""           # plan_id this replaces, if any
 ---
 
@@ -141,6 +141,7 @@ reported rows in here after reviewing the diff). Write it as you finish, never i
 | 2026-10-30 16:05 | T7 | Legacy audit and upload-session startup repair | Runs 129/130 migrated the 20 managed tables but failed while reading the unbounded audit payload query and then stopped on an incompatible upload-session table. Paginate audit mirroring by primary-key batches, reuse canonical column types for upload-session checks, and include that table in the read-only deployment preflight. | main |
 | 2026-10-30 16:12 | T7 | Audit backup retention verification | Run 131 has 4,820 matching IDs out of the verifier's 5,000 expected IDs. A focused fixture reproduces that exact overlap when the backup reader selects the latest 5,000 by timestamp but LocalAuditStore retains 180 older critical entries ahead of 5,000 access entries. Make verification use the shared runtime merge policy; rerun deployment to confirm against the retained server backup. | main |
 | 2026-10-30 16:25 | T7 | Host verification module dependency | Run after `4e013ff` deployed the release but failed before assertions because importing `metadata-normalizers.js` pulled `mysql2` through `server/state.js`, which is absent on the runner host. Move the shared audit normalizer into a dependency-light module and import that from the host verifier. | main |
+| 2026-10-30 16:50 | T7 | Matched audit row query shape | Run after `7913c43` reached the database comparison but failed because the verifier destructured `mysql2.execute()` rows as a single nested record, then called `.map()` on that object. Read the returned row array, and derive unique matched ID counts directly from the source and relational table selections. | main |
 
 ## Verification Evidence
 
@@ -170,6 +171,7 @@ rest deferred - list which), or `not-run` (nothing run - say why + residual risk
 | 2026-10-30 | `node scripts/verify-collection-layout.mjs`; `npx vite build`; `git diff --check` | Passed | Responsive layout regression checks and production build; existing large viewer chunk warning remains. |
 | 2026-10-30 16:12 | `npm run test:audit`; `npm run test:db-schema`; `node scripts/verify-deploy-release.mjs`; `node scripts/verify-team-handover.mjs`; syntax checks; `git diff --check` | Passed: 10 audit tests, 11 audit persistence checks, 14 database tests, 10 deployment gates and 65 handover cases | New retention regression reproduces the 4,820 overlap locally. The actual server backup still needs the next post-deploy verification run. |
 | 2026-10-30 16:25 | Gitea Actions release `4e013ff` | Deploy passed; host verification stopped during module resolution | `mysql2` was imported transitively by the audit normalizer's aggregate module; replace it with the standalone audit normalizer before retrying. |
+| 2026-10-30 16:50 | Gitea Actions release `7913c43` | Host verifier loaded; database comparison stopped on the `mysql2.execute()` row-array shape | Select matched IDs as rows and build `Set` counts; local probe and database tests must pass before retry. |
 | 2026-10-30 | Read-only Gitea API permission check | Blocked | Repository push access works, but the current account cannot manage Actions Secrets (HTTP 403; owner required). No deployment was triggered. |
 | 2026-10-30 | Repository Actions Secrets page | Passed | `KUNQIONG_DB_HOST`, `KUNQIONG_DB_PORT`, `KUNQIONG_DB_NAME`, `KUNQIONG_DB_USER`, and `KUNQIONG_DB_PASSWORD` are present and masked. |
 | 2026-10-30 | Database, persistence, release-gate and packaging suite | Passed | 20 tests, 10 release-gate checks, 5,000-user transactional sync, upload-session test, shell syntax and Docker COPY startup check; no synthetic rows retained. |
@@ -185,6 +187,7 @@ here after fixing, so the same error logic is not repeated next time._
 | 2026-10-30 16:05 | Runs 129/130 fail after first relational import | Legacy audit mirroring selected the whole payload table; upload-session validation hid the actual existing field mismatch | Read audit rows with `id > cursor LIMIT 100`, report upload-session field names/types, and preflight all 21 relation tables plus `kq_upload_session` before replacement | 205-row paged mirror test, canonical type checks, upload-session DDL included in SELECT-only preflight |
 | 2026-10-30 16:12 | Run 131 verification reports 4820/5000 audit IDs | Probable root cause: backup verification used timestamp-only truncation while runtime prioritizes critical entries; a focused fixture reproduces the exact 4,820 overlap | Reconstruct deployment evidence with the same exported `mergeAuditEntries` policy; emit safe ID-length/type counts if records are still missing | Regression test applies runtime selection to the snapshot+journal fixture and reproduces the old 4,820 overlap |
 | 2026-10-30 16:25 | Run after `4e013ff` cannot load the host verifier | Importing the aggregate metadata normalizers loads `server/state.js` and requires `mysql2` on a runner that does not install application dependencies | Put `normalizeAuditLog` in `server/lib/audit-normalizer.js`; preserve its export from `metadata-normalizers.js` and import the lightweight module in host scripts | Host dependency graph no longer references `server/state.js`; audit and syntax checks cover the new module |
+| 2026-10-30 16:50 | Run after `7913c43` throws `sourceMatchedRows.map is not a function` | mysql2 `execute()` returns `[rows, fields]`; nested destructuring selected the first row object instead of the result row array | Use `[rows]` for ID selections and count distinct matches with `Set` | Deployment verifier parses and checks its generated probe before container execution; re-run it against MySQL |
 
 ## Completion Summary
 
@@ -198,4 +201,4 @@ Migration work resumed on 2026-10-30 after the user supplied the test database c
 _Always keep ONE explicit next action here so any agent resuming knows exactly where to
 start. Update it every time you stop._
 
-- Commit and push the host dependency repair, then confirm the next Actions run passes both the backup audit comparison and relational audit parity checks.
+- Commit and push the matched-row result-shape fix, then confirm the next Actions run passes both the backup audit comparison and relational audit parity checks.
