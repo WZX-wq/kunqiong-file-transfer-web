@@ -2,7 +2,7 @@
 plan_id: 20261030-111611-relational-json-release # stable unique id, e.g. 20260715-143005-user-auth-refactor
 title: relational-json-release # human-readable goal title (also rendered as the H1 below)
 goal: Ensure the test deployment runs on migrated MySQL relational data, then commit, push, and verify the deployed release. # one sentence: what "done" looks like
-status: active # active | paused | blocked | completed | cancelled | superseded
+status: paused # active | paused | blocked | completed | cancelled | superseded
 verification_status: partial # verified | partial | not-run
 owner: main-agent # who is driving: main-agent / a named sub-agent / a user
 repo_root: D:/demo/鲲穹文件传输/kunqiong-file-transfer-web-main/kunqiong-file-transfer-web-main # repo-relative or absolute path this plan applies to
@@ -84,7 +84,7 @@ interface, non-overlapping file ownership); otherwise run it in the main thread 
 | T2 | Preserve/pass DB configuration and fail closed before deployment | `[main]` | T1 | [x] |
 | T3 | Extend deployment verification to require relational MySQL state | `[main]` | T2 | [x] |
 | T4 | Run deploy, migration, targeted feature tests and build | `[main]` | T2,T3 | [x] |
-| T5 | Stage and commit only the intended deployment, responsive UI, test and plan files | `[main]` | T4 | [ ] |
+| T5 | Stage and commit only the intended deployment, responsive UI, test and plan files | `[main]` | T4 | [x] |
 | T6 | Push the reviewed commit to Gitea `main` after remote DB settings are available | `[main]` | T5 | [ ] |
 | T7 | Verify test deployment release and database-backed state | `[main]` | T6 | [ ] |
 
@@ -178,11 +178,11 @@ here after fixing, so the same error logic is not repeated next time._
 _Leave empty until the acceptance pass is done. Then fill in: what was built, key
 decisions, what was verified (and how), verification_status rationale, anything deferred._
 
-Local MySQL migration and transactional relational tests are verified. The deployment preflight now preserves an existing app container's configuration, but the remote test server has no DB settings to inherit and deployment has not been retried. The responsive and deployment changes are tested but not yet committed or pushed. Remote database configuration and post-deploy database verification remain outstanding.
+Paused by the user on 2026-10-30 while a separate bugfix-only release proceeds without database migration. Local MySQL migration and transactional relational tests are verified. The bugfix and deployment-preflight changes are committed locally in `dd8278a`; remote database configuration is absent, so pushing this plan's `main` migration release and post-deploy database verification remain outstanding.
 
 ## Next Steps
 
 _Always keep ONE explicit next action here so any agent resuming knows exactly where to
 start. Update it every time you stop._
 
-- Configure the real test-server MySQL host, database name, user and password as Gitea repository Secrets; then commit the tested files, push to Gitea `main`, and verify the deployed release and migrated relational data.
+- Resume this paused migration plan only after the test server's real MySQL connection is configured in Gitea Secrets; do not infer database migration completion from the separate JSON-mode bugfix deployment.
