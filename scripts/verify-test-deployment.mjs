@@ -7,6 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { countRelationalModelRows } from '../server/db/relational-store.js'
 import { normalizeAuditLog } from '../server/lib/audit-normalizer.js'
 import { listValidAuditIds, readFixtureMetadata } from './lib/read-audit-fixture.mjs'
+import { classifyMigrationSource } from './lib/migration-source-verification.mjs'
 
 const app = process.env.KUNQIONG_DEPLOY_APP_NAME || 'kunqiong-file-transfer-web'
 const image = app + ':test'
@@ -30,13 +31,16 @@ if (fs.existsSync(backupMarker)) {
     .map(name => path.join(backup, name))
     .find(filename => fs.existsSync(filename))
   if (metadataFile) {
-    assert.ok(fs.existsSync(path.join(backup, 'backup-complete.json')), 'Data backup must finish before deployment')
+    const completionFile = path.join(backup, 'backup-complete.json')
+    assert.ok(fs.existsSync(completionFile), 'Data backup must finish before deployment')
+    const backupCompletedAt = JSON.parse(fs.readFileSync(completionFile, 'utf8')).completedAt
     const data = readFixtureMetadata(metadataFile, { normalize: normalizeAuditLog })
     const revisionFile = path.join(backup, 'metadata.json.revision')
     const auditDirectory = path.join(path.dirname(metadataFile), 'audit')
     previous = {
       sourceSha256: crypto.createHash('sha256').update(stableSnapshotJson(JSON.parse(fs.readFileSync(metadataFile, 'utf8')))).digest('hex'),
       sourceRevision: Math.max(Number(data._localRevision) || 0, fs.existsSync(revisionFile) ? Number(fs.readFileSync(revisionFile, 'utf8').trim()) || 0 : 0),
+      backupCompletedAt,
       rowCounts: countRelationalModelRows(data),
       auditRetainedRows: Array.isArray(data.auditLogs) ? data.auditLogs.length : 0,
       auditJournalArtifacts: ['snapshot.json', 'snapshot.json.bak', 'events.jsonl']
@@ -66,6 +70,7 @@ import {readRelationalState, loadRelationalMetadataFromConnection} from '/app/se
 const manifest = ${JSON.stringify(manifest)};
 const expected = ${JSON.stringify(expected)};
 const previous = ${JSON.stringify(previous)};
+const classifyMigrationSource = ${classifyMigrationSource.toString()};
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 for (const [file, digest] of Object.entries(manifest)) assert.equal(hash('/app/' + file), digest, 'Runtime source mismatch: ' + file);
 const base = 'http://127.0.0.1:' + (process.env.PORT || 8045);
@@ -115,12 +120,21 @@ try {
   assert.equal(Number(migrationReceipt.sourceRevision), databaseEvidence.sourceSnapshotRevision, 'The source revision must match the migration state');
   if (migrationReceipt.source === 'metadata.json') {
     assert.ok(previous, 'A pre-deployment JSON snapshot is required to verify the migration');
-    assert.equal(migrationReceipt.sourceSha256, previous.sourceSha256, 'The imported JSON must match the pre-deployment backup');
-    assert.equal(Number(migrationReceipt.sourceRevision), Number(previous.sourceRevision), 'The source revision must match the backed-up JSON revision');
-    for (const [table, expectedCount] of Object.entries(previous.rowCounts || {})) {
-      assert.equal(Number(migrationReceipt.sourceCounts[table] || 0), Number(expectedCount), 'Migration source row count differs from the backed-up JSON: ' + table);
+    assert.match(String(migrationReceipt.sourceSha256 || ''), /^[a-f0-9]{64}$/i, 'The migration receipt must contain a SHA-256 source fingerprint');
+    const sourceMode = classifyMigrationSource(migrationReceipt, previous.backupCompletedAt);
+    assert.notEqual(sourceMode, 'unverifiable', 'Migration and backup timestamps are required to verify the JSON import');
+    if (sourceMode === 'current-deployment') {
+      assert.equal(migrationReceipt.sourceSha256, previous.sourceSha256, 'The imported JSON must match the pre-deployment backup');
+      assert.equal(Number(migrationReceipt.sourceRevision), Number(previous.sourceRevision), 'The source revision must match the backed-up JSON revision');
+      for (const [table, expectedCount] of Object.entries(previous.rowCounts || {})) {
+        assert.equal(Number(migrationReceipt.sourceCounts[table] || 0), Number(expectedCount), 'Migration source row count differs from the backed-up JSON: ' + table);
+      }
+    } else {
+      assert.ok(Date.parse(migrationReceipt.completedAt) <= Date.parse(previous.backupCompletedAt), 'An existing JSON migration receipt must predate the current deployment backup');
     }
-    assert.deepEqual(Object.keys(previous.rowCounts || {}).sort(), Object.keys(relationalMetadata.state.counts || {}).sort(), 'Backup row-count manifest must cover every managed relation table');
+    if (sourceMode === 'current-deployment') {
+      assert.deepEqual(Object.keys(previous.rowCounts || {}).sort(), Object.keys(relationalMetadata.state.counts || {}).sort(), 'Backup row-count manifest must cover every managed relation table');
+    }
   }
   assert.deepEqual(migrationReceipt.importedCounts, relationalMetadata.state.counts, 'Imported row counts must match committed relationship-table counts');
   assert.equal(relationalMetadata.metadata.auditStorage, 'mysql-v1', 'MySQL audit persistence must be active');
@@ -210,7 +224,7 @@ await new Promise((resolve,reject) => {
   socket.on('data',data=>{body+=data; if(body.includes('PONG')){socket.destroy();resolve();}});
   socket.once('error',reject); socket.once('timeout',()=>{socket.destroy();reject(new Error('Scanner timeout'));});
 });
-console.log(JSON.stringify({release:health.release,sourceFiles:Object.keys(manifest).length,pages:4,assets,workerAssets,avatarDecoder:'WebP 1x1; corrupt input rejected',database:databaseEvidence,migration:relationalMetadata.metadata._relationalMigration,auditStorage:relationalMetadata.metadata.auditStorage,readRequests:requestIds.length,businessSnapshotUnchanged:true,auditRequestsPersisted:true,previousDataVerified:Boolean(previous),preservedCounts:previous?Object.fromEntries(['users','shares','collections','organizations','distributions','upgradeOrders'].map(kind=>[kind,previous[kind].length])):null,scanner:'PONG',passed:true}));
+console.log(JSON.stringify({release:health.release,sourceFiles:Object.keys(manifest).length,pages:4,assets,workerAssets,avatarDecoder:'WebP 1x1; corrupt input rejected',database:databaseEvidence,migration:relationalMetadata.metadata._relationalMigration,migrationSourceVerification:previous&&relationalMetadata.metadata._relationalMigration.source==='metadata.json'?classifyMigrationSource(relationalMetadata.metadata._relationalMigration,previous.backupCompletedAt):'not-applicable',auditStorage:relationalMetadata.metadata.auditStorage,readRequests:requestIds.length,businessSnapshotUnchanged:true,auditRequestsPersisted:true,previousDataVerified:Boolean(previous),preservedCounts:previous?Object.fromEntries(['users','shares','collections','organizations','distributions','upgradeOrders'].map(kind=>[kind,previous[kind].length])):null,scanner:'PONG',passed:true}));
 `
 const syntax = spawnSync(process.execPath, ['--input-type=module', '--check'], { input: probe, encoding: 'utf8', windowsHide: true })
 if (syntax.status !== 0) throw new Error(`Deployment probe syntax check failed: ${syntax.stderr || syntax.error?.message || ''}`)
