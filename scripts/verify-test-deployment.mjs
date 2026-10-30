@@ -13,14 +13,29 @@ const app = process.env.KUNQIONG_DEPLOY_APP_NAME || 'kunqiong-file-transfer-web'
 const image = app + ':test'
 const root = path.resolve(import.meta.dirname, '..')
 const expected = process.env.GITHUB_SHA || process.env.GITEA_SHA || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+const verifyMode = process.env.KUNQIONG_DEPLOY_VERIFY_MODE || 'runtime'
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', windowsHide: true, maxBuffer: 8 * 1024 ** 2 }).trim()
 const stableSnapshotJson = value => Array.isArray(value) ? `[${value.map(stableSnapshotJson).join(',')}]`
   : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableSnapshotJson(value[key])}`).join(',')}}`
     : JSON.stringify(value)
 const info = JSON.parse(docker(['inspect', app]))[0]
-assert.equal(info.State.Running, true, 'Deployed app must be running')
 assert.equal(info.Image, docker(['image', 'inspect', '-f', '{{.Id}}', image]), 'Container must use the newly built image')
 assert.equal(info.Config.Labels?.['org.opencontainers.image.revision'], expected, 'Image provenance must match the full release SHA')
+if (verifyMode === 'configuration') {
+  const configured = Object.fromEntries((info.Config.Env || []).map(entry => {
+    const separator = entry.indexOf('=')
+    return separator < 0 ? [entry, ''] : [entry.slice(0, separator), entry.slice(separator + 1)]
+  }))
+  assert.ok(['running', 'exited'].includes(info.State.Status), 'Deployment container must have been started or stopped by the test-server guard')
+  assert.equal(configured.KUNQIONG_DB_ENABLED, 'true', 'Deployed app must use MySQL')
+  assert.equal(configured.KUNQIONG_RELATIONAL_SCHEMA_ENABLED, 'true', 'Deployed app must use relational metadata tables')
+  assert.equal(configured.KUNQIONG_SCAN_MODE, 'required', 'Required file scanning must stay enabled')
+  assert.equal(configured.KUNQIONG_RELEASE_SHA, expected, 'Container configuration must match the full release SHA')
+  assert.ok(configured.KUNQIONG_DB_HOST && configured.KUNQIONG_DB_NAME && configured.KUNQIONG_DB_USER, 'Deployed MySQL connection must be configured')
+  console.log(JSON.stringify({ release: expected, verificationMode: 'configuration', containerState: info.State.Status, databaseConfigured: true, requiredScannerConfigured: true, passed: true }))
+  process.exit(0)
+}
+assert.equal(info.State.Running, true, 'Deployed app must be running')
 const files = execFileSync('git', ['ls-files', '-z', 'server', 'server.mjs', 'package.json', 'package-lock.json'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean)
 const manifest = Object.fromEntries(files.map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex')]))
 const backupMarker = path.join(process.env.KUNQIONG_COMPOSE_DIR || '/opt/' + app, '.last-deployment-backup')

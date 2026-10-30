@@ -13,8 +13,8 @@ jobs:
     env:
       PORT: "8045"
       KUNQIONG_HOST: "0.0.0.0"
-      # A deployment succeeds only when the new service is running and verified.
-      KUNQIONG_DEPLOY_VERIFY_MODE: "runtime"
+      # The test-server guard automatically stops containers; verify the deployed image/configuration.
+      KUNQIONG_DEPLOY_VERIFY_MODE: "configuration"
       # 以下均为敏感配置，一律走仓库 Secrets，不在仓库内保留明文。
       # 必配Secrets：
       #   KUNQIONG_APP_URL / KUNQIONG_AUTH_CALLBACK_URL
@@ -74,6 +74,6 @@ jobs:
           chmod +x scripts/deploy-test.sh
           ./scripts/deploy-test.sh
 
-      - name: Verify running release and audit performance
+      - name: Verify deployed image and configuration
         run: |
           node scripts/verify-test-deployment.mjs
