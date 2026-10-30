@@ -6,7 +6,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { DatabaseAuditStore, LocalAuditStore, mergeAuditEntries } from '../server/lib/audit-store.js'
-import { normalizeAuditLog } from '../server/lib/metadata-normalizers.js'
+import { normalizeAuditLog } from '../server/lib/audit-normalizer.js'
 import { listValidAuditIds, restoreFixtureAudit } from './lib/read-audit-fixture.mjs'
 
 const normalize = entry => ({ ...entry })

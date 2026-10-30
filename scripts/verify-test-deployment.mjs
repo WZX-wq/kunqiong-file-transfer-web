@@ -5,7 +5,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { countRelationalModelRows } from '../server/db/relational-store.js'
-import { normalizeAuditLog } from '../server/lib/metadata-normalizers.js'
+import { normalizeAuditLog } from '../server/lib/audit-normalizer.js'
 import { listValidAuditIds, readFixtureMetadata } from './lib/read-audit-fixture.mjs'
 
 const app = process.env.KUNQIONG_DEPLOY_APP_NAME || 'kunqiong-file-transfer-web'

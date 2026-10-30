@@ -30,6 +30,9 @@ import {
 
 import { normalizeCollectionCustomFields, normalizeCollectionMaterials } from './collection-forms.js'
 import { normalizeStoredTeamBranding } from './team-branding.js'
+import { normalizeAuditLog } from './audit-normalizer.js'
+
+export { normalizeAuditLog }
 
 export function normalizeMetadata(value = {}) {
   const shares = Array.isArray(value.shares) ? value.shares : []
@@ -242,21 +245,6 @@ export function normalizePlanOverrides(value = {}) {
 export function normalizeAuditLogs(value = []) {
   if (!Array.isArray(value)) return []
   return value.map(normalizeAuditLog).filter((item) => item.action).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, MAX_AUDIT_LOGS)
-}
-
-export function normalizeAuditLog(item) {
-  return {
-    id: trimRecordString(item?.id, 80) || createToken(10),
-    type: trimRecordString(item?.type, 30) || 'access',
-    action: trimRecordString(item?.action, 180),
-    status: normalizeNonNegativeInteger(item?.status),
-    durationMs: normalizeNonNegativeInteger(item?.durationMs),
-    userId: trimRecordString(item?.userId, 120),
-    targetId: trimRecordString(item?.targetId, 160),
-    ip: trimRecordString(item?.ip, 80),
-    details: item?.details && typeof item.details === 'object' ? item.details : {},
-    createdAt: normalizeRecordDate(item?.createdAt) || new Date().toISOString(),
-  }
 }
 
 export function normalizeOwnershipHandovers(value) {
