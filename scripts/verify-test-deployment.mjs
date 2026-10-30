@@ -87,7 +87,9 @@ const databasePool = mysql.createPool({host:databaseHost, port:databasePort, dat
 let relationalState, relationalMetadata, databaseEvidence;
 try {
   const connection = await databasePool.getConnection();
+  let transactionOpen = false;
   try {
+    await connection.beginTransaction(); transactionOpen = true;
     relationalState = await readRelationalState(connection);
     relationalMetadata = await loadRelationalMetadataFromConnection(connection, relationalState);
     if (previous?.auditJournalArtifacts) {
@@ -114,7 +116,8 @@ try {
       assert.equal(importedRelationalAuditRows, expectedAuditIds.length, 'Every valid backed-up audit log must be mirrored into the relational audit table (valid=' + expectedAuditIds.length + ', retained_backup_rows=' + previous.auditRetainedRows + ', missing_types=' + JSON.stringify(Object.fromEntries(Object.entries(missingRelationalTypes).map(([type, ids]) => [type, ids.length]))) + ')');
     }
     databaseEvidence = {revision:relationalState.revision, sourceSnapshotRevision:relationalState.sourceSnapshotRevision, managedRows:Object.values(relationalMetadata.state.counts).reduce((total, count) => total + Number(count || 0), 0), migratedTableCount:Object.keys(relationalMetadata.state.counts).length, currentRowCounts:relationalMetadata.state.counts, sourceAuditRows:Number(auditCounts[0].source_count), relationalAuditRows:Number(auditCounts[0].relational_count), importedSourceAuditRows, importedRelationalAuditRows, retainedBackupAuditRows:previous?.auditRetainedRows ?? null, expectedValidAuditRows:previous?.auditIds.length ?? null, uploadSessions:Number(uploadSessionRows[0].total)};
-  } finally { connection.release(); }
+    await connection.commit(); transactionOpen = false;
+  } finally { if(transactionOpen) await connection.rollback().catch(() => {}); connection.release(); }
   assert.ok(databaseEvidence.managedRows > 0, 'Migrated business records must exist in relational tables');
   const migrationReceipt = relationalMetadata.metadata._relationalMigration;
   assert.ok(migrationReceipt && ['metadata.json', 'kunqiong_app_state'].includes(migrationReceipt.source), 'A legacy migration receipt must be present in MySQL');

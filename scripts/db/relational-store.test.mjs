@@ -121,6 +121,9 @@ test('an unmarked database with existing business rows rejects import before any
 test('deployment preflight allows an empty schema and rejects unmarked business rows using only reads', async () => {
   let occupied = false
   const connection = {
+    async beginTransaction() {},
+    async commit() {},
+    async rollback() {},
     async query(sql) {
       assert.match(sql, /^SELECT /)
       if (sql.includes('information_schema.TABLES')) return [[{ table_name: 'kq_user' }, { table_name: 'unrelated' }], []]

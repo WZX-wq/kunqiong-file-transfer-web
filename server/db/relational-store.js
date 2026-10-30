@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { keyedDigest, protectCredential, revealCredential } from '../lib/private-key.js'
+import { readRowsById } from './paged-reader.js'
 
 const STATE_TABLE = 'kq_relational_store_state'
 const PAYLOAD_TABLES = [
@@ -16,6 +17,7 @@ const DATA_TABLES = [
   'kq_user_setting', 'kq_account_record', 'kq_guest_usage', 'kq_system_setting', 'kq_user',
 ]
 const MANAGED_TABLES = DATA_TABLES.filter(table => table !== 'kq_audit_log')
+const RELATIONAL_READ_PAGE_SIZES = { kq_account_record: 10, kq_resource: 25, kq_upgrade_order: 25 }
 const IDENTITY_COLUMNS = {
   kq_message: ['user_id', 'legacy_id'],
   kq_user_setting: ['user_id'],
@@ -342,7 +344,7 @@ async function syncRow(connection, sync, table, columns, values, options = {}) {
 export async function readRelationalSyncRows(connection, expectedCounts = null) {
   const rowsByTable = new Map()
   for (const table of MANAGED_TABLES) {
-    const [rows] = await connection.query(`SELECT * FROM \`${table}\``)
+    const rows = await readRowsById(connection, table, '*', RELATIONAL_READ_PAGE_SIZES[table] || 100)
     const byKey = new Map()
     for (const row of rows) {
       const key = identityKey(table, row)
@@ -738,20 +740,20 @@ export async function loadRelationalMetadataFromConnection(connection, state = n
   const currentState = state || await readRelationalState(connection)
   if (!currentState) return null
   await assertCounts(connection, currentState.counts)
-  const [userRows] = await connection.query('SELECT legacy_id, entity_payload_json FROM kq_user ORDER BY id')
-  const [organizationRows] = await connection.query('SELECT legacy_id, entity_payload_json FROM kq_organization ORDER BY id')
-  const [resourceRows] = await connection.query('SELECT legacy_id, resource_kind, entity_payload_json FROM kq_resource ORDER BY id')
-  const [distributionRows] = await connection.query('SELECT legacy_id, entity_payload_json FROM kq_distribution_batch ORDER BY id')
-  const [sessionRows] = await connection.query('SELECT legacy_id, entity_payload_json FROM kq_auth_session ORDER BY id')
-  const [verificationRows] = await connection.query('SELECT legacy_id, entity_payload_json FROM kq_verification_code ORDER BY id')
-  const [upgradeRows] = await connection.query('SELECT legacy_id, entity_payload_json FROM kq_upgrade_order ORDER BY id')
-  const [messageRows] = await connection.query('SELECT user_id, legacy_id, entity_payload_json FROM kq_message ORDER BY id')
-  const [settingRows] = await connection.query('SELECT user_id, notification_json, entity_payload_json FROM kq_user_setting ORDER BY id')
-  const [recordRows] = await connection.query('SELECT user_id, legacy_id, record_snapshot_json FROM kq_account_record ORDER BY id')
-  const [guestRows] = await connection.query('SELECT identity_digest, entity_payload_json FROM kq_guest_usage ORDER BY id')
-  const [systemRows] = await connection.query('SELECT setting_key, setting_value_json FROM kq_system_setting ORDER BY id')
-  const [userKeys] = await connection.query('SELECT id, legacy_id FROM kq_user')
-  const userByPk = new Map(userKeys.map(row => [String(row.id), String(row.legacy_id)]))
+  const readTable = (table, columns) => readRowsById(connection, table, columns, RELATIONAL_READ_PAGE_SIZES[table] || 100)
+  const userRows = await readTable('kq_user', ['legacy_id', 'entity_payload_json'])
+  const organizationRows = await readTable('kq_organization', ['legacy_id', 'entity_payload_json'])
+  const resourceRows = await readTable('kq_resource', ['legacy_id', 'resource_kind', 'entity_payload_json'])
+  const distributionRows = await readTable('kq_distribution_batch', ['legacy_id', 'entity_payload_json'])
+  const sessionRows = await readTable('kq_auth_session', ['legacy_id', 'entity_payload_json'])
+  const verificationRows = await readTable('kq_verification_code', ['legacy_id', 'entity_payload_json'])
+  const upgradeRows = await readTable('kq_upgrade_order', ['legacy_id', 'entity_payload_json'])
+  const messageRows = await readTable('kq_message', ['user_id', 'legacy_id', 'entity_payload_json'])
+  const settingRows = await readTable('kq_user_setting', ['user_id', 'notification_json', 'entity_payload_json'])
+  const recordRows = await readTable('kq_account_record', ['user_id', 'legacy_id', 'record_snapshot_json'])
+  const guestRows = await readTable('kq_guest_usage', ['identity_digest', 'entity_payload_json'])
+  const systemRows = await readTable('kq_system_setting', ['setting_key', 'setting_value_json'])
+  const userByPk = new Map(userRows.map(row => [String(row.id), String(row.legacy_id)]))
   const system = Object.fromEntries(systemRows.map(row => [row.setting_key, parseJson(row.setting_value_json, {})]))
   const metadata = {
     users: {}, organizations: {}, shares: [], collections: [], distributions: [], sessions: [],
@@ -832,18 +834,26 @@ export async function assertUninitializedRelationalTablesEmpty(connection) {
 
 // Read-only deployment preflight, before the running container is replaced.
 export async function inspectRelationalMigrationTarget(connection) {
-  const [tables] = await connection.query('SELECT TABLE_NAME AS table_name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()')
-  const available = new Set(tables.map(row => row.table_name))
-  const state = available.has(STATE_TABLE) ? await readRelationalState(connection) : null
-  if (state) {
-    await loadRelationalMetadataFromConnection(connection, state)
-    return { initialized: true, revision: state.revision, managedTableCount: Object.keys(state.counts).length }
+  await connection.beginTransaction()
+  try {
+    const [tables] = await connection.query('SELECT TABLE_NAME AS table_name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()')
+    const available = new Set(tables.map(row => row.table_name))
+    const state = available.has(STATE_TABLE) ? await readRelationalState(connection) : null
+    if (state) {
+      await loadRelationalMetadataFromConnection(connection, state)
+      await connection.commit()
+      return { initialized: true, revision: state.revision, managedTableCount: Object.keys(state.counts).length }
+    }
+    for (const table of DATA_TABLES.filter(name => available.has(name))) {
+      const [rows] = await connection.query(`SELECT 1 AS present FROM \`${table}\` LIMIT 1`)
+      if (rows.length) throw new Error(`关系表 ${table} 已有记录但缺少迁移状态，已停止部署以避免覆盖数据`)
+    }
+    await connection.commit()
+    return { initialized: false, managedTableCount: 0 }
+  } catch (error) {
+    await connection.rollback().catch(() => {})
+    throw error
   }
-  for (const table of DATA_TABLES.filter(name => available.has(name))) {
-    const [rows] = await connection.query(`SELECT 1 AS present FROM \`${table}\` LIMIT 1`)
-    if (rows.length) throw new Error(`关系表 ${table} 已有记录但缺少迁移状态，已停止部署以避免覆盖数据`)
-  }
-  return { initialized: false, managedTableCount: 0 }
 }
 
 export async function initializeRelationalMetadata(pool, source, sourceSnapshotRevision = 0) {
@@ -855,10 +865,19 @@ export async function initializeRelationalMetadata(pool, source, sourceSnapshotR
     locked = true
     const existing = await readRelationalState(connection)
     if (existing) {
-      const loaded = await loadRelationalMetadataFromConnection(connection, existing)
-      const rowsByTable = await readRelationalSyncRows(connection, existing.counts)
-      relationalSyncCaches.set(pool, { revision: existing.revision, rowsByTable })
-      return { ...loaded, alreadyInitialized: true }
+      await connection.beginTransaction()
+      try {
+        const current = await readRelationalState(connection)
+        if (!current) throw new Error('关系存储状态行在迁移期间消失，已停止启动')
+        const loaded = await loadRelationalMetadataFromConnection(connection, current)
+        const rowsByTable = await readRelationalSyncRows(connection, current.counts)
+        await connection.commit()
+        relationalSyncCaches.set(pool, { revision: current.revision, rowsByTable })
+        return { ...loaded, alreadyInitialized: true }
+      } catch (error) {
+        await connection.rollback().catch(() => {})
+        throw error
+      }
     }
     await connection.beginTransaction()
     try {
