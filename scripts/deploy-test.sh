@@ -204,8 +204,10 @@ resolve_data_key
 write_env_file "$ENV_FILE"
 
 healthcheck_docker() {
-  for _ in $(seq 1 40); do
-    if docker exec "$APP_NAME" node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '$PORT') + '/api/health').then(async r => { if (!r.ok) process.exit(1); console.log(await r.text()) }).catch(() => process.exit(1))"; then
+  # First-time schema/data/audit import must finish before the HTTP listener
+  # opens. Allow five minutes rather than treating a safe import as a crash.
+  for _ in $(seq 1 300); do
+    if docker exec "$APP_NAME" node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '$PORT') + '/api/health', {signal:AbortSignal.timeout(5000)}).then(async r => { if (!r.ok) process.exit(1); console.log(await r.text()) }).catch(() => process.exit(1))"; then
       return 0
     fi
     sleep 1

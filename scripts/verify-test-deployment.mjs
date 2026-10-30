@@ -178,7 +178,7 @@ const auditPool = mysql.createPool({host:databaseHost, port:databasePort, databa
 try {
   const connection = await auditPool.getConnection();
   try {
-    [requestAuditRows] = await connection.execute('SELECT COUNT(DISTINCT JSON_UNQUOTE(JSON_EXTRACT(details_json, \'$.requestId\'))) AS total FROM kq_audit_log WHERE JSON_UNQUOTE(JSON_EXTRACT(details_json, \'$.requestId\')) IN (' + auditPlaceholders + ')', requestIds);
+    [requestAuditRows] = await connection.execute("SELECT COUNT(DISTINCT JSON_UNQUOTE(JSON_EXTRACT(details_json, '$.requestId'))) AS total FROM kq_audit_log WHERE JSON_UNQUOTE(JSON_EXTRACT(details_json, '$.requestId')) IN (" + auditPlaceholders + ')', requestIds);
     const [auditCounts] = await connection.query('SELECT (SELECT COUNT(*) FROM kunqiong_audit_log) AS source_count, (SELECT COUNT(*) FROM kq_audit_log) AS relational_count');
     assert.equal(Number(auditCounts[0].source_count), Number(auditCounts[0].relational_count), 'Audit source and relational mirror counts must match after verification requests');
   } finally { connection.release(); }
@@ -193,6 +193,8 @@ await new Promise((resolve,reject) => {
 });
 console.log(JSON.stringify({release:health.release,sourceFiles:Object.keys(manifest).length,pages:4,assets,workerAssets,avatarDecoder:'WebP 1x1; corrupt input rejected',database:databaseEvidence,migration:relationalMetadata.metadata._relationalMigration,auditStorage:relationalMetadata.metadata.auditStorage,readRequests:requestIds.length,businessSnapshotUnchanged:true,auditRequestsPersisted:true,previousDataVerified:Boolean(previous),preservedCounts:previous?Object.fromEntries(['users','shares','collections','organizations','distributions','upgradeOrders'].map(kind=>[kind,previous[kind].length])):null,scanner:'PONG',passed:true}));
 `
+const syntax = spawnSync(process.execPath, ['--input-type=module', '--check'], { input: probe, encoding: 'utf8', windowsHide: true })
+if (syntax.status !== 0) throw new Error(`Deployment probe syntax check failed: ${syntax.stderr || syntax.error?.message || ''}`)
 const result = spawnSync('docker', ['exec', '-i', app, 'node', '--input-type=module'], { input: probe, encoding: 'utf8', windowsHide: true, timeout: 60000, maxBuffer: 4 * 1024 ** 2 })
 if (result.status !== 0) throw new Error(`Deployment verification failed (${result.status}): ${result.stderr || result.error?.message || ''}`)
 console.log(result.stdout.trim())
