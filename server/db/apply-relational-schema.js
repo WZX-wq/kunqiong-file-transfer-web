@@ -20,11 +20,12 @@ async function ensureMigrationTable(connection) {
   })
 }
 
-async function assertTableIsCurrent(connection, table) {
+async function assertTableIsCurrent(connection, table, { allowMissing = false } = {}) {
   const [columns] = await connection.execute(
     'SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
     [table.name],
   )
+  if (allowMissing && columns.length === 0) return false
   const [indexes] = await connection.execute(
     'SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
     [table.name],
@@ -34,6 +35,17 @@ async function assertTableIsCurrent(connection, table) {
     [table.name],
   )
   assertTableMatches(columns, indexes, table, tableRows?.[0])
+  return true
+}
+
+// Read-only gate: reject incompatible existing tables before stopping the old
+// service. Missing tables are created by the normal locked startup migration.
+export async function inspectExistingRelationalSchema({ connection, schemaSql }) {
+  let existingTableCount = 0
+  for (const table of inspectRelationalSchemaSql(schemaSql)) {
+    if (await assertTableIsCurrent(connection, table, { allowMissing: true })) existingTableCount += 1
+  }
+  return { existingTableCount }
 }
 
 export async function applyRelationalSchema({ pool, schemaSql }) {

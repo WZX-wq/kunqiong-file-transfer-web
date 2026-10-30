@@ -292,11 +292,18 @@ deploy_with_docker() {
   docker run --rm --env-file "$ENV_FILE" --entrypoint node "$IMAGE_NAME" --input-type=module -e '
 const { databasePool } = await import("/app/server/state.js");
 const { inspectRelationalMigrationTarget } = await import("/app/server/db/relational-store.js");
+const { inspectExistingRelationalSchema } = await import("/app/server/db/apply-relational-schema.js");
+const { readFile } = await import("node:fs/promises");
 try {
   const connection = await databasePool.getConnection();
-  try { console.log(JSON.stringify({ event: "database_migration_preflight", ...await inspectRelationalMigrationTarget(connection), passed: true })); }
+  try {
+    const schemaSql = await readFile("/app/docs/数据库设计-2026-10-29/03-现有功能关系表设计.sql", "utf8");
+    const schema = await inspectExistingRelationalSchema({ connection, schemaSql });
+    console.log(JSON.stringify({ event: "database_migration_preflight", ...schema, ...await inspectRelationalMigrationTarget(connection), passed: true }));
+  }
   finally { connection.release(); }
 } catch (error) {
+  if (error.message?.startsWith("Existing table ")) console.error(error.message);
   console.error(JSON.stringify({ event: "database_migration_preflight", passed: false, code: error.code || "MIGRATION_TARGET_REJECTED" }));
   process.exitCode = 1;
 } finally { await databasePool.end(); }

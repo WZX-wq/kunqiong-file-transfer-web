@@ -9,7 +9,7 @@ repo_root: D:/demo/鲲穹文件传输/kunqiong-file-transfer-web-main/kunqiong-f
 branch: deploy/user-file-isolation-20261029 # git branch the work happens on
 base_sha: 70a7670 # git short SHA the plan started from
 created: 2026-10-30 11:16 # YYYY-MM-DD HH:mm
-updated: 2026-10-30 15:05 # YYYY-MM-DD HH:mm  (bump on every edit)
+updated: 2026-10-30 15:12 # YYYY-MM-DD HH:mm  (bump on every edit)
 supersedes: ""           # plan_id this replaces, if any
 ---
 
@@ -28,7 +28,7 @@ supersedes: ""           # plan_id this replaces, if any
 - [x] Test deployment passes DB settings and requires relational mode; it cannot silently start in JSON mode.
 - [ ] Post-deploy verification confirms exact release, MySQL connectivity, relational revision, migrated data, audit parity, and core routes.
 - [x] Targeted tests/build pass.
-- [ ] Intended changes are committed and pushed to Gitea `main`.
+- [x] Intended changes are committed and pushed to Gitea `main`.
 
 ## Assumptions & Constraints
 
@@ -84,8 +84,8 @@ interface, non-overlapping file ownership); otherwise run it in the main thread 
 | T2 | Preserve/pass DB configuration and fail closed before deployment | `[main]` | T1 | [x] |
 | T3 | Extend deployment verification to require relational MySQL state | `[main]` | T2 | [x] |
 | T4 | Run deploy, migration, targeted feature tests and build | `[main]` | T2,T3 | [x] |
-| T5 | Stage and commit only the intended deployment, responsive UI, test and plan files | `[main]` | T4 | [ ] |
-| T6 | Push the reviewed commit to Gitea `main` after remote DB settings are available | `[main]` | T5 | [ ] |
+| T5 | Stage and commit only the intended deployment, responsive UI, test and plan files | `[main]` | T4 | [x] |
+| T6 | Push the reviewed commit to Gitea `main` after remote DB settings are available | `[main]` | T5 | [x] |
 | T7 | Verify test deployment release and database-backed state | `[main]` | T6 | [ ] |
 
 > A task that depends on an unfinished interface is NOT independent. Give it a `Deps`
@@ -136,6 +136,8 @@ reported rows in here after reviewing the diff). Write it as you finish, never i
 | 2026-10-30 11:44 | T3 | `scripts/verify-test-deployment.mjs`, `scripts/verify-deploy-release.mjs` | Added relational revision, migrated-row, audit-parity, preserved-data, route, asset and exact-release checks; release gate fixture passed 5/5 cases. | main |
 | 2026-10-30 11:48 | T4 | Relational sync, responsive upload toolbar and regression suite | Fixed account-record replay to ignore database-managed `gmt_modified`; moved guest quota and batch distribution into an adaptive grid; database and UI/build checks passed. | main |
 | 2026-10-30 | T4 | `scripts/deploy-test.sh`, `scripts/verify-deploy-release.mjs` | Added a secret-safe fallback to the current app container's configuration and verified secret precedence/log redaction; 6 deployment checks pass. The remote app currently has no DB configuration, so fallback alone cannot unblock deployment. | main |
+| 2026-10-30 15:06 | T5,T6 | Git release | Committed and pushed `4429b25` to Gitea `main`; Actions run 128 started. No SSH connection used. | main |
+| 2026-10-30 15:12 | T7 | Schema compatibility and deployment preflight | Run 128 reached MySQL but failed table-type validation on `kq_user`. Normalize integer display widths only, retain range/precision checks, and inspect existing tables before replacing the service. 14 DB tests and 10 deployment gates pass. | main |
 
 ## Verification Evidence
 
@@ -174,18 +176,18 @@ here after fixing, so the same error logic is not repeated next time._
 
 | Time | Symptom | Root cause | Fix (files) | Guard added (test/assert/check) |
 | --- | --- | --- | --- | --- |
-| | | | | |
+| 2026-10-30 15:12 | Run 128 app restarts during schema bootstrap | Schema comparator treated MySQL integer display width metadata as a different type | Canonicalize integer display widths; add detailed mismatch errors and read-only schema preflight | MySQL 5.7 type fixtures, unsigned/range/precision rejection and SELECT-only preflight tests |
 
 ## Completion Summary
 
 _Leave empty until the acceptance pass is done. Then fill in: what was built, key
 decisions, what was verified (and how), verification_status rationale, anything deferred._
 
-Migration work resumed on 2026-10-30 after the user supplied the test database connection details. The local migration, source-receipt checks, transactional relational tests, deployment preflight and build are verified. The reviewed release is ready to push; post-deployment migration verification remains outstanding until Actions completes.
+Migration work resumed on 2026-10-30 after the user supplied the test database connection details. Release `4429b25` was committed and pushed. Actions run 128 reached MySQL but failed schema type validation; compatibility repair is tested locally. Migration completion and remote acceptance remain unverified.
 
 ## Next Steps
 
 _Always keep ONE explicit next action here so any agent resuming knows exactly where to
 start. Update it every time you stop._
 
-- Stage and commit the reviewed files, push `HEAD:main` to Gitea, then wait for Actions and verify the deployed release and migrated database evidence.
+- Push the schema compatibility repair, then verify the new Actions run, running release and migrated database evidence.

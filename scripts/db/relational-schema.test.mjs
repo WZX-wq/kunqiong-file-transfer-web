@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assertTableMatches, inspectRelationalSchemaSql, makeIdempotentCreateStatement, splitSqlStatements } from '../../server/db/relational-schema.js'
 import { UPLOAD_SESSION_TABLE_SQL } from '../../server/db/upload-session-store.js'
+import { inspectExistingRelationalSchema } from '../../server/db/apply-relational-schema.js'
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const schemaPath = path.join(projectRoot, 'docs', '数据库设计-2026-10-29', '03-现有功能关系表设计.sql')
@@ -70,4 +71,38 @@ test('makes bootstrap DDL retryable without allowing an existing table to go unc
     ],
     [{ INDEX_NAME: 'PRIMARY' }, { INDEX_NAME: 'uk_user_legacy_id' }], expected,
   ), /columns that do not match/)
+})
+
+test('accepts MySQL 5.7 integer display widths while rejecting range and precision changes', () => {
+  for (const type of ['tinyint', 'smallint', 'mediumint', 'int', 'bigint']) {
+    const expected = { name: 'fixture', columns: ['id'], columnTypes: { id: `${type} unsigned` }, indexes: ['PRIMARY'] }
+    assert.doesNotThrow(() => assertTableMatches([{ COLUMN_NAME: 'id', COLUMN_TYPE: `${type}(20) unsigned` }], [{ INDEX_NAME: 'PRIMARY' }], expected))
+    assert.throws(() => assertTableMatches([{ COLUMN_NAME: 'id', COLUMN_TYPE: `${type}(20)` }], [{ INDEX_NAME: 'PRIMARY' }], expected), /column type/)
+    assert.throws(() => assertTableMatches([{ COLUMN_NAME: 'id', COLUMN_TYPE: `${type}(20) unsigned zerofill` }], [{ INDEX_NAME: 'PRIMARY' }], expected), /column type/)
+  }
+  for (const [expectedType, actualType] of [['varchar(20)', 'varchar(21)'], ['datetime(3)', 'datetime(6)'], ['decimal(20,3)', 'decimal(20,4)'], ['bigint unsigned', 'int(11) unsigned']]) {
+    assert.throws(() => assertTableMatches([{ COLUMN_NAME: 'id', COLUMN_TYPE: actualType }], [{ INDEX_NAME: 'PRIMARY' }], {
+      name: 'fixture', columns: ['id'], columnTypes: { id: expectedType }, indexes: ['PRIMARY'],
+    }), /column type/)
+  }
+})
+
+test('deployment schema preflight uses SELECT only and tolerates absent tables', async () => {
+  const schemaSql = fs.readFileSync(schemaPath, 'utf8')
+  const tables = inspectRelationalSchemaSql(schemaSql)
+  let incompatible = false
+  const connection = { execute: async (sql, [name]) => {
+    assert.match(sql, /^SELECT /)
+    const table = tables.find(item => item.name === name)
+    if (sql.includes('information_schema.COLUMNS')) {
+      if (name !== 'kq_user') return [[]]
+      return [table.columns.map(COLUMN_NAME => ({ COLUMN_NAME, COLUMN_TYPE: incompatible && COLUMN_NAME === 'id' ? 'int(11)' : table.columnTypes[COLUMN_NAME].replace(/^bigint unsigned$/, 'bigint(20) unsigned') }))]
+    }
+    if (sql.includes('information_schema.STATISTICS')) return [table.indexes.map(INDEX_NAME => ({ INDEX_NAME }))]
+    if (sql.includes('information_schema.TABLES')) return [[{ ENGINE: 'InnoDB', TABLE_COLLATION: 'utf8mb4_unicode_ci' }]]
+    throw new Error('Unexpected query')
+  } }
+  assert.deepEqual(await inspectExistingRelationalSchema({ connection, schemaSql }), { existingTableCount: 1 })
+  incompatible = true
+  await assert.rejects(inspectExistingRelationalSchema({ connection, schemaSql }), /kq_user.*id is int\(11\)/)
 })

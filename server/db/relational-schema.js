@@ -123,6 +123,13 @@ export function makeIdempotentCreateStatement(statement) {
   return statement.replace(/^CREATE\s+TABLE\s+/i, 'CREATE TABLE IF NOT EXISTS ')
 }
 
+function canonicalColumnType(value) {
+  // MySQL 5.7 reports integer display widths that MySQL 8 omits. They do not
+  // change the integer range; retain unsigned/zerofill and all real precisions.
+  return String(value).toLowerCase().trim().replace(/\s+/g, ' ')
+    .replace(/^(tinyint|smallint|mediumint|int|bigint)\(\d+\)(?=\s|$)/, '$1')
+}
+
 export function assertTableMatches(actualColumns, actualIndexes, expected, tableInfo) {
   const actualColumnNames = actualColumns.map(column => column.COLUMN_NAME).sort()
   const allowedAdditions = ADDITIVE_COLUMN_TYPES[expected.name] || {}
@@ -137,8 +144,8 @@ export function assertTableMatches(actualColumns, actualIndexes, expected, table
   }
   for (const column of actualColumns) {
     const expectedType = expected.columnTypes[column.COLUMN_NAME] || allowedAdditions[column.COLUMN_NAME]
-    if (String(column.COLUMN_TYPE).toLowerCase().replace(/\s+/g, ' ') !== expectedType) {
-      throw new Error(`Existing table ${expected.name} has a column type that does not match the project schema`)
+    if (canonicalColumnType(column.COLUMN_TYPE) !== canonicalColumnType(expectedType)) {
+      throw new Error(`Existing table ${expected.name} has a column type that does not match the project schema: ${column.COLUMN_NAME} is ${column.COLUMN_TYPE}, expected ${expectedType}`)
     }
   }
   if (tableInfo && (tableInfo.ENGINE !== 'InnoDB' || tableInfo.TABLE_COLLATION !== 'utf8mb4_unicode_ci')) {
