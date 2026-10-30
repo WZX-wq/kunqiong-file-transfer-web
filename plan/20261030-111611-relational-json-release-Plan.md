@@ -9,7 +9,7 @@ repo_root: D:/demo/鲲穹文件传输/kunqiong-file-transfer-web-main/kunqiong-f
 branch: deploy/user-file-isolation-20261029 # git branch the work happens on
 base_sha: 70a7670 # git short SHA the plan started from
 created: 2026-10-30 11:16 # YYYY-MM-DD HH:mm
-updated: 2026-10-30 11:48 # YYYY-MM-DD HH:mm  (bump on every edit)
+updated: 2026-10-30 12:04 # YYYY-MM-DD HH:mm  (bump on every edit)
 supersedes: ""           # plan_id this replaces, if any
 ---
 
@@ -27,7 +27,7 @@ supersedes: ""           # plan_id this replaces, if any
 - [x] Local MySQL relational mode is enabled; managed rows load, source snapshot revision is recorded, audit source/mirror counts match, and upload-session manifests are stored in MySQL.
 - [x] Test deployment passes DB settings and requires relational mode; it cannot silently start in JSON mode.
 - [ ] Post-deploy verification confirms exact release, MySQL connectivity, relational revision, migrated data, audit parity, and core routes.
-- [ ] Targeted tests/build pass; intended changes are committed and pushed to Gitea `main`.
+- [x] Targeted tests/build pass; intended changes are committed and pushed to Gitea `main`.
 
 ## Assumptions & Constraints
 
@@ -118,7 +118,7 @@ the replacement rather than reusing its identity._
 
 _Open questions or external dependencies stopping progress. Empty when unblocked._
 
-- Test-server MySQL configuration may require Gitea repository Secrets; deployment must stop safely if values are unavailable.
+- Test runner has not claimed Gitea Actions run `#126` after the push; the remote 8045 service still reports the previous release `9303aedca8c0915578b6e1a365ab52c18b5b3595`. Keep the run queued and complete T6 after a runner is available.
 
 ---
 
@@ -156,6 +156,7 @@ rest deferred - list which), or `not-run` (nothing run - say why + residual risk
 | 2026-10-30 | `node scripts/verify-collection-layout.mjs`; `node scripts/verify-collection-fields-ui.mjs` | Passed; 38 passed, 0 failed | Existing collection layout and field regressions remain green. |
 | 2026-10-30 | `npm run build` | Passed | Manual generation/verification passed; existing large viewer chunk warning only. |
 | 2026-10-30 | Browser responsive viewport checks | Passed | 1440px, 1024px, 760px and 390px representative viewports; no toolbar overlap or horizontal overflow. |
+| 2026-10-30 | Gitea Actions `deploy-test.yml` run `#126` and remote `/api/health` | Pending | Commit `07fd31b` is on `main`; run remains queued and remote 8045 still serves `9303aed`, so post-deploy DB verification has not run. |
 
 ## Bug & Fix Log
 
@@ -171,7 +172,7 @@ here after fixing, so the same error logic is not repeated next time._
 _Leave empty until the acceptance pass is done. Then fill in: what was built, key
 decisions, what was verified (and how), verification_status rationale, anything deferred._
 
-Local migration, deployment gates, targeted tests, build and responsive checks are complete. Remote deployment remains pending until the commit is pushed and the Gitea runner reports success; post-deploy verification must then be run against the deployed container.
+Local migration, deployment gates, targeted tests, build, responsive checks, commit and push are complete. Remote deployment is pending because Gitea run `#126` remains queued; the post-deploy database and route verification must run after the test runner claims it.
 
 ## Next Steps
 
