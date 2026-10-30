@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { countRelationalModelRows } from '../server/db/relational-store.js'
 import { normalizeAuditLog } from '../server/lib/audit-normalizer.js'
 import { listValidAuditIds, readFixtureMetadata } from './lib/read-audit-fixture.mjs'
-import { classifyMigrationSource } from './lib/migration-source-verification.mjs'
+import { classifyMigrationSource, hasValidImportedCountManifest } from './lib/migration-source-verification.mjs'
 
 const app = process.env.KUNQIONG_DEPLOY_APP_NAME || 'kunqiong-file-transfer-web'
 const image = app + ':test'
@@ -71,6 +71,7 @@ const manifest = ${JSON.stringify(manifest)};
 const expected = ${JSON.stringify(expected)};
 const previous = ${JSON.stringify(previous)};
 const classifyMigrationSource = ${classifyMigrationSource.toString()};
+const hasValidImportedCountManifest = ${hasValidImportedCountManifest.toString()};
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 for (const [file, digest] of Object.entries(manifest)) assert.equal(hash('/app/' + file), digest, 'Runtime source mismatch: ' + file);
 const base = 'http://127.0.0.1:' + (process.env.PORT || 8045);
@@ -112,7 +113,7 @@ try {
       const missingRelationalTypes = Object.groupBy(missingRelationalIds, id => previous.auditTypesById[id] || 'unknown');
       assert.equal(importedRelationalAuditRows, expectedAuditIds.length, 'Every valid backed-up audit log must be mirrored into the relational audit table (valid=' + expectedAuditIds.length + ', retained_backup_rows=' + previous.auditRetainedRows + ', missing_types=' + JSON.stringify(Object.fromEntries(Object.entries(missingRelationalTypes).map(([type, ids]) => [type, ids.length]))) + ')');
     }
-    databaseEvidence = {revision:relationalState.revision, sourceSnapshotRevision:relationalState.sourceSnapshotRevision, managedRows:Object.values(relationalMetadata.state.counts).reduce((total, count) => total + Number(count || 0), 0), migratedTableCount:Object.keys(relationalMetadata.state.counts).length, sourceAuditRows:Number(auditCounts[0].source_count), relationalAuditRows:Number(auditCounts[0].relational_count), importedSourceAuditRows, importedRelationalAuditRows, retainedBackupAuditRows:previous?.auditRetainedRows ?? null, expectedValidAuditRows:previous?.auditIds.length ?? null, uploadSessions:Number(uploadSessionRows[0].total)};
+    databaseEvidence = {revision:relationalState.revision, sourceSnapshotRevision:relationalState.sourceSnapshotRevision, managedRows:Object.values(relationalMetadata.state.counts).reduce((total, count) => total + Number(count || 0), 0), migratedTableCount:Object.keys(relationalMetadata.state.counts).length, currentRowCounts:relationalMetadata.state.counts, sourceAuditRows:Number(auditCounts[0].source_count), relationalAuditRows:Number(auditCounts[0].relational_count), importedSourceAuditRows, importedRelationalAuditRows, retainedBackupAuditRows:previous?.auditRetainedRows ?? null, expectedValidAuditRows:previous?.auditIds.length ?? null, uploadSessions:Number(uploadSessionRows[0].total)};
   } finally { connection.release(); }
   assert.ok(databaseEvidence.managedRows > 0, 'Migrated business records must exist in relational tables');
   const migrationReceipt = relationalMetadata.metadata._relationalMigration;
@@ -136,7 +137,7 @@ try {
       assert.deepEqual(Object.keys(previous.rowCounts || {}).sort(), Object.keys(relationalMetadata.state.counts || {}).sort(), 'Backup row-count manifest must cover every managed relation table');
     }
   }
-  assert.deepEqual(migrationReceipt.importedCounts, relationalMetadata.state.counts, 'Imported row counts must match committed relationship-table counts');
+  assert.ok(hasValidImportedCountManifest(migrationReceipt.importedCounts, relationalMetadata.state.counts), 'The initial import count receipt must contain valid counts for known relationship tables');
   assert.equal(relationalMetadata.metadata.auditStorage, 'mysql-v1', 'MySQL audit persistence must be active');
   assert.equal(relationalMetadata.metadata.auditLogs.length, 0, 'Business metadata must not embed audit history');
   assert.equal(databaseEvidence.sourceAuditRows, databaseEvidence.relationalAuditRows, 'Audit source and relational mirror counts must match');
@@ -224,7 +225,7 @@ await new Promise((resolve,reject) => {
   socket.on('data',data=>{body+=data; if(body.includes('PONG')){socket.destroy();resolve();}});
   socket.once('error',reject); socket.once('timeout',()=>{socket.destroy();reject(new Error('Scanner timeout'));});
 });
-console.log(JSON.stringify({release:health.release,sourceFiles:Object.keys(manifest).length,pages:4,assets,workerAssets,avatarDecoder:'WebP 1x1; corrupt input rejected',database:databaseEvidence,migration:relationalMetadata.metadata._relationalMigration,migrationSourceVerification:previous&&relationalMetadata.metadata._relationalMigration.source==='metadata.json'?classifyMigrationSource(relationalMetadata.metadata._relationalMigration,previous.backupCompletedAt):'not-applicable',auditStorage:relationalMetadata.metadata.auditStorage,readRequests:requestIds.length,businessSnapshotUnchanged:true,auditRequestsPersisted:true,previousDataVerified:Boolean(previous),preservedCounts:previous?Object.fromEntries(['users','shares','collections','organizations','distributions','upgradeOrders'].map(kind=>[kind,previous[kind].length])):null,scanner:'PONG',passed:true}));
+console.log(JSON.stringify({release:health.release,sourceFiles:Object.keys(manifest).length,pages:4,assets,workerAssets,avatarDecoder:'WebP 1x1; corrupt input rejected',database:databaseEvidence,migration:relationalMetadata.metadata._relationalMigration,migrationSourceVerification:previous&&relationalMetadata.metadata._relationalMigration.source==='metadata.json'?classifyMigrationSource(relationalMetadata.metadata._relationalMigration,previous.backupCompletedAt):'not-applicable',initialImportCounts:relationalMetadata.metadata._relationalMigration.importedCounts,auditStorage:relationalMetadata.metadata.auditStorage,readRequests:requestIds.length,businessSnapshotUnchanged:true,auditRequestsPersisted:true,previousDataVerified:Boolean(previous),preservedCounts:previous?Object.fromEntries(['users','shares','collections','organizations','distributions','upgradeOrders'].map(kind=>[kind,previous[kind].length])):null,scanner:'PONG',passed:true}));
 `
 const syntax = spawnSync(process.execPath, ['--input-type=module', '--check'], { input: probe, encoding: 'utf8', windowsHide: true })
 if (syntax.status !== 0) throw new Error(`Deployment probe syntax check failed: ${syntax.stderr || syntax.error?.message || ''}`)

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawnSync } from 'node:child_process'
-import { classifyMigrationSource } from './lib/migration-source-verification.mjs'
+import { classifyMigrationSource, hasValidImportedCountManifest } from './lib/migration-source-verification.mjs'
 
 test('a migration completed after backup must match the backup source exactly', () => {
   assert.equal(classifyMigrationSource(
@@ -23,7 +23,22 @@ test('missing migration or backup times fail closed', () => {
 })
 
 test('the classifier source embeds as valid module code for the container probe', () => {
-  const source = `const classifyMigrationSource = ${classifyMigrationSource.toString()};\n`
+  const source = `const classifyMigrationSource = ${classifyMigrationSource.toString()};\nconst hasValidImportedCountManifest = ${hasValidImportedCountManifest.toString()};\n`
   const result = spawnSync(process.execPath, ['--input-type=module', '--check'], { input: source, encoding: 'utf8' })
   assert.equal(result.status, 0, result.stderr)
+})
+
+test('historical imported row counts remain valid when live rows have since changed', () => {
+  assert.equal(hasValidImportedCountManifest(
+    { kq_user: 14, kq_account_record: 42 },
+    { kq_user: 14, kq_account_record: 38 },
+  ), true)
+})
+
+test('imported row-count receipts reject unknown tables and invalid counts', () => {
+  const current = { kq_user: 14, kq_account_record: 38 }
+  assert.equal(hasValidImportedCountManifest({ kq_user: 14, kq_unknown: 1 }, current), false)
+  assert.equal(hasValidImportedCountManifest({ kq_user: -1 }, current), false)
+  assert.equal(hasValidImportedCountManifest({ kq_user: 1.5 }, current), false)
+  assert.equal(hasValidImportedCountManifest({ kq_user: null }, current), false)
 })
