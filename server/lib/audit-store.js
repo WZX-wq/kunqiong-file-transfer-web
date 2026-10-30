@@ -6,6 +6,8 @@ import crypto from 'node:crypto'
 import { removeFile } from './file-lock.js'
 import { protectCredential } from './private-key.js'
 
+export const LOCAL_AUDIT_JOURNAL_MIGRATION = 'local-audit-journal-v1'
+
 export function mergeAuditEntries(logs, normalize, limit) {
   const byId = new Map()
   for (const entry of logs) {
@@ -33,6 +35,16 @@ export class DatabaseAuditStore {
     this.error = null
     this.pending = new Map()
     this.relationalAuditEnabled = false
+  }
+
+  async initializeWithLocalJournal(legacy, directory, { migrated = false, alreadyImported = false } = {}) {
+    const hasArtifacts = ['snapshot.json', 'snapshot.json.bak', 'events.jsonl']
+      .some(name => fs.existsSync(path.join(directory, name)))
+    if (!hasArtifacts || alreadyImported) return { logs: await this.initialize(legacy), importedLocalJournal: false }
+
+    const restored = new LocalAuditStore(directory, this.normalize, this.limit).initialize(legacy, migrated)
+    const logs = await this.initialize(restored)
+    return { logs, importedLocalJournal: true }
   }
 
   async initialize(legacy = []) {

@@ -9,7 +9,7 @@ repo_root: D:/demo/鲲穹文件传输/kunqiong-file-transfer-web-main/kunqiong-f
 branch: deploy/user-file-isolation-20261029 # git branch the work happens on
 base_sha: 70a7670 # git short SHA the plan started from
 created: 2026-10-30 11:16 # YYYY-MM-DD HH:mm
-updated: 2026-10-30 16:50 # YYYY-MM-DD HH:mm  (bump on every edit)
+updated: 2026-10-30 17:55 # YYYY-MM-DD HH:mm  (bump on every edit)
 supersedes: ""           # plan_id this replaces, if any
 ---
 
@@ -142,6 +142,7 @@ reported rows in here after reviewing the diff). Write it as you finish, never i
 | 2026-10-30 16:12 | T7 | Audit backup retention verification | Run 131 has 4,820 matching IDs out of the verifier's 5,000 expected IDs. A focused fixture reproduces that exact overlap when the backup reader selects the latest 5,000 by timestamp but LocalAuditStore retains 180 older critical entries ahead of 5,000 access entries. Make verification use the shared runtime merge policy; rerun deployment to confirm against the retained server backup. | main |
 | 2026-10-30 16:25 | T7 | Host verification module dependency | Run after `4e013ff` deployed the release but failed before assertions because importing `metadata-normalizers.js` pulled `mysql2` through `server/state.js`, which is absent on the runner host. Move the shared audit normalizer into a dependency-light module and import that from the host verifier. | main |
 | 2026-10-30 16:50 | T7 | Matched audit row query shape | Run after `7913c43` reached the database comparison but failed because the verifier destructured `mysql2.execute()` rows as a single nested record, then called `.map()` on that object. Read the returned row array, and derive unique matched ID counts directly from the source and relational table selections. | main |
+| 2026-10-30 17:55 | T7 | Idempotent audit journal recovery | Run 134 confirmed 4,820/5,000 source audit rows. Import the local journal even if the old `mysql-v1` marker was saved by a prior partial startup; persist a one-time journal-import marker only after both MySQL writes finish. | main |
 
 ## Verification Evidence
 
@@ -172,6 +173,9 @@ rest deferred - list which), or `not-run` (nothing run - say why + residual risk
 | 2026-10-30 16:12 | `npm run test:audit`; `npm run test:db-schema`; `node scripts/verify-deploy-release.mjs`; `node scripts/verify-team-handover.mjs`; syntax checks; `git diff --check` | Passed: 10 audit tests, 11 audit persistence checks, 14 database tests, 10 deployment gates and 65 handover cases | New retention regression reproduces the 4,820 overlap locally. The actual server backup still needs the next post-deploy verification run. |
 | 2026-10-30 16:25 | Gitea Actions release `4e013ff` | Deploy passed; host verification stopped during module resolution | `mysql2` was imported transitively by the audit normalizer's aggregate module; replace it with the standalone audit normalizer before retrying. |
 | 2026-10-30 16:50 | Gitea Actions release `7913c43` | Host verifier loaded; database comparison stopped on the `mysql2.execute()` row-array shape | Select matched IDs as rows and build `Set` counts; local probe and database tests must pass before retry. |
+| 2026-10-30 17:40 | Latest local checks on `4e24a39` | Passed: 10 audit unit tests, 11 audit persistence checks, upload-session test, 10 deploy-release gates, and verifier syntax check | `gitea/main` points to `4e24a39`; the Actions API route returned 404 and the web page returned Sign In, so the remote run result cannot be read in this session. |
+| 2026-10-30 17:55 | `npm run test:audit`; `npm run test:db-schema`; `npm run test:db-upload-sessions`; `node scripts/verify-deploy-release.mjs`; `node scripts/db/verify-relational-sync.mjs` | Passed: 11 audit unit tests, 11 audit persistence checks, 14 schema/store tests, 1 upload-session test, 10 deploy gates, and 5,000-user sync | The audit test reproduces 4,820 existing rows plus 180 journal rows, verifies 5,000 after import, and verifies restart does not replay stale journal data. |
+| 2026-10-30 17:55 | Gitea Actions run 134 for `4e24a39` | Failed: 4,820 of 5,000 valid audit IDs found in `kunqiong_audit_log` | The 180 missing IDs are 12-character `access` records from the independent journal. The app had persisted `auditStorage=mysql-v1` during an earlier partial startup, and that marker suppressed journal import on retry. |
 | 2026-10-30 | Read-only Gitea API permission check | Blocked | Repository push access works, but the current account cannot manage Actions Secrets (HTTP 403; owner required). No deployment was triggered. |
 | 2026-10-30 | Repository Actions Secrets page | Passed | `KUNQIONG_DB_HOST`, `KUNQIONG_DB_PORT`, `KUNQIONG_DB_NAME`, `KUNQIONG_DB_USER`, and `KUNQIONG_DB_PASSWORD` are present and masked. |
 | 2026-10-30 | Database, persistence, release-gate and packaging suite | Passed | 20 tests, 10 release-gate checks, 5,000-user transactional sync, upload-session test, shell syntax and Docker COPY startup check; no synthetic rows retained. |
@@ -188,17 +192,18 @@ here after fixing, so the same error logic is not repeated next time._
 | 2026-10-30 16:12 | Run 131 verification reports 4820/5000 audit IDs | Probable root cause: backup verification used timestamp-only truncation while runtime prioritizes critical entries; a focused fixture reproduces the exact 4,820 overlap | Reconstruct deployment evidence with the same exported `mergeAuditEntries` policy; emit safe ID-length/type counts if records are still missing | Regression test applies runtime selection to the snapshot+journal fixture and reproduces the old 4,820 overlap |
 | 2026-10-30 16:25 | Run after `4e013ff` cannot load the host verifier | Importing the aggregate metadata normalizers loads `server/state.js` and requires `mysql2` on a runner that does not install application dependencies | Put `normalizeAuditLog` in `server/lib/audit-normalizer.js`; preserve its export from `metadata-normalizers.js` and import the lightweight module in host scripts | Host dependency graph no longer references `server/state.js`; audit and syntax checks cover the new module |
 | 2026-10-30 16:50 | Run after `7913c43` throws `sourceMatchedRows.map is not a function` | mysql2 `execute()` returns `[rows, fields]`; nested destructuring selected the first row object instead of the result row array | Use `[rows]` for ID selections and count distinct matches with `Set` | Deployment verifier parses and checks its generated probe before container execution; re-run it against MySQL |
+| 2026-10-30 17:55 | Run 134 still reports 4,820/5,000 audit rows after the backup-reader fix | Runtime imported local journals only when the persisted mode was exactly `journal-v1`; an earlier failed startup had already saved `mysql-v1` before the journal reached MySQL | Import local journal artifacts until a separate `auditJournalMigration` receipt is durably stored in relational metadata; verify that receipt during deployment | Regression covers a partially migrated 4,820-row database, imports the 180 journal rows, confirms 5,000 rows, and skips stale journal data after restart |
 
 ## Completion Summary
 
 _Leave empty until the acceptance pass is done. Then fill in: what was built, key
 decisions, what was verified (and how), verification_status rationale, anything deferred._
 
-Migration work resumed on 2026-10-30 after the user supplied the test database connection details. Release `4429b25` was committed and pushed. Actions run 128 reached MySQL but failed schema type validation; compatibility repair is tested locally. Migration completion and remote acceptance remain unverified.
+Migration work resumed on 2026-10-30 after the user supplied the test database connection details. Gitea run 134 for `4e24a39` failed because the app skipped 180 valid access logs in its independent journal after an earlier partial startup persisted the MySQL mode marker. A one-time journal-import receipt now makes the backfill idempotent; focused local tests pass. Test-server migration remains unverified until a new Actions run passes; no SSH connection was made.
 
 ## Next Steps
 
 _Always keep ONE explicit next action here so any agent resuming knows exactly where to
 start. Update it every time you stop._
 
-- Commit and push the matched-row result-shape fix, then confirm the next Actions run passes both the backup audit comparison and relational audit parity checks.
+- Push the journal-recovery fix to Gitea `main`, then confirm the new Actions run verifies all 5,000 backed-up audit IDs in both MySQL audit tables, the saved journal-import receipt, and the live release SHA.

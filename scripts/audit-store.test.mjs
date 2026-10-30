@@ -43,6 +43,73 @@ test('relational audit mirror traverses large history in bounded primary-key pag
   assert.deepEqual(executions.flatMap(item => item.values.filter((_, index) => index % 12 === 0)), entries.map(item => item.id))
 })
 
+test('partially migrated MySQL audit storage imports its local journal once', async () => {
+  const { directory, store } = fixture()
+  const legacy = Array.from({ length: 4820 }, (_, index) => ({
+    id: 'S' + String(index).padStart(11, '0'),
+    type: 'access',
+    action: 'read request',
+    createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+  }))
+  store.initialize(legacy)
+  const appended = Array.from({ length: 180 }, (_, index) => ({
+    id: 'J' + String(index).padStart(11, '0'),
+    type: 'access',
+    action: 'journal request',
+    createdAt: new Date(Date.UTC(2026, 0, 10, 0, index)).toISOString(),
+  }))
+  for (const entry of appended) store.append(entry)
+
+  const rows = new Map(legacy.map(entry => [entry.id, {
+    critical: 0,
+    createdAt: entry.createdAt,
+    payload: JSON.stringify(entry),
+  }]))
+  const pool = {
+    query: async (sql, values = []) => {
+      if (sql.startsWith('CREATE TABLE')) return [{ affectedRows: 0 }, []]
+      if (sql.includes('SELECT payload FROM kunqiong_audit_log WHERE critical = ?')) {
+        const critical = Number(values[0])
+        const payloads = [...rows.values()]
+          .filter(entry => entry.critical === critical)
+          .sort((first, second) => second.createdAt.localeCompare(first.createdAt))
+          .map(entry => ({ payload: entry.payload }))
+        return [payloads, []]
+      }
+      throw new Error('Unexpected audit query: ' + sql)
+    },
+    execute: async (sql, values = []) => {
+      if (sql.includes('information_schema.TABLES')) return [[{ found: 0 }], []]
+      if (sql.includes('INSERT IGNORE INTO kunqiong_audit_log')) {
+        let inserted = 0
+        for (let index = 0; index < values.length; index += 4) {
+          const [id, critical, createdAt, payload] = values.slice(index, index + 4)
+          if (!rows.has(id)) {
+            rows.set(id, { critical, createdAt, payload })
+            inserted += 1
+          }
+        }
+        return [{ affectedRows: inserted }, []]
+      }
+      throw new Error('Unexpected audit execution: ' + sql)
+    },
+  }
+
+  const firstStart = new DatabaseAuditStore(pool, normalize, 5000)
+  const firstResult = await firstStart.initializeWithLocalJournal(legacy, directory)
+  assert.equal(firstResult.importedLocalJournal, true)
+  assert.equal(firstResult.logs.length, 5000)
+  assert.equal(rows.size, 5000)
+  assert.ok(appended.every(entry => rows.has(entry.id)))
+
+  store.append({ id: 'J99999999999', type: 'access', action: 'stale local entry', createdAt: '2026-12-01T00:00:00.000Z' })
+  const restarted = new DatabaseAuditStore(pool, normalize, 5000)
+  const restartResult = await restarted.initializeWithLocalJournal(legacy, directory, { alreadyImported: true })
+  assert.equal(rows.size, 5000)
+  assert.equal(restartResult.importedLocalJournal, false)
+  assert.ok(!restartResult.logs.some(entry => entry.id === 'J99999999999'))
+})
+
 test('deployment audit evidence counts unique logs accepted by the runtime normalizer', () => {
   const entries = [
     { id: 'audit-valid-1', action: ' 文件上传 ' },

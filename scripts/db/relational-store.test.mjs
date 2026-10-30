@@ -29,6 +29,7 @@ test('maps every metadata domain to its owning relational record set', () => {
     systemConfig: { maxBatchFiles: 12 },
     collectionTemplates: [{ id: 'template1' }],
     extensionState: { retained: true },
+    auditJournalMigration: 'local-audit-journal-v1',
   }
 
   const model = buildRelationalModel(source)
@@ -46,7 +47,7 @@ test('maps every metadata domain to its owning relational record set', () => {
   assert.deepEqual(model.systemSettings, [
     { key: 'systemConfig', value: source.systemConfig },
     { key: 'collectionTemplates', value: source.collectionTemplates },
-    { key: 'legacyExtraMetadata', value: { extensionState: { retained: true } } },
+    { key: 'legacyExtraMetadata', value: { extensionState: { retained: true }, auditJournalMigration: 'local-audit-journal-v1' } },
   ])
 })
 

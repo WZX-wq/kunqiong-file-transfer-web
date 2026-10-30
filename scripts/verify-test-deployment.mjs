@@ -33,11 +33,14 @@ if (fs.existsSync(backupMarker)) {
     assert.ok(fs.existsSync(path.join(backup, 'backup-complete.json')), 'Data backup must finish before deployment')
     const data = readFixtureMetadata(metadataFile, { normalize: normalizeAuditLog })
     const revisionFile = path.join(backup, 'metadata.json.revision')
+    const auditDirectory = path.join(path.dirname(metadataFile), 'audit')
     previous = {
       sourceSha256: crypto.createHash('sha256').update(stableSnapshotJson(JSON.parse(fs.readFileSync(metadataFile, 'utf8')))).digest('hex'),
       sourceRevision: Math.max(Number(data._localRevision) || 0, fs.existsSync(revisionFile) ? Number(fs.readFileSync(revisionFile, 'utf8').trim()) || 0 : 0),
       rowCounts: countRelationalModelRows(data),
       auditRetainedRows: Array.isArray(data.auditLogs) ? data.auditLogs.length : 0,
+      auditJournalArtifacts: ['snapshot.json', 'snapshot.json.bak', 'events.jsonl']
+        .some(name => fs.existsSync(path.join(auditDirectory, name))),
       auditIds: listValidAuditIds(data.auditLogs, normalizeAuditLog),
       auditTypesById: Object.fromEntries(data.auditLogs.filter(item => String(item?.id || '').trim()).map(item => {
         const log = normalizeAuditLog(item)
@@ -81,6 +84,9 @@ try {
   try {
     relationalState = await readRelationalState(connection);
     relationalMetadata = await loadRelationalMetadataFromConnection(connection, relationalState);
+    if (previous?.auditJournalArtifacts) {
+      assert.equal(relationalMetadata.metadata.auditJournalMigration, 'local-audit-journal-v1', 'The local audit journal import receipt must be durably stored in MySQL metadata');
+    }
     const [auditCounts] = await connection.query('SELECT (SELECT COUNT(*) FROM kunqiong_audit_log) AS source_count, (SELECT COUNT(*) FROM kq_audit_log) AS relational_count');
     const [uploadSessionRows] = await connection.query('SELECT COUNT(*) AS total FROM kq_upload_session');
     const expectedAuditIds = previous?.auditIds || [];

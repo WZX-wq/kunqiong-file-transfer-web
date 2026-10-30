@@ -14,7 +14,7 @@ import { requireSharedDataKey, transformCredentials } from './private-key.js'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import path from 'node:path'
-import { DatabaseAuditStore, LocalAuditStore } from './audit-store.js'
+import { DatabaseAuditStore, LocalAuditStore, LOCAL_AUDIT_JOURNAL_MIGRATION } from './audit-store.js'
 import {
   metadataPath, MAX_METADATA_WRITE_ATTEMPTS, DEFAULT_SYSTEM_CONFIG, MAX_AUDIT_LOGS,
   databaseHost, databaseName, databaseUser, relationalSchemaEnabled,
@@ -34,21 +34,20 @@ let auditStore
 export async function initializeAuditPersistence(normalizeEntry) {
   const directory = path.join(path.dirname(metadataPath), 'audit')
   if (databasePool) {
-    // Import a previous host-local journal when available; INSERT IGNORE makes
-    // migration repeatable, including when the process died before its marker commit.
-    let legacy = metadata.auditLogs || []
-    // A DB-backed host may be completely new and therefore have no copy of the
-    // previous host's local audit journal. In that case the DB table is the
-    // authority and must be allowed to initialize from its own rows. If any
-    // journal artifact is present, however, import it (or fail closed when the
-    // migrated snapshot is incomplete) instead of silently discarding it.
-    const hasLocalAuditArtifacts = ['snapshot.json', 'snapshot.json.bak', 'events.jsonl']
-      .some(name => fs.existsSync(path.join(directory, name)))
-    if (metadata.auditStorage === 'journal-v1' && hasLocalAuditArtifacts) {
-      legacy = new LocalAuditStore(directory, normalizeEntry, MAX_AUDIT_LOGS).initialize(legacy, true)
-    }
     auditStore = new DatabaseAuditStore(databasePool, normalizeEntry, MAX_AUDIT_LOGS)
-    metadata.auditLogs = await auditStore.initialize(legacy)
+    const result = await auditStore.initializeWithLocalJournal(
+      metadata.auditLogs || [],
+      directory,
+      {
+        migrated: metadata.auditStorage === 'journal-v1',
+        alreadyImported: metadata.auditJournalMigration === LOCAL_AUDIT_JOURNAL_MIGRATION,
+      },
+    )
+    metadata.auditLogs = result.logs
+    if (result.importedLocalJournal) {
+      metadata.auditJournalMigration = LOCAL_AUDIT_JOURNAL_MIGRATION
+      runtime.metadataNeedsPersist = true
+    }
     if (metadata.auditStorage !== 'mysql-v1') runtime.metadataNeedsPersist = true
     metadata.auditStorage = 'mysql-v1'
     return
