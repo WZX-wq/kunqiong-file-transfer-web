@@ -79,15 +79,17 @@ function MaterialRow({
             placeholder="例如：营业执照"
           />
         </label>
-        <label className="collection-rule-required">
-          <input type="checkbox" checked={material.required} onChange={(event) => onUpdate({ required: event.target.checked })} />
-          必交
-        </label>
-        <div className="collection-rule-actions">
-          <button type="button" className="ghost-icon" disabled={index === 0} aria-label={`上移材料 ${index + 1}`} title="上移" onClick={() => move(-1)}><ArrowUp size={14} /></button>
-          <button type="button" className="ghost-icon" disabled={index === total - 1} aria-label={`下移材料 ${index + 1}`} title="下移" onClick={() => move(1)}><ArrowDown size={14} /></button>
-          <button type="button" className="ghost-icon" aria-label={`复制材料 ${index + 1}`} title="复制" onClick={onCopy}><Copy size={14} /></button>
-          <button type="button" className="ghost-icon collection-rule-delete" aria-label={`删除材料 ${index + 1}`} title="删除材料" onClick={onRemove}><Trash2 size={15} /></button>
+        <div className="collection-material-controls">
+          <label className="collection-rule-required">
+            <input type="checkbox" checked={material.required} onChange={(event) => onUpdate({ required: event.target.checked })} />
+            必交
+          </label>
+          <div className="collection-rule-actions">
+            <button type="button" className="ghost-icon" disabled={index === 0} aria-label={`上移材料 ${index + 1}`} title="上移" onClick={() => move(-1)}><ArrowUp size={14} /></button>
+            <button type="button" className="ghost-icon" disabled={index === total - 1} aria-label={`下移材料 ${index + 1}`} title="下移" onClick={() => move(1)}><ArrowDown size={14} /></button>
+            <button type="button" className="ghost-icon" aria-label={`复制材料 ${index + 1}`} title="复制" onClick={onCopy}><Copy size={14} /></button>
+            <button type="button" className="ghost-icon collection-rule-delete" aria-label={`删除材料 ${index + 1}`} title="删除材料" onClick={onRemove}><Trash2 size={15} /></button>
+          </div>
         </div>
       </div>
       {error?.name && <small className="collection-inline-error" role="alert">{error.name}</small>}
