@@ -6,7 +6,10 @@ import crypto from 'node:crypto'
 import { removeFile } from './file-lock.js'
 import { protectCredential } from './private-key.js'
 
-export const LOCAL_AUDIT_JOURNAL_MIGRATION = 'local-audit-journal-v1'
+// v2 replays the retained local journal after repairing the legacy MySQL
+// source key. v1 used a case-insensitive VARCHAR(64) primary key and could
+// silently drop distinct access IDs through INSERT IGNORE.
+export const LOCAL_AUDIT_JOURNAL_MIGRATION = 'local-audit-journal-v2'
 
 export function mergeAuditEntries(logs, normalize, limit) {
   const byId = new Map()
@@ -35,6 +38,7 @@ export class DatabaseAuditStore {
     this.error = null
     this.pending = new Map()
     this.relationalAuditEnabled = false
+    this.legacyAuditSchemaRepaired = false
   }
 
   async initializeWithLocalJournal(legacy, directory, { migrated = false, alreadyImported = false } = {}) {
@@ -49,12 +53,24 @@ export class DatabaseAuditStore {
 
   async initialize(legacy = []) {
     await this.pool.query(`CREATE TABLE IF NOT EXISTS kunqiong_audit_log (
-      id VARCHAR(64) NOT NULL PRIMARY KEY,
+      id VARCHAR(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
       critical TINYINT NOT NULL,
       created_at VARCHAR(32) NOT NULL,
       payload LONGTEXT NOT NULL,
       INDEX audit_time (critical, created_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+    const [legacyIdColumns] = await this.pool.execute(
+      `SELECT CHARACTER_MAXIMUM_LENGTH AS max_length, CHARACTER_SET_NAME AS character_set_name,
+              COLLATION_NAME AS collation_name, IS_NULLABLE AS is_nullable
+         FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+      ['kunqiong_audit_log', 'id'],
+    )
+    const legacyId = legacyIdColumns?.[0]
+    if (!legacyId || Number(legacyId.max_length) < 80 || legacyId.character_set_name !== 'utf8mb4' || legacyId.collation_name !== 'utf8mb4_bin' || legacyId.is_nullable !== 'NO') {
+      await this.pool.query('ALTER TABLE kunqiong_audit_log MODIFY COLUMN id VARCHAR(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL')
+      this.legacyAuditSchemaRepaired = true
+    }
     const [auditTableRows] = await this.pool.execute(
       'SELECT COUNT(*) AS found FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
       ['kq_audit_log'],

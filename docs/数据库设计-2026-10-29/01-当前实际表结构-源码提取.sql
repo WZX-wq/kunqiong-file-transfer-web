@@ -13,11 +13,11 @@ CREATE TABLE IF NOT EXISTS kunqiong_app_state (
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 来源 server/lib/audit-store.js:37
+-- 来源 server/lib/audit-store.js:54
 CREATE TABLE IF NOT EXISTS kunqiong_audit_log (
-      id VARCHAR(64) NOT NULL PRIMARY KEY,
+      id VARCHAR(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
       critical TINYINT NOT NULL,
       created_at VARCHAR(32) NOT NULL,
       payload LONGTEXT NOT NULL,
       INDEX audit_time (critical, created_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

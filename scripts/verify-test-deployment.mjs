@@ -108,7 +108,7 @@ try {
     relationalState = await readRelationalState(connection);
     relationalMetadata = await loadRelationalMetadataFromConnection(connection, relationalState);
     if (previous?.auditJournalArtifacts) {
-      assert.equal(relationalMetadata.metadata.auditJournalMigration, 'local-audit-journal-v1', 'The local audit journal import receipt must be durably stored in MySQL metadata');
+      assert.equal(relationalMetadata.metadata.auditJournalMigration, 'local-audit-journal-v2', 'The local audit journal import receipt must be durably stored in MySQL metadata');
     }
     const [auditCounts] = await connection.query('SELECT (SELECT COUNT(*) FROM kunqiong_audit_log) AS source_count, (SELECT COUNT(*) FROM kq_audit_log) AS relational_count');
     const [uploadSessionRows] = await connection.query('SELECT COUNT(*) AS total FROM kq_upload_session');

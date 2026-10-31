@@ -80,6 +80,7 @@ test('partially migrated MySQL audit storage imports its local journal once', as
     },
     execute: async (sql, values = []) => {
       if (sql.includes('information_schema.TABLES')) return [[{ found: 0 }], []]
+      if (sql.includes('information_schema.COLUMNS')) return [[{ max_length: 80, character_set_name: 'utf8mb4', collation_name: 'utf8mb4_bin', is_nullable: 'NO' }], []]
       if (sql.includes('INSERT IGNORE INTO kunqiong_audit_log')) {
         let inserted = 0
         for (let index = 0; index < values.length; index += 4) {
@@ -108,6 +109,32 @@ test('partially migrated MySQL audit storage imports its local journal once', as
   assert.equal(rows.size, 5000)
   assert.equal(restartResult.importedLocalJournal, false)
   assert.ok(!restartResult.logs.some(entry => entry.id === 'J99999999999'))
+})
+
+test('legacy audit source key is widened and made binary before import', async () => {
+  let schema = { max_length: 64, character_set_name: 'utf8mb4', collation_name: 'utf8mb4_unicode_ci', is_nullable: 'NO' }
+  const queries = []
+  const pool = {
+    query: async sql => {
+      queries.push(sql)
+      if (sql.startsWith('CREATE TABLE')) return [{ affectedRows: 0 }, []]
+      if (sql.includes('ALTER TABLE kunqiong_audit_log')) {
+        schema = { max_length: 80, character_set_name: 'utf8mb4', collation_name: 'utf8mb4_bin', is_nullable: 'NO' }
+        return [{ affectedRows: 0 }, []]
+      }
+      if (sql.includes('SELECT payload FROM kunqiong_audit_log WHERE critical = ?')) return [[], []]
+      throw new Error('Unexpected audit query: ' + sql)
+    },
+    execute: async (sql, values = []) => {
+      if (sql.includes('information_schema.COLUMNS')) return [[schema], []]
+      if (sql.includes('information_schema.TABLES')) return [[{ found: 0 }], []]
+      if (sql.includes('INSERT IGNORE INTO kunqiong_audit_log')) return [{ affectedRows: values.length / 4 }, []]
+      throw new Error('Unexpected audit execution: ' + sql)
+    },
+  }
+  const store = new DatabaseAuditStore(pool, normalize, 5000)
+  await store.initialize([])
+  assert.ok(queries.some(sql => sql.includes('ALTER TABLE kunqiong_audit_log MODIFY COLUMN id VARCHAR(80)')))
 })
 
 test('deployment audit evidence counts unique logs accepted by the runtime normalizer', () => {
