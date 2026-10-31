@@ -368,6 +368,7 @@
 .collection-builder-section.has-items .collection-builder-section-heading strong { font-size: 16px; }
 .collection-builder-section.has-items .collection-builder-section-heading small { color: #5b6c82; font-size: 13px; }
 .collection-builder-section { position: relative; isolation: isolate; display: grid; align-self: start; gap: 14px; min-width: 0; height: auto; box-sizing: border-box; padding: 18px; overflow: hidden; background: #fff; border: 1px solid #dce7f5; border-radius: 14px; box-shadow: 0 10px 24px -22px rgba(27, 64, 120, .55); transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.collection-material-editor { container-type: inline-size; }
 .collection-page .collection-builder-groups > .collection-builder-section {
   align-self: start;
   min-height: 190px;
@@ -768,7 +769,7 @@
 .collection-rule-row-v2.dragging { opacity: .55; }
 .collection-rule-name { display: grid; gap: 4px; min-width: 0; }
 .collection-inline-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; width: 100%; color: #526b8d; font-size: 12.5px; }
-.collection-rule-name > input { width: 100%; min-width: 0; height: 38px; box-sizing: border-box; padding: 0 10px; color: #24364d; background: #fbfdff; border: 1px solid #dce8f7; border-radius: 7px; outline: 0; font: inherit; font-size: 14px; }
+.collection-page .collection-rule-name > input { width: 100%; min-width: 0; height: 38px; box-sizing: border-box; padding: 0 8px; color: #24364d; background: #fbfdff; border: 1px solid #dce8f7; border-radius: 7px; outline: 0; font: inherit; font-size: 12px; line-height: 1.35; }
 .collection-rule-name > input:focus { border-color: #79a4ed; box-shadow: 0 0 0 3px rgba(31, 107, 255, .1); }
 .collection-rule-row-v2 .collection-rule-required { min-height: 38px; font-size: 12.5px; }
 .collection-rule-actions,
@@ -803,6 +804,11 @@
 @media (prefers-reduced-motion: reduce) { .collection-naming-details > summary > svg { transition: none; } }
 .collection-expand-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: 100%; min-height: 30px; padding: 0 10px; color: #587296; background: #f8fbff; border: 1px dashed #d7e4f4; border-radius: 7px; font: inherit; font-size: 11.5px; cursor: pointer; }
 .collection-expand-toggle:hover { color: #1f63d4; background: #eef5ff; border-color: #c3d9f4; }
+@container (max-width: 430px) {
+  .collection-material-editor .collection-rule-main { grid-template-columns: 24px minmax(0, 1fr); }
+  .collection-material-editor .collection-rule-main > .collection-rule-required { grid-column: 2; min-height: 28px; }
+  .collection-material-editor .collection-rule-actions { grid-column: 1 / -1; justify-content: flex-end; padding-top: 1px; }
+}
 /* 材料清单 + 自定义字段（含快速搭建）整块折叠：默认收起，摘要条右侧「更多」展开。 */
 .collection-structure-block { display: grid; gap: 12px; padding: 12px 0 0; }
 .collection-structure-summary {
