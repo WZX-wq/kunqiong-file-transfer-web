@@ -1,4 +1,5 @@
 FROM node:22-alpine AS build
+LABEL com.docker.compose.project="kunqiong-file-transfer-web"
 
 WORKDIR /app
 
@@ -9,6 +10,7 @@ COPY . .
 RUN npm run build
 
 FROM node:22-alpine
+LABEL com.docker.compose.project="kunqiong-file-transfer-web"
 
 WORKDIR /app
 ENV NODE_ENV=production

@@ -162,7 +162,7 @@ resolve_data_key() {
     storage_volume="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/storage"}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}{{end}}' "$APP_NAME" 2>/dev/null || true)"
     if [ -n "$old_image" ] && [ -n "$storage_volume" ]; then
       # Never print or regenerate the key that protects the existing JSON data.
-      KUNQIONG_DATA_KEY="$(docker run --rm --network none --entrypoint node \
+      KUNQIONG_DATA_KEY="$(docker run --rm --label "com.docker.compose.project=$APP_NAME" --network none --entrypoint node \
         --mount "type=volume,src=$storage_volume,dst=/data,readonly" "$old_image" -e '
 const fs = require("fs");
 const filename = "/data/.private-key";
@@ -288,15 +288,13 @@ verify_container_configuration() {
 
 deploy_with_docker() {
   docker info >/dev/null 2>&1 || return 1
-  # The self-hosted test runner has a tight memory limit. BuildKit may finish
-  # exporting the image and still have its builder process killed with 137,
-  # which prevents the migration preflight from running. The legacy builder
-  # uses less resident memory for this two-stage image and keeps the deploy
-  # command deterministic on that runner.
+  # Keep the low-memory legacy builder. Each Dockerfile stage declares the
+  # same Compose project before RUN, so temporary build containers are
+  # identified by the server guard. A final-image --label alone is too late.
   DOCKER_BUILDKIT=0 docker build --label "org.opencontainers.image.revision=$RELEASE_SHA" -t "$IMAGE_NAME" .
   # Check connectivity, decryptability and nonempty-target conflicts without DDL
   # or data writes. A failure here leaves the current running container intact.
-  docker run --rm --env-file "$ENV_FILE" --entrypoint node "$IMAGE_NAME" --input-type=module -e '
+  docker run --rm --label "com.docker.compose.project=$APP_NAME" --env-file "$ENV_FILE" --entrypoint node "$IMAGE_NAME" --input-type=module -e '
 const { databasePool } = await import("/app/server/state.js");
 const { inspectRelationalMigrationTarget } = await import("/app/server/db/relational-store.js");
 const { inspectExistingRelationalSchema } = await import("/app/server/db/apply-relational-schema.js");

@@ -9,7 +9,7 @@ import { normalizeAuditLog } from '../server/lib/audit-normalizer.js'
 import { listValidAuditIds, readFixtureMetadata } from './lib/read-audit-fixture.mjs'
 import { classifyMigrationSource, hasValidImportedCountManifest } from './lib/migration-source-verification.mjs'
 
-const app = process.env.KUNQIONG_DEPLOY_APP_NAME || 'kunqiong-file-transfer-web'
+const app = 'kunqiong-file-transfer-web'
 const image = app + ':test'
 const root = path.resolve(import.meta.dirname, '..')
 const expected = process.env.GITHUB_SHA || process.env.GITEA_SHA || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
@@ -19,6 +19,8 @@ const stableSnapshotJson = value => Array.isArray(value) ? `[${value.map(stableS
   : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableSnapshotJson(value[key])}`).join(',')}}`
     : JSON.stringify(value)
 const info = JSON.parse(docker(['inspect', app]))[0]
+assert.equal(info.Name, '/' + app, 'The deployed container name must remain fixed')
+assert.equal(info.Config.Labels?.['com.docker.compose.project'], app, 'The container must belong to the existing Compose project')
 assert.equal(info.Image, docker(['image', 'inspect', '-f', '{{.Id}}', image]), 'Container must use the newly built image')
 assert.equal(info.Config.Labels?.['org.opencontainers.image.revision'], expected, 'Image provenance must match the full release SHA')
 if (verifyMode === 'configuration') {

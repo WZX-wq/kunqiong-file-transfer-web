@@ -39,7 +39,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$app_name")" = true ] && [ "$(do
 fi
 # Files are kept in the original storage volume. Back up all metadata and the
 # complete independent audit directory before startup can migrate either format.
-docker run --rm --network none --entrypoint node \
+docker run --rm --label "com.docker.compose.project=$app_name" --network none --entrypoint node \
   --mount "type=volume,src=$volume,dst=/data,readonly" \
   --mount "type=bind,src=$backup_dir,dst=/backup" \
   "$previous_image" -e '
