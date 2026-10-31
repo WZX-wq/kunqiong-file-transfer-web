@@ -58,15 +58,17 @@ try {
   }
   await send('Page.enable')
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `
-    window.fetch = async url => {
+    window.collectionPatches = [];
+    window.fetch = async (url, options = {}) => {
       const route = String(url);
+      if (route === '/api/collections/manage/layout-fixture' && options.method === 'PATCH') window.collectionPatches.push(JSON.parse(options.body));
       const fields = Array.from({length: Number(new URL(location.href).searchParams.get('fields') || 1)}, (_, i) => ({ id: 'company-' + i, label: '公司名称', type: 'text', required: true }));
       let body;
       if (route === '/api/auth/me') body = {user: null};
       else if (route === '/api/runtime-config') body = {upload: {singleFileLimitBytes: 1024 ** 3}};
       else if (route === '/api/guest/quota') body = {enabled: false};
       else if (route === '/api/collections/manage/layout-fixture') body = {collection: {
-        id: 'layout-fixture', token: 'layout-fixture', title: '布局验收', status: 'active',
+        id: 'layout-fixture', token: 'layout-fixture', title: '布局验收', status: options.method === 'PATCH' ? JSON.parse(options.body).status || 'active' : 'active',
         deadline: '2026-11-07T15:59:00.000Z', allowedTypes: ['PDF', 'Word'], maxFileSizeMb: 500,
         materials: [{id: 'material-0', name: '营业执照', required: true}], customFields: [], submissions: []
       }};
@@ -159,6 +161,39 @@ try {
     assert.ok(bottomState.maxScroll - bottomState.scrollTop <= 2, `${viewport.label}: content can scroll to its end`)
     assert.ok(bottomState.contentBottom <= bottomState.bodyBottom + 1, `${viewport.label}: last settings section is visible at the scroll end`)
     console.log(`PASS manage collection settings scroll at ${viewport.label}`)
+
+    const openCloseConfirmation = async () => {
+      await evaluate("document.querySelector('.manage-modal-footer .danger-lite').click()")
+      await waitFor(() => evaluate("Boolean(document.querySelector('.confirm-modal'))"), 'Close confirmation did not render')
+    }
+    const clickVisible = async (selector) => {
+      const point = await evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; })()`)
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point })
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point })
+    }
+    await openCloseConfirmation()
+    const layer = await evaluate(`(() => {
+      const backdrop = document.querySelector('.confirm-backdrop'), modal = backdrop.querySelector('.confirm-modal');
+      const button = modal.querySelector('.primary-button'), r = modal.getBoundingClientRect(), b = button.getBoundingClientRect();
+      return {rootPortal: backdrop.parentElement === document.body, width: r.width, top: r.top, bottom: r.bottom,
+        centered: Math.abs(r.y + r.height / 2 - innerHeight / 2) <= 1,
+        clickable: button.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2))};
+    })()`)
+    assert.ok(layer.rootPortal && layer.clickable, `${viewport.label}: confirmation must appear above settings and receive pointer input`)
+    assert.ok(layer.centered && layer.top >= 0 && layer.bottom <= viewport.height && layer.width <= 421, `${viewport.label}: confirmation stays compact and centered`)
+    await clickVisible('.confirm-modal .secondary-button')
+    await waitFor(() => evaluate("!document.querySelector('.confirm-modal') && !document.querySelector('.manage-modal-footer .danger-lite').disabled"), 'Cancel must return to the settings')
+    await openCloseConfirmation()
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+    await waitFor(() => evaluate("!document.querySelector('.confirm-modal') && Boolean(document.querySelector('.manage-modal'))"), 'Escape only cancels confirmation')
+    assert.equal(await evaluate('window.collectionPatches.length'), 0, 'Cancel and Escape must not close the task')
+    assert.ok(await evaluate("document.querySelectorAll('.manage-collection-structure .collection-rule-row').length >= 9"), 'Cancel must preserve unsaved settings')
+    await openCloseConfirmation()
+    await clickVisible('.confirm-modal .primary-button')
+    await waitFor(() => evaluate("!document.querySelector('.confirm-modal') && !document.querySelector('.manage-modal')"), 'Confirm must close both dialogs')
+    assert.deepEqual(await evaluate('window.collectionPatches'), [{ status: 'closed' }], 'Confirm closes the task exactly once')
+    console.log(`PASS close confirmation layer, pointer input, cancel, Escape and one close request at ${viewport.label}`)
   }
 } finally {
   cdp?.close()

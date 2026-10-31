@@ -699,8 +699,8 @@ h1, h2, p { margin-top: 0; }
 .qr-preview-link { display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 19px; padding: 11px 12px; color: #5b6779; background: #f6f8fa; border: 1px solid #e3e7ee; border-radius: 8px; font-family: 'Inter', sans-serif; font-size: 12px; }
 .qr-preview-link span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qr-modal-footer { justify-content: center; }
-.confirm-backdrop { z-index: 12; align-items: center; justify-items: center; }
-.confirm-modal { width: min(420px, calc(100vw - 40px)); padding: 26px; overflow: hidden; text-align: left; }
+.modal-backdrop.confirm-backdrop { z-index: 40; align-items: center; justify-items: center; }
+.modal.confirm-modal { width: min(420px, calc(100vw - 40px)); padding: 26px; overflow: hidden; text-align: left; }
 .confirm-modal-icon { display: grid; place-items: center; width: 42px; height: 42px; margin-bottom: 16px; color: var(--accent-dark); background: #e8edf5; border-radius: 11px; }
 .confirm-modal.danger .confirm-modal-icon { color: #a7564b; background: #fbefed; }
 .confirm-modal .eyebrow { margin: 0 0 8px; }

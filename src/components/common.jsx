@@ -40,16 +40,19 @@ export function ConfirmModal({ state, onCancel, onConfirm }) {
   useEffect(() => {
     if (!state) return undefined
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onCancel()
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      onCancel()
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [state, onCancel])
 
   if (!state) return null
 
   const Icon = state.tone === 'danger' ? Trash2 : ShieldCheck
-  return (
+  return createPortal(
     <div className="modal-backdrop confirm-backdrop" onMouseDown={onCancel}>
       <div className={`modal confirm-modal ${state.tone === 'danger' ? 'danger' : ''}`} role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
         <div className="confirm-modal-icon"><Icon size={20} /></div>
@@ -62,7 +65,8 @@ export function ConfirmModal({ state, onCancel, onConfirm }) {
           <button className={`primary-button ${state.tone === 'danger' ? 'danger-button' : ''}`} onClick={onConfirm}>{state.confirmText || '确定'}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
