@@ -14,7 +14,19 @@ const before = fs.readFileSync(target)
 execFileSync(process.execPath, [path.join(root, '_build_manual.mjs')], { cwd: root, stdio: 'pipe' })
 const html = fs.readFileSync(target)
 assert.equal(sha256(html), sha256(before), 'The checked-in manual is stale or generation is not deterministic')
-const { window } = new JSDOM(html.toString())
+// Keep multi-megabyte base64 attributes out of jsdom's HTML tokenizer. Validate
+// their original bytes below without expanding every character into DOM state.
+const embeddedImages = new Map()
+const structureHtml = html.toString().replace(/\b(?:src|href)="(data:image\/png;base64,[^"]*)"/g, (attribute, source) => {
+  const key = `manual-embedded-image-${embeddedImages.size}`
+  embeddedImages.set(key, source)
+  return attribute.replace(source, key)
+})
+const { window } = new JSDOM(structureHtml)
+const imageSource = (node, attribute = 'src') => {
+  const value = node.getAttribute(attribute)
+  return embeddedImages.get(value) || value
+}
 const document = window.document
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manual_shots/current/manifest.json'), 'utf8'))
 const captures = new Map(JSON.parse(fs.readFileSync(path.join(root, 'manual_shots/current/captures.json'), 'utf8')).map(entry => [entry.name, entry]))
@@ -36,7 +48,7 @@ for (const entry of manifest.screenshots) {
   const image = figure.querySelector('img')
   const definition = screenshots.get(entry.name)
   const capture = captures.get(entry.name)
-  const match = image.src.match(/^data:image\/png;base64,(.+)$/)
+  const match = imageSource(image).match(/^data:image\/png;base64,(.+)$/)
   assert.ok(match, `Non-embedded or broken screenshot ${entry.name}`)
   const bytes = Buffer.from(match[1], 'base64')
   assert.equal(sha256(bytes), entry.sha256, `Wrong embedded screenshot ${entry.name}`)
@@ -54,7 +66,7 @@ for (const entry of manifest.screenshots) {
 }
 const logo = fs.readFileSync(path.join(root, 'public/app-icon.png'))
 for (const node of [document.querySelector('link[rel="icon"]'), document.querySelector('.brand img')]) {
-  const value = node.getAttribute(node.tagName === 'LINK' ? 'href' : 'src')
+  const value = imageSource(node, node.tagName === 'LINK' ? 'href' : 'src')
   assert.equal(sha256(Buffer.from(value.split(',')[1], 'base64')), sha256(logo), 'Manual must use the current software icon')
 }
 const text = document.body.textContent
