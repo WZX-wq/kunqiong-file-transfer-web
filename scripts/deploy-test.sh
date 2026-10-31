@@ -348,10 +348,7 @@ try {
   if [ "$DEPLOY_VERIFY_MODE" = "configuration" ]; then
     ( cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" create --force-recreate --remove-orphans )
     verify_container_configuration
-    local configured_scanner_id
-    configured_scanner_id="$(cd "$COMPOSE_DIR" && docker compose -f "$COMPOSE_FILE" ps -a -q scanner)"
-    docker start "$configured_scanner_id" "$APP_NAME"
-    echo "Deployment complete; automatic container shutdown is managed by the server"
+    echo "Deployment configuration installed; container startup is managed by the test server"
     return 0
   fi
 

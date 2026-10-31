@@ -26,7 +26,7 @@ if (verifyMode === 'configuration') {
     const separator = entry.indexOf('=')
     return separator < 0 ? [entry, ''] : [entry.slice(0, separator), entry.slice(separator + 1)]
   }))
-  assert.ok(['running', 'exited'].includes(info.State.Status), 'Deployment container must have been started or stopped by the test-server guard')
+  assert.ok(['created', 'running', 'exited'].includes(info.State.Status), 'Deployment container must have been created or stopped by the test-server guard')
   assert.equal(configured.KUNQIONG_DB_ENABLED, 'true', 'Deployed app must use MySQL')
   assert.equal(configured.KUNQIONG_RELATIONAL_SCHEMA_ENABLED, 'true', 'Deployed app must use relational metadata tables')
   assert.equal(configured.KUNQIONG_SCAN_MODE, 'required', 'Required file scanning must stay enabled')
