@@ -15,14 +15,27 @@ const captures = new Map(JSON.parse(fs.readFileSync(path.join(shotRoot, 'capture
 // Only an explicit screenshot review updates the lock. Normal builds reject changed images.
 if (process.argv.includes('--refresh-screenshots')) {
   const entries = []
+  fs.mkdirSync(path.join(shotRoot, 'optimized'), { recursive: true })
+  sharp.concurrency(1)
   for (const [name, description] of screenshots) {
     const capture = captures.get(name)
     if (!capture || description.labels.some(label => !capture.snapshot.includes(label))) throw new Error(`Screenshot labels do not match: ${name}`)
     const bytes = fs.readFileSync(path.join(shotRoot, `${name}.png`))
     const { width, height } = await sharp(bytes).metadata()
-    entries.push({ name, file: `${name}.png`, sha256: sha256(bytes), width, height, url: capture.url, labels: description.labels })
+    const { data, info } = await sharp(bytes)
+      .resize({ width: 1440, withoutEnlargement: true })
+      .webp({ quality: 85, smartSubsample: true, effort: 4 })
+      .toBuffer({ resolveWithObject: true })
+    const image = { file: `optimized/${name}.webp`, sha256: sha256(data), width: info.width, height: info.height }
+    fs.writeFileSync(path.join(shotRoot, image.file), data)
+    entries.push({ name, file: `${name}.png`, sha256: sha256(bytes), width, height, image, url: capture.url, labels: description.labels })
   }
-  fs.writeFileSync(manifestPath, JSON.stringify({ version: manualVersion, screenshots: entries }, null, 2) + '\n')
+  const sourceLogo = fs.readFileSync(path.join(root, 'public/app-icon.png'))
+  const { data: logoBytes, info: logoInfo } = await sharp(sourceLogo)
+    .resize({ width: 96, withoutEnlargement: true }).png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true })
+  const logo = { file: 'optimized/app-icon.png', sourceSha256: sha256(sourceLogo), sha256: sha256(logoBytes), width: logoInfo.width, height: logoInfo.height }
+  fs.writeFileSync(path.join(shotRoot, logo.file), logoBytes)
+  fs.writeFileSync(manifestPath, JSON.stringify({ version: manualVersion, logo, screenshots: entries }, null, 2) + '\n')
 }
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
 if (manifest.version !== manualVersion) throw new Error('Manual version and screenshot manifest differ')
@@ -35,17 +48,25 @@ for (const [name, description] of screenshots) {
   const bytes = fs.readFileSync(path.join(shotRoot, entry.file))
   if (sha256(bytes) !== entry.sha256) throw new Error(`Screenshot changed without review: ${name}`)
   if (JSON.stringify(entry.labels) !== JSON.stringify(description.labels) || !capture || entry.url !== capture.url || description.labels.some(label => !capture.snapshot.includes(label))) throw new Error(`Screenshot/text pairing changed: ${name}`)
-  embedded.set(name, `data:image/png;base64,${bytes.toString('base64')}`)
+  const image = entry.image
+  if (!image || image.file !== `optimized/${name}.webp`) throw new Error(`Missing optimized screenshot: ${name}`)
+  const optimized = fs.readFileSync(path.join(shotRoot, image.file))
+  if (sha256(optimized) !== image.sha256) throw new Error(`Optimized screenshot changed without review: ${name}`)
+  embedded.set(name, `data:image/webp;base64,${optimized.toString('base64')}`)
 }
 if (locked.size !== screenshots.size) throw new Error('Unexpected screenshots in manifest')
-const logo = `data:image/png;base64,${fs.readFileSync(path.join(root, 'public/app-icon.png')).toString('base64')}`
+if (manifest.logo?.file !== 'optimized/app-icon.png' || manifest.logo.sourceSha256 !== sha256(fs.readFileSync(path.join(root, 'public/app-icon.png')))) throw new Error('Manual icon changed without review')
+const logoBytes = fs.readFileSync(path.join(shotRoot, manifest.logo.file))
+if (sha256(logoBytes) !== manifest.logo.sha256) throw new Error('Optimized manual icon changed without review')
+const logo = `data:image/png;base64,${logoBytes.toString('base64')}`
 let figureNumber = 0
 const rendered = sections.map((section, index) => `<section id="${section.id}" aria-labelledby="heading-${section.id}"><h2 id="heading-${section.id}"><span>${String(index + 1).padStart(2, '0')}</span>${section.title}</h2>${section.body.replace(/<manual-shot name="([a-z-]+)"><\/manual-shot>/g, (_, name) => {
   const entry = locked.get(name)
   const description = screenshots.get(name)
   if (!entry || !description) throw new Error(`Unknown screenshot in section: ${name}`)
+  const image = entry.image
   figureNumber++
-  return `<figure class="shot" data-shot="${name}" data-sha256="${entry.sha256}"><button type="button" class="shot-open" aria-label="放大图片：${escape(description.caption)}"><img src="${embedded.get(name)}" alt="${escape(description.caption)}" width="${entry.width}" height="${entry.height}" loading="lazy" decoding="async"></button><figcaption><span>图 ${figureNumber} · ${escape(description.caption)}</span><button type="button" class="image-zoom" data-zoom="${name}" aria-label="查看大图：${escape(description.caption)}">查看大图</button></figcaption></figure>`
+  return `<figure class="shot" data-shot="${name}" data-sha256="${image.sha256}"><button type="button" class="shot-open" aria-label="放大图片：${escape(description.caption)}"><img src="${embedded.get(name)}" alt="${escape(description.caption)}" width="${image.width}" height="${image.height}" loading="lazy" decoding="async"></button><figcaption><span>图 ${figureNumber} · ${escape(description.caption)}</span><button type="button" class="image-zoom" data-zoom="${name}" aria-label="查看大图：${escape(description.caption)}">查看大图</button></figcaption></figure>`
 })}</section>`).join('\n')
 const nav = sections.map((section, index) => `<a href="#${section.id}"><span>${String(index + 1).padStart(2, '0')}</span>${section.title}</a>`).join('')
 

@@ -18,7 +18,12 @@ Vite 构建再复制到 `dist/user-manual.html`。不要只修改生成后的 HT
 4. 将对应图片覆盖到 `manual_shots/current/<name>.png`，在正文中使用同名
    `fig`，配置该图真实显示的按钮或标题。不要用 figure 顺序配图。
 5. 完成人工图文核对后执行 `node _build_manual.mjs --refresh-screenshots`，
-   显式更新截图 SHA256、尺寸、来源和可见文字清单。普通构建不更新这份锁定清单。
+   显式更新截图 SHA256、尺寸、来源和可见文字清单，同时生成
+   `manual_shots/current/optimized/<name>.webp`。压缩图最多 1440 像素宽，
+   保持比例且不放大小图，WebP 质量为 85；原始 PNG 保留用于后续维护。
+   手册图标另外生成最多 96 像素宽的 PNG，避免在页眉和 favicon 重复嵌入原始大图。
+   人工检查压缩图中的文字，并一同提交压缩图和清单。普通构建直接读取这些文件，
+   不重复压缩，也不更新锁定清单。
 6. 执行 `npm run build`，再执行
    `node scripts/verify-user-manual.mjs --dist --url=http://localhost:8045/user-manual.html`。
    端口按实际服务调整。浏览器核对桌面、窄屏、图片放大与章节跳转。

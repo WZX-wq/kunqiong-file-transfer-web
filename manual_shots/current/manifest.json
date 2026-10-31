@@ -1,5 +1,12 @@
 {
   "version": "2026-10-29.2",
+  "logo": {
+    "file": "optimized/app-icon.png",
+    "sourceSha256": "dabedd75cbbd6e39646014c16d7e256bfe3f9dfd7644e3ea9985fed331839c91",
+    "sha256": "6dd925714f5573a208857fe551e39b8a8763034e87a01fcf5fcfa264dde565a4",
+    "width": 96,
+    "height": 96
+  },
   "screenshots": [
     {
       "name": "home",
@@ -7,6 +14,12 @@
       "sha256": "24fc3821ab2dca54febeaef31cc8fa5a8ca644c3330339485c3b8e6948247279",
       "width": 1897,
       "height": 923,
+      "image": {
+        "file": "optimized/home.webp",
+        "sha256": "646163976b93318d1f97b16ba230ce5186368688d1eae89b585b59fb2b270e99",
+        "width": 1440,
+        "height": 701
+      },
       "url": "http://127.0.0.1:8118/",
       "labels": [
         "轻松发送大文件",
@@ -21,6 +34,12 @@
       "sha256": "15b134fe29322ec15bee8d2c115a1cf752a023c26dda8d3f8053f6e0a97c80da",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/account-menu.webp",
+        "sha256": "f6c3d161f7b632a5ab1f353cca5e701dbdbc3b41c912b2298a5c4779f018a1f0",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/",
       "labels": [
         "账户设置",
@@ -34,6 +53,12 @@
       "sha256": "f9bc13df9db96ba5c68400d09cebe7125f64a1c76526d46dbe2c387edc9afe7d",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/upload-queue.webp",
+        "sha256": "52af2ae23b60cd937503ebd867ed6945114627050ae83da65d67b0c7c8ea21b8",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/",
       "labels": [
         "已选文件",
@@ -48,6 +73,12 @@
       "sha256": "b56e19bc84e52bbdfd4021464bb69b117a3d80884b23b151bfc90f325a72c8fa",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/upload-settings.webp",
+        "sha256": "1c355cdaffa40d7da200fcbc813c31d93bdd7e0e2bcd6e28f18dbff18d577606",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/",
       "labels": [
         "让文件按你的规则消失",
@@ -62,6 +93,12 @@
       "sha256": "fffe8d2023ba565b4cd07aa7ab54dd9b37540b49ba9ae510300c9e9658b349f5",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/send-result.webp",
+        "sha256": "c8b1aa3dd2a90b3b2daa6bc5cae28c4ea4e0f478a7a55482b8eb8b37fd9691e4",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/",
       "labels": [
         "发送完成",
@@ -76,6 +113,12 @@
       "sha256": "80994d1ea4a498e00f62882b575bf945b213e0c38f1fc4adcde995222b8f6b5b",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/share-qr.webp",
+        "sha256": "50f354e598f6bc15da3ae06a51791d4e6ae39ab1bc14296c5ff92ecd8c1eebbd",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/",
       "labels": [
         "dialog \"分享二维码\"",
@@ -89,6 +132,12 @@
       "sha256": "23ff7ce93b90d9824c305cebdec6655db2f5d1caea49c8c08c55b5d21487e2c4",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/share-password.webp",
+        "sha256": "b335b0bcb49fd1f289130bcba5cff90ed4c233d0956282f730a4bdce39320087",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/share/7eb85f0f52",
       "labels": [
         "此分享已加密",
@@ -101,6 +150,12 @@
       "sha256": "94a0f8877a90720b4eea3fb03d8dfd649a920c181618c55e78189b122c2d5e78",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/share-receive.webp",
+        "sha256": "cf8ea7ed9986a99c4999e5dce47e964086043b52bc2848b4193aacf2dd6a6b60",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/share/afacde3b53",
       "labels": [
         "有人给你发来了文件",
@@ -114,6 +169,12 @@
       "sha256": "702381b764b9e435fd0f47dcb91853d7f1eddbe27eeb65b379c5bcae05fec5b8",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/share-manage.webp",
+        "sha256": "4aacbe946c89d65a1e6b1aa3336b9b0111d748303c2c4ded61cb2f3d93d5d456",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/share/manage/989692578190e83e9a",
       "labels": [
         "分享管理",
@@ -128,6 +189,12 @@
       "sha256": "742842ea56eaffbd1cc0c544828051fff88ed8a2107a8766e1d5d3ea8cfbfc3f",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/share-settings.webp",
+        "sha256": "66d80cdad191f05621bc23d4f9f3f629cdeec2af5d1fc13ab91e8fe6d9d3485b",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/share/manage/989692578190e83e9a",
       "labels": [
         "管理分享设置",
@@ -142,6 +209,12 @@
       "sha256": "7a89b4ecc8416e22ca9c9c1c9087116168ac3fe95911fdca1816c8a815329084",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/collection-create.webp",
+        "sha256": "cb27a5467b8ac305aa8dba4f95f40b3b8f5682724257c2c7cfdb0f94cf2bf2ee",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/?view=collect",
       "labels": [
         "创建收集任务",
@@ -156,6 +229,12 @@
       "sha256": "148568a3ba7303e2d7a3942b310f84e5f355727f5acec04f7b6721f0a4084c25",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/collection-result.webp",
+        "sha256": "8418a60c20a5a320a1166ad3a41be180957139d54bd63c810b3f0e2b7e8457b2",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/?view=collect",
       "labels": [
         "收集任务已创建",
@@ -170,6 +249,12 @@
       "sha256": "9e2c60d2f74bb0d652b42fab3ba74c0adec897b12a0257247c53f6bc2f5eb410",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/collection-submit.webp",
+        "sha256": "a7d0da4965bf3801e64126a146a37dc59665c19c33f3d701b73534223c132387",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/collect/6366909e98",
       "labels": [
         "活动素材收集",
@@ -183,6 +268,12 @@
       "sha256": "e83ead708fc1bdfaa1a1e0a6cf3bf0c69475cfaf52f07a7b5bcd711ce8fdddb7",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/collection-anonymous.webp",
+        "sha256": "3e95c7099fdeea560f3f8e1c40414220cb749b97f91ff01e8bc2458d1d668857",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/collect/6366909e98",
       "labels": [
         "当前未登录",
@@ -196,6 +287,12 @@
       "sha256": "034a09ec5f1fcbcd326eca792a8fb9296927ab21ed43aae5690e531bd81bc1b4",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/collection-receipt.webp",
+        "sha256": "8bb61b2ff45c2e50e92890173b19ce659ab027d32dfc3b4583418be24a9f2d6a",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/collect/6366909e98",
       "labels": [
         "文件提交成功",
@@ -210,6 +307,12 @@
       "sha256": "c8b00400badcf710f7656f188a82d7134aa8cbb722a91505aeb866d194778947",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/collection-manage.webp",
+        "sha256": "04730845c988a2a54e7fa27045c3483199fc5560aed969d370d8baa9b9149dfc",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/collect/manage/25a86c5c2a17f55ab7",
       "labels": [
         "已收提交",
@@ -224,6 +327,12 @@
       "sha256": "94eadee6923621306edbec310800730110b2cddf98fd393ed4901dcb7e040161",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/collection-settings.webp",
+        "sha256": "7d23c6149c6ecc6dc2579095dc33e802ecf4dc8ec5cd4965eaceb1818b1ca296",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/collect/manage/25a86c5c2a17f55ab7",
       "labels": [
         "管理收集设置",
@@ -238,6 +347,12 @@
       "sha256": "584dbca2eb48fc819e93efe436b2b0fa0b77e13ca4e4f7b16c5ba22c5412e776",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/records.webp",
+        "sha256": "5621f3e8736bf42012c8e151b581daeb9f7c295d4035e647a14a82a2b1aebf5c",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/?view=records",
       "labels": [
         "我发送的",
@@ -252,6 +367,12 @@
       "sha256": "3b8444aeaed21237858352fcc2d4b50a9d1287828e0bd80b4b88891105042189",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/record-actions.webp",
+        "sha256": "25e612a7325e6f0f930a713e1827b66b0f34e9acd47f6ce46d0813e8691592b3",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/?view=records",
       "labels": [
         "查看已收文件",
@@ -266,6 +387,12 @@
       "sha256": "1d5427f59d4fc7c33f9b576d7e82ca4e7f58cbf2b61316694e29d3c91ad4b29c",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/file-management.webp",
+        "sha256": "641be3ea7284c431f3d7de8172cba649c4b8c8d5b586b01c68a8a8495a3522e0",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/?view=records&center=files",
       "labels": [
         "文件管理中心",
@@ -280,6 +407,12 @@
       "sha256": "2cd34445c3b2aed295c0731424485998b93d595078967f30342a0687cbfe5942",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/message-center.webp",
+        "sha256": "9ab15cb9451d5c9e14e9870407ad0ed496b367b1fa6233945502ced9d3a71b8a",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/?panel=messages",
       "labels": [
         "消息中心",
@@ -293,6 +426,12 @@
       "sha256": "4ff3ec828495207ff9bd91add28a7e189c172b6030ba54fdaf170ea14e10237c",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/notifications.webp",
+        "sha256": "08fa55c80a31f4285b9bb9932db51735c25ceba00dc78c62ea3bda41c62d00cb",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/settings/notice",
       "labels": [
         "通知方式",
@@ -306,6 +445,12 @@
       "sha256": "8dbd6d65e0b4ffd7624a61b9bb94ce1363d84253e97f4bfa43f87c0c2ab7f112",
       "width": 1912,
       "height": 901,
+      "image": {
+        "file": "optimized/profile.webp",
+        "sha256": "7ad97d1a4f0fd0d111727427b8b50e250741928d8317e205d8c581cde52f5cb6",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/settings",
       "labels": [
         "个人资料",
@@ -320,6 +465,12 @@
       "sha256": "5fc9c0070a1c61293b084d5ce548f27023864ecaa6e6487bab4f3d0086217af4",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/security.webp",
+        "sha256": "4a17871ca5129465fa364ce2ee665fe8256675d8ecf920f8c3eb04edf9f9acdc",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/settings/security",
       "labels": [
         "账号与安全",
@@ -334,6 +485,12 @@
       "sha256": "f53238f3e59f279924e90ffc20f06612ae11cdf5d5054403f124c97b3023640d",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/cleanup.webp",
+        "sha256": "ccae506cdb315b42ec18d1f5b4baa228ef3f3ab4f219eef44e6c940e6de7ada0",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/settings/cleanup",
       "labels": [
         "存储与清理",
@@ -348,6 +505,12 @@
       "sha256": "cc7ef37155da1c05721caa4faac31b209fedb9a602483d3a23026ef77ea0989a",
       "width": 1882,
       "height": 1046,
+      "image": {
+        "file": "optimized/membership.webp",
+        "sha256": "7a10841de7de8824e9ecfb710229aa5ad31e09d0bf83a04dd16dc9d77f3e8b60",
+        "width": 1440,
+        "height": 800
+      },
       "url": "http://127.0.0.1:8119/workspace",
       "labels": [
         "会员与团队空间",
@@ -362,6 +525,12 @@
       "sha256": "478adf18be9fc28e0ac92dedded43afa29c32e0f41077197304e49585613f50d",
       "width": 1600,
       "height": 1000,
+      "image": {
+        "file": "optimized/team-plan-unavailable.webp",
+        "sha256": "1a1edecd45936b41eda960210d5eaac7ede73959f6831b474e032fe05198f9fe",
+        "width": 1440,
+        "height": 900
+      },
       "url": "http://127.0.0.1:8120/workspace",
       "labels": [
         "团队套餐暂不可用",
@@ -375,6 +544,12 @@
       "sha256": "b4ca2e6649d4fca0c053523fe920f59392bd2de1d28580f299fed5c744ce5585",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/plans.webp",
+        "sha256": "92bf3aee589c471fe8ba3adfc65e159843ae7df558731b8fbd19bf4b89316e75",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/workspace?view=plans",
       "labels": [
         "基础版",
@@ -390,6 +565,12 @@
       "sha256": "2073828e41321bd28a76be198a44fccdbb131f807f21f11d228ef8de0f3ce601",
       "width": 1882,
       "height": 936,
+      "image": {
+        "file": "optimized/orders.webp",
+        "sha256": "32b3b3ea19acf310924c23df40185e84a81e54b6320341a32d4535e8c8c3b0ac",
+        "width": 1440,
+        "height": 716
+      },
       "url": "http://127.0.0.1:8119/settings/orders",
       "labels": [
         "我的订单",
@@ -404,6 +585,12 @@
       "sha256": "0571defc2a95707337976681611151b116440de2c899e872641a09149da0b8d2",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/order-detail-delete.webp",
+        "sha256": "a9351762affffe1672f9881c9c9a744e04258d5ec21c7ca51eadeb9829788e6d",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8119/settings/orders",
       "labels": [
         "订单详情",
@@ -417,6 +604,12 @@
       "sha256": "1086a30682b53fcbafe9cd97895c0b8689f1d2723762c5317bbee79e0e1e78fa",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/order-linked-retained.webp",
+        "sha256": "dbb1517d2471d4e2e5464d8f95174521d10e9a06a2be69759f316d6a4dfd4f3d",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8119/settings/orders",
       "labels": [
         "订单详情",
@@ -430,6 +623,12 @@
       "sha256": "3e085193b914ef0431b62d71a6b52e11fee80761d5fb5a56e9b6cceb09526097",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/order-delete-confirmation.webp",
+        "sha256": "0b255358de6d845936219e7694de2ed796fe6f1064db85ced6433602573fcbca",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8119/settings/orders",
       "labels": [
         "确认删除订单？",
@@ -443,6 +642,12 @@
       "sha256": "abb718078320c145647fa870aad2f19a0c82fa81c32b7dea58a2e4335965b6d0",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/team-overview.webp",
+        "sha256": "fa23df629d7d7ce83bc806e49d1f4443e3b2f18147659433748e406f46a57b30",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/team",
       "labels": [
         "产品协作团队",
@@ -457,6 +662,12 @@
       "sha256": "ab3d8817bbaeb23f80889ef2226ab10a89e12417491e52b26e8322e9a84cc1ae",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/team-join.webp",
+        "sha256": "e3af5906da43e948cad553a608dd622975c788d8757a00951953e83811284342",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/e/manual-team/share/00d8cf25a7",
       "labels": [
         "加入「产品协作团队」团队空间",
@@ -469,6 +680,12 @@
       "sha256": "fbfcb24f901ebbb501e7b73bf33a095b73fe7e8ead48ddf9650c299f953f343b",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/team-resources.webp",
+        "sha256": "07812ad767bd4975b16d54b7bbe4a19146c292b658e61ee202263b5cf6ed4f47",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/team?tab=resources",
       "labels": [
         "专属团队文件",
@@ -483,6 +700,12 @@
       "sha256": "0854ac4d81612530e236010a0dbba4b64d331803775141a59e59ad3e8e89ac84",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/team-members.webp",
+        "sha256": "2260d1aab05f34a76cd94a68e06d0bd465a95bb7e9ed72677cf9616a881cb487",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/team?tab=manage",
       "labels": [
         "团队成员",
@@ -496,6 +719,12 @@
       "sha256": "853dcc861615ba3067096fe27f1b2d269297cd800933a8f33593c2250fbe6919",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/team-requests.webp",
+        "sha256": "4f9bd306e2787b6fc86e7e848f1ccd6f75009b1c0e6f3e28ec4cf29cb54b5a1c",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/team?tab=requests",
       "labels": [
         "入团申请",
@@ -509,6 +738,12 @@
       "sha256": "177fc9ed6b78a75dfaf1ded7884510627b4bbf225ffa70ebdc19dbc343428b79",
       "width": 1897,
       "height": 894,
+      "image": {
+        "file": "optimized/team-member-view.webp",
+        "sha256": "060d2c7d02b027e8c2185024ee74121dc35e5646bf67c5fe1c3c8ad2bd4e0e62",
+        "width": 1440,
+        "height": 679
+      },
       "url": "http://127.0.0.1:8118/team",
       "labels": [
         "退出团队空间",
@@ -523,6 +758,12 @@
       "sha256": "1cfb06310eb17ea46c64f5f440695a0fcd95c2caa413732f0272f7e99a5d01db",
       "width": 1600,
       "height": 1000,
+      "image": {
+        "file": "optimized/collection-structure.webp",
+        "sha256": "e218dd7179f71bb92ed3a3571158ceeef40c3e209f63f5b1fca51f9d6c943ac3",
+        "width": 1440,
+        "height": 900
+      },
       "url": "http://127.0.0.1:8118/?view=collect",
       "labels": [
         "材料清单与自定义字段",
@@ -538,6 +779,12 @@
       "sha256": "a1999b5049557eb60504b7ddeceae6477bdba45f5767442b561b271f016e28ff",
       "width": 1600,
       "height": 1000,
+      "image": {
+        "file": "optimized/collection-naming.webp",
+        "sha256": "080b986faf785e83e600081a0f39a81cac39a4b8df68298d533c31e30cad3f86",
+        "width": 1440,
+        "height": 900
+      },
       "url": "http://127.0.0.1:8118/?view=collect",
       "labels": [
         "自动命名",
@@ -552,6 +799,12 @@
       "sha256": "c6936a7fe56be98231fa460b1c9e4620032f68c1f020fbbc218db4ff47f0f315",
       "width": 1600,
       "height": 1000,
+      "image": {
+        "file": "optimized/distribution.webp",
+        "sha256": "e8e4344144e17ec1d31a0e54563f8483fb848e72ba87d2265eddd249d2dce07a",
+        "width": 1440,
+        "height": 900
+      },
       "url": "http://127.0.0.1:8118/?view=deliver",
       "labels": [
         "批量分发给指定收件人",
@@ -566,6 +819,12 @@
       "sha256": "afdd7ab5e62d5a9a6aaac9c4b4e7a33c6a63d68a0b4f238262bdf119a21a7c7e",
       "width": 1600,
       "height": 1000,
+      "image": {
+        "file": "optimized/team-handover.webp",
+        "sha256": "c2ae56bdcc425766c9986afa24facd46f90e1684e379a1406e120aa37b1efcd4",
+        "width": 1440,
+        "height": 900
+      },
       "url": "http://127.0.0.1:8118/team?tab=manage",
       "labels": [
         "负责人交接",
@@ -579,6 +838,12 @@
       "sha256": "d76f32566928c1eccf80575bb647715a40c593dae9a90264aac452759baf3917",
       "width": 1600,
       "height": 1000,
+      "image": {
+        "file": "optimized/team-branding.webp",
+        "sha256": "81d734d522125c21859c207b999a7d973f5479f56d1e1f7bb69e1374200efe09",
+        "width": 1440,
+        "height": 900
+      },
       "url": "http://127.0.0.1:8118/team?tab=branding",
       "labels": [
         "团队品牌展示",
@@ -594,6 +859,12 @@
       "sha256": "267ebb92e8fb7d85ffb4734a4f2a728272ab8da07e17c6956262cb73675e3125",
       "width": 1600,
       "height": 1000,
+      "image": {
+        "file": "optimized/trash.webp",
+        "sha256": "a2e50e5797e380a6219a33a0690cd3694552ac94b9ffa4bc97f548ff12f3b9da",
+        "width": 1440,
+        "height": 900
+      },
       "url": "http://127.0.0.1:8118/trash",
       "labels": [
         "回收站",

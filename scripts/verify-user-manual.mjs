@@ -17,7 +17,7 @@ assert.equal(sha256(html), sha256(before), 'The checked-in manual is stale or ge
 // Keep multi-megabyte base64 attributes out of jsdom's HTML tokenizer. Validate
 // their original bytes below without expanding every character into DOM state.
 const embeddedImages = new Map()
-const structureHtml = html.toString().replace(/\b(?:src|href)="(data:image\/png;base64,[^"]*)"/g, (attribute, source) => {
+const structureHtml = html.toString().replace(/\b(?:src|href)="(data:image\/(?:png|webp);base64,[^"]*)"/g, (attribute, source) => {
   const key = `manual-embedded-image-${embeddedImages.size}`
   embeddedImages.set(key, source)
   return attribute.replace(source, key)
@@ -48,16 +48,22 @@ for (const entry of manifest.screenshots) {
   const image = figure.querySelector('img')
   const definition = screenshots.get(entry.name)
   const capture = captures.get(entry.name)
-  const match = imageSource(image).match(/^data:image\/png;base64,(.+)$/)
+  const match = imageSource(image).match(/^data:image\/webp;base64,(.+)$/)
   assert.ok(match, `Non-embedded or broken screenshot ${entry.name}`)
   const bytes = Buffer.from(match[1], 'base64')
-  assert.equal(sha256(bytes), entry.sha256, `Wrong embedded screenshot ${entry.name}`)
+  assert.equal(sha256(bytes), entry.image.sha256, `Wrong embedded screenshot ${entry.name}`)
+  assert.equal(figure.dataset.sha256, entry.image.sha256)
   assert.equal(sha256(fs.readFileSync(path.join(root, 'manual_shots/current', entry.file))), entry.sha256)
+  assert.equal(entry.image.file, `optimized/${entry.name}.webp`)
+  assert.equal(sha256(fs.readFileSync(path.join(root, 'manual_shots/current', entry.image.file))), entry.image.sha256)
   const metadata = await sharp(bytes).metadata()
-  assert.equal(metadata.width, entry.width)
-  assert.equal(metadata.height, entry.height)
-  assert.equal(Number(image.getAttribute('width')), entry.width)
-  assert.equal(Number(image.getAttribute('height')), entry.height)
+  assert.equal(metadata.format, 'webp')
+  assert.equal(metadata.width, entry.image.width)
+  assert.equal(metadata.height, entry.image.height)
+  assert.ok(metadata.width <= Math.min(1440, entry.width), `Oversized screenshot ${entry.name}`)
+  assert.ok(Math.abs(metadata.width * entry.height - metadata.height * entry.width) <= entry.width, `Distorted screenshot ${entry.name}`)
+  assert.equal(Number(image.getAttribute('width')), metadata.width)
+  assert.equal(Number(image.getAttribute('height')), metadata.height)
   assert.equal(image.alt, definition.caption)
   assert.ok(figure.querySelector('figcaption')?.textContent.includes(definition.caption))
   assert.deepEqual(entry.labels, definition.labels)
@@ -65,9 +71,18 @@ for (const entry of manifest.screenshots) {
   for (const label of definition.labels) assert.ok(capture.snapshot.includes(label), `Screenshot ${entry.name} does not show ${label}`)
 }
 const logo = fs.readFileSync(path.join(root, 'public/app-icon.png'))
+assert.equal(manifest.logo.sourceSha256, sha256(logo), 'Manual must use the current software icon')
+assert.equal(manifest.logo.file, 'optimized/app-icon.png')
+assert.equal(sha256(fs.readFileSync(path.join(root, 'manual_shots/current', manifest.logo.file))), manifest.logo.sha256)
 for (const node of [document.querySelector('link[rel="icon"]'), document.querySelector('.brand img')]) {
   const value = imageSource(node, node.tagName === 'LINK' ? 'href' : 'src')
-  assert.equal(sha256(Buffer.from(value.split(',')[1], 'base64')), sha256(logo), 'Manual must use the current software icon')
+  const bytes = Buffer.from(value.split(',')[1], 'base64')
+  assert.equal(sha256(bytes), manifest.logo.sha256, 'Manual must use the optimized software icon')
+  const metadata = await sharp(bytes).metadata()
+  assert.equal(metadata.format, 'png')
+  assert.equal(metadata.width, manifest.logo.width)
+  assert.equal(metadata.height, manifest.logo.height)
+  assert.ok(metadata.width <= 96 && metadata.width === metadata.height, 'Manual icon stays compact and square')
 }
 const text = document.body.textContent
 for (const obsolete of ['2026-10-13', '收集给我的', '恢复登录头像', '会员版及以上权益', '5 MB/片', '登录后 ≤ 5 GB', '未登录 ≤ 500 MB', '#168b73']) {
