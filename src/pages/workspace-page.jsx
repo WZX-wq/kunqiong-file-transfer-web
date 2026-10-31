@@ -1,9 +1,10 @@
 import React from 'react'
 import { copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { createPortal } from 'react-dom'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useRemotePlanPricing, useToast } from '../hooks.js'
 import { apiRequest, mergePlanPricing, upgradeApiRequest } from '../lib/api.js'
+import { parseAlipayCheckout } from '../lib/alipay-checkout.js'
 import { ConfirmModal, FeedbackMessage, PublicShell, Toast } from '../components/common.jsx'
 import { ArrowLeft, BadgeCheck, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, History, Info, Link2, PencilLine, RefreshCw, RotateCcw, ScanLine, ShieldCheck, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
 import { feedbackTone, formatBytes, formatDate, formatPlanPrice } from '../lib/format.js'
@@ -12,6 +13,39 @@ import { PlanCarousel } from '../components/plan-carousel.jsx'
 import { ACCOUNT_PLAN_ICON, ACCOUNT_PLAN_RANK, UPGRADE_ORDER_STATUS_LABELS } from '../lib/constants.js'
 import { TEAM_NAME_MAX, limitInputText } from '../lib/input-limits.js'
 import { paymentDeadline, paymentOrderView } from '../lib/upgrade-payment.js'
+
+function AlipayCheckoutFrame({ html }) {
+  const frameName = `alipay-checkout-${useId().replace(/:/g, '')}`
+  const postedCheckout = useRef(null)
+  const checkout = useMemo(() => {
+    try { return { value: parseAlipayCheckout(html, { baseUrl: window.location.href, Parser: window.DOMParser }) } }
+    catch (error) { return { error: error.message || '支付宝收银台信息无效' } }
+  }, [html])
+
+  useEffect(() => {
+    const payment = checkout.value
+    if (!payment || payment.method !== 'POST' || postedCheckout.current === payment) return
+    postedCheckout.current = payment
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = payment.url
+    form.target = frameName
+    form.hidden = true
+    for (const field of payment.fields) {
+      const input = document.createElement('input')
+      input.type = 'hidden'
+      input.name = field.name
+      input.value = field.value
+      form.append(input)
+    }
+    document.body.append(form)
+    window.HTMLFormElement.prototype.submit.call(form)
+    form.remove()
+  }, [checkout, frameName])
+
+  if (checkout.error) return <div className="upgrade-payment-alipay-error" role="alert">{checkout.error}</div>
+  return <div className="upgrade-payment-alipay-frame"><iframe title="支付宝二维码" name={frameName} src={checkout.value.method === 'GET' ? checkout.value.url : undefined} scrolling="no" referrerPolicy="no-referrer" allow="payment" /></div>
+}
 
 export function WorkspacePage() {
   const { toast, notify } = useToast()
@@ -608,7 +642,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
       setPayment(nextPayment)
       setPayType(nextPayType)
       onRefresh?.({ silent: true })
-      setNotice(nextPayType === 2 ? '支付宝收银台已加载，请完成支付后刷新支付状态' : result.message || '微信支付二维码已创建，请扫码支付')
+      setNotice(nextPayType === 2 ? '支付宝二维码已加载，请扫码支付' : result.message || '微信支付二维码已创建，请扫码支付')
     } catch (err) {
       if (err.order) { setOrderView(err.order); setPayment(null); setNow(Date.now()); onRefresh?.({ silent: true }) }
       setError(err.message || '支付订单创建失败')
@@ -710,7 +744,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
               {orderView.status === 'pending_payment' && !payment && (busy || !error) && <div className="upgrade-payment-qr" role="status"><span className="loading-dot" /><span>{payType === 2 ? '正在加载支付宝收银台…' : '正在加载微信支付二维码…'}</span></div>}
               {orderView.status === 'pending_payment' && <div className={`upgrade-payment-countdown ${remainingSeconds <= 60 ? 'is-urgent' : ''}`}><Clock3 size={15} /><span>支付剩余时间 <strong role="timer" aria-label="支付剩余时间">{countdown}</strong><small>订单创建后 15 分钟内有效，超时需重新创建订单</small></span></div>}
               {orderView.status === 'pending_payment' && payment?.qrcode_img_url && <div className="upgrade-payment-qr"><img src={payment.qrcode_img_url} alt="微信支付二维码" /><span>请使用微信扫码支付</span></div>}
-              {orderView.status === 'pending_payment' && payment?.alipaysubmit_html && <div className="upgrade-payment-qr upgrade-payment-alipay"><div className="upgrade-payment-alipay-frame"><iframe title="支付宝收银台" scrolling="no" sandbox="allow-scripts allow-forms allow-popups allow-top-navigation-by-user-activation" referrerPolicy="no-referrer" srcDoc={payment.alipaysubmit_html} /></div><span>请使用支付宝扫码支付</span></div>}
+              {orderView.status === 'pending_payment' && payment?.alipaysubmit_html && <div className="upgrade-payment-qr upgrade-payment-alipay"><AlipayCheckoutFrame html={payment.alipaysubmit_html} /><span>请使用支付宝扫码支付</span></div>}
               </>}
               <div className="upgrade-order-note" role="status"><Clock3 size={15} /><span>{orderView.retired ? '请选择当前在售套餐，或查看已购权益。' : orderPurchaseBlocked ? `${orderPurchaseBlockedReason}。如已付款，可核对原单支付状态。` : orderView.status === 'expired' ? '支付已超时，请重新创建订单支付；如已付款，可核对原单支付状态。' : notice || '支付成功后会员权益会自动开通。'}</span></div>
               {orderView.status === 'pending_payment' ? (

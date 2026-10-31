@@ -268,7 +268,7 @@
 .upgrade-maximum-notice > div span { color: #374964; font-size: 12px; font-weight: 600; }
 .workspace-team-maximum-notice { margin: 10px 0; }
 @keyframes upgrade-maximum-notice-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
-.upgrade-order-view { display: flex; flex-direction: column; gap: 14px; }
+.upgrade-order-view { display: flex; min-width: 0; width: 100%; flex-direction: column; gap: 14px; }
 .upgrade-order-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .upgrade-order-plan { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 16px; font-weight: 800; }
 .upgrade-order-plan svg { color: #986d32; }
@@ -282,9 +282,11 @@
 .upgrade-order-meta dd { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 12px; }
 .upgrade-order-meta > div:last-child dd { color: var(--accent-dark); font-size: 17px; font-weight: 800; }
 .upgrade-order-meta dd code { padding: 2px 7px; background: #eef0f3; border-radius: 5px; font-size: 11px; }
-.upgrade-order-note { display: flex; align-items: flex-start; gap: 9px; padding: 12px 14px; color: #8a6116; background: #fdf3dd; border: 1px solid #ecd9a8; border-radius: 9px; font-size: 11.5px; line-height: 1.7; }
+.upgrade-order-note { display: flex; align-items: flex-start; gap: 9px; width: 100%; min-width: 0; max-width: 100%; padding: 12px 14px; color: #8a6116; background: #fdf3dd; border: 1px solid #ecd9a8; border-radius: 9px; font-size: 11.5px; line-height: 1.7; overflow: hidden; }
+.upgrade-order-note > span { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .upgrade-order-note svg { flex: none; margin-top: 2px; }
-.upgrade-payment-countdown { display: flex; align-items: flex-start; gap: 9px; padding: 11px 14px; color: #515b6b; background: #eef2f7; border: 1px solid #d5dde9; border-radius: 9px; font-size: 12px; line-height: 1.7; }
+.upgrade-payment-countdown { display: flex; align-items: flex-start; gap: 9px; width: 100%; min-width: 0; max-width: 100%; padding: 11px 14px; color: #515b6b; background: #eef2f7; border: 1px solid #d5dde9; border-radius: 9px; font-size: 12px; line-height: 1.7; overflow: hidden; }
+.upgrade-payment-countdown > span { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .upgrade-payment-countdown svg { flex: none; margin-top: 3px; }
 .upgrade-payment-countdown strong { margin-left: 5px; color: var(--accent-dark); font-size: 18px; font-variant-numeric: tabular-nums; }
 .upgrade-payment-countdown small { display: block; font-size: 11px; }
@@ -298,8 +300,9 @@
 .upgrade-payment-qr img { width: 220px; height: 220px; object-fit: contain; background: #fff; }
 .upgrade-payment-qr span { color: #5d697c; font-size: 12px; }
 .upgrade-payment-alipay { overflow: hidden; }
-.upgrade-payment-alipay-frame { display: flex; width: 220px; height: 220px; align-items: center; justify-content: center; overflow: hidden; background: #fff; }
-.upgrade-payment-alipay iframe { display: block; flex: none; width: 130px; height: 130px; border: 0; background: #fff; }
+.upgrade-payment-alipay-frame { position: relative; width: 220px; height: 220px; overflow: hidden; background: #fff; }
+.upgrade-payment-alipay-frame iframe { position: absolute; top: 0; left: 0; display: block; width: 130px; height: 130px; border: 0; background: #fff; transform: scale(1.6923077); transform-origin: top left; }
+.upgrade-payment-alipay-error { display: grid; width: 220px; height: 220px; place-items: center; padding: 16px; color: #9d3227; background: #fff; font-size: 13px; line-height: 1.5; text-align: center; }
 .upgrade-order-actions { display: flex; gap: 10px; }
 .upgrade-order-actions .primary-button { flex: 1; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: #fff; background: var(--accent); border-radius: 8px; font-size: 12px; font-weight: 700; }
 .upgrade-order-actions .primary-button:hover { background: var(--accent-dark); }
