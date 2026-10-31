@@ -454,8 +454,8 @@
 @media (prefers-reduced-motion: reduce) { .cm-submission-details { animation: none; transition: none; } }
 
 /* 收集提交成功 / 收集已截止（对齐原型 collect.js 的两个状态页） */
-.collection-state-card { width: 100%; max-width: 520px; margin: 20px auto 0; padding: 38px 36px 30px; text-align: center; }
-.collection-state-card.is-closed { max-width: 480px; }
+.collection-state-card { width: min(520px, 100%); max-width: 520px; margin: 20px auto 0; padding: 38px 36px 30px; text-align: center; }
+.collection-state-card.is-closed { width: min(480px, 100%); max-width: 480px; }
 .collect-success-badge { display: block; width: 64px; height: 64px; margin: 0 auto 14px; object-fit: contain; }
 .collection-state-card h2 { margin: 0; color: #101c2e; font-size: 21px; font-weight: 700; }
 .collection-state-card > p { margin: 7px 0 0; color: #64748b; font-size: 13.3px; line-height: 1.7; }

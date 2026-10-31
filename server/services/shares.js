@@ -597,14 +597,15 @@ export async function assertSafeUploadFiles(files = [], onFile) {
 
 export async function ensureStoredFilesScanned(files, directory) {
   assertFilesDownloadable(files)
+  let changed = false
   for (const file of files) {
     if (file.reviewStatus === 'approved' && file.scanEngine === 'clamav' && file.scannedAt) continue
     const targetPath = resolveStoredFilePath(file, directory, userFilesRoot)
     if (!targetPath || !fs.existsSync(targetPath)) throw httpError(410, '文件已清理，无法读取')
-    try { Object.assign(file, await scanFileBytes(targetPath)) }
+    try { Object.assign(file, await scanFileBytes(targetPath)); changed = true }
     catch (error) { if (error.code === 'scan_threat_detected') file.reviewStatus = 'blocked'; persistMetadata(); throw error }
   }
-  persistMetadata()
+  if (changed) persistMetadata()
 }
 
 // Reject invalid tasks and exhausted identities before multipart writes begin.
@@ -921,6 +922,15 @@ export function sendDownloadFile(req, res, next, filePath, file) {
   fs.createReadStream(filePath, { start, end }).on('error', next).pipe(res)
 }
 
+// These formats already compress their payload. Re-deflating them delays the
+// stream and uses CPU for little gain, especially for nested ZIP/Office files.
+const STORED_ZIP_EXTENSIONS = new Set([
+  '.zip', '.7z', '.rar', '.gz', '.tgz', '.bz2', '.xz', '.zst',
+  '.jpg', '.jpeg', '.jpe', '.jfif', '.png', '.gif', '.webp', '.avif', '.heic', '.heif',
+  '.mp4', '.m4v', '.mov', '.webm', '.mkv', '.mp3', '.m4a', '.aac', '.ogg', '.flac',
+  '.pdf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp',
+])
+
 export async function streamZip(res, next, filename, entries) {
   const availableEntries = entries.filter((entry) => fs.existsSync(entry.path))
   if (!availableEntries.length) return res.status(410).json({ message: '文件已清理，无法下载' })
@@ -931,7 +941,7 @@ export async function streamZip(res, next, filename, entries) {
   res.setHeader('Accept-Ranges', 'none')
   res.attachment(filename)
   if (res.req.method === 'HEAD') return res.end()
-  const archive = archiver('zip', { zlib: { level: 6 } })
+  const archive = archiver('zip', { zlib: { level: 1 } })
   archive.on('warning', (error) => {
     if (error.code === 'ENOENT') console.warn(error)
     else next(error)
@@ -939,7 +949,8 @@ export async function streamZip(res, next, filename, entries) {
   archive.on('error', next)
   archive.pipe(res)
   for (const entry of availableEntries) {
-    archive.file(entry.path, { name: zipEntryPath(entry.name) })
+    const name = zipEntryPath(entry.name)
+    archive.file(entry.path, { name, store: STORED_ZIP_EXTENSIONS.has(path.extname(name).toLowerCase()) })
   }
   await archive.finalize()
 }

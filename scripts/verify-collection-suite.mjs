@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import net from 'node:net'
+import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { inflateRawSync } from 'node:zlib'
@@ -141,7 +142,7 @@ function zipEntryContents(buffer) {
     const dataOffset = localOffset + 30 + localNameLength + localExtraLength
     const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize)
     const content = method === 0 ? Buffer.from(compressed) : method === 8 ? inflateRawSync(compressed) : null
-    entries.push({ name, content })
+    entries.push({ name, content, method, compressedSize })
     offset += 46 + nameLength + extraLength + commentLength
   }
   return entries
@@ -585,6 +586,37 @@ try {
   check('单提交 ZIP 下载内容正确', oneZip.status === 200 && oneEntries.length === 3, `entries=${oneEntries.map((item) => item.name).join('|')}`)
   const previewFile = await api(`/api/collections/manage/${zipTask.manageToken}/submissions/${zipSubmit.data.submission.id}/files/0/preview`, { user: 'owner', raw: true })
   check('单文件预览可用（text/plain 防注入）', previewFile.status === 200 && String(previewFile.headers.get('content-type') || '').includes('text/plain'), `status=${previewFile.status} type=${previewFile.headers.get('content-type')}`)
+
+  console.log('\n=== 批量下载压缩与只读回归 ===')
+  const downloadFiles = [
+    { name: '压缩包.ZIP', content: allZip.buffer },
+    { name: '照片.jfif', content: randomBytes(1024 ** 2) },
+    { name: '文档.docx', content: allZip.buffer },
+    { name: '视频.mp4', content: randomBytes(1024 ** 2) },
+    { name: '说明.txt', content: Buffer.from('保持文本压缩，避免浪费下载带宽\n'.repeat(4096)) },
+  ]
+  const fastTask = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '批量下载性能回归' } })).data
+  const fastSubmit = await api(`/api/collections/${fastTask.collection.token}/submissions`, { user: 'recipient', method: 'POST', body: form(downloadFiles, { participantName: '下载验收' }) })
+  check('混合文件提交并完成安全检查', fastSubmit.status === 201, JSON.stringify(fastSubmit.data))
+  const fastUrl = `/api/collections/manage/${fastTask.manageToken}/download`
+  const metadataFile = path.join(fixture, 'storage', 'metadata.json')
+  const beforeDownloads = { bytes: fs.readFileSync(metadataFile), mtime: fs.statSync(metadataFile).mtimeMs }
+  const head = await api(fastUrl, { user: 'owner', method: 'HEAD', raw: true })
+  const startedAt = performance.now()
+  const fastZip = await api(fastUrl, { user: 'owner', raw: true })
+  const elapsedMs = Math.round(performance.now() - startedAt)
+  const fastEntries = zipEntryContents(fastZip.buffer)
+  check('HEAD 只返回下载信息且文件数正确', head.status === 200 && !head.buffer.length && head.headers.get('x-download-file-count') === String(downloadFiles.length))
+  check('ZIP 图片 Office 视频不重复压缩', fastEntries.length === downloadFiles.length && fastEntries.filter(entry => !entry.name.endsWith('.txt')).every(entry => entry.method === 0))
+  const textEntry = fastEntries.find(entry => entry.name.endsWith('.txt'))
+  check('文本仍压缩以节省带宽', textEntry?.method === 8 && textEntry.compressedSize < downloadFiles.at(-1).content.length / 10)
+  check('优化后的压缩包文件名和原字节完整', downloadFiles.every(file => fastEntries.some(entry => entry.name.endsWith('/' + file.name) && entry.content.equals(file.content))))
+  const submissionZip = await api(`/api/collections/manage/${fastTask.manageToken}/submissions/${fastSubmit.data.submission.id}/download`, { user: 'owner', raw: true })
+  check('单份提交下载也使用快速打包且内容完整', submissionZip.status === 200 && zipEntryContents(submissionZip.buffer).every(entry => downloadFiles.some(file => file.name === entry.name && entry.content.equals(file.content))))
+  check('重复下载不重写业务元数据', beforeDownloads.bytes.equals(fs.readFileSync(metadataFile)) && beforeDownloads.mtime === fs.statSync(metadataFile).mtimeMs)
+  const denied = await api(fastUrl, { user: 'stranger', raw: true })
+  check('快速打包仍拒绝非所有者下载', denied.status === 403)
+  console.log(JSON.stringify({ event: 'collection_download_performance', bytes: fastZip.buffer.length, files: fastEntries.length, elapsedMs }))
 } catch (error) {
   console.error('\n套件异常:', error.message)
   failures.push('套件异常: ' + error.message)
