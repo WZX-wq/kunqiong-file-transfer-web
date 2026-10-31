@@ -340,15 +340,17 @@ function FieldRow({
             {COLLECTION_FIELD_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         </label>
-        <label className="collection-rule-required">
-          <input type="checkbox" checked={field.required} onChange={(event) => onUpdate({ required: event.target.checked })} />
-          必填
-        </label>
-        <div className="collection-field-actions">
-          <button type="button" className="ghost-icon" disabled={index === 0} aria-label={`上移字段 ${index + 1}`} title="上移" onClick={() => move(-1)}><ArrowUp size={14} /></button>
-          <button type="button" className="ghost-icon" disabled={index === total - 1} aria-label={`下移字段 ${index + 1}`} title="下移" onClick={() => move(1)}><ArrowDown size={14} /></button>
-          <button type="button" className="ghost-icon" aria-label={`复制字段 ${index + 1}`} title="复制" onClick={onCopy}><Copy size={14} /></button>
-          <button type="button" className="ghost-icon collection-field-delete" aria-label={`删除字段 ${index + 1}`} title="删除字段" onClick={onRemove}><Trash2 size={15} /></button>
+        <div className="collection-field-toggle-actions">
+          <label className="collection-rule-required">
+            <input type="checkbox" checked={field.required} onChange={(event) => onUpdate({ required: event.target.checked })} />
+            必填
+          </label>
+          <div className="collection-field-actions">
+            <button type="button" className="ghost-icon" disabled={index === 0} aria-label={`上移字段 ${index + 1}`} title="上移" onClick={() => move(-1)}><ArrowUp size={14} /></button>
+            <button type="button" className="ghost-icon" disabled={index === total - 1} aria-label={`下移字段 ${index + 1}`} title="下移" onClick={() => move(1)}><ArrowDown size={14} /></button>
+            <button type="button" className="ghost-icon" aria-label={`复制字段 ${index + 1}`} title="复制" onClick={onCopy}><Copy size={14} /></button>
+            <button type="button" className="ghost-icon collection-rule-delete" aria-label={`删除字段 ${index + 1}`} title="删除字段" onClick={onRemove}><Trash2 size={15} /></button>
+          </div>
         </div>
       </div>
       {error?.label && <small className="collection-inline-error" role="alert">{error.label}</small>}

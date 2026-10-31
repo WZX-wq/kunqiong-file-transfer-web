@@ -853,7 +853,7 @@
 .collection-structure-summary:hover .collection-structure-summary-toggle { background: #eef5ff; border-color: #b9d1f0; }
 .collection-structure-body { display: grid; gap: 12px; }
 .collection-field-limit-note { margin: 0; color: #8a6a28; background: #fff9ed; border: 1px solid #f1e0b9; border-radius: 7px; padding: 6px 9px; font-size: 11.5px; }
-.collection-page .collection-field-editor .collection-field-editor-main { grid-template-columns: minmax(0, 1fr) 124px max-content max-content; align-items: end; gap: 7px; }
+.collection-page .collection-field-editor .collection-field-editor-main { grid-template-columns: minmax(0, 1fr) 124px max-content; align-items: end; gap: 7px; }
 .collection-field-name { display: grid; gap: 4px; min-width: 0; }
 .collection-field-name > input { width: 100%; min-width: 0; height: 38px; box-sizing: border-box; padding: 0 10px; color: #24364d; background: #fbfdff; border: 1px solid #dce8f7; border-radius: 7px; outline: 0; font: inherit; font-size: 14px; }
 .collection-field-name > input:focus { border-color: #79a4ed; box-shadow: 0 0 0 3px rgba(31, 107, 255, .1); }
@@ -863,6 +863,9 @@
 .collection-field-type > select:focus { border-color: #79a4ed; box-shadow: 0 0 0 3px rgba(31, 107, 255, .1); }
 .collection-field-editor .collection-rule-required { min-height: 38px; font-size: 12.5px; }
 .collection-field-actions { padding-bottom: 4px; }
+.collection-field-toggle-actions { display: flex; align-items: center; justify-self: end; gap: 8px; min-height: 38px; }
+.collection-field-editor .collection-field-toggle-actions .collection-field-actions { padding: 0; }
+.collection-field-editor .collection-field-actions .ghost-icon { flex: 0 0 29px; min-width: 29px; min-height: 29px; padding: 0; }
 /* 创建页的「材料清单 / 自定义字段」是双列卡片，单卡内容宽约 335px：
  * 四列并排时固定列吃掉全部宽度，字段名称会被挤成竖排文字。
  * 这里让名称独占一行，类型/必填/操作落到第二行，空间不足时自然换行。 */
@@ -874,8 +877,10 @@
 }
 .collection-page .collection-builder-groups .collection-field-editor .collection-field-name { flex: 1 1 100%; }
 .collection-page .collection-builder-groups .collection-field-editor .collection-field-type { flex: 1 1 120px; }
+.collection-page .collection-builder-groups .collection-field-toggle-actions { flex: 0 0 auto; min-height: 46px; margin-left: auto; }
 .collection-page .collection-builder-groups .collection-field-editor .collection-rule-required { flex: 0 0 auto; }
 .collection-page .collection-builder-groups .collection-field-editor .collection-field-actions { flex: 0 0 auto; }
+.collection-page .collection-field-editor :is(input:not([type="checkbox"]), select) { color: #24364d; font-size: 12px; font-weight: 600; line-height: 1.35; }
 /* 卡片内的行内标签左对齐，避免被 .builder-form label 的纵向 flex 居中。 */
 .collection-page .collection-builder-groups .collection-field-help-input,
 .collection-page .collection-builder-groups .collection-field-option-input,
