@@ -855,8 +855,12 @@
 .collection-field-limit-note { margin: 0; color: #8a6a28; background: #fff9ed; border: 1px solid #f1e0b9; border-radius: 7px; padding: 6px 9px; font-size: 11.5px; }
 .collection-page .collection-field-editor .collection-field-editor-main { grid-template-columns: minmax(0, 1fr) 124px max-content; align-items: end; gap: 7px; }
 .collection-field-name { display: grid; gap: 4px; min-width: 0; }
-.collection-field-name > input { width: 100%; min-width: 0; height: 38px; box-sizing: border-box; padding: 0 10px; color: #24364d; background: #fbfdff; border: 1px solid #dce8f7; border-radius: 7px; outline: 0; font: inherit; font-size: 14px; }
-.collection-field-name > input:focus { border-color: #79a4ed; box-shadow: 0 0 0 3px rgba(31, 107, 255, .1); }
+.collection-field-name > input,
+.manage-collection-structure .collection-rule-name > input,
+.manage-collection-structure .collection-naming-input-label > input { width: 100%; min-width: 0; height: 38px; box-sizing: border-box; padding: 0 10px; color: #24364d; background: #fbfdff; border: 1px solid #dce8f7; border-radius: 7px; outline: 0; font: inherit; font-size: 14px; }
+.collection-field-name > input:focus,
+.manage-collection-structure .collection-rule-name > input:focus,
+.manage-collection-structure .collection-naming-input-label > input:focus { border-color: #79a4ed; box-shadow: 0 0 0 3px rgba(31, 107, 255, .1); }
 .collection-field-type { display: grid; gap: 0; min-width: 0; }
 .collection-field-type-label { display: none; }
 .collection-field-type > select { width: 100%; min-width: 0; height: 38px; padding: 0 8px; color: #2c4564; background: #fbfdff; border: 1px solid #dce8f7; border-radius: 7px; outline: 0; font: inherit; font-size: 13px; }
@@ -969,6 +973,7 @@
 .manage-collection-structure .collection-builder-section-heading small { font-size: 11.5px; }
 .manage-collection-structure .collection-rule-main { grid-template-columns: 20px minmax(0, 1fr) max-content; }
 .manage-collection-structure .collection-rule-name > input,
+.manage-collection-structure .collection-naming-input-label > input,
 .manage-collection-structure .collection-field-name > input,
 .manage-collection-structure .collection-field-type > select { height: 36px; font-size: 13px; }
 .manage-collection-structure .collection-page .collection-field-editor .collection-field-editor-main,
