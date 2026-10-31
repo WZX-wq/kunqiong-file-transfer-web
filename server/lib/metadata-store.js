@@ -257,6 +257,42 @@ export async function loadMetadata() {
     await ensureRelationalStoreSchema(databasePool)
     const current = await loadRelationalMetadata(databasePool)
     if (current) {
+      // A relational migration can be followed by a final JSON mirror write
+      // from the previous release.  Import that newer mirror once so records
+      // created between the original migration and the deployment backup are
+      // not silently lost when the relational tables become authoritative.
+      const migration = current.metadata?._relationalMigration
+      const mirrorIsNewer = !localError
+        && migration?.source === 'metadata.json'
+        && runtime.metadataLocalRevision > Number(current.state.sourceSnapshotRevision || 0)
+      if (mirrorIsNewer) {
+        const merged = mergeMetadataSnapshots(current.metadata, localMetadata, null)
+        const mergedMigration = merged._relationalMigration
+        if (mergedMigration && typeof mergedMigration === 'object') {
+          merged._relationalMigration = {
+            ...mergedMigration,
+            sourceRevision: runtime.metadataLocalRevision,
+            sourceCounts: countRelationalModelRows(merged),
+            importedCounts: countRelationalModelRows(merged),
+          }
+        }
+        const reconciled = await commitRelationalMetadata(
+          databasePool,
+          merged,
+          current.revision,
+          (remote, value) => mergeMetadataSnapshots(remote, value, null),
+          { sourceSnapshotRevision: runtime.metadataLocalRevision },
+        )
+        runtime.metadataRevision = reconciled.revision
+        runtime.metadataBaseIds = metadataIdSets(reconciled.metadata)
+        console.log(JSON.stringify({
+          event: 'relational_metadata_mirror_reconciled',
+          sourceRevision: runtime.metadataLocalRevision,
+          revision: reconciled.revision,
+          counts: countRelationalModelRows(reconciled.metadata),
+        }))
+        return reconciled.metadata
+      }
       runtime.metadataRevision = current.revision
       runtime.metadataBaseIds = metadataIdSets(current.metadata)
       return current.metadata

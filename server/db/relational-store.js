@@ -907,7 +907,7 @@ export async function initializeRelationalMetadata(pool, source, sourceSnapshotR
   }
 }
 
-export async function commitRelationalMetadata(pool, value, expectedRevision, mergeConflict) {
+export async function commitRelationalMetadata(pool, value, expectedRevision, mergeConflict, options = {}) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
@@ -927,9 +927,15 @@ export async function commitRelationalMetadata(pool, value, expectedRevision, me
     rowsByTable = cacheIsCurrent ? cached.rowsByTable : await readRelationalSyncRows(connection, state.counts)
     const { counts, changes, syncCache } = await synchronizeRelationalMetadata(connection, next, state.counts, rowsByTable)
     const nextRevision = state.revision + 1
+    const sourceSnapshotRevision = Number.isSafeInteger(options.sourceSnapshotRevision)
+      && options.sourceSnapshotRevision >= state.sourceSnapshotRevision
+      ? options.sourceSnapshotRevision
+      : state.sourceSnapshotRevision
     const [revisionResult] = await connection.execute(
-      `UPDATE ${STATE_TABLE} SET revision = ?, record_counts_json = ? WHERE state_key = ? AND revision = ?`,
-      [nextRevision, JSON.stringify(counts), 'metadata', state.revision],
+      `UPDATE ${STATE_TABLE}
+          SET revision = ?, source_snapshot_revision = ?, record_counts_json = ?
+        WHERE state_key = ? AND revision = ?`,
+      [nextRevision, sourceSnapshotRevision, JSON.stringify(counts), 'metadata', state.revision],
     )
     if (Number(revisionResult.affectedRows) !== 1) throw new Error('关系存储 revision 已变化，本次事务已回滚')
     await connection.commit()
