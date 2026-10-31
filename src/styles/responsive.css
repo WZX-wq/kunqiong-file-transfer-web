@@ -113,6 +113,20 @@ iframe {
   width: min(calc(100% - 32px), 1240px);
 }
 
+.cm-page {
+  width: min(calc(100% - 32px), 1320px);
+}
+
+.cm-grid {
+  grid-template-columns: minmax(0, 1fr) 400px;
+}
+
+.cm-sum .cm-link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .section-intro,
 .workspace-heading,
 .team-page-heading,
