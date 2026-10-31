@@ -207,24 +207,21 @@ iframe {
   overflow-wrap: anywhere;
 }
 
-/* 上传卡片右上角的定向发布入口在桌面保持绝对定位，避免占用拖拽区的内容列；
- * 窄屏再恢复为普通网格项，按钮会跟随额度提示自然换行。 */
+/* 工具栏铺满卡片，入口参与网格布局；登录后没有额度提示时仍保留按钮高度。 */
 .send-prototype-upload-toolbar {
-  position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 .send-distribution-upload-entry {
-  position: absolute;
-  top: 0;
-  right: 0;
-  grid-column: auto;
+  position: static;
+  grid-column: 2;
   align-self: start;
 }
 
 .send-prototype-guest-strip {
   min-width: 0;
   width: 100%;
-  padding-right: 164px;
   box-sizing: border-box;
 }
 
@@ -454,13 +451,7 @@ iframe {
   }
 
   .send-distribution-upload-entry {
-    position: static;
     grid-column: 1;
-    justify-self: start;
-  }
-
-  .send-prototype-guest-strip {
-    padding-right: 13px;
   }
 
   .workspace-grid,
