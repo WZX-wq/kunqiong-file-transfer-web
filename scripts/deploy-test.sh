@@ -288,7 +288,12 @@ verify_container_configuration() {
 
 deploy_with_docker() {
   docker info >/dev/null 2>&1 || return 1
-  docker build --label "org.opencontainers.image.revision=$RELEASE_SHA" -t "$IMAGE_NAME" .
+  # The self-hosted test runner has a tight memory limit. BuildKit may finish
+  # exporting the image and still have its builder process killed with 137,
+  # which prevents the migration preflight from running. The legacy builder
+  # uses less resident memory for this two-stage image and keeps the deploy
+  # command deterministic on that runner.
+  DOCKER_BUILDKIT=0 docker build --label "org.opencontainers.image.revision=$RELEASE_SHA" -t "$IMAGE_NAME" .
   # Check connectivity, decryptability and nonempty-target conflicts without DDL
   # or data writes. A failure here leaves the current running container intact.
   docker run --rm --env-file "$ENV_FILE" --entrypoint node "$IMAGE_NAME" --input-type=module -e '
