@@ -68,17 +68,21 @@ test('partially migrated MySQL audit storage imports its local journal once', as
   const pool = {
     query: async (sql, values = []) => {
       if (sql.startsWith('CREATE TABLE')) return [{ affectedRows: 0 }, []]
-      if (sql.includes('SELECT payload FROM kunqiong_audit_log WHERE critical = ?')) {
+      if (sql.includes('SELECT id, created_at FROM kunqiong_audit_log WHERE critical = ?')) {
         const critical = Number(values[0])
-        const payloads = [...rows.values()]
-          .filter(entry => entry.critical === critical)
-          .sort((first, second) => second.createdAt.localeCompare(first.createdAt))
-          .map(entry => ({ payload: entry.payload }))
-        return [payloads, []]
+        const keys = [...rows.entries()]
+          .filter(([, entry]) => entry.critical === critical)
+          .sort(([, first], [, second]) => second.createdAt.localeCompare(first.createdAt))
+          .slice(0, 5000)
+          .map(([id, entry]) => ({ id, created_at: entry.createdAt }))
+        return [keys, []]
       }
       throw new Error('Unexpected audit query: ' + sql)
     },
     execute: async (sql, values = []) => {
+      if (sql.includes('SELECT id, payload FROM kunqiong_audit_log WHERE id IN')) {
+        return [[...new Set(values)].map(id => rows.has(id) ? { id, payload: rows.get(id).payload } : null).filter(Boolean), []]
+      }
       if (sql.includes('information_schema.TABLES')) return [[{ found: 0 }], []]
       if (sql.includes('information_schema.COLUMNS')) return [[{ max_length: 80, character_set_name: 'utf8mb4', collation_name: 'utf8mb4_bin', is_nullable: 'NO' }], []]
       if (sql.includes('INSERT IGNORE INTO kunqiong_audit_log')) {
@@ -122,7 +126,7 @@ test('legacy audit source key is widened and made binary before import', async (
         schema = { max_length: 80, character_set_name: 'utf8mb4', collation_name: 'utf8mb4_bin', is_nullable: 'NO' }
         return [{ affectedRows: 0 }, []]
       }
-      if (sql.includes('SELECT payload FROM kunqiong_audit_log WHERE critical = ?')) return [[], []]
+      if (sql.includes('SELECT id, created_at FROM kunqiong_audit_log WHERE critical = ?')) return [[], []]
       throw new Error('Unexpected audit query: ' + sql)
     },
     execute: async (sql, values = []) => {

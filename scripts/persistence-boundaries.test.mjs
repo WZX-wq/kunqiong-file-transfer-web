@@ -15,12 +15,14 @@ function database() {
     async query(sql, values = []) {
       if (failed) throw Object.assign(new Error('fixture database unavailable'), { code: 'FIXTURE_DB_DOWN' })
       if (sql.includes('CREATE TABLE')) return [[], []]
-      if (sql.includes('SELECT payload')) return [[...rows.values()].filter(row => row.critical === values[0]).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(row => ({ payload: JSON.stringify(row.log) })), []]
+      if (sql.includes('SELECT id, created_at')) return [[...rows.entries()].filter(([, row]) => row.critical === values[0]).sort(([, a], [, b]) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5000).map(([id, row]) => ({ id, created_at: row.createdAt })), []]
       throw new Error('Unexpected fixture SQL: ' + sql)
     },
     async execute(sql, values) {
       if (failed) throw Object.assign(new Error('fixture database unavailable'), { code: 'FIXTURE_DB_DOWN' })
       if (sql.includes('information_schema.TABLES')) return [[{ found: 0 }], []]
+      if (sql.includes('information_schema.COLUMNS')) return [[{ max_length: 80, character_set_name: 'utf8mb4', collation_name: 'utf8mb4_bin', is_nullable: 'NO' }], []]
+      if (sql.includes('SELECT id, payload FROM kunqiong_audit_log WHERE id IN')) return [[...new Set(values)].map(id => rows.has(id) ? { id, payload: JSON.stringify(rows.get(id).log) } : null).filter(Boolean), []]
       if (sql.includes('INSERT IGNORE')) {
         for (let i = 0; i < values.length; i += 4) rows.set(values[i], { critical: values[i + 1], createdAt: values[i + 2], log: JSON.parse(values[i + 3]) })
         return [{ affectedRows: 1 }]

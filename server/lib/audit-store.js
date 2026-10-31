@@ -166,6 +166,30 @@ export class DatabaseAuditStore {
     if (this.error) throw this.error
   }
 
+  async readRecentRows(critical, limit) {
+    // Keep the ordered index scan small: reading thousands of LONGTEXT payloads
+    // in one statement can exceed MySQL's statement execution-time limit.
+    const [keys] = await this.pool.query(
+      `SELECT id, created_at FROM kunqiong_audit_log WHERE critical = ? ORDER BY created_at DESC, id DESC LIMIT ${limit}`,
+      [critical],
+    )
+    const rows = []
+    for (let offset = 0; offset < keys.length; offset += 100) {
+      const batch = keys.slice(offset, offset + 100)
+      const placeholders = batch.map(() => '?').join(', ')
+      const [payloadRows] = await this.pool.execute(
+        `SELECT id, payload FROM kunqiong_audit_log WHERE id IN (${placeholders})`,
+        batch.map(row => row.id),
+      )
+      const payloadById = new Map(payloadRows.map(row => [String(row.id), row.payload]))
+      for (const key of batch) {
+        const payload = payloadById.get(String(key.id))
+        if (payload !== undefined) rows.push({ payload })
+      }
+    }
+    return rows
+  }
+
   async refresh() {
     // Serialize reads with appends/purges. Entries appended while SELECT is in
     // flight remain pending, and are merged without reviving remotely purged rows.
@@ -173,7 +197,7 @@ export class DatabaseAuditStore {
       await this.flushPendingRows()
       const logs = []
       for (const critical of [0, 1]) {
-        const [rows] = await this.pool.query(`SELECT payload FROM kunqiong_audit_log WHERE critical = ? ORDER BY created_at DESC, id DESC LIMIT ${Math.max(1, Math.floor(this.limit))}`, [critical])
+        const rows = await this.readRecentRows(critical, Math.max(1, Math.floor(this.limit)))
         logs.push(...rows.map(row => JSON.parse(row.payload)))
       }
       this.logs = mergeAuditEntries([...logs, ...this.pending.values()], this.normalize, this.limit)
