@@ -149,7 +149,7 @@ const METADATA_MERGE_RULES = [
   { key: 'sessions', kind: 'array', time: ['createdAt'] },
   { key: 'upgradeOrders', kind: 'array', time: ['updatedAt', 'createdAt'] },
   { key: 'auditLogs', kind: 'array', time: ['createdAt'] },
-  { key: 'organizations', kind: 'array', time: ['updatedAt', 'createdAt'] },
+  { key: 'organizations', kind: 'map', time: ['updatedAt', 'createdAt'] },
   { key: 'verificationCodes', kind: 'array', time: ['createdAt'] },
   { key: 'users', kind: 'map', time: ['updatedAt', 'createdAt'] },
   { key: 'records', kind: 'map', time: ['updatedAt', 'createdAt'] },
@@ -262,11 +262,17 @@ export async function loadMetadata() {
       // created between the original migration and the deployment backup are
       // not silently lost when the relational tables become authoritative.
       const migration = current.metadata?._relationalMigration
+      const mirrorCandidate = !localError && migration?.source === 'metadata.json'
+        ? mergeMetadataSnapshots(current.metadata, localMetadata, null)
+        : null
+      const mirrorCounts = mirrorCandidate ? countRelationalModelRows(mirrorCandidate) : null
+      const relationCountsDiffer = mirrorCounts && Object.entries(mirrorCounts)
+        .some(([table, count]) => Number(count) !== Number(current.state.counts?.[table] || 0))
       const mirrorIsNewer = !localError
         && migration?.source === 'metadata.json'
-        && runtime.metadataLocalRevision > Number(current.state.sourceSnapshotRevision || 0)
+        && (runtime.metadataLocalRevision > Number(current.state.sourceSnapshotRevision || 0) || relationCountsDiffer)
       if (mirrorIsNewer) {
-        const merged = mergeMetadataSnapshots(current.metadata, localMetadata, null)
+        const merged = mirrorCandidate
         const mergedMigration = merged._relationalMigration
         if (mergedMigration && typeof mergedMigration === 'object') {
           merged._relationalMigration = {
