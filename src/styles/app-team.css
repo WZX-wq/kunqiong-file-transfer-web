@@ -245,7 +245,8 @@
 .workspace-overview-page .workspace-benefits-cta .primary-button { min-height: 38px; font-size: 12.6px; }
 .workspace-overview-page .workspace-benefits-card .upgrade-maximum-notice { margin: 12px 20px 0; }
 .workspace-overview-page .workspace-benefits-card .workspace-pending-banner,
-.workspace-overview-page .workspace-benefits-card .workspace-payment-warning { margin: 12px 20px 0; }
+.workspace-overview-page .workspace-benefits-card .workspace-payment-warning { min-width: 0; max-width: calc(100% - 40px); margin: 12px 20px 0; box-sizing: border-box; overflow-wrap: anywhere; }
+.workspace-overview-page .workspace-benefits-card .workspace-pending-banner { width: auto; min-width: 0; max-width: calc(100% - 40px); box-sizing: border-box; overflow-wrap: anywhere; white-space: normal; }
 
 /* 右侧个人空间卡片（原型 .side-card） */
 .workspace-overview-page .workspace-side-card { min-width: 0; padding: 0; overflow: hidden; border-color: #e1eaf6; border-radius: 14px; box-shadow: 0 14px 34px -32px rgba(24, 72, 160, .34); }
@@ -378,8 +379,8 @@
   .workspace-overview-page .workspace-plan-note,
   .workspace-overview-page .workspace-benefits-cta,
   .workspace-overview-page .workspace-benefits-card .upgrade-maximum-notice,
-  .workspace-overview-page .workspace-benefits-card .workspace-pending-banner,
-  .workspace-overview-page .workspace-benefits-card .workspace-payment-warning { margin-right: 16px; margin-left: 16px; }
+  .workspace-overview-page .workspace-benefits-card .workspace-payment-warning { max-width: calc(100% - 32px); margin-right: 16px; margin-left: 16px; }
+  .workspace-overview-page .workspace-benefits-card .workspace-pending-banner { max-width: calc(100% - 32px); margin-right: 16px; margin-left: 16px; }
   .workspace-overview-page .workspace-side-card-body { padding: 12px 14px 13px; }
 }
 @media (max-width: 560px) {
