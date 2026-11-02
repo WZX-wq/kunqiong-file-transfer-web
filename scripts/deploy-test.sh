@@ -298,14 +298,48 @@ deploy_with_docker() {
 const { databasePool } = await import("/app/server/state.js");
 const { inspectRelationalMigrationTarget } = await import("/app/server/db/relational-store.js");
 const { inspectExistingRelationalSchema } = await import("/app/server/db/apply-relational-schema.js");
+const { shouldSkipRelationalSchemaPreflight } = await import("/app/server/db/deployment-preflight.js");
 const { readFile } = await import("node:fs/promises");
+const { createHash } = await import("node:crypto");
 const { UPLOAD_SESSION_TABLE_SQL } = await import("/app/server/db/upload-session-store.js");
 try {
   const connection = await databasePool.getConnection();
   try {
     const schemaSql = await readFile("/app/docs/数据库设计-2026-10-29/03-现有功能关系表设计.sql", "utf8");
-    const schema = await inspectExistingRelationalSchema({ connection, schemaSql: schemaSql + ";\n" + UPLOAD_SESSION_TABLE_SQL });
-    console.log(JSON.stringify({ event: "database_migration_preflight", ...schema, ...await inspectRelationalMigrationTarget(connection), passed: true }));
+    const expectedMigrations = {
+      "001-existing-features-relational-schema": createHash("sha256").update(schemaSql).digest("hex"),
+      "003-upload-session-storage": createHash("sha256").update(UPLOAD_SESSION_TABLE_SQL).digest("hex"),
+    };
+    const [migrationTables] = await connection.execute(
+      "SELECT COUNT(*) AS found FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+      ["kq_schema_migration"],
+    );
+    const appliedMigrations = {};
+    if (Number(migrationTables?.[0]?.found) > 0) {
+      const [rows] = await connection.execute(
+        "SELECT migration_key, checksum_sha256 FROM kq_schema_migration WHERE migration_key IN (?, ?)",
+        Object.keys(expectedMigrations),
+      );
+      for (const row of rows) appliedMigrations[row.migration_key] = row.checksum_sha256;
+    }
+    const [stateTables] = await connection.execute(
+      "SELECT COUNT(*) AS found FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+      ["kq_relational_store_state"],
+    );
+    let hasRelationalState = false;
+    if (Number(stateTables?.[0]?.found) > 0) {
+      const [rows] = await connection.execute(
+        "SELECT 1 FROM kq_relational_store_state WHERE state_key = ? LIMIT 1",
+        ["metadata"],
+      );
+      hasRelationalState = rows.length > 0;
+    }
+    if (shouldSkipRelationalSchemaPreflight({ appliedMigrations, expectedMigrations, hasRelationalState })) {
+      console.log(JSON.stringify({ event: "database_migration_preflight", initialized: true, schemaPreflight: "skipped_unchanged", passed: true }));
+    } else {
+      const schema = await inspectExistingRelationalSchema({ connection, schemaSql: schemaSql + ";\n" + UPLOAD_SESSION_TABLE_SQL });
+      console.log(JSON.stringify({ event: "database_migration_preflight", ...schema, ...await inspectRelationalMigrationTarget(connection), schemaPreflight: "full", passed: true }));
+    }
   }
   finally { connection.release(); }
 } catch (error) {

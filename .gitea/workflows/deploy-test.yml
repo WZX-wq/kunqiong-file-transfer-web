@@ -71,6 +71,7 @@ jobs:
 
       - name: Verify Docker build project identity
         run: |
+          node --test scripts/db/deployment-preflight.test.mjs
           node scripts/verify-deploy-project.mjs
 
       - name: Deploy
