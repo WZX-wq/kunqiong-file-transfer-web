@@ -217,6 +217,54 @@ export class DatabaseAuditStore {
     })
     return { logs: this.logs, removed: before - this.logs.length }
   }
+
+  // Enforce MAX_AUDIT_LOGS on the structured MySQL table as well. The append
+  // path only bounds the in-memory merge, so a long-running instance grew
+  // kq_audit_log without limit. Retention priority keeps evidence: oldest
+  // access noise goes first, then oldest non-access (critical) events. Batches
+  // are capped so a DELETE never holds a long lock or grows one huge undo log.
+  // Safe no-op for JSON/local stores and for databases without the table.
+  async trimToLimit() {
+    const batchSize = 1000
+    const limit = Math.max(1, Math.floor(Number(this.limit) || 0))
+    const tableExists = async () => {
+      const [rows] = await this.pool.execute(
+        'SELECT COUNT(*) AS found FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+        ['kq_audit_log'],
+      )
+      return Number(rows?.[0]?.found) > 0
+    }
+    if (!await tableExists()) return 0
+    const [[totalRow]] = await this.pool.query('SELECT COUNT(*) AS total FROM kq_audit_log')
+    let excess = Number(totalRow?.total || 0) - limit
+    if (excess <= 0) return 0
+    let removed = 0
+    // 1) oldest access events, 2) oldest critical events. Both statements use
+    // the (event_type, gmt_create) index and stop at a hard per-batch ceiling.
+    for (const predicate of [`event_type = 'access'`, `event_type <> 'access'`]) {
+      while (excess > 0) {
+        const batch = Math.min(batchSize, excess)
+        let result
+        try {
+          ;[result] = await this.pool.query(
+            `DELETE FROM kq_audit_log WHERE ${predicate} ORDER BY gmt_create ASC, id ASC LIMIT ${batch}`,
+          )
+        } catch (error) {
+          if (error.code === 'ER_NO_SUCH_TABLE') return removed
+          throw error
+        }
+        const affected = Number(result?.affectedRows || 0)
+        removed += affected
+        excess -= affected
+        // Fewer rows than requested means this priority class is exhausted.
+        if (affected < batch) break
+      }
+    }
+    // The in-memory list is already bounded by append/refresh; the next
+    // refresh() reflects this purge. Pending (not yet flushed) rows are left
+    // untouched here so a concurrent append cannot be dropped by the trimmer.
+    return removed
+  }
 }
 
 export class LocalAuditStore {

@@ -1,5 +1,6 @@
 import { withFileLock, durableWrite, removeFile } from './file-lock.js'
 import { requireSharedDataKey, transformCredentials } from './private-key.js'
+import { contextualObject, currentDataContext } from './data-context.js'
 // 元数据存储层 —— 载入 / 合并 / CAS 落盘
 //
 // 分层位置：config ← state ← metadata-store ← 领域模块 ← metadata-normalizers ← 入口
@@ -28,7 +29,7 @@ import {
 // 全进程唯一实例。**只在启动时就地填充一次，之后只做属性级修改，绝不整体替换** ——
 // 路由与定时器持有的是同一个引用，替换对象会让它们继续写到废弃的快照上。
 // （applyMergedMetadata 的注释里也写了这条不变量。）
-export const metadata = {}
+export const metadata = contextualObject({}, context => context?.data)
 let auditStore
 
 export async function initializeAuditPersistence(normalizeEntry) {
@@ -59,10 +60,13 @@ export async function initializeAuditPersistence(normalizeEntry) {
 }
 
 export async function flushAuditPersistence() {
+  if (currentDataContext()?.flushAudit) return currentDataContext().flushAudit()
   await auditStore?.flush?.()
 }
 
 export async function refreshAuditPersistence() {
+  const context = currentDataContext()
+  if (context?.auditStore) { metadata.auditLogs = await context.auditStore.refresh(context.store.adminReadModel ? 100 : undefined); return }
   if (auditStore instanceof DatabaseAuditStore) metadata.auditLogs = await auditStore.refresh()
 }
 
@@ -74,6 +78,8 @@ export async function flushMetadataWrites() {
 // A failed filesystem/DB acknowledgement can occur after the commit itself.
 // File rollback must never delete bytes that a durable resource already references.
 export async function publicationExists(predicate) {
+  const context = currentDataContext()
+  if (context?.publicationExists) return context.publicationExists(predicate)
   try {
     const snapshot = databasePool
       ? relationalSchemaEnabled
@@ -85,11 +91,14 @@ export async function publicationExists(predicate) {
 }
 
 export function readAuditLogs() {
+  if (currentDataContext()?.auditStore) return currentDataContext().auditStore.read()
   if (auditStore) metadata.auditLogs = auditStore.read()
   return metadata.auditLogs || []
 }
 
 export function persistAuditLog(log) {
+  const context = currentDataContext()
+  if (context?.auditStore) { metadata.auditLogs = context.auditStore.append(log); return }
   if (auditStore) {
     metadata.auditLogs = auditStore.append(log)
   } else {
@@ -100,6 +109,12 @@ export function persistAuditLog(log) {
 }
 
 export function purgeAuditLogsBefore(cutoff) {
+  const context = currentDataContext()
+  if (context?.auditStore) {
+    const result = context.auditStore.purgeBefore(cutoff)
+    metadata.auditLogs = result.logs
+    return result.removed
+  }
   if (auditStore) {
     const result = auditStore.purgeBefore(cutoff)
     metadata.auditLogs = result.logs
@@ -506,6 +521,9 @@ export function rememberMetadataBaseIds() {
 
 // ── 持久化 ───────────────────────────────────────────────────
 export function persistMetadata() {
+  const context = currentDataContext()
+  if (context?.persist) return context.persist()
+  if (databasePool && runtime.onDemandData) throw Object.assign(new Error('数据库写入必须在数据请求上下文中执行'), { status: 503, code: 'DATA_CONTEXT_REQUIRED' })
   if (runtime.persistenceError) throw runtime.persistenceError
   if (!databasePool) {
     persistLocalMetadata()
@@ -519,6 +537,16 @@ export function persistMetadata() {
       runtime.persistenceError = Object.assign(new Error('数据保存失败，服务暂不可写，请联系管理员'), { status:503, code:'METADATA_WRITE_FAILED' })
       console.error(JSON.stringify({event:'metadata_write_failed',code:error.code || 'DATABASE_WRITE_FAILED'}))
     })
+}
+
+// 数据已确认落库、但本次请求的持久化队列曾报错时，清除粘性错误，避免响应层
+// （server.mjs 的 res.json 包装）把已成功的操作改写为失败。
+export function clearPersistenceError() {
+  const context = currentDataContext()
+  if (!context?.runtime?.persistenceError) return
+  const code = context.runtime.persistenceError.code || 'UNKNOWN'
+  context.runtime.persistenceError = null
+  console.warn(JSON.stringify({ event: 'relational_persistence_error_recovered', code }))
 }
 
 export function withLocalMetadataLock(task) {

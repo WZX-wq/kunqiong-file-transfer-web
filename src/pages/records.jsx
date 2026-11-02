@@ -1,4 +1,5 @@
 import React from 'react'
+import { fetchPagedAccountList } from '../lib/records.js'
 import { createPortal } from 'react-dom'
 import { canReopenCollection, fileCategoryIcon, isDateInputStillOpen, managedFileItemsFromRecords, matchesManagedFileCategory, matchesManagedFileSearch, matchesRecordDate, matchesRecordScope, matchesRecordStatus, normalizeRecord, recordCopyLabel, recordCopyTarget, recordDetail, recordDisplayName, recordDisplayStatus, recordExpiryLabel, recordIconForScope, recordLink, recordManageUrl, recordOpenLabel, recordScopeLabel, recordStatusGroup, recordStatusTone, recordValidityLabel, toDateInputValue } from '../lib/records.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -720,7 +721,7 @@ export function TrashView({ user, authLoading = false, onLogin, onBack, onRefres
     applyLoading(true)
     applyError('')
     try {
-      const data = await apiRequest(teamScope ? '/api/account/team/trash' : '/api/account/trash')
+      const data = await fetchPagedAccountList(teamScope ? '/api/account/team/trash' : '/api/account/trash', 'items')
       if (requestId !== trashRequestRef.current) return
       applyItems(data.items || [])
       applyRetention(Number(data.retentionDays) || 7)

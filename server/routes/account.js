@@ -280,13 +280,13 @@ export function registerAccountRoutes(app) {
     const session = requireAuthSession(req, res)
     if (!session) return
     if (ensureRestoredResourceRecords(session.user.id)) persistMetadata()
-    res.json({ records: accountRecordsForUser(session.user.id) })
+    res.json({ records: accountRecordsForUser(session.user.id), ...(req.dataContext?.pagination ? { pagination: req.dataContext.pagination } : {}) })
   })
 
   app.get('/api/account/trash', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
-    res.json({ items: listTrashForOwner(session.user.id), retentionDays: TRASH_RETENTION_DAYS })
+    res.json({ items: listTrashForOwner(session.user.id), retentionDays: TRASH_RETENTION_DAYS, ...(req.dataContext?.pagination ? { pagination: req.dataContext.pagination } : {}) })
   })
 
   app.delete('/api/account/trash', async (req, res, next) => {
@@ -324,6 +324,7 @@ export function registerAccountRoutes(app) {
     if (!session) return
     const key = accountRecordOwnerKey(session.user.id)
     metadata.records[key] = pruneOrphanRecordEntries(normalizeAccountRecords(recordInputs(req.body?.records)))
+    req.dataContext?.store.bulkOperations.push({ type: 'replaceRecords', owner: key })
     persistMetadata()
     res.json({ records: metadata.records[key] })
   })
@@ -366,6 +367,7 @@ export function registerAccountRoutes(app) {
         if (purgedResource) purged.push(purgedResource)
       }
       metadata.records[key] = []
+      req.dataContext?.store.bulkOperations.push({ type: 'replaceRecords', owner: key })
     }
     persistMetadata()
     res.json({ records: metadata.records[key], purged })
@@ -374,7 +376,7 @@ export function registerAccountRoutes(app) {
   app.get('/api/account/messages', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
-    res.json({ messages: accountMessagesForUser(session.user.id), settings: accountNotificationSettingsForUser(session.user.id) })
+    res.json({ messages: accountMessagesForUser(session.user.id), settings: accountNotificationSettingsForUser(session.user.id), ...(req.dataContext?.pagination ? { pagination: req.dataContext.pagination } : {}) })
   })
 
   app.patch('/api/account/messages', (req, res) => {
@@ -382,6 +384,7 @@ export function registerAccountRoutes(app) {
     if (!session) return
     const key = accountRecordOwnerKey(session.user.id)
     metadata.messages[key] = accountMessagesForUser(session.user.id).map((message) => ({ ...message, unread: false }))
+    req.dataContext?.store.bulkOperations.push({ type: 'markMessagesRead', owner: key })
     persistMetadata()
     res.json({ messages: metadata.messages[key] })
   })
@@ -391,6 +394,7 @@ export function registerAccountRoutes(app) {
     if (!session) return
     const key = accountRecordOwnerKey(session.user.id)
     metadata.messages[key] = []
+    req.dataContext?.store.bulkOperations.push({ type: 'clearMessages', owner: key })
     persistMetadata()
     res.json({ messages: metadata.messages[key] })
   })

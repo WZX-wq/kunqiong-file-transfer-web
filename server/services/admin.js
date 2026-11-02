@@ -44,6 +44,7 @@ import {
 } from '../state.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import { currentDataContext } from '../lib/data-context.js'
 
 export function createAdminSession(req) {
   cleanupExpiredAdminSessions()
@@ -199,6 +200,12 @@ export function adminResourceSummary(kind, item) {
 }
 
 export function buildAdminOverview() {
+  const model = currentDataContext()?.store.adminReadModel
+  if (model) return { ...model,
+    users: model.users.map(user => ({ ...adminUserSummary(user), organizationName: user.organizationName, organizationRole: user.organizationRole, usageBytes: user.usageBytes })),
+    auditLogs: readAuditLogs().slice(0, 100), config: normalizeSystemConfig(metadata.systemConfig),
+    plans: configuredAccountPlans(), planDefaults: Object.values(ACCOUNT_PLANS).filter(plan => !plan.retired),
+  }
   const users = Object.values(metadata.users || {}).map(adminUserSummary).sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())
   const resources = [
     ...metadata.shares.map((item) => adminResourceSummary('share', item)),

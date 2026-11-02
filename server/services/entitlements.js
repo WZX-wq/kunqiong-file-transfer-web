@@ -3,6 +3,7 @@ import { MAX_FILE_SIZE } from '../config.js'
 import { normalizeSystemConfig } from '../lib/metadata-normalizers.js'
 import { metadata } from '../lib/metadata-store.js'
 import { httpError } from '../lib/http.js'
+import { currentDataContext } from '../lib/data-context.js'
 import { accountPlanForUser, accountUserById, accountOrganizationPlanForUser, authSessionFromRequest, currentCollectionStatus } from './account.js'
 
 export function personalEntitlements(userId = '') {
@@ -55,7 +56,7 @@ export function assertCollectionParticipant(task, submitter) {
 export function assertActiveCollectionLimit(ownerUserId, guestKey = '', excludeId = '') {
   const limit = personalEntitlements(ownerUserId).activeCollectionLimit
   if (!limit) return
-  const count = metadata.collections.filter(task => task.id !== excludeId && !task.cleanedAt && currentCollectionStatus(task) === 'active'
+  const count = currentDataContext()?.activeCollections(ownerUserId || '', guestKey, excludeId) ?? metadata.collections.filter(task => task.id !== excludeId && !task.cleanedAt && currentCollectionStatus(task) === 'active'
     && (ownerUserId ? task.ownerUserId === ownerUserId : !task.ownerUserId && task.ownerGuestKey === guestKey)).length
   if (count >= limit) throw httpError(409, `当前最多同时进行 ${limit} 个收集任务，请先关闭已有任务或升级套餐`)
 }

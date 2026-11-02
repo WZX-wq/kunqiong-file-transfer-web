@@ -76,6 +76,7 @@ export function registerWorkspaceRoutes(app) {
         fileCount: shares.reduce((sum, item) => sum + (item.files?.length || 0), 0),
         usedBytes: shareBytes,
         lastActivityAt: shares.map((item) => item.updatedAt || item.createdAt).filter(Boolean).sort().pop() || null,
+        ...(req.dataContext?.memberUsage?.get(member.userId) || {}),
       }
     })
     // 管理凭证仅提供给当前有效的管理者或上传者；接口每次重新校验成员与角色。
@@ -114,6 +115,7 @@ export function registerWorkspaceRoutes(app) {
       memberUsage,
       joinRequests: isOrganizationManager(organization, session.user.id) ? publicJoinRequestsForOrganization(organization) : [],
       resources: resources.slice(0, 200),
+      ...(req.dataContext?.pagination ? { pagination: req.dataContext.pagination } : {}),
     })
   })
   app.delete('/api/account/team/resources/:resourceId', async (req, res, next) => {
@@ -143,7 +145,7 @@ export function registerWorkspaceRoutes(app) {
       canRestore: canManageTeam || item.ownerUserId === session.user.id,
       canDelete: canManageTeam,
     }))
-    res.json({ items, retentionDays: TRASH_RETENTION_DAYS })
+    res.json({ items, retentionDays: TRASH_RETENTION_DAYS, ...(req.dataContext?.pagination ? { pagination: req.dataContext.pagination } : {}) })
   })
 
   app.delete('/api/account/team/trash', async (req, res, next) => {

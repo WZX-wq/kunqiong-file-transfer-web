@@ -17,7 +17,7 @@ import {
   normalizeSystemConfig
 } from '../lib/metadata-normalizers.js'
 import {
-  metadata
+  metadata, clearPersistenceError
 } from '../lib/metadata-store.js'
 import {
   chunkUpload, prepareChunkUpload
@@ -84,7 +84,7 @@ export function registerUploadRoutes(app) {
     if (!teamOrganization.members.some((member) => member.userId === ownerSession.user.id && member.status === 'active')) {
       return res.status(403).json({ message: '当前成员状态不能上传到团队空间' })
     }
-    assertUniqueTeamResourceNames(teamOrganization, normalizedFiles)
+    await assertUniqueTeamResourceNames(teamOrganization, normalizedFiles)
     assertTeamCapacity(teamOrganization, normalizedFiles.reduce((sum, file) => sum + file.size, 0), ownerSession.user.id)
   } else {
     assertAccountCapacity(collectionTask ? accountUserById(collectionTask.ownerUserId) : ownerSession?.user, normalizedFiles.reduce((sum, file) => sum + file.size, 0))
@@ -296,6 +296,17 @@ export function registerUploadRoutes(app) {
       await persistUploadSession(session)
       await discardUploadSession(session)
       res.status(201).json(result)
+    } catch (error) {
+      // 发布事务可能已经提交，随后通知/会话落盘才失败：按已发布返回，避免客户端
+      // 重试导致重复发布。publicationUncertain 表示无法确认是否已提交，必须报错。
+      const recovered = error.publicationUncertain ? null : uploadCompletionResult(session, req)
+      if (!recovered) throw error
+      console.warn(JSON.stringify({ event: 'upload_completion_recovered', code: error.code || 'UNKNOWN' }))
+      clearPersistenceError()
+      session.completion = { status: 'complete', finishedAt: new Date().toISOString() }
+      await persistUploadSession(session).catch(() => {})
+      await discardUploadSession(session).catch(() => {})
+      res.status(201).json(recovered)
     } finally { session.completing = false }
   } catch (error) { next(error) }
 })
@@ -360,7 +371,7 @@ async function completeUpload(req, session, mergedFiles) {
   if (session.mode === 'team_resource') {
     const organization = Object.values(metadata.organizations || {}).find((item) => item.id === session.organizationId)
     if (!organization) throw httpError(404, '团队空间不存在')
-    assertUniqueTeamResourceNames(organization, mergedFiles)
+    await assertUniqueTeamResourceNames(organization, mergedFiles)
     assertTeamCapacity(organization, mergedFiles.reduce((sum, file) => sum + file.size, 0), session.uploadUserId ?? session.ownerUserId)
   }
   const share = await createShareFromTempFiles(mergedFiles, {

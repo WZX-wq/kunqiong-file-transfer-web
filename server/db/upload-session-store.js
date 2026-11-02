@@ -163,6 +163,25 @@ export class MySqlUploadSessionStore {
     })
   }
 
+  async load(id) {
+    const digest = sessionDigest(id)
+    const [rows] = await this.executor.execute(`SELECT session_digest, manifest_ciphertext FROM ${this.table} WHERE session_digest = ? LIMIT 1`, [digest])
+    if (!rows.length) return null
+    const manifest = JSON.parse(revealCredential(rows[0].manifest_ciphertext, `upload-session:${digest}`))
+    if (sessionDigest(manifest?.id) !== digest) throw new Error('MySQL 上传会话摘要校验失败')
+    return assertManifest(manifest)
+  }
+
+  async cleanupCandidates(afterId, before) {
+    const [rows] = await this.executor.execute(`SELECT id, session_digest, manifest_ciphertext FROM ${this.table}
+      WHERE id > ? AND gmt_create <= ? ORDER BY id LIMIT 50`, [afterId, mysqlDate(before)])
+    return rows.map(row => {
+      const manifest = JSON.parse(revealCredential(row.manifest_ciphertext, `upload-session:${row.session_digest}`))
+      if (sessionDigest(manifest?.id) !== row.session_digest) throw new Error('MySQL 上传会话摘要校验失败')
+      return { rowId: row.id, manifest: assertManifest(manifest) }
+    })
+  }
+
   async delete(id) {
     const [result] = await this.executor.execute(`DELETE FROM ${this.table} WHERE session_digest = ?`, [sessionDigest(id)])
     return Number(result.affectedRows) > 0

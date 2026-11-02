@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { apiRequest, copyTextToClipboard, createUploadSessionState, createUploadState } from '../lib/api.js'
 import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canPreviewFile, createShareDownloadConfig, createShareFilePreviewConfig, uploadShareInChunks } from '../lib/transfer.js'
-import { createShareRecord, saveLocalRecord, upsertCloudRecords } from '../lib/records.js'
+import { createShareRecord, saveLocalRecord, upsertCloudRecords, fetchPagedAccountList } from '../lib/records.js'
 import { ConfirmModal, FeedbackMessage, PublicShell, Toast } from '../components/common.jsx'
 import { ArrowLeft, Building2, Check, ClipboardCheck, Copy, Crown, Database, Download, Eye, FileText, FolderOpen, HardDrive, Home, Link2, LogOut, PencilLine, Search, Settings2, Trash2, UploadCloud, UserPlus, UserRound, Users, X } from 'lucide-react'
 import { formatBytes, formatDate } from '../lib/format.js'
@@ -91,7 +91,7 @@ export function TeamPage() {
         return
       }
       setUser(auth.user)
-      setData(await apiRequest('/api/account/team/overview'))
+      setData(await fetchPagedAccountList('/api/account/team/overview', 'resources'))
     } catch (err) {
       if (silent) setNotice({ message: err.message || '团队数据刷新失败', tone: 'error' })
       else setError(err.message || '团队数据加载失败')

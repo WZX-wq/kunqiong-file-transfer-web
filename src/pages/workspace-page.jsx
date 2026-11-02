@@ -86,15 +86,16 @@ export function WorkspacePage() {
           request.queued = false
           try {
             const auth = await apiRequest('/api/auth/me', { signal })
-            const data = auth.user ? await apiRequest('/api/account/workspace', { signal }) : null
             if (!mounted.current || signal.aborted) return
             setUser(auth.user || null)
+            const data = auth.user ? await apiRequest('/api/account/workspace', { signal }) : null
+            if (!mounted.current || signal.aborted) return
             setWorkspace(data)
             setError('')
             if (!auth.user) { setUpgradeOpen(false); setTeamUsage(null); return }
             // 团队共享用量单独取；失败时保持空值，卡片降级显示额度与成员数。
             if (data?.organization?.id && data?.teamEntitlement?.canUseTeamSpace) {
-              apiRequest('/api/account/team/overview', { signal })
+              apiRequest('/api/account/team/overview?summary=1', { signal })
                 .then((overview) => { if (mounted.current && !signal.aborted) setTeamUsage(overview?.capacity || null) })
                 .catch(() => { if (mounted.current && !signal.aborted) setTeamUsage(null) })
             } else {
@@ -106,6 +107,7 @@ export function WorkspacePage() {
               setUser(null)
               setWorkspace(null)
               setUpgradeOpen(false)
+              setError('')
               return
             }
             setError(err.message || '团队空间加载失败')
@@ -201,6 +203,7 @@ export function WorkspacePage() {
   }
 
   if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开团队空间</h1><p>正在读取账号权益和团队数据。</p></div></PublicShell>
+  if (error && !workspace) return <PublicShell><div className="state-block" data-workspace-load-error role="alert"><div className="settings-state-icon"><Building2 size={24} /></div><h1>{user ? '团队空间暂时无法加载' : '暂时无法确认登录状态'}</h1><p>{error}</p><button className="primary-button" onClick={() => load()}><RefreshCw size={16} /> 重新加载</button></div></PublicShell>
   if (!user) {
     return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和入团申请会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
   }

@@ -16,23 +16,26 @@ import express from 'express'
 import { limitResourceCreation } from './server/lib/resource-rate-limit.js'
 
 import {
-  AUTH_COOKIE_NAME, MAX_FILE_SIZE, MAX_FILES, collectionsRoot, distRoot, filesRoot, relationalSchemaEnabled, releaseSha, userFilesRoot,
+  MAX_FILE_SIZE, MAX_FILES, collectionsRoot, distRoot, filesRoot, releaseSha, userFilesRoot,
   serverHost, serverPort, storageRoot, tempRoot, testEnterpriseForAllUsers, testVerificationDebugMode
 } from './server/config.js'
 
 import {
   createToken, firstHeader
 } from './server/lib/http.js'
-import { keyedDigest } from './server/lib/private-key.js'
-import { readRelationalAuthSessionState } from './server/lib/relational-auth-session.js'
 
 import {
   databasePool, runtime
 } from './server/state.js'
 import { initializeRelationalSchemaOnStartup } from './server/db/startup.js'
+import { createStartupLifecycle } from './server/lib/startup-lifecycle.js'
+import { relationalDataMiddleware } from './server/lib/relational-request.js'
+import { requireSharedDataKey } from './server/lib/private-key.js'
+import { scheduleRelationalMaintenance } from './server/lib/relational-maintenance.js'
+import { flushDataOperations } from './server/lib/data-context.js'
 
 import {
-  flushAuditPersistence, flushMetadataWrites, initMetadata, initializeAuditPersistence, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata
+  emptyMetadata, flushAuditPersistence, flushMetadataWrites, initMetadata, initializeAuditPersistence, installNormalizer, loadMetadata, metadata, metadataIdSets, persistMetadata
 } from './server/lib/metadata-store.js'
 
 // normalizeMetadata 的传递依赖闭包已移至 metadata-normalizers.js；
@@ -54,7 +57,7 @@ import {
 // 账号域业务逻辑（路由仍在本文件注册，按域逐步迁移）
 import {
   authSessionFailure, authSessionFromRequest, cleanupExpired, configuredAccountPlans, isSmtpConfigured,
-  isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog, readCookie, repairLegacyTestAdminPlans, repairLegacyTestPaidPlans, restoreAdminPlanRestrictions
+  isTencentSmsConfigured, normalizeContactTarget, reconcileActiveUpgradeOrders, recordAuditLog, repairLegacyTestAdminPlans, repairLegacyTestPaidPlans, restoreAdminPlanRestrictions
 } from './server/services/account.js'
 
 import { registerAdminRoutes } from './server/routes/admin.js'
@@ -84,65 +87,112 @@ import {
 } from './server/lib/audit.js'
 
 // 业务常量（套餐、默认通知/清理设置、默认站内消息）已移至 server/config.js。
-// 元数据并发写保护：revision 是快照的单调版本号，落盘走 CAS（MySQL 用 WHERE revision = ?）。
-// 冲突时重读远端 + 合并 + 重试，避免多实例各自拿启动时的旧快照互相覆盖。
-// MySQL 模式以数据库为准（metadata.json 只作镜像，不参与 CAS）；
-// 本地模式以文件为准，用旁挂的 .revision 文件记录版本。两条路径各自独立计数。
-// 快照合并规则（合并算法见后面的 mergeMetadataSnapshots）。放在模块顶部是因为
-// 启动阶段就会调用 metadataIdSets，必须早于任何落盘动作完成初始化。
+// 数据库模式按请求查询关系表并事务保存改动实体，不读写本地业务快照。
+// 单机模式仍以文件为准，用旁挂的 .revision 文件记录版本。
 // 连接池与限流/会话状态已移至 server/state.js（全进程共享同一实例，见该文件说明）。
 
 for (const directory of [storageRoot, tempRoot, filesRoot, collectionsRoot, userFilesRoot]) {
   fs.mkdirSync(directory, { recursive: true })
 }
 
-const relationalSchemaResult = await initializeRelationalSchemaOnStartup()
-if (relationalSchemaResult) {
-  console.log(`关系表结构已就绪：${relationalSchemaResult.tableCount} 张表。`)
+async function initializeApplication(setStage) {
+  if (databasePool) {
+    requireSharedDataKey()
+    // Schema and legacy imports are explicit migration commands. Opening HTTP
+    // neither connects to MySQL nor loads a local/remote business snapshot.
+    runtime.onDemandData = true
+    initMetadata(emptyMetadata())
+    runtime.metadataReady = metadata
+    setStage('ready')
+    return
+  }
+  setStage('schema')
+  const relationalSchemaResult = await initializeRelationalSchemaOnStartup()
+  if (relationalSchemaResult) {
+    console.log(`关系表结构已就绪：${relationalSchemaResult.tableCount} 张表。`)
+  }
+
+  // ① 先注入领域规范化函数，之后 loadMetadata / mergeMetadataSnapshots 才会真正做规范化
+  //    （顺序不可颠倒：loadMetadata 内部就要调用它）
+  installNormalizer(normalizeMetadata)
+  // ② 再载入并就地填充 metadata 快照
+  setStage('metadata')
+  initMetadata(normalizeMetadata(await loadMetadata()))
+  setStage('audit')
+  await initializeAuditPersistence(normalizeAuditLog)
+  if (databasePool && relationalSchemaResult) {
+    console.log(`业务数据已从 MySQL 关系表载入：revision ${runtime.metadataRevision}。`)
+  }
+  runtime.metadataBaseIds = metadataIdSets(metadata)
+  runtime.metadataLocalBaseIds = runtime.metadataBaseIds
+  for (const share of metadata.shares) {
+    if (share.deliveryRecipients?.length && !Array.isArray(share.recipientUserIds)) {
+      const notifiedIds = (share.notificationLog || []).flatMap((entry) => entry.deliveredUserIds || [])
+      share.recipientUserIds = [...new Set([...notifiedIds, ...resolveRecipientUserIds(share.deliveryRecipients, true)])]
+      share.recipientContacts = share.deliveryRecipients.filter((recipient) => normalizeContactTarget(recipient) && !resolveRecipientUserIds([recipient], true).length)
+      runtime.metadataNeedsPersist = true
+    }
+  }
+  setStage('files')
+  const storageMigration = await migrateLegacyUserFiles(metadata, {
+    usersRoot: userFilesRoot, legacyFilesRoot: filesRoot, legacyCollectionsRoot: collectionsRoot,
+    persist: async () => { persistMetadata(); await flushMetadataWrites() },
+  })
+  if (storageMigration.migrated || storageMigration.resumed || storageMigration.failures.length) {
+    console.log(JSON.stringify({ event: 'legacy_file_storage_migration', ...storageMigration }))
+  }
+  runtime.metadataReady = metadata
+  repairLegacyTestAdminPlans()
+  repairLegacyTestPaidPlans()
+  restoreAdminPlanRestrictions()
+  if (runtime.metadataNeedsPersist) persistMetadata()
+  setStage('uploads')
+  await restoreUploadSessions()
+  setStage('ready')
 }
 
-// ① 先注入领域规范化函数，之后 loadMetadata / mergeMetadataSnapshots 才会真正做规范化
-//    （顺序不可颠倒：loadMetadata 内部就要调用它）
-installNormalizer(normalizeMetadata)
-// ② 再载入并就地填充 metadata 快照
-initMetadata(normalizeMetadata(await loadMetadata()))
-await initializeAuditPersistence(normalizeAuditLog)
-if (databasePool && relationalSchemaResult) {
-  console.log(`业务数据已从 MySQL 关系表载入：revision ${runtime.metadataRevision}。`)
-}
-runtime.metadataBaseIds = metadataIdSets(metadata)
-runtime.metadataLocalBaseIds = runtime.metadataBaseIds
-for (const share of metadata.shares) {
-  if (share.deliveryRecipients?.length && !Array.isArray(share.recipientUserIds)) {
-    const notifiedIds = (share.notificationLog || []).flatMap((entry) => entry.deliveredUserIds || [])
-    share.recipientUserIds = [...new Set([...notifiedIds, ...resolveRecipientUserIds(share.deliveryRecipients, true)])]
-    share.recipientContacts = share.deliveryRecipients.filter((recipient) => normalizeContactTarget(recipient) && !resolveRecipientUserIds([recipient], true).length)
-    runtime.metadataNeedsPersist = true
-  }
-}
-const storageMigration = await migrateLegacyUserFiles(metadata, {
-  usersRoot: userFilesRoot, legacyFilesRoot: filesRoot, legacyCollectionsRoot: collectionsRoot,
-  persist: async () => { persistMetadata(); await flushMetadataWrites() },
+const startup = createStartupLifecycle({
+  initialize: initializeApplication,
+  onError(error, stage) {
+    console.error(JSON.stringify({ event: 'application_initialization_failed', release: releaseSha, stage, code: error.code || 'STARTUP_FAILED' }))
+  },
 })
-if (storageMigration.migrated || storageMigration.resumed || storageMigration.failures.length) {
-  console.log(JSON.stringify({ event: 'legacy_file_storage_migration', ...storageMigration }))
-}
-runtime.metadataReady = metadata
-repairLegacyTestAdminPlans()
-repairLegacyTestPaidPlans()
-restoreAdminPlanRestrictions()
-if (runtime.metadataNeedsPersist) persistMetadata()
 const app = express()
 
 app.set('trust proxy', 'loopback')
+// These probes must bypass session queries, audit flushing and business middleware.
+app.get('/api/health/live', (_req, res) => {
+  res.set('Cache-Control', 'no-store').json({ ok: true, service: 'kunqiong-local-api', release: releaseSha, status: startup.status })
+})
+app.get('/api/health', (_req, res) => {
+  const ready = startup.ready && !runtime.persistenceError
+  res.status(ready ? 200 : 503).set('Cache-Control', 'no-store').json({
+    ok: ready,
+    ready,
+    status: runtime.persistenceError ? 'failed' : startup.status,
+    stage: startup.stage,
+    service: 'kunqiong-local-api',
+    release: releaseSha,
+    now: new Date().toISOString(),
+    test: process.env.NODE_ENV === 'test',
+    testEnterpriseForAllUsers,
+    verification: {
+      email: isSmtpConfigured(),
+      sms: isTencentSmsConfigured(),
+      debugFallback: testVerificationDebugMode,
+    },
+  })
+})
+app.use(startup.middleware)
 app.use(express.json({ limit: '1mb' }))
+if (databasePool) app.use(relationalDataMiddleware(databasePool))
 // 4xx/5xx 的 JSON 错误响应统一附带 x-error-message 头：下载预检走 HEAD（无响应体），
 // 前端从该头读取人类可读的错误文案，避免界面出现「下载失败（410）」这类裸状态码。
 // 头值只允许 latin1，中文先 encodeURIComponent，前端拿到后 decodeURIComponent。
 app.use((_req, res, next) => {
   const originalJson = res.json.bind(res)
   res.json = (payload) => {
-    if (databasePool && res.statusCode < 400) {
+    if (databasePool) {
       Promise.all([runtime.metadataWriteQueue, flushAuditPersistence()]).then(() => {
         if (res.destroyed) return
         if (runtime.persistenceError) return originalJsonAfterError()
@@ -153,8 +203,9 @@ app.use((_req, res, next) => {
     return sendJson(payload)
   }
   const originalJsonAfterError = () => {
-    res.status(503)
-    return sendJson({ message:'数据保存失败，服务暂不可写，请联系管理员', code:'METADATA_WRITE_FAILED' })
+    const error = runtime.persistenceError
+    res.status(error?.status || 503)
+    return sendJson({ message: error?.message || '数据保存失败，请稍后重试', code: error?.code || 'METADATA_WRITE_FAILED' })
   }
   const originalRedirect = res.redirect.bind(res)
   res.redirect = (...args) => {
@@ -173,37 +224,6 @@ app.use((_req, res, next) => {
     return originalJson(payload)
   }
   next()
-})
-app.use('/api', async (req, _res, next) => {
-  const sessionId = readCookie(req, AUTH_COOKIE_NAME)
-  if (!sessionId || !databasePool) return next()
-  try {
-    let sessionState = null
-    if (relationalSchemaEnabled) {
-      sessionState = await readRelationalAuthSessionState(databasePool, keyedDigest(`session-cookie:${sessionId}`))
-    } else {
-      const search = "JSON_SEARCH(CAST(payload AS JSON), 'one', ?, NULL, '$.sessions[*].id')"
-      const base = `SUBSTRING_INDEX(${search}, '.id', 1)`
-      const [rows] = await databasePool.execute(
-        `SELECT ${search} AS session_path,
-          JSON_UNQUOTE(JSON_EXTRACT(CAST(payload AS JSON), CONCAT(${base}, '.expiresAt'))) AS expires_at,
-          JSON_UNQUOTE(JSON_EXTRACT(CAST(payload AS JSON), CONCAT(${base}, '.revokedAt'))) AS revoked_at
-         FROM kunqiong_app_state WHERE state_key = ? LIMIT 1`,
-        [sessionId, sessionId, sessionId, 'metadata'],
-      )
-      if (rows[0]?.session_path) {
-        sessionState = {
-          expired: new Date(rows[0].expires_at).getTime() <= Date.now(),
-          revoked: Boolean(rows[0].revoked_at),
-        }
-      }
-    }
-    if (!sessionState || sessionState.revoked || sessionState.expired) {
-      req.accountSessionInvalidationReason = sessionState?.revoked ? 'replaced' : sessionState ? 'expired' : 'invalid'
-      req.headers.cookie = String(req.headers.cookie || '').split(';').filter((part) => part.trim().split('=', 1)[0] !== AUTH_COOKIE_NAME).join('; ')
-    }
-    next()
-  } catch (error) { next(error) }
 })
 app.use('/api', (req, res, next) => {
   const json = res.json.bind(res)
@@ -256,22 +276,6 @@ app.use((req, res, next) => {
 })
 
 app.use(limitResourceCreation)
-
-app.get('/api/health', (_req, res) => {
-  res.json({
-    ok: !runtime.persistenceError,
-    service: 'kunqiong-local-api',
-    release: releaseSha,
-    now: new Date().toISOString(),
-    test: process.env.NODE_ENV === 'test',
-    testEnterpriseForAllUsers,
-    verification: {
-      email: isSmtpConfigured(),
-      sms: isTencentSmsConfigured(),
-      debugFallback: testVerificationDebugMode,
-    },
-  })
-})
 
 app.get('/api/runtime-config', (req, res) => {
   res.set('Cache-Control', 'no-store')
@@ -381,6 +385,7 @@ if (fs.existsSync(distRoot)) {
 
 app.use((error, req, res, _next) => {
   const errorCode = /^[a-zA-Z_0-9]+$/.test(String(error.code || '')) ? error.code : 'REQUEST_FAILED'
+  const retryableCodes = ['METADATA_WRITE_FAILED', 'PUBLICATION_UNCERTAIN', 'DATABASE_RETRY_EXHAUSTED', 'DATABASE_QUEUE_TIMEOUT', 'DATABASE_QUERY_TIMEOUT', 'DATABASE_UNAVAILABLE', 'CAPACITY_CHANGED', 'COLLECTION_COUNT_CHANGED']
   res.locals.errorCode = errorCode
   console.error(JSON.stringify({ event: 'request_failed', release: releaseSha, requestId: res.locals.requestId || '', method: req.method, path: sanitizeAuditPath(req.path), code: errorCode }))
   if (error.code === 'ENOSPC' || error.code === 'EDQUOT') return res.status(507).json({ message: '存储空间不足，请清理空间后重试', code: error.code })
@@ -388,6 +393,7 @@ app.use((error, req, res, _next) => {
     // guestQuota 仅在游客配额超限时存在，前端据此渲染引导弹窗；code 供前端区分业务错误。
     const payload = { message: error.message || '请求处理失败' }
     if (error.code) payload.code = error.code
+    if (retryableCodes.includes(error.code)) payload.retryable = true
     if (error.scanLimit) payload.scanLimit = error.scanLimit
     if (error.scanFile) payload.scanFile = error.scanFile
     if (error.scanFinding) payload.scanFinding = error.scanFinding
@@ -403,36 +409,51 @@ app.use((error, req, res, _next) => {
 
 const server = app.listen(serverPort, serverHost, () => {
   console.log(`鲲穹服务 listening on http://${serverHost === '0.0.0.0' ? 'localhost' : serverHost}:${serverPort}`)
+  startup.start().then(() => {
+    if (!startup.ready) return
+    console.log(JSON.stringify({ event: 'application_ready', release: releaseSha }))
+    startMaintenance()
+  })
 })
 
-const cleanupTimer = setInterval(() => {
+let cleanupTimer, paymentTimer, initialPaymentCheck, auditLogTimer
+function startMaintenance() {
+  if (databasePool) {
+    const timers = scheduleRelationalMaintenance(databasePool)
+    cleanupTimer = timers.cleanup
+    paymentTimer = timers.payment
+    auditLogTimer = timers.audit
+    return
+  }
+  cleanupTimer = setInterval(() => {
+    cleanupExpired()
+    purgeExpiredTrash()
+    cleanupUploadSessions()
+  }, 60 * 1000)
+  cleanupTimer.unref()
+  paymentTimer = setInterval(() => { reconcileActiveUpgradeOrders().catch(() => {}) }, 30000)
+  paymentTimer.unref()
+  initialPaymentCheck = setTimeout(() => { reconcileActiveUpgradeOrders().catch(() => {}) }, 1000)
+  initialPaymentCheck.unref()
+  // 审计日志按保留期每日自动清除（只动 auditLogs，不碰资源清理——purgeStaleResources 绝不进定时链路）
+  auditLogTimer = setInterval(() => {
+    try {
+      purgeExpiredAuditLogs()
+    } catch (error) {
+      console.warn('[audit-log-cleanup] failed:', error?.message || error)
+    }
+  }, 24 * 60 * 60 * 1000)
+  auditLogTimer.unref()
   cleanupExpired()
   purgeExpiredTrash()
   cleanupUploadSessions()
-}, 60 * 1000)
-cleanupTimer.unref()
-const paymentTimer = setInterval(() => { reconcileActiveUpgradeOrders().catch(() => {}) }, 30000)
-paymentTimer.unref()
-const initialPaymentCheck = setTimeout(() => { reconcileActiveUpgradeOrders().catch(() => {}) }, 1000)
-initialPaymentCheck.unref()
-// 审计日志按保留期每日自动清除（只动 auditLogs，不碰资源清理——purgeStaleResources 绝不进定时链路）
-const auditLogTimer = setInterval(() => {
-  try {
-    purgeExpiredAuditLogs()
-  } catch (error) {
-    console.warn('[audit-log-cleanup] failed:', error?.message || error)
-  }
-}, 24 * 60 * 60 * 1000)
-auditLogTimer.unref()
-await restoreUploadSessions()
-cleanupExpired()
-purgeExpiredTrash()
-cleanupUploadSessions()
+}
 
 let shuttingDown = false
 async function shutdown(signal) {
   if (shuttingDown) return
   shuttingDown = true
+  startup.stop()
   clearInterval(cleanupTimer)
   clearInterval(paymentTimer)
   clearTimeout(initialPaymentCheck)
@@ -447,6 +468,7 @@ async function shutdown(signal) {
     await new Promise((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeIdleConnections?.() })
     await runtime.metadataWriteQueue
     await flushAuditPersistence()
+    await flushDataOperations()
     if (databasePool) await databasePool.end()
     if (runtime.persistenceError) throw runtime.persistenceError
     clearTimeout(deadline)

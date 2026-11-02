@@ -237,7 +237,7 @@ export function saveAuthoritativeLocalRecord(record, currentRecords) {
 }
 
 export async function fetchCloudRecords() {
-  const data = await apiRequest('/api/account/records')
+  const data = await fetchPagedAccountList('/api/account/records', 'records')
   return normalizeRecords(data.records || [])
 }
 
@@ -267,21 +267,39 @@ export async function clearCloudRecords() {
 }
 
 export async function fetchCloudMessages() {
-  return apiRequest('/api/account/messages')
+  return fetchPagedAccountList('/api/account/messages', 'messages')
+}
+
+export async function fetchPagedAccountList(url, field) {
+  const result = await apiRequest(url)
+  const items = [...(result[field] || [])]
+  const seen = new Set()
+  let cursor = result.pagination?.nextCursor
+  while (cursor) {
+    if (seen.has(cursor)) throw new Error('分页结果异常，请刷新后重试')
+    seen.add(cursor)
+    const page = await apiRequest(`${url}?cursor=${encodeURIComponent(cursor)}`)
+    items.push(...(page[field] || []))
+    cursor = page.pagination?.nextCursor
+  }
+  return { ...result, [field]: [...new Map(items.map(item => [item.id, item])).values()], pagination: { nextCursor: null } }
 }
 
 export async function markCloudMessageRead(id) {
-  return apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'PATCH' })
+  const result = await apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'PATCH' })
+  return { ...result, ...await fetchCloudMessages() }
 }
 
 export async function markAllCloudMessagesRead() {
-  return apiRequest('/api/account/messages', { method: 'PATCH' })
+  await apiRequest('/api/account/messages', { method: 'PATCH' })
+  return fetchCloudMessages()
 }
 
 export async function deleteCloudMessage(id) {
   // keepalive：用户点删除后立即刷新/关闭页面时，浏览器默认会取消飞行中的请求，
   // 服务端收不到 DELETE，刷新后消息「复活」。keepalive 保证请求送达（msg 体很小，无 64KB 限制风险）。
-  return apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true })
+  await apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true })
+  return fetchCloudMessages()
 }
 
 export async function deleteAllCloudMessages() {

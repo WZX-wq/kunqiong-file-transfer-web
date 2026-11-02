@@ -1,4 +1,5 @@
 import { keyedDigest } from '../lib/private-key.js'
+import { currentDataContext } from '../lib/data-context.js'
 import { teamBrandConfiguration } from '../lib/team-branding.js'
 import { upgradePaymentDeadline, upgradePaymentExpired } from '../lib/upgrade-payment.js'
 import { equalSecret, pruneAttempts } from '../lib/security-primitives.js'
@@ -1053,23 +1054,21 @@ export function accountUsageForUser(userId) {
   const user = accountUserById(key) || {}
   // 个人用量必须按**个人套餐**算容量：加入团队不能把个人空间撑大。
   const plan = accountPersonalPlanForUser(user)
+  const queried = currentDataContext()?.usage(key)
   const ownedShares = metadata.shares.filter((share) => share.ownerUserId === key && !share.teamResource && !share.cleanedAt)
   const ownedCollections = metadata.collections.filter((task) => task.ownerUserId === key && !task.cleanedAt)
   const shareBytes = ownedShares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const collectionBytes = ownedCollections.reduce((sum, task) => sum + task.submissions.reduce((inner, submission) => inner + fileListSize(submission.files), 0), 0)
-  const usedBytes = shareBytes + collectionBytes
-  const fileCount = ownedShares.reduce((sum, share) => sum + (share.files?.length || 0), 0)
-    + ownedCollections.reduce((sum, task) => sum + task.submissions.reduce((inner, submission) => inner + (submission.files?.length || 0), 0), 0)
+  const totals = queried || { shareBytes, collectionBytes, shareCount: ownedShares.length, collectionCount: ownedCollections.length,
+    fileCount: ownedShares.reduce((sum, share) => sum + (share.files?.length || 0), 0)
+      + ownedCollections.reduce((sum, task) => sum + task.submissions.reduce((inner, submission) => inner + (submission.files?.length || 0), 0), 0) }
+  const usedBytes = totals.shareBytes + totals.collectionBytes
   return {
     usedBytes,
     totalBytes: plan.totalBytes,
     remainingBytes: Math.max(plan.totalBytes - usedBytes, 0),
     usageRatio: plan.totalBytes ? Math.min(1, usedBytes / plan.totalBytes) : 0,
-    shareBytes,
-    collectionBytes,
-    shareCount: ownedShares.length,
-    collectionCount: ownedCollections.length,
-    fileCount,
+    ...totals,
     singleFileLimitBytes: plan.singleFileLimitBytes,
   }
 }
@@ -1078,7 +1077,8 @@ export function accountTeamUsageForOrganization(organization, userOrId = null) {
   // Organization capacity is the same for every active member.
   const plan = organizationTeamPlanForOrganization(organization)
   const shares = metadata.shares.filter((share) => share.teamResource && share.teamOrganizationId === organization?.id && !share.cleanedAt)
-  const usedBytes = shares.reduce((sum, share) => sum + fileListSize(share.files), 0)
+  const totals = currentDataContext()?.usage(organization?.id, true)
+  const usedBytes = totals?.shareBytes ?? shares.reduce((sum, share) => sum + fileListSize(share.files), 0)
   const totalBytes = Number(plan.teamSpaceBytes || 0)
   return {
     usedBytes,
@@ -1087,9 +1087,9 @@ export function accountTeamUsageForOrganization(organization, userOrId = null) {
     usageRatio: totalBytes ? Math.min(1, usedBytes / totalBytes) : 0,
     shareBytes: usedBytes,
     collectionBytes: 0,
-    shareCount: shares.length,
+    shareCount: totals?.shareCount ?? shares.length,
     collectionCount: 0,
-    fileCount: shares.reduce((sum, share) => sum + (share.files?.length || 0), 0),
+    fileCount: totals?.fileCount ?? shares.reduce((sum, share) => sum + (share.files?.length || 0), 0),
     singleFileLimitBytes: plan.singleFileLimitBytes,
   }
 }

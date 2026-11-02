@@ -79,7 +79,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
    if(deleteFailure||currentRole==='peer'){deleteFailure=false;status=403;data={message:'你已失去删除权限'}}
    else{resourceDeleted=true;trashDeleted=true;data={ok:true,deletedResourceId:'teamfile',deletedFileCount:1,releasedBytes:0,retainedBytes:4,trashExpiresAt:new Date(Date.now()+7*86400000).toISOString(),capacity:overview().capacity}}
   }
-  else if(url==='/api/account/workspace'){if(method==='PATCH'&&renameFailure){renameFailure=false;status=409;data={message:'团队名称已存在，请使用其他名称'}}else{if(method==='PATCH'||method==='POST'){name=JSON.parse(options.body).name;hasTeam=true}data={plan,plans:[plan],capacity:{usedBytes:0,totalBytes:plan.totalBytes},organization:hasTeam?organization():null,canManage:hasTeam&&['owner','admin'].includes(currentRole),isOwner:currentRole==='owner',teamEntitlement:{role:currentRole,canManage:hasTeam&&['owner','admin'].includes(currentRole),canUseTeamSpace:hasTeam,teamSpaceBytes:plan.teamSpaceBytes},orders:[]}}}
+  else if(url==='/api/account/workspace'){if(method==='GET'&&navigation.workspaceFailure){status=503;data={message:'数据库暂时繁忙，请稍后重试'}}else if(method==='PATCH'&&renameFailure){renameFailure=false;status=409;data={message:'团队名称已存在，请使用其他名称'}}else{if(method==='PATCH'||method==='POST'){name=JSON.parse(options.body).name;hasTeam=true}data={plan,plans:[plan],capacity:{usedBytes:0,totalBytes:plan.totalBytes},organization:hasTeam?organization():null,canManage:hasTeam&&['owner','admin'].includes(currentRole),isOwner:currentRole==='owner',teamEntitlement:{role:currentRole,canManage:hasTeam&&['owner','admin'].includes(currentRole),canUseTeamSpace:hasTeam,teamSpaceBytes:plan.teamSpaceBytes},orders:[]}}}
   else if(url.startsWith('/api/account/workspace/member-search'))data={users:[{id:'candidate',displayName:'候选成员',username:'candidate',email:'c***@example.test',phone:'138****9999'}]}
   else if(url==='/api/account/workspace/members/m-member/role'&&method==='PATCH'){if(roleChangeFailure){roleChangeFailure=false;status=403;data={message:'角色调整被拒绝'}}else{members.find(member=>member.id==='m-member').role=JSON.parse(options.body).role;data={organization:organization()}}}
   else if(url==='/api/account/workspace/transfer-ownership'){pendingHandover={id:'handover-1',fromUserId:'owner',toUserId:'member',fromName:'所有者',toName:'普通成员',status:'pending',initiatedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+7*86400000).toISOString(),canCancel:true,canRespond:false};status=201;data={transferred:false,handover:pendingHandover}}
@@ -106,6 +106,20 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  return {failNextHandover:()=>handoverFailure=true,holdNextHandover:()=>holdHandover=true,releaseHandover:()=>{holdHandover=false;releaseHandover?.()},exhaustDownloads:()=>quotaUsed=true,failNextRoleChange:()=>roleChangeFailure=true,dom,window,document,calls,errors,copiedTexts,click,find,input,file,choose,remove:()=>removed=true,failNextRename:()=>renameFailure=true,failNextResourceDelete:()=>deleteFailure=true,holdNextResourceDelete:()=>holdDelete=true,releaseResourceDelete:()=>{holdDelete=false;releaseDelete?.()},holdNextTrash:()=>holdTrash=true,releaseTrash:()=>{holdTrash=false;releaseTrash?.()}}
 }
 async function scenario(id,fn){try{await fn();cases.push({id,status:'PASS'})}catch(e){failures.push({id,message:e.message});cases.push({id,status:'FAIL'});console.log('FAIL '+id+' '+e.stack)}}
+await scenario('WORKSPACE-QUERY-RECOVERY', async () => {
+ const navigation={workspaceFailure:true}
+ const f=await mount('/workspace','member','隔离验证团队',true,1,navigation)
+ try {
+  await waitFor(()=>f.document.querySelector('[data-workspace-load-error]'),'workspace query error shown')
+  check('已登录用户的查询失败不显示未登录提示',f.document.body.textContent.includes('团队空间暂时无法加载')&&!f.document.body.textContent.includes('登录后使用团队空间'))
+  check('查询失败保留具体错误说明',f.document.querySelector('[data-workspace-load-error]').textContent.includes('数据库暂时繁忙'))
+  navigation.workspaceFailure=false
+  await f.click('重新加载')
+  await waitFor(()=>!f.document.querySelector('[data-workspace-load-error]'),'workspace retry recovered')
+  check('重试恢复会员空间',!!f.document.querySelector('.workspace-page')&&f.document.body.textContent.includes('隔离验证团队'))
+  check('重试无页面运行错误',f.errors.length===0)
+ } finally {f.dom.window.close()}
+})
 await scenario('TEAM-BACK-NAVIGATION', async () => {
  for (const navigation of [
   { previousRoutes: ['/team'], referrer: 'http://fixture.local/team' },

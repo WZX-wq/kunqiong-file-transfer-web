@@ -4,18 +4,32 @@ set -euo pipefail
 app_name="$1"
 compose_dir="$2"
 release="$3"
+backup_image="${4:-}"
+database_env="${5:-$compose_dir/.env}"
 backup_dir="$compose_dir/backups/$(date -u +%Y%m%dT%H%M%SZ)-${release:0:12}"
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
-printf '%s\n' "$backup_dir" > "$compose_dir/.last-deployment-backup"
-chmod 600 "$compose_dir/.last-deployment-backup"
+record_completed_backup() {
+  printf '%s\n' "$backup_dir" > "$compose_dir/.last-deployment-backup"
+  chmod 600 "$compose_dir/.last-deployment-backup"
+}
 for file in .env docker-compose.test.yml clamd.conf; do
   if [ -f "$compose_dir/$file" ]; then
     cp "$compose_dir/$file" "$backup_dir/$file"
     chmod 600 "$backup_dir/$file"
   fi
 done
+# The caller has stopped the old writer. A consistent logical dump and its
+# checksum must finish before any schema/data migration, including first deploy.
+if [ -z "$backup_image" ] || [ ! -f "$database_env" ]; then
+  echo "Database backup image/environment is missing" >&2
+  exit 1
+fi
+docker run --rm --label "com.docker.compose.project=$app_name" --env-file "$database_env" \
+  --mount "type=bind,src=$backup_dir,dst=/backup" --entrypoint node \
+  "$backup_image" scripts/db/backup-mysql.mjs /backup
 if ! docker inspect "$app_name" >/dev/null 2>&1; then
+  record_completed_backup
   echo "Deployment configuration backup: $backup_dir (first app deployment)"
   exit 0
 fi
@@ -50,4 +64,5 @@ for (const name of ["metadata.json", "metadata.json.bak", "metadata.json.revisio
 }
 fs.writeFileSync("/backup/backup-complete.json", JSON.stringify({ completedAt: new Date().toISOString(), metadata: fs.existsSync("/backup/metadata.json"), audit: fs.existsSync("/backup/audit") }));
 '
+record_completed_backup
 echo "Deployment data and configuration backup: $backup_dir"

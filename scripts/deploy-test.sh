@@ -79,6 +79,11 @@ KUNQIONG_DB_NAME=${KUNQIONG_DB_NAME:-}
 KUNQIONG_DB_USER=${KUNQIONG_DB_USER:-}
 KUNQIONG_DB_PASSWORD=${KUNQIONG_DB_PASSWORD:-}
 KUNQIONG_DB_CONNECTION_LIMIT=${KUNQIONG_DB_CONNECTION_LIMIT:-5}
+KUNQIONG_DB_QUEUE_LIMIT=${KUNQIONG_DB_QUEUE_LIMIT:-50}
+KUNQIONG_DB_CONNECT_TIMEOUT_MS=${KUNQIONG_DB_CONNECT_TIMEOUT_MS:-10000}
+KUNQIONG_DB_ACQUIRE_TIMEOUT_MS=${KUNQIONG_DB_ACQUIRE_TIMEOUT_MS:-30000}
+KUNQIONG_DB_QUERY_TIMEOUT_MS=${KUNQIONG_DB_QUERY_TIMEOUT_MS:-60000}
+KUNQIONG_DB_TLS=${KUNQIONG_DB_TLS:-false}
 KUNQIONG_DATA_KEY=${KUNQIONG_DATA_KEY:-}
 KUNQIONG_RELEASE_SHA=$RELEASE_SHA
 EOF
@@ -109,7 +114,7 @@ preserve_existing_config() {
     KUNQIONG_TENCENT_SMS_TEMPLATE_LOGIN_CODE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_PASSWORD_CODE_ID \
     KUNQIONG_TENCENT_SMS_TEMPLATE_WORKSPACE_INVITE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_FILE_SHARE_ID \
     KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_ACTIVATED_ID KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_EXPIRING_ID \
-    KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT KUNQIONG_DATA_KEY
+    KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT KUNQIONG_DB_QUEUE_LIMIT KUNQIONG_DB_CONNECT_TIMEOUT_MS KUNQIONG_DB_ACQUIRE_TIMEOUT_MS KUNQIONG_DB_QUERY_TIMEOUT_MS KUNQIONG_DB_TLS KUNQIONG_DATA_KEY
   do
     if [ -n "${!name:-}" ]; then
       continue
@@ -142,7 +147,7 @@ normalize_gitea_env_values() {
     KUNQIONG_TENCENT_SMS_TEMPLATE_LOGIN_CODE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_PASSWORD_CODE_ID \
     KUNQIONG_TENCENT_SMS_TEMPLATE_WORKSPACE_INVITE_ID KUNQIONG_TENCENT_SMS_TEMPLATE_FILE_SHARE_ID \
     KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_ACTIVATED_ID KUNQIONG_TENCENT_SMS_TEMPLATE_MEMBERSHIP_EXPIRING_ID \
-    KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT KUNQIONG_DATA_KEY
+    KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT KUNQIONG_DB_QUEUE_LIMIT KUNQIONG_DB_CONNECT_TIMEOUT_MS KUNQIONG_DB_ACQUIRE_TIMEOUT_MS KUNQIONG_DB_QUERY_TIMEOUT_MS KUNQIONG_DB_TLS KUNQIONG_DATA_KEY
   do
     value="${!name:-}"
     if [[ "$value" == "%!t(string="*")" ]]; then
@@ -182,6 +187,11 @@ process.stdout.write(key.toString("hex"));
 
 KUNQIONG_DB_PORT="${KUNQIONG_DB_PORT:-3306}"
 KUNQIONG_DB_CONNECTION_LIMIT="${KUNQIONG_DB_CONNECTION_LIMIT:-5}"
+KUNQIONG_DB_QUEUE_LIMIT="${KUNQIONG_DB_QUEUE_LIMIT:-50}"
+KUNQIONG_DB_CONNECT_TIMEOUT_MS="${KUNQIONG_DB_CONNECT_TIMEOUT_MS:-10000}"
+KUNQIONG_DB_ACQUIRE_TIMEOUT_MS="${KUNQIONG_DB_ACQUIRE_TIMEOUT_MS:-30000}"
+KUNQIONG_DB_QUERY_TIMEOUT_MS="${KUNQIONG_DB_QUERY_TIMEOUT_MS:-60000}"
+KUNQIONG_DB_TLS="${KUNQIONG_DB_TLS:-false}"
 if [ "${KUNQIONG_DB_ENABLED:-false}" != "true" ]; then
   echo "KUNQIONG_DB_ENABLED must be true for the test deployment" >&2
   exit 1
@@ -204,8 +214,8 @@ resolve_data_key
 write_env_file "$ENV_FILE"
 
 healthcheck_docker() {
-  # First-time schema/data/audit import must finish before the HTTP listener
-  # opens. Allow five minutes rather than treating a safe import as a crash.
+  # HTTP starts without loading business data. Storage migrations run explicitly
+  # in the release step before the application container is replaced.
   for _ in $(seq 1 300); do
     if docker exec "$APP_NAME" node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '$PORT') + '/api/health', {signal:AbortSignal.timeout(5000)}).then(async r => { if (!r.ok) process.exit(1); console.log(await r.text()) }).catch(() => process.exit(1))"; then
       return 0
@@ -271,7 +281,7 @@ verify_container_configuration() {
     echo "App container does not use the deployed image" >&2
     return 1
   fi
-  for name in KUNQIONG_ADMIN_USERNAME KUNQIONG_ADMIN_PASSWORD KUNQIONG_DB_ENABLED KUNQIONG_RELATIONAL_SCHEMA_ENABLED KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT KUNQIONG_DATA_KEY; do
+  for name in KUNQIONG_ADMIN_USERNAME KUNQIONG_ADMIN_PASSWORD KUNQIONG_DB_ENABLED KUNQIONG_RELATIONAL_SCHEMA_ENABLED KUNQIONG_DB_HOST KUNQIONG_DB_PORT KUNQIONG_DB_NAME KUNQIONG_DB_USER KUNQIONG_DB_PASSWORD KUNQIONG_DB_CONNECTION_LIMIT KUNQIONG_DB_QUEUE_LIMIT KUNQIONG_DB_CONNECT_TIMEOUT_MS KUNQIONG_DB_ACQUIRE_TIMEOUT_MS KUNQIONG_DB_QUERY_TIMEOUT_MS KUNQIONG_DB_TLS KUNQIONG_DATA_KEY; do
     actual_value="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$APP_NAME" | sed -n "s/^${name}=//p")"
     if [ "$actual_value" != "${!name}" ]; then
       echo "App container configuration mismatch: $name" >&2
@@ -353,7 +363,11 @@ try {
   if [ "$(docker inspect -f '{{.State.Running}}' "$APP_NAME" 2>/dev/null || true)" = true ]; then
     docker stop --time 40 "$APP_NAME" >/dev/null
   fi
-  bash scripts/backup-test-deployment.sh "$APP_NAME" "$COMPOSE_DIR" "$RELEASE_SHA"
+  bash scripts/backup-test-deployment.sh "$APP_NAME" "$COMPOSE_DIR" "$RELEASE_SHA" "$IMAGE_NAME" "$ENV_FILE"
+  # Versioned SQL backfill runs once outside HTTP startup. Subsequent releases
+  # only check its migration key; they never reload all business data.
+  docker run --rm --label "com.docker.compose.project=$APP_NAME" --env-file "$ENV_FILE" \
+    --entrypoint node "$IMAGE_NAME" scripts/db/migrate-on-demand.mjs --apply
 
   mkdir -p "$COMPOSE_DIR"
   write_compose_file "$COMPOSE_DIR/$COMPOSE_FILE"
@@ -494,6 +508,7 @@ deploy_with_process_manager() {
   cd "$DEPLOY_DIR"
   npm ci --omit=dev
   mkdir -p storage
+  node scripts/db/migrate-on-demand.mjs --apply
 
   if command -v pm2 >/dev/null 2>&1; then
     if pm2 describe "$APP_NAME" >/dev/null 2>&1; then

@@ -35,7 +35,7 @@ import {
 } from '../lib/metadata-normalizers.js'
 
 import {
-  flushMetadataWrites, metadata, persistMetadata, publicationExists
+  flushMetadataWrites, metadata, persistMetadata, publicationExists, clearPersistenceError
 } from '../lib/metadata-store.js'
 
 import {
@@ -54,7 +54,7 @@ import { applyCollectionNaming } from '../lib/collection-naming.js'
 import { createScanCoordinator, scanFileBatch } from '../lib/scan-coordinator.js'
 
 import {
-  adminSessions, databasePool, reservedShareCodes, shareLookupAttempts, uploadDiskReservations, uploadIntakeReservations, uploadReservations, uploadSessions
+  adminSessions, databasePool, runtime, reservedShareCodes, shareLookupAttempts, uploadDiskReservations, uploadIntakeReservations, uploadReservations, uploadSessions
 } from '../state.js'
 import {
   ensureUploadSessionTable, importLegacyUploadSessionManifests, MySqlUploadSessionStore,
@@ -63,6 +63,7 @@ import {
 import { booleanInput, dateInput, integerInput, objectInput, textInput } from '../lib/input-validation.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import { currentDataContext } from '../lib/data-context.js'
 import { contactMatchesUser, recipientInputError } from '../lib/contact-input.js'
 import crypto from 'node:crypto'
 import net from 'node:net'
@@ -167,7 +168,7 @@ function uploadSessionManifest(session) {
 export async function persistUploadSession(session) {
   const manifest = uploadSessionManifest(session)
   if (databasePool) {
-    if (!uploadSessionPersistenceReady) throw httpError(503, '上传会话存储尚未就绪，请稍后重试')
+    if (!uploadSessionPersistenceReady && !runtime.onDemandData) throw httpError(503, '上传会话存储尚未就绪，请稍后重试')
     try {
       await databaseUploadSessionStore.save(manifest)
     } catch (error) {
@@ -217,6 +218,29 @@ function restoreSessionFromManifest(raw, directory) {
   const hasProgress = session.files.some(file => file.chunks.size > 0)
   const expired = age > UPLOAD_SESSION_TTL_MS || (!hasProgress && age > UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS)
   return { session, published, broken, expired, completionChanged: JSON.stringify(session.completion) !== JSON.stringify(raw.completion) }
+}
+
+const restoringDatabaseSessions = new Map()
+export async function restoreDatabaseUploadSession(id, { manifestOnly = false } = {}) {
+  if (!databaseUploadSessionStore) return null
+  if (uploadSessions.has(id)) return uploadSessions.get(id)
+  if (manifestOnly) return databaseUploadSessionStore.load(id)
+  if (restoringDatabaseSessions.has(id)) return restoringDatabaseSessions.get(id)
+  const operation = (async () => {
+    const raw = await databaseUploadSessionStore.load(id)
+    if (!raw) return null
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw httpError(400, '上传会话标识无效')
+    const directory = path.join(tempRoot, 'upload-sessions', id)
+    const restored = restoreSessionFromManifest(raw, directory)
+    if (restored.broken || restored.expired) return null
+    const session = restored.session
+    if (!restored.published && session.completion?.status !== 'complete') reserveUploadDisk(session, { restore: true })
+    uploadSessions.set(id, session)
+    if (restored.completionChanged) await databaseUploadSessionStore.save(uploadSessionManifest(session))
+    return session
+  })()
+  restoringDatabaseSessions.set(id, operation)
+  try { return await operation } finally { restoringDatabaseSessions.delete(id) }
 }
 
 export async function restoreUploadSessions() {
@@ -1037,7 +1061,7 @@ export function assertTeamCapacity(organization, incomingBytes, userOrId = null)
   }
 }
 
-export function assertUniqueTeamResourceNames(organization, files) {
+export async function assertUniqueTeamResourceNames(organization, files) {
   const resourcePath = (file) => safeRelativePath(normalizeUploadFileName(file.relativePath || file.name || '')).trim().toLowerCase()
   const existingNames = new Set(
     metadata.shares
@@ -1047,6 +1071,9 @@ export function assertUniqueTeamResourceNames(organization, files) {
       .filter(Boolean),
   )
   const incomingNames = new Set()
+  if (currentDataContext()?.store && await currentDataContext().store.conflictingTeamPaths(organization.id, files)) {
+    throw httpError(409, '团队空间中已存在相同路径的文件')
+  }
   for (const file of files || []) {
     const name = normalizeUploadFileName(file.name || '').trim()
     const normalized = resourcePath(file)
@@ -1159,8 +1186,25 @@ export function listGuestPendingUploads(guestKey) {
 
 // 上传会话定时清扫：TTL 过期的会话、以及创建后长期零进度（一个分片都没传成功）的
 // 会话。零进度会话没有续传价值，却占着容量预留，是「看不见的占用」的主要来源。
+let uploadCleanupCursor = 0
 export async function sweepStaleUploadSessions(now = Date.now()) {
   const swept = []
+  if (databaseUploadSessionStore && runtime.onDemandData) {
+    const candidates = await databaseUploadSessionStore.cleanupCandidates(uploadCleanupCursor, now - UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS)
+    uploadCleanupCursor = candidates.length === 50 ? candidates.at(-1).rowId : 0
+    for (const { manifest } of candidates) {
+      if (uploadSessions.has(manifest.id)) continue
+      const directory = path.join(tempRoot, 'upload-sessions', manifest.id)
+      const age = now - new Date(manifest.createdAt).getTime()
+      const hasProgress = manifest.files.some((_file, index) => {
+        try { return fs.readdirSync(path.join(directory, String(index))).some(name => /^\d+\.done$/.test(name)) } catch { return false }
+      })
+      if (age > UPLOAD_SESSION_TTL_MS || (!hasProgress && age > UPLOAD_SESSION_ZERO_PROGRESS_TTL_MS)) {
+        await discardUploadSession({ ...manifest, directory })
+        swept.push(manifest.id)
+      }
+    }
+  }
   for (const [, item] of [...uploadSessions]) {
     if (item.completing) continue
     const createdAt = new Date(item.createdAt).getTime()
@@ -1437,6 +1481,7 @@ export function resolveCollectionSubmitter(req, res) {
 export async function publishUploadedFiles(tempFiles, directory, { attach, detach, persisted, storageOwnerId: optionsStorageOwnerId = '' }) {
   const moves = []
   let attemptedCommit = false
+  let resource = null
   try {
     const files = tempFiles.map((file) => {
       const relativePath = safeRelativePath(file.relativePath || file.name)
@@ -1457,13 +1502,20 @@ export async function publishUploadedFiles(tempFiles, directory, { attach, detac
         ...(file.materialId ? { materialId: file.materialId } : {}),
       }
     })
-    const resource = attach(files)
+    resource = attach(files)
     attemptedCommit = true
     persistMetadata()
     await flushMetadataWrites()
     return resource
   } catch (error) {
     const durable = attemptedCommit ? await publicationExists(persisted) : false
+    if (durable === true) {
+      // COMMIT 已生效但确认链路失败（超时/连接中断）：按“已发布”返回，避免客户端
+      // 重试而产生重复分享或重复收集提交。字节已由关系数据库引用，不能回滚删除。
+      console.warn(JSON.stringify({ event: 'upload_commit_recovered', code: error.code || 'METADATA_WRITE_FAILED' }))
+      clearPersistenceError()
+      return resource
+    }
     if (durable === false) {
       detach()
       for (const move of moves.reverse()) {
@@ -1487,6 +1539,11 @@ export async function publishUploadedFiles(tempFiles, directory, { attach, detac
 }
 
 export async function publishCollectionSubmission(task, tempFiles, submitter, req, { uploadSessionId = '', guestKey = '', fieldValues = submitter.fieldValues || {}, materialIds = submitter.materialIds || [] } = {}) {
+  // 上传会话完成接口可能被重试：同一会话已发布过就直接返回既有提交，保证幂等。
+  if (uploadSessionId) {
+    const published = (task.submissions || []).find(item => item.uploadSessionId === uploadSessionId)
+    if (published) return published
+  }
   const id = createToken(12)
   const storageOwnerId = submitter.submitterUserId
     ? String(submitter.submitterUserId)
@@ -1494,6 +1551,7 @@ export async function publishCollectionSubmission(task, tempFiles, submitter, re
       ? `collection-participant:${submitter.participantKey}`
       : `collection-submission:${task.id}:${id}`
   const namedFiles = applyCollectionNaming(task, tempFiles, submitter.participantName, submitter.fileMaterialIds || [])
+  const persisted = snapshot => snapshot.collections?.find(item => item.id === task.id)?.submissions?.some(item => item.id === id)
   const submission = await publishUploadedFiles(namedFiles, path.join(collectionsRoot, task.id, id), { storageOwnerId,
     attach(files) {
       const access = validateCollection(task)
@@ -1505,16 +1563,28 @@ export async function publishCollectionSubmission(task, tempFiles, submitter, re
       return item
     },
     detach() { task.submissions = task.submissions.filter(item => item.id !== id) },
-    persisted: snapshot => snapshot.collections?.find(item => item.id === task.id)?.submissions?.some(item => item.id === id),
+    persisted,
   })
   addCollectionSubmissionMessage(task, submission, req)
   addGuestUsage(guestKey, submission.files)
-  persistMetadata()
-  await flushMetadataWrites()
+  try {
+    persistMetadata()
+    await flushMetadataWrites()
+  } catch (error) {
+    // 提交本身已在上一次事务中落库；补写消息/用量失败不应把已成功的提交回报为失败。
+    if (await publicationExists(persisted) !== true) throw error
+    console.warn(JSON.stringify({ event: 'collection_submission_commit_recovered', code: error.code || 'METADATA_WRITE_FAILED' }))
+    clearPersistenceError()
+  }
   return submission
 }
 
 export async function createShareFromTempFiles(tempFiles, options, req) {
+  // 断点续传完成接口可能被重试：同一上传会话已发布过就直接返回既有分享，避免重复建分享。
+  if (options.uploadSessionId) {
+    const published = metadata.shares.find(item => !item.deletedAt && item.uploadSessionId === String(options.uploadSessionId))
+    if (published) return published
+  }
   let reservedCode = ''
   try {
     // 耗时准备在提交之前完成；此后直到元数据提交不再 await，撤权可立即阻止发布。
@@ -1535,7 +1605,7 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
       const organization = Object.values(metadata.organizations || {}).find((item) => item.id === options.teamOrganizationId)
       if (!organization) throw httpError(404, '团队空间不存在')
       if (!organization.members.some(member => member.userId === ownerSession?.user?.id && member.status === 'active')) throw httpError(403, '团队成员权限已失效，无法提交资源')
-      assertUniqueTeamResourceNames(organization, tempFiles)
+      await assertUniqueTeamResourceNames(organization, tempFiles)
       assertTeamCapacity(organization, totalSize, ownerSession?.user?.id)
     } else {
       assertAccountCapacity(ownerSession?.user, totalSize)
@@ -1582,7 +1652,12 @@ export async function createShareFromTempFiles(tempFiles, options, req) {
     },
     persisted: snapshot => snapshot.shares?.some(item => item.id === shareToken) })
     reservedShareCodes.delete(reservedCode)
-    share.notificationLog = await notifyShareRecipients(share, req, ownerSession?.user)
+    // 分享已在事务中提交；邮件/站内通知失败只降级记录，不能把已发布的分享回报为失败。
+    try {
+      share.notificationLog = await notifyShareRecipients(share, req, ownerSession?.user)
+    } catch (error) {
+      console.warn(JSON.stringify({ event: 'share_notification_failed', code: error.code || 'NOTIFICATION_FAILED' }))
+    }
     if (metadata.shares.includes(share)) persistMetadata()
     return share
   } catch (error) {

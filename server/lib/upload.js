@@ -60,7 +60,10 @@ export const upload = { array(field, count) {
       const release = () => intake.delete(req)
       res.once('finish', release)
       res.once('close', release)
-      receive(req, res, error => { if (error) release(); next(error) })
+      receive(req, res, error => {
+        if (error) { release(); return next(error) }
+        Promise.resolve(req.dataContext?.loadInput(req)).then(() => next(), next)
+      })
     } catch (error) { next(error) }
   }
 } }

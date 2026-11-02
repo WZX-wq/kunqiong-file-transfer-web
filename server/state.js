@@ -8,6 +8,8 @@
 // 避免“搬走一个函数就得连带搬走它引用的状态”。
 
 import mysql from 'mysql2/promise'
+import { boundedPool, positiveSetting } from './db/bounded-pool.js'
+import { contextualObject } from './lib/data-context.js'
 import {
   databaseEnabled, databaseHost, databasePort, databaseName, databaseUser, databasePassword,
 } from './config.js'
@@ -15,23 +17,36 @@ import {
 // ── 数据库连接池 ─────────────────────────────────────────────
 // 全进程唯一。databaseEnabled 为 false 时是 null，调用方需自行判空。
 // 注意 mysql2 的 createPool 不会立即建连，首个查询才真正连接。
-export const databasePool = databaseEnabled ? mysql.createPool({
+export const databasePool = databaseEnabled ? boundedPool(mysql.createPool({
   host: databaseHost,
   port: databasePort,
   database: databaseName,
   user: databaseUser,
   password: databasePassword,
   waitForConnections: true,
-  connectionLimit: Number(process.env.KUNQIONG_DB_CONNECTION_LIMIT || 5),
-  queueLimit: 0,
+  connectionLimit: positiveSetting(process.env.KUNQIONG_DB_CONNECTION_LIMIT, 5, 100),
+  queueLimit: positiveSetting(process.env.KUNQIONG_DB_QUEUE_LIMIT, 50, 10000),
+  connectTimeout: positiveSetting(process.env.KUNQIONG_DB_CONNECT_TIMEOUT_MS, 10000),
+  enableKeepAlive: true,
+  timezone: 'Z',
+  ...(process.env.KUNQIONG_DB_TLS === 'true' ? { ssl: { rejectUnauthorized: true } } : {}),
   charset: 'utf8mb4',
+}), {
+  acquireTimeoutMs: positiveSetting(process.env.KUNQIONG_DB_ACQUIRE_TIMEOUT_MS, 30000),
+  queryTimeoutMs: positiveSetting(process.env.KUNQIONG_DB_QUERY_TIMEOUT_MS, 60000),
 }) : null
+
+databasePool?.on('connection', connection => {
+  connection.query(`SET time_zone = '+00:00', max_execution_time = ${positiveSetting(process.env.KUNQIONG_DB_QUERY_TIMEOUT_MS, 60000)}`, error => {
+    if (error) connection.destroy()
+  })
+})
 
 // ── 元数据运行期标记 ─────────────────────────────────────────
 // 为什么要包成对象：ESM 的导入绑定是只读的 —— `import { x }` 之后不能 `x = 1`，
 // 而这些值在业务代码里被赋值（如 metadataNeedsPersist = true，共 40 余处）。
 // 所以统一放进可变容器，引用处写 runtime.xxx。
-export const runtime = {
+export const runtime = contextualObject({
   // 启动期规范化时若修正了旧数据，置为 true，触发一次落盘
   metadataNeedsPersist: false,
   // 指向当前 metadata 快照（与 metadata 同一引用），供少数需要判空的路径使用
@@ -46,7 +61,7 @@ export const runtime = {
   metadataBaseIds: null,
   metadataLocalBaseIds: null,
   metadataConflictCount: 0,
-}
+}, context => context?.runtime)
 
 // ── 分享 ─────────────────────────────────────────────────────
 // 已分配的提取码，用于生成时避免碰撞

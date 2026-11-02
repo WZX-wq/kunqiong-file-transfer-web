@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { currentDataContext } from './data-context.js'
 
 const SAFE_FILENAME_BYTES_MAX = 255
 const FILE_EXTENSION_BYTES_MAX = 200
@@ -126,6 +127,10 @@ export function removeStoredFiles(files = [], legacyDirectory = '', usersRoot = 
   for (const file of files) {
     const targetPath = resolveStoredFilePath(file, legacyDirectory, usersRoot)
     if (!targetPath) continue
+    if (currentDataContext()?.deferCleanup?.(targetPath, false)) {
+      removed += 1
+      continue
+    }
     try {
       fs.unlinkSync(targetPath)
       removed += 1

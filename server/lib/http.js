@@ -2,6 +2,7 @@
 // 本文件由 scripts/refactor/extract-config.mjs 从 server.mjs 逐字抽取生成。
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import { currentDataContext } from './data-context.js'
 
 export function httpError(status, message) {
   const error = new Error(message)
@@ -58,6 +59,7 @@ export function removeDirectory(directory) {
   // 所有 API 请求排队（表现为整站周期性卡 10s+）。删除失败的目录由调用方
   // 的清扫/恢复逻辑兜底（过期会话不再恢复，不再反复重试）。
   if (!directory) return
+  if (currentDataContext()?.deferCleanup?.(directory, true)) return
   fs.rm(directory, { recursive: true, force: true }, (error) => {
     if (error && error.code !== 'ENOENT') console.warn('[removeDirectory] 删除失败:', directory, '→', error?.message || error)
   })

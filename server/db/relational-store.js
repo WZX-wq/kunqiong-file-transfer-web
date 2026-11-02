@@ -2,6 +2,8 @@ import crypto from 'node:crypto'
 import path from 'node:path'
 import { keyedDigest, protectCredential, revealCredential } from '../lib/private-key.js'
 import { readRowsById } from './paged-reader.js'
+import { hydrateRows, packEntity } from './normalized-codec.js'
+import { filePathDigest, diskKeyDigest } from './file-path-key.js'
 
 const STATE_TABLE = 'kq_relational_store_state'
 const PAYLOAD_TABLES = [
@@ -17,7 +19,9 @@ const DATA_TABLES = [
   'kq_user_setting', 'kq_account_record', 'kq_guest_usage', 'kq_system_setting', 'kq_user',
 ]
 const MANAGED_TABLES = DATA_TABLES.filter(table => table !== 'kq_audit_log')
-const RELATIONAL_READ_PAGE_SIZES = { kq_account_record: 10, kq_resource: 25, kq_upgrade_order: 25 }
+// Embedded avatars and resource snapshots can make individual JSON rows large.
+// Bound these responses while loading over a remote database connection.
+const RELATIONAL_READ_PAGE_SIZES = { kq_user: 1, kq_account_record: 1, kq_resource: 1, kq_upgrade_order: 1 }
 const IDENTITY_COLUMNS = {
   kq_message: ['user_id', 'legacy_id'],
   kq_user_setting: ['user_id'],
@@ -49,7 +53,7 @@ function encodeProtected(value, context) {
   return JSON.stringify(protectCredential(JSON.stringify(value), `relational:${context}`))
 }
 
-function decodeProtected(value, context) {
+export function decodeProtected(value, context) {
   let encoded = value
   if (typeof encoded === 'string' && encoded.startsWith('"')) encoded = JSON.parse(encoded)
   if (typeof encoded !== 'string') throw new Error('关系表中的加密业务记录格式无效')
@@ -227,13 +231,14 @@ function comparisonForProtected(context, value, { prefix = true, parseJsonValue 
 }
 
 async function insertPayload(connection, table, columns, values, payload, context, protectedColumns = {}, options = {}) {
+  if (relationalSyncContexts.get(connection)?.normalized) payload = packEntity(table, payload, Object.fromEntries(columns.map((key, index) => [key, values[index]])), options)
   return executeInsert(connection, table, [...columns, 'entity_payload_json'], [...values, encodeProtected(payload, context)], {
     protectedColumns: { entity_payload_json: comparisonForProtected(context, payload), ...protectedColumns },
     ...options,
   })
 }
 
-function identityKey(table, rowOrValues, columns = null) {
+export function identityKey(table, rowOrValues, columns = null) {
   const identityColumns = IDENTITY_COLUMNS[table] || ['legacy_id']
   const parts = identityColumns.map(column => {
     const index = columns?.indexOf(column) ?? -1
@@ -250,7 +255,7 @@ function stableValue(value) {
   if (value instanceof Date) {
     const two = part => String(part).padStart(2, '0')
     const three = part => String(part).padStart(3, '0')
-    return `${value.getFullYear()}-${two(value.getMonth() + 1)}-${two(value.getDate())} ${two(value.getHours())}:${two(value.getMinutes())}:${two(value.getSeconds())}.${three(value.getMilliseconds())}`
+    return `${value.getUTCFullYear()}-${two(value.getUTCMonth() + 1)}-${two(value.getUTCDate())} ${two(value.getUTCHours())}:${two(value.getUTCMinutes())}:${two(value.getUTCSeconds())}.${three(value.getUTCMilliseconds())}`
   }
   if (Buffer.isBuffer(value)) return `buffer:${value.toString('hex')}`
   if (Array.isArray(value)) return `[${value.map(stableValue).join(',')}]`
@@ -321,9 +326,13 @@ async function syncRow(connection, sync, table, columns, values, options = {}) {
     const changed = columns.filter((column, index) => !ignoredColumns.has(column)
       && !storedValueMatches(column, existing[column], values[index], options.protectedColumns))
     if (changed.length) {
+      // Normalized entities read their domain timestamp from this column. An
+      // extension/version update must not silently replace it via ON UPDATE.
+      const written = sync.normalized && columns.includes('gmt_modified') && !changed.includes('gmt_modified')
+        ? [...changed, 'gmt_modified'] : changed
       await connection.execute(
-        `UPDATE \`${table}\` SET ${changed.map(column => `\`${column}\` = ?`).join(', ')} WHERE id = ?`,
-        [...changed.map(column => values[columns.indexOf(column)]), rowId],
+        `UPDATE \`${table}\` SET ${written.map(column => `\`${column}\` = ?`).join(', ')} WHERE id = ?`,
+        [...written.map(column => values[columns.indexOf(column)]), rowId],
       )
       for (const column of changed) metric.changedColumns[column] = (metric.changedColumns[column] || 0) + 1
       metric.updated += 1
@@ -393,12 +402,14 @@ async function createRelationalSyncContext(connection, expectedCounts, cachedRow
   return context
 }
 
-// Caller must hold the metadata revision row FOR UPDATE and own the surrounding transaction.
-export async function synchronizeRelationalMetadata(connection, value, expectedCounts, cachedRowsByTable = null) {
+// Caller owns the transaction and either the legacy revision lock or the complete
+// owner/entity lock scope when synchronizing an explicitly bounded write set.
+export async function synchronizeRelationalMetadata(connection, value, expectedCounts, cachedRowsByTable = null, options = {}) {
   const sync = await createRelationalSyncContext(connection, expectedCounts, cachedRowsByTable)
+  sync.normalized = Boolean(options.normalized)
   relationalSyncContexts.set(connection, sync)
   try {
-    await insertAll(connection, value)
+    await insertAll(connection, value, options)
     for (const table of DATA_TABLES) {
       const staleIds = [...sync.initialIds.get(table)].filter(id => !sync.retainedIds.get(table).has(id))
       for (let offset = 0; offset < staleIds.length; offset += 500) {
@@ -437,14 +448,14 @@ async function getCounts(connection) {
   return counts
 }
 
-async function insertAll(connection, value) {
+async function insertAll(connection, value, options = {}) {
   const model = buildRelationalModel(value)
-  const userIds = new Map()
-  const organizationIds = new Map()
-  const resourceIds = new Map()
-  const fileIds = new Map()
+  const userIds = new Map(options.references?.userIds)
+  const organizationIds = new Map(options.references?.organizationIds)
+  const resourceIds = new Map(options.references?.resourceIds)
+  const fileIds = new Map(options.references?.fileIds)
   const submissionIds = new Map()
-  const userByLegacyId = new Map(model.users.map(user => [String(user.id), user]))
+  const userByLegacyId = new Map([...(options.references?.users || []), ...model.users.map(user => [String(user.id), user])])
 
   for (const user of model.users) {
     const id = text(user.id, 120)
@@ -493,24 +504,28 @@ async function insertAll(connection, value) {
         : member.phone ? `phone:${member.phone}` : `member:${member.id}`
       const legacyId = text(`${organization.id}:${member.id}`, 120)
       const contactSnapshot = { email: member.email || '', phone: member.phone || '', displayName: member.displayName || '', joinMessage: member.joinMessage || '' }
-      await executeInsert(connection, 'kq_organization_member',
+      const memberColumns =
         ['legacy_id', 'organization_id', 'user_id', 'identity_key', 'role', 'status', 'contact_snapshot_json',
-          'invitation_token_hash', 'invitation_expires_at', 'requested_at', 'reviewed_at', 'joined_at'],
-        [legacyId, organizationPk, userPk, keyedDigest(`organization-member:${identity}`), text(member.role || 'member', 20),
+          'invitation_token_hash', 'invitation_expires_at', 'requested_at', 'reviewed_at', 'joined_at']
+      const memberValues = [legacyId, organizationPk, userPk, keyedDigest(`organization-member:${identity}`), text(member.role || 'member', 20),
           text(member.status || 'active', 20), JSON.stringify(protectCredential(JSON.stringify(contactSnapshot), `relational:member:${legacyId}`)),
           member.invitationToken ? keyedDigest(member.invitationToken) : null, dateTime(member.invitationExpiresAt),
-          dateTime(member.requestedAt), dateTime(member.reviewedAt), dateTime(member.joinedAt || member.invitedAt)],
-        { protectedColumns: { contact_snapshot_json: comparisonForProtected(`member:${legacyId}`, contactSnapshot) } })
+          dateTime(member.requestedAt), dateTime(member.reviewedAt), dateTime(member.joinedAt || member.invitedAt)]
+      const memberProtection = { contact_snapshot_json: comparisonForProtected(`member:${legacyId}`, contactSnapshot) }
+      if (relationalSyncContexts.get(connection)?.normalized) await insertPayload(connection, 'kq_organization_member', memberColumns, memberValues, member, `member-entity:${legacyId}`, memberProtection, { position: organization.members.indexOf(member) })
+      else await executeInsert(connection, 'kq_organization_member', memberColumns, memberValues, { protectedColumns: memberProtection })
     }
     for (const handover of Array.isArray(organization.ownershipHandovers) ? organization.ownershipHandovers : []) {
       const fromUserId = userIds.get(String(handover.fromUserId))
       const toUserId = userIds.get(String(handover.toUserId))
       if (!fromUserId || !toUserId) throw new Error(`关系迁移发现团队交接 ${handover.id} 的交接双方账号不存在`)
-      await executeInsert(connection, 'kq_ownership_handover',
+      const handoverColumns =
         ['legacy_id', 'organization_id', 'from_user_id', 'to_user_id', 'status', 'initiated_at', 'expires_at', 'resolved_at', 'resolved_by_user_id', 'reason'],
-        [text(handover.id, 120), organizationPk, fromUserId, toUserId, text(handover.status || 'invalidated', 20),
+        handoverValues = [text(handover.id, 120), organizationPk, fromUserId, toUserId, text(handover.status || 'invalidated', 20),
           dateTime(handover.initiatedAt, new Date().toISOString().slice(0, 23).replace('T', ' ')), dateTime(handover.expiresAt),
-          dateTime(handover.resolvedAt), userIds.get(String(handover.resolvedByUserId || '')) || null, text(handover.reason, 240) || null])
+          dateTime(handover.resolvedAt), userIds.get(String(handover.resolvedByUserId || '')) || null, text(handover.reason, 240) || null]
+      if (relationalSyncContexts.get(connection)?.normalized) await insertPayload(connection, 'kq_ownership_handover', handoverColumns, handoverValues, handover, `handover-entity:${handover.id}`)
+      else await executeInsert(connection, 'kq_ownership_handover', handoverColumns, handoverValues)
     }
   }
 
@@ -571,7 +586,7 @@ async function insertAll(connection, value) {
             text(submission.participantName, 120) || null, text(submission.submitterName, 120) || null,
             JSON.stringify(protectCredential(JSON.stringify(fieldValues), `relational:field-values:${submissionLegacyId}`)),
             dateTime(submission.submittedAt)], submission, `submission:${submissionLegacyId}`,
-          { field_values_json: comparisonForProtected(`field-values:${submissionLegacyId}`, fieldValues) })
+          { field_values_json: comparisonForProtected(`field-values:${submissionLegacyId}`, fieldValues) }, { position: submissionIndex })
         submissionIds.set(`${id}:${submission.id || submissionIndex}`, submissionPk)
         for (const [fileIndex, file] of (Array.isArray(submission.files) ? submission.files : []).entries()) {
           const filePk = await insertResourceFile(connection, file, fileIndex, { ...entity, ownerUserId: submission.submitterUserId || entity.ownerUserId }, id, pk, userIds, fileIds)
@@ -593,10 +608,18 @@ async function insertAll(connection, value) {
       ['legacy_id', 'owner_user_id', 'share_resource_id', 'idempotency_key', 'status', 'frozen_at'],
       [id, ownerPk, resourcePk, text(distribution.idempotencyKey || `legacy:${id}`, 200), 'published',
         dateTime(distribution.frozenAt || distribution.createdAt, new Date().toISOString().slice(0, 23).replace('T', ' '))],
-      distribution, `distribution:${id}`)
+      distribution, `distribution:${id}`, {}, {
+        ignoreComparisonColumns: distribution.frozenAt || distribution.createdAt ? [] : ['frozen_at'],
+      })
     const share = model.resources.find(item => item.kind === 'share' && String(item.entity.id) === String(distribution.shareId))?.entity
+      || options.references?.shares?.find(item => String(item.id) === String(distribution.shareId))
     const claimedFiles = new Set()
+    const claimedFileIds = new Set()
     const distributionRows = Array.isArray(distribution.rows) ? distribution.rows : []
+    const sync = relationalSyncContexts.get(connection)
+    const existingAssignments = sync?.rowsByTable.get('kq_distribution_assignment')
+    const resourceFilesById = new Map([...(sync?.rowsByTable.get('kq_resource_file')?.values() || [])]
+      .map(file => [String(file.id), file]))
     for (const [rowIndex, row] of distributionRows.entries()) {
       const recipientPk = userIds.get(String(row.userId || ''))
       if (!recipientPk) throw new Error(`关系迁移发现定向分发 ${id} 的收件人账号不存在`)
@@ -607,12 +630,29 @@ async function insertAll(connection, value) {
       if (fileIndex < 0) fileIndex = files.findIndex((file, index) => !claimedFiles.has(index) && fileKeyMatches(file))
       if (fileIndex < 0 && files.length === distributionRows.length && !claimedFiles.has(rowIndex)) fileIndex = rowIndex
       if (fileIndex < 0) fileIndex = files.findIndex((file, index) => !claimedFiles.has(index) && String(file.distributionRecipientUserId || '') === String(row.userId))
-      const filePk = fileIndex >= 0 ? fileIds.get(`${distribution.shareId}:${fileIndex}`) : null
+      let filePk = fileIndex >= 0 ? fileIds.get(`${distribution.shareId}:${fileIndex}`) : null
+      if (!filePk && existingAssignments && sync) {
+        // Automatic file cleanup removes the share's live file metadata, while a
+        // published distribution keeps its historical file-name snapshot. Reuse
+        // that assignment's existing file row so its foreign-key history survives.
+        const previousAssignment = [...existingAssignments.values()].find(assignment =>
+          String(assignment.batch_id) === String(batchPk)
+          && String(assignment.recipient_user_id) === String(recipientPk)
+          && String(assignment.file_name_snapshot) === String(row.fileName)
+          && !claimedFileIds.has(String(assignment.resource_file_id)))
+        const previousFile = previousAssignment && resourceFilesById.get(String(previousAssignment.resource_file_id))
+        if (previousFile && String(previousFile.resource_id) === String(resourcePk)) {
+          filePk = Number(previousFile.id)
+          sync.retainedIds.get('kq_resource_file').add(String(previousFile.id))
+        }
+      }
       if (!filePk) throw new Error(`关系迁移无法将分发 ${id} 的文件 ${row.fileName} 关联到资源文件`)
       claimedFiles.add(fileIndex)
-      await executeInsert(connection, 'kq_distribution_assignment',
-        ['batch_id', 'resource_file_id', 'recipient_user_id', 'recipient_snapshot', 'file_name_snapshot'],
-        [batchPk, filePk, recipientPk, text(row.userId, 160), text(row.fileName, 240)])
+      claimedFileIds.add(String(filePk))
+      const assignmentColumns = ['batch_id', 'resource_file_id', 'recipient_user_id', 'recipient_snapshot', 'file_name_snapshot']
+      const assignmentValues = [batchPk, filePk, recipientPk, text(row.userId, 160), text(row.fileName, 240)]
+      if (relationalSyncContexts.get(connection)?.normalized) await insertPayload(connection, 'kq_distribution_assignment', assignmentColumns, assignmentValues, row, `assignment-entity:${id}:${filePk}`, {}, { position: rowIndex })
+      else await executeInsert(connection, 'kq_distribution_assignment', assignmentColumns, assignmentValues)
     }
   }
 
@@ -703,6 +743,7 @@ async function insertAll(connection, value) {
   }
 
   for (const setting of model.systemSettings) {
+    if (options.systemKeys && !options.systemKeys.has(setting.key)) continue
     await executeInsert(connection, 'kq_system_setting',
       ['setting_key', 'setting_value_json'], [text(setting.key, 100), JSON.stringify(setting.value)])
   }
@@ -717,13 +758,14 @@ async function insertResourceFile(connection, file, index, entity, resourceId, r
   const id = stableFileId(resourceId, file, index)
   const ownerPk = userIds.get(String(file.ownerUserId || entity.ownerUserId || '')) || null
   const sha = /^[a-f0-9]{64}$/i.test(file.sha256 || file.contentSha256 || '') ? String(file.sha256 || file.contentSha256) : null
+  const normalized = Boolean(relationalSyncContexts.get(connection)?.normalized)
   const pk = await insertPayload(connection, 'kq_resource_file',
     ['legacy_id', 'resource_id', 'owner_user_id', 'storage_owner_key', 'file_name', 'original_file_name', 'storage_key',
-      'size_bytes', 'mime_type', 'content_sha256', 'scan_status', 'scanned_at'],
+      'size_bytes', 'mime_type', 'content_sha256', 'scan_status', 'scanned_at', ...(normalized ? ['path_digest', 'disk_key_digest'] : [])],
     [id, resourcePk, ownerPk, ownerKey, text(file.name || file.originalName || storedName, 240), text(file.originalName, 240) || null,
       storageKey, positiveInteger(file.size), text(file.mimeType || file.mimetype, 160) || null, sha,
-      text(file.reviewStatus || file.scanStatus, 30) || null, dateTime(file.scannedAt)],
-    file, `resource-file:${resourceId}:${id}`)
+      text(file.reviewStatus || file.scanStatus, 30) || null, dateTime(file.scannedAt), ...(normalized ? [filePathDigest(file), diskKeyDigest(ownerKey, storedName)] : [])],
+    file, `resource-file:${resourceId}:${id}`, {}, { position: index })
   return pk
 }
 
@@ -736,11 +778,27 @@ async function assertCounts(connection, expected) {
   }
 }
 
-export async function loadRelationalMetadataFromConnection(connection, state = null) {
+export async function loadRelationalMetadataFromConnection(connection, state = null, rowsByTable = null) {
   const currentState = state || await readRelationalState(connection)
   if (!currentState) return null
-  await assertCounts(connection, currentState.counts)
-  const readTable = (table, columns) => readRowsById(connection, table, columns, RELATIONAL_READ_PAGE_SIZES[table] || 100)
+  if (currentState.schemaVersion >= 3) {
+    const source = rowsByTable || await readRelationalSyncRows(connection)
+    const metadata = { users: {}, organizations: {}, shares: [], collections: [], distributions: [], sessions: [], verificationCodes: [], upgradeOrders: [], messages: {}, notificationSettings: {}, records: {}, guestUsage: {}, systemConfig: {}, collectionTemplates: [], auditLogs: [] }
+    hydrateRows(source, metadata, decodeProtected)
+    return { metadata, revision: currentState.revision, state: { ...currentState, counts: Object.fromEntries([...source].map(([table, rows]) => [table, rows.size])) } }
+  }
+  if (rowsByTable) {
+    for (const [table, count] of Object.entries(currentState.counts)) {
+      if (rowsByTable.get(table)?.size !== Number(count)) {
+        throw new Error(`关系表 ${table} 行数与已提交迁移校验不一致`)
+      }
+    }
+  } else {
+    await assertCounts(connection, currentState.counts)
+  }
+  const readTable = (table, columns) => rowsByTable
+    ? [...rowsByTable.get(table).values()]
+    : readRowsById(connection, table, columns, RELATIONAL_READ_PAGE_SIZES[table] || 100)
   const userRows = await readTable('kq_user', ['legacy_id', 'entity_payload_json'])
   const organizationRows = await readTable('kq_organization', ['legacy_id', 'entity_payload_json'])
   const resourceRows = await readTable('kq_resource', ['legacy_id', 'resource_kind', 'entity_payload_json'])
@@ -754,7 +812,7 @@ export async function loadRelationalMetadataFromConnection(connection, state = n
   const guestRows = await readTable('kq_guest_usage', ['identity_digest', 'entity_payload_json'])
   const systemRows = await readTable('kq_system_setting', ['setting_key', 'setting_value_json'])
   const userByPk = new Map(userRows.map(row => [String(row.id), String(row.legacy_id)]))
-  const system = Object.fromEntries(systemRows.map(row => [row.setting_key, parseJson(row.setting_value_json, {})]))
+  const system = Object.fromEntries(systemRows.map(row => [row.setting_key, structuredClone(parseJson(row.setting_value_json, {}))]))
   const metadata = {
     users: {}, organizations: {}, shares: [], collections: [], distributions: [], sessions: [],
     verificationCodes: [], upgradeOrders: [], messages: {}, notificationSettings: {}, records: {},
@@ -807,10 +865,10 @@ export async function loadRelationalMetadata(pool) {
   try {
     await connection.beginTransaction()
     const state = await readRelationalState(connection)
-    const loaded = state ? await loadRelationalMetadataFromConnection(connection, state) : null
-    const rowsByTable = state ? await readRelationalSyncRows(connection, state.counts) : null
+    const rowsByTable = state ? await readRelationalSyncRows(connection, state.schemaVersion >= 3 ? null : state.counts) : null
+    const loaded = state ? await loadRelationalMetadataFromConnection(connection, state, rowsByTable) : null
     await connection.commit()
-    if (state) relationalSyncCaches.set(pool, { revision: state.revision, rowsByTable })
+    if (state && state.schemaVersion < 3) relationalSyncCaches.set(pool, { revision: state.revision, rowsByTable })
     return loaded
   } catch (error) {
     await connection.rollback().catch(() => {})
@@ -869,10 +927,10 @@ export async function initializeRelationalMetadata(pool, source, sourceSnapshotR
       try {
         const current = await readRelationalState(connection)
         if (!current) throw new Error('关系存储状态行在迁移期间消失，已停止启动')
-        const loaded = await loadRelationalMetadataFromConnection(connection, current)
-        const rowsByTable = await readRelationalSyncRows(connection, current.counts)
+        const rowsByTable = await readRelationalSyncRows(connection, current.schemaVersion >= 3 ? null : current.counts)
+        const loaded = await loadRelationalMetadataFromConnection(connection, current, rowsByTable)
         await connection.commit()
-        relationalSyncCaches.set(pool, { revision: current.revision, rowsByTable })
+        if (current.schemaVersion < 3) relationalSyncCaches.set(pool, { revision: current.revision, rowsByTable })
         return { ...loaded, alreadyInitialized: true }
       } catch (error) {
         await connection.rollback().catch(() => {})
@@ -913,6 +971,7 @@ export async function commitRelationalMetadata(pool, value, expectedRevision, me
     await connection.beginTransaction()
     const state = await readRelationalState(connection, true)
     if (!state) throw new Error('关系存储迁移标记缺失，拒绝将业务数据写回快照模式')
+    if (state.schemaVersion >= 3) throw new Error('数据库已升级为实体事务写入，禁止旧版本整库快照保存；请恢复匹配的数据库备份后再回退应用')
     let next = value
     let conflict = false
     let rowsByTable = null

@@ -36,9 +36,10 @@ import {
 } from '../services/shares.js'
 import { systemConfigError, userUpdateError } from '../lib/admin-validation.js'
 import path from 'node:path'
+import { runDatabaseCleanup } from '../lib/database-cleanup.js'
 
 export function registerAdminRoutes(app) {
-  app.post('/api/admin/login', (req, res) => {
+  app.post('/api/admin/login', async (req, res, next) => {
     if (!adminCredentialsConfigured) return res.status(503).json({ message: '后台登录未配置，请设置管理员账号和密码' })
     if (adminLoginRateLimited(req)) {
       return res.status(429).json({ message: '登录尝试过于频繁，请稍后再试' })
@@ -58,6 +59,7 @@ export function registerAdminRoutes(app) {
     const adminSession = createAdminSession(req)
     setAdminCookie(res, adminSession.token, req)
     recordAuditLog({ type: 'admin', action: '后台登录成功', userId: `admin:${adminSession.username}`, ip: requestIp(req) })
+    try { await req.dataContext?.store.adminOverview() } catch (error) { return next(error) }
     res.json({ admin: adminSessionDescriptor(adminSession), overview: buildAdminOverview() })
   })
 
@@ -106,13 +108,14 @@ export function registerAdminRoutes(app) {
     res.json({ sessionId: session.id, user: adminUserSummary(user) })
   })
 
-  app.post('/api/admin/cleanup', (req, res) => {
+  app.post('/api/admin/cleanup', (req, res, next) => Promise.resolve().then(async () => {
     const auth = requireAdminSession(req, res)
     if (!auth) return
-    const result = runMaintenanceCleanup()
+    const result = req.dataContext ? await runDatabaseCleanup(req.dataContext.store.pool) : runMaintenanceCleanup()
     recordAuditLog({ type: 'admin', action: '手动执行存储清理', userId: auth.user.id, details: result })
+    await req.dataContext?.store.adminOverview()
     res.json({ ...result, overview: buildAdminOverview() })
-  })
+  }).catch(next))
 
   app.patch('/api/admin/config', async (req, res, next) => {
     try {
@@ -176,7 +179,7 @@ export function registerAdminRoutes(app) {
     res.json({ user: adminUserSummary(user) })
   })
 
-  app.delete('/api/admin/resources/:kind/:id', (req, res) => {
+  app.delete('/api/admin/resources/:kind/:id', (req, res, next) => Promise.resolve().then(async () => {
     const auth = requireAdminSession(req, res)
     if (!auth) return
     const kind = String(req.params.kind)
@@ -207,8 +210,10 @@ export function registerAdminRoutes(app) {
     // 此前这里写的是 `session.user.id`，但本作用域内没有 session（应为 auth），
     // 会在资源已经 splice 掉之后抛 ReferenceError → 接口 500、审计日志丢失。
     recordAuditLog({ type: 'admin', action: '删除文件资源', userId: auth.user.id, targetId: id, details: { kind } })
+    await flushMetadataWrites()
+    await req.dataContext?.store.adminOverview()
     res.json({ ok: true, overview: buildAdminOverview() })
-  })
+  }).catch(next))
 
   app.get('/auth/callback', async (req, res) => {
     const code = firstValue(req.query.code)
@@ -219,8 +224,15 @@ export function registerAdminRoutes(app) {
     if (!pendingState) return res.redirect(appendAuthResult(returnTo, 'failed', '登录状态已过期，请重新登录'))
     if (!code) return res.redirect(appendAuthResult(returnTo, 'failed', '授权码缺失，请重新登录'))
 
+    let stage = 'token_exchange'
     try {
       const tokenData = await exchangeOAuthToken(code, pendingState.redirectUri)
+      stage = 'account_load'
+      if (req.dataContext) {
+        await req.dataContext.store.contacts([tokenData.user?.email, tokenData.user?.phone].filter(Boolean))
+        await req.dataContext.loadAccount(String(tokenData.user?.id || ''), true)
+        req.dataContext.normalize()
+      }
       // 禁用账号不能创建短暂的登录会话，否则后续 /api/auth/me 会静默清掉会话，
       // 前端只能显示“会话未生效”，用户会误以为是地址或 Cookie 问题。
       const existingAccount = accountUserById(tokenData.user?.id)
@@ -228,12 +240,17 @@ export function registerAdminRoutes(app) {
         setOAuthStateCookie(res, req, state, '')
         return res.redirect(appendAuthResult(returnTo, 'failed', '该账号已被后台禁用，暂时无法登录，请联系管理员。'))
       }
+      stage = 'session_create'
       const session = createAuthSession(tokenData)
+      stage = 'session_commit'
       await flushMetadataWrites()
       setAuthCookie(res, session.id, session.expiresAt, req)
       setOAuthStateCookie(res, req, state, '')
       res.redirect(appendAuthResult(returnTo, 'success'))
     } catch (error) {
+      // Never log provider errors/messages: they can contain codes or tokens.
+      console.error(JSON.stringify({ event: 'oauth_callback_failed', stage,
+        code: /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code || '') ? error.code : 'OAUTH_CALLBACK_FAILED' }))
       setOAuthStateCookie(res, req, state, '')
       res.redirect(appendAuthResult(returnTo, 'failed', '登录服务暂时不可用，请重新登录'))
     }

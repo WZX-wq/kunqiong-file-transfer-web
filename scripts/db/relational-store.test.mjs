@@ -202,3 +202,39 @@ test('account record replay ignores the database-managed modification timestamp'
   assert.equal(updated.changes.byTable.kq_account_record.updated, 1)
   assert.ok(!lastUpdate.includes('`gmt_modified`'), 'updates must let MySQL maintain gmt_modified automatically')
 })
+
+test('retains distribution file rows after automatic cleanup removes live share files', async () => {
+  const counts = Object.fromEntries(managedTables.map(table => [table, 0]))
+  const cachedRows = new Map(managedTables.map(table => [table, new Map()]))
+  let nextId = 1
+  const connection = {
+    async query() { throw new Error('cached sync must not read tables') },
+    async execute() { return [{ insertId: nextId++ }, []] },
+  }
+  const active = {
+    users: { u1: { id: 'u1', username: 'u1' } },
+    shares: [{
+      id: 's1', ownerUserId: 'u1', code: 'share1', manageToken: 'manage1',
+      files: [{ id: 'f1', name: 'expired.pdf', storedName: 'f1.pdf', storageOwnerId: 'u1', size: 10 }],
+    }],
+    distributions: [{
+      id: 'd1', ownerUserId: 'u1', shareId: 's1',
+      rows: [{ key: 'a', userId: 'u1', fileName: 'expired.pdf' }],
+    }],
+  }
+
+  const initial = await synchronizeRelationalMetadata(connection, active, counts, cachedRows)
+  const cleaned = structuredClone(active)
+  cleaned.shares[0].files = []
+  cleaned.shares[0].cleanedAt = '2026-11-02T00:00:00.000Z'
+
+  const afterCleanup = await synchronizeRelationalMetadata(connection, cleaned, initial.counts, initial.syncCache)
+  assert.equal(afterCleanup.changes.byTable.kq_distribution_assignment.deleted, 0)
+  assert.equal(afterCleanup.changes.byTable.kq_resource_file.deleted, 0)
+  assert.equal(afterCleanup.counts.kq_distribution_assignment, 1)
+  assert.equal(afterCleanup.counts.kq_resource_file, 1)
+
+  const repeated = await synchronizeRelationalMetadata(connection, cleaned, afterCleanup.counts, afterCleanup.syncCache)
+  assert.equal(repeated.changes.inserted + repeated.changes.updated + repeated.changes.deleted, 0)
+  assert.equal(repeated.counts.kq_resource_file, 1)
+})
