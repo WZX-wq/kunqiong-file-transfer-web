@@ -30,6 +30,14 @@ const FILE_CATEGORY_ICONS = {
 
 const TRASH_PAGE_SIZE = 8
 
+function hasActiveMembership(user) {
+  const planId = user?.plan?.id || user?.planId
+  const expiresAt = user?.planExpiresAt || user?.plan?.expiresAt
+  const expiresAtMs = expiresAt ? new Date(expiresAt).getTime() : Number.NaN
+  return Boolean(user?.plan?.permanent || (planId && planId !== 'free'
+    && (!Number.isFinite(expiresAtMs) || expiresAtMs > Date.now())))
+}
+
 function trashPageNumbers(current, total) {
   if (total <= 5) return Array.from({ length: total }, (_, index) => index + 1)
   const pages = new Set([1, total, current - 1, current, current + 1])
@@ -46,16 +54,19 @@ export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
   const currentExpiry = toDateInputValue(record?.expiresAt)
   const [mode, setMode] = useState('date')
   const [expiryDate, setExpiryDate] = useState(currentExpiry && isDateInputStillOpen(currentExpiry) ? currentExpiry : defaultDeadline(7))
+  const [calendarOpen, setCalendarOpen] = useState(false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key !== 'Escape') return
+      if (calendarOpen) setCalendarOpen(false)
+      else onClose()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
+  }, [calendarOpen, onClose])
 
   const submit = async () => {
     // 自定义截止日期是会员特权（hasMembership 口径），只有「永久保存」才要求企业版 permanent。
@@ -79,7 +90,8 @@ export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
     }
   }
 
-  return (
+  return createPortal(
+    <>
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal share-expiry-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
@@ -90,10 +102,10 @@ export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
           <div className="setting-block">
             <span>分享截止时间</span>
             <div className="option-grid compact-grid">
-              <ActionButton className={mode === 'date' ? 'selected' : ''} onClick={() => setMode('date')}>自定义日期{mode === 'date' && <Check size={14} />}</ActionButton>
-              <ActionButton className={mode === 'permanent' ? 'selected' : ''} onClick={() => canUsePermanent && setMode('permanent')} disabled={!canUsePermanent} title={!canUsePermanent ? '永久保存需要企业版权益' : ''}>永久保存{mode === 'permanent' && <Check size={14} />}</ActionButton>
+              <ActionButton className={mode === 'date' ? 'selected' : ''} onClick={() => { setMode('date'); setCalendarOpen(true) }}>自定义日期{mode === 'date' && <Check size={14} />}</ActionButton>
+              <ActionButton className={mode === 'permanent' ? 'selected' : ''} onClick={() => { if (canUsePermanent) { setMode('permanent'); setCalendarOpen(false) } }} disabled={!canUsePermanent} title={!canUsePermanent ? '永久保存需要企业版权益' : ''}>永久保存{mode === 'permanent' && <Check size={14} />}</ActionButton>
             </div>
-            {mode === 'date' && <DatePicker value={expiryDate} onChange={setExpiryDate} ariaLabel="分享截止日期" />}
+            {mode === 'date' && <ActionButton className="date-picker-trigger expiry-date-trigger" aria-label="选择分享截止日期" aria-haspopup="dialog" onClick={() => setCalendarOpen(true)}><CalendarDays size={15} /><span>{expiryDate.replaceAll('-', '/')}</span><span>选择日期</span></ActionButton>}
             {!canUsePermanent && <small className="setting-hint">永久保存需要企业版权益，会员可自定义截止时间。</small>}
           </div>
           {error && <p className="manage-form-error">{error}</p>}
@@ -104,6 +116,17 @@ export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
         </div>
       </div>
     </div>
+    {calendarOpen && mode === 'date' && createPortal(
+      <div className="expiry-calendar-backdrop" onMouseDown={() => setCalendarOpen(false)}>
+        <section className="expiry-calendar-dialog" role="dialog" aria-modal="true" aria-label="选择分享截止日期" onMouseDown={(event) => event.stopPropagation()}>
+          <header className="expiry-calendar-header"><strong>选择截止日期</strong><ActionButton className="ghost-icon" aria-label="关闭日期选择" onClick={() => setCalendarOpen(false)}><X size={17} /></ActionButton></header>
+          <DatePicker value={expiryDate} onChange={(value) => { setExpiryDate(value); setCalendarOpen(false) }} ariaLabel="分享截止日期" inline />
+        </section>
+      </div>,
+      document.body,
+    )}
+    </>,
+    document.body,
   )
 }
 
@@ -449,8 +472,7 @@ export function RecordsView({ records, user, revision = 0, syncing = false, onCo
             <ActionButton disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => {
               // 与服务端 applyShareUpdate 同口径：改有效期 = 会员特权（付费且在有效期内），
               // 永久保存才要求 permanent。此前误用 plan.permanent 预检，把月卡/季卡会员拦在门外。
-              const hasMembership = Boolean(user?.plan?.permanent || (user?.plan?.id && user?.plan?.id !== 'free'))
-              if (!hasMembership) {
+              if (!hasActiveMembership(user)) {
                 onNotify?.('设置分享截止时间需要会员版或更高权益')
                 return
               }

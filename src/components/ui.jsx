@@ -447,7 +447,7 @@ export function CollectionLimitInfo({ allowedTypes, maxFileSizeMb, compact = fal
   )
 }
 
-export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择日期', className = '', min = '' }) {
+export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择日期', className = '', min = '', inline = false }) {
   const pickerRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [viewDate, setViewDate] = useState(() => startOfMonth(parseLocalDate(value) || new Date()))
@@ -457,7 +457,7 @@ export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择�
   }, [value])
 
   useEffect(() => {
-    if (!open) return undefined
+    if (!open || inline) return undefined
     const handleOutsideClick = (event) => {
       if (!pickerRef.current?.contains(event.target)) setOpen(false)
     }
@@ -470,7 +470,7 @@ export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择�
       window.removeEventListener('click', handleOutsideClick)
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [open])
+  }, [open, inline])
 
   const monthStart = startOfMonth(viewDate)
   const leadingDays = (monthStart.getDay() + 6) % 7
@@ -496,13 +496,20 @@ export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择�
 
   return (
     <div className={`date-picker ${className}`} ref={pickerRef}>
-      <ActionButton type="button" className={`date-picker-trigger ${open ? 'open' : ''}`} aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
-        <CalendarDays size={15} />
-        <span className={value ? '' : 'placeholder'}>{value ? formatDateInputDisplay(value) : placeholder}</span>
-        <ChevronDown size={15} />
-      </ActionButton>
-      {open && (
-        <div className="date-picker-popover" role="dialog" aria-label={`${ariaLabel}日期选择`}>
+      {inline ? (
+        <div className="date-picker-trigger date-picker-inline-label" aria-label={ariaLabel}>
+          <CalendarDays size={15} />
+          <span className={value ? '' : 'placeholder'}>{value ? formatDateInputDisplay(value) : placeholder}</span>
+        </div>
+      ) : (
+        <ActionButton type="button" className={`date-picker-trigger ${open ? 'open' : ''}`} aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+          <CalendarDays size={15} />
+          <span className={value ? '' : 'placeholder'}>{value ? formatDateInputDisplay(value) : placeholder}</span>
+          <ChevronDown size={15} />
+        </ActionButton>
+      )}
+      {(open || inline) && (
+        <div className={`date-picker-popover ${inline ? 'inline' : ''}`} role="dialog" aria-label={`${ariaLabel}日期选择`}>
           <div className="date-picker-header">
             <ActionButton type="button" className="date-picker-nav" aria-label="上个月" title="上个月" onClick={() => setViewDate((current) => addMonths(current, -1))}><ChevronLeft size={16} /></ActionButton>
             <strong>{monthLabel}</strong>

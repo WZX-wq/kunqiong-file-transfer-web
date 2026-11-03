@@ -5,6 +5,7 @@ export function useSerializedPreference(value, ownerId, normalize, save, onSaved
   const sourceKey = JSON.stringify(normalize(value))
   const [state, setState] = useState(() => normalize(value))
   const [error, setError] = useState('')
+  const [pendingOwner, setPendingOwner] = useState(null)
   const ref = useRef({ ownerId, desired:state, confirmed:state, version:0, settled:0, queue:Promise.resolve() })
   const callback = useRef(onSaved)
   const mounted = useRef(false)
@@ -29,6 +30,7 @@ export function useSerializedPreference(value, ownerId, normalize, save, onSaved
     const sessionKey = accountSessionKey()
     setState(next)
     setError('')
+    setPendingOwner(ownerId)
     entry.queue = entry.queue.catch(() => {}).then(async () => {
       // The component may unmount while a preference is queued (for example
       // when switching settings sections). Keep the request going so the last
@@ -51,8 +53,10 @@ export function useSerializedPreference(value, ownerId, normalize, save, onSaved
           setState(entry.confirmed)
           setError(failure.message || '设置保存失败，请重试')
         }
+      } finally {
+        if (mounted.current && ref.current === entry && version === entry.version) setPendingOwner(null)
       }
     })
   }
-  return [state, update, error]
+  return [state, update, error, pendingOwner !== null && pendingOwner === ownerId]
 }

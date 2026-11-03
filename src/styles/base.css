@@ -652,6 +652,15 @@ h1, h2, p { margin-top: 0; }
 .date-picker-trigger:hover, .date-picker-trigger.open { border-color: #7690b6; background: #fff; }
 .record-date-range .date-picker-trigger { height: 38px; padding: 0 11px; font-size: 12px; }
 .date-picker-popover { position: absolute; top: calc(100% + 8px); left: 0; z-index: 8; width: 276px; padding: 14px; background: #fff; border: 1px solid #dbe0e8; border-radius: 10px; box-shadow: 0 18px 48px rgba(32, 48, 72,.16); }
+.date-picker-popover.inline { position: static; width: min(300px, 100%); max-width: 100%; margin: 0 auto; padding: 10px; box-shadow: none; }
+.date-picker-inline-label { cursor: default; }
+.expiry-date-trigger { cursor: pointer; }
+.expiry-date-trigger span:first-of-type { flex: 1; }
+.expiry-date-trigger span:last-child { flex: none; color: var(--accent-dark); font-size: 12px; }
+.expiry-calendar-backdrop { position: fixed; inset: 0; z-index: 7; display: grid; place-items: center; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: rgba(27, 35, 46, .18); backdrop-filter: blur(3px); }
+.expiry-calendar-dialog { width: min(320px, 100%); padding: 12px; background: #fff; border: 1px solid #dbe0e8; border-radius: 10px; box-shadow: 0 22px 64px rgba(27, 42, 65, .26); }
+.expiry-calendar-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; padding: 0 2px; color: var(--ink); font-size: 14px; }
+.expiry-calendar-header .ghost-icon { flex: none; width: 30px; height: 30px; }
 .date-picker-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .date-picker-header strong { color: var(--ink); font-family: 'Inter', 'Noto Sans SC', sans-serif; font-size: 14px; }
 .date-picker-nav { display: grid; place-items: center; width: 28px; height: 28px; color: #5d697c; background: transparent; border-radius: 7px; }
@@ -818,7 +827,7 @@ h1, h2, p { margin-top: 0; }
 .share-expiry-form { display: flex; flex-direction: column; gap: 18px; }
 .share-expiry-form .setting-block { display: flex; flex-direction: column; gap: 14px; }
 .share-expiry-form .option-grid { gap: 10px; }
-.share-expiry-form .date-picker { margin-top: 2px; }
+.share-expiry-form .expiry-date-trigger { margin-top: 2px; }
 .manage-form { display: flex; flex-direction: column; gap: 17px; }
 .manage-field { display: flex; flex-direction: column; gap: 8px; color: #5b6779; font-size: 12px; font-weight: 700; }
 .manage-field input, .manage-field select, .manage-field textarea { width: 100%; color: var(--ink); background: #fbfcfd; border: 1px solid #d8dee7; border-radius: 7px; outline: 0; font-size: 13px; }

@@ -321,6 +321,10 @@ iframe {
   min-width: 0;
 }
 
+.modal.share-expiry-modal {
+  width: min(460px, 100%);
+}
+
 .modal,
 .content-modal,
 .preview-modal,

@@ -44,9 +44,9 @@ const entry = `
   const save = next => window.savePreference(next);
   function Harness() {
     const [owner, setOwner] = useState('first');
-    const [state, update, error] = useSerializedPreference({enabled:false,days:3}, owner, normalize, save, value => window.saved.push(value));
+    const [state, update, error, saving] = useSerializedPreference({enabled:false,days:3}, owner, normalize, save, value => window.saved.push(value));
     const confirm = useConfirmDialog();
-    window.harness = {state, update, error, setOwner, ...confirm};
+    window.harness = {state, update, error, saving, setOwner, ...confirm};
     return React.createElement('div', null, JSON.stringify(state));
   }
   const root = createRoot(document.getElementById('root'));
@@ -75,7 +75,7 @@ async function mount() {
   window.startHarness()
   await waitFor(() => window.harness, 'hook mounts')
   await delay(20)
-  return {window,requests,errors,close:()=>window.close(),switchUser:async id=>{user=id;await window.apiRequest('/api/auth/me')}}
+  return {window,requests,errors,close:()=>window.close(),switchUser:async id=>{user=id;await window.apiRequest('/api/auth/me', {force:true})}}
 }
 
 const serial = await mount()
@@ -84,12 +84,15 @@ try {
   serial.window.harness.update(current => ({...current,days:7}))
   await waitFor(() => serial.requests.length === 1, 'first preference request')
   check('StrictMode does not duplicate preference requests', serial.requests.length === 1)
+  check('preference queue exposes its pending state', serial.window.harness.saving)
   serial.requests[0].resolve({settings:serial.requests[0].value})
   await waitFor(() => serial.requests.length === 2, 'serialized second request')
   check('rapid preference changes preserve the latest full intent', serial.requests[1].value.enabled && serial.requests[1].value.days === 7)
+  check('pending remains visible through queued preference changes', serial.window.harness.saving)
   serial.requests[1].reject(new Error('fixture save rejected'))
   await waitFor(() => serial.window.harness.error, 'visible preference error')
   check('failed last preference rolls back to last confirmed state', serial.window.harness.state.enabled && serial.window.harness.state.days === 3 && serial.window.saved.length === 0)
+  check('failed preference unlocks pending state', !serial.window.harness.saving)
   const first = serial.window.harness.requestConfirm({title:'first'})
   const second = serial.window.harness.requestConfirm({title:'second'})
   check('replacing a confirmation resolves the previous caller as cancelled', await first === false)

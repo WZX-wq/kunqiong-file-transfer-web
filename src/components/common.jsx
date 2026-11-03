@@ -100,6 +100,14 @@ export function PublicShell({ children, className = '' }) {
   </div>
 }
 
-export function StateBlock({ title, detail, onRetry }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p>{onRetry && <ActionButton className="primary-button" onClick={onRetry}>重新加载</ActionButton>}<a className={onRetry ? 'secondary-button' : 'primary-button'} href="/">返回鲲穹首页</a></div> }
+export function StateBlock({ title, detail, onRetry }) {
+  return <div className="state-block">
+    <ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p>
+    <div className="state-block-actions">
+      {onRetry && <ActionButton className="primary-button" onClick={onRetry}>重新加载</ActionButton>}
+      <a className={onRetry ? 'secondary-button' : 'primary-button'} href="/">返回鲲穹首页</a>
+    </div>
+  </div>
+}
 
 export function LoadingBlock() { return <div className="state-block"><span className="loading-dot" /><h1>正在打开</h1><p>正在检查分享状态，请稍候。</p></div> }

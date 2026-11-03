@@ -11,6 +11,7 @@ const recordsStyles = (await Promise.all([
   'src/styles/base.css',
   'src/styles/components.css',
   'src/styles/app-records.css',
+  'src/styles/responsive.css',
 ].map(file => readFile(path.resolve(root, file), 'utf8')))).join('\n')
 const bundle = await build({
   root, configFile: false, logLevel: 'silent',
@@ -23,13 +24,14 @@ const bundle = await build({
       return `import React from 'react';
         import { createRoot } from 'react-dom/client';
         import { FilePreviewModal, ManageItemModal } from '/src/components/ui.jsx';
-        import { RecordsView } from '/src/pages/records.jsx';
+        import { RecordsView, ShareExpiryModal } from '/src/pages/records.jsx';
         import { recordPreviewConfigs, createShareFilePreviewConfig } from '/src/lib/transfer.js';
         import { fileCategoryFromFile, managedFileItemsFromRecords, matchesManagedFileCategory, syncShareRecord } from '/src/lib/records.js';
         const root = createRoot(document.getElementById('root'));
         window.previewFixture = { recordPreviewConfigs, createShareFilePreviewConfig, syncShareRecord,
           fileCategoryFromFile, managedFileItemsFromRecords, matchesManagedFileCategory,
           renderManage(data) { root.render(React.createElement(ManageItemModal, {target:{kind:'share',record:{kind:'share'},data},onSave:async payload=>{window.savedSettings=payload;return true},onClose:()=>root.render(null)})) },
+          renderExpiry(record) { root.render(React.createElement(ShareExpiryModal, {record, canUsePermanent:false, onClose:()=>root.render(null), onSave:async()=>true})) },
           render(preview) { root.render(React.createElement(FilePreviewModal, {preview, onClose:()=>root.render(null), onDownload:()=>{window.downloadClicked=true}})) },
           renderRecords(records) { root.render(React.createElement(RecordsView, {records, onRefresh:async()=>{}, onNotify:()=>{}, onOpen:record=>{window.openedRecord=record}})) },
           unmount() { root.unmount() }
@@ -73,6 +75,26 @@ async function fixture(handler) {
 const ok = body => new Response(body, { status: 200 })
 const failure = (status, message) => new Response(JSON.stringify({ message }), { status, headers: { 'x-error-message': encodeURIComponent(message), 'content-type': 'application/json' } })
 const record = { kind: 'share', scope: 'my_sent', name: 'records.pdf', shareId: 'share', code: 'ABC123', manageToken: 'manage', files: [{ name: 'records.pdf', size: 603 }], status: '已关闭' }
+
+const expiryCalendar = await fixture(() => ok('{}'))
+try {
+  expiryCalendar.api.renderExpiry({ ...record, id: 'expiry-calendar', expiresAt: '2026-11-10T00:00:00.000Z' })
+  await waitFor(() => expiryCalendar.document.querySelector('.share-expiry-modal'), 'Share expiry dialog mounts')
+  check('Share expiry dialog is portaled outside the records page root', !expiryCalendar.document.querySelector('.share-expiry-modal').closest('#root'))
+  check('Date picker stays hidden until a custom expiry is chosen', expiryCalendar.document.querySelectorAll('.expiry-calendar-dialog .date-picker-day').length === 0)
+  expiryCalendar.document.querySelector('.share-expiry-modal .option-grid button').dispatchEvent(new expiryCalendar.window.MouseEvent('click', { bubbles: true }))
+  await waitFor(() => expiryCalendar.document.querySelector('.expiry-calendar-dialog .date-picker-day'), 'Independent expiry calendar opens')
+  check('Share expiry calendar is an independent layer and exposes dates without scrolling', expiryCalendar.document.querySelectorAll('.expiry-calendar-dialog .date-picker-day').length === 42 && !expiryCalendar.document.querySelector('.expiry-calendar-dialog').closest('.share-expiry-modal') && recordsStyles.includes('.expiry-calendar-backdrop'))
+  expiryCalendar.document.querySelector('.expiry-calendar-dialog .date-picker-day:not(:disabled)').dispatchEvent(new expiryCalendar.window.MouseEvent('click', { bubbles: true }))
+  await waitFor(() => !expiryCalendar.document.querySelector('.expiry-calendar-dialog'), 'Selecting an expiry date closes the calendar layer')
+  check('Selecting a date updates the expiry trigger and dismisses the calendar', expiryCalendar.document.querySelector('.expiry-date-trigger')?.textContent.includes('选择日期'))
+  expiryCalendar.document.querySelector('.expiry-date-trigger').dispatchEvent(new expiryCalendar.window.MouseEvent('click', { bubbles: true }))
+  await waitFor(() => expiryCalendar.document.querySelector('.expiry-calendar-dialog'), 'Date trigger reopens calendar')
+  expiryCalendar.window.dispatchEvent(new expiryCalendar.window.KeyboardEvent('keydown', { key: 'Escape' }))
+  await waitFor(() => !expiryCalendar.document.querySelector('.expiry-calendar-dialog'), 'Escape closes only the calendar layer')
+  check('Escape dismisses the independent calendar while keeping expiry settings open', Boolean(expiryCalendar.document.querySelector('.share-expiry-modal')))
+  check('Share expiry dialog keeps a compact width under responsive modal rules', /\.modal\.share-expiry-modal\s*\{\s*width:\s*min\(460px, 100%\)/.test(recordsStyles))
+} finally { expiryCalendar.close() }
 
 const recordsLayout = await fixture(() => ok('{}'))
 try {

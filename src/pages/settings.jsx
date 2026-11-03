@@ -15,16 +15,49 @@ import { apiRequest, getCachedAccountData } from '../lib/api.js'
 // 清理页顶部「存储与清理」卡（对齐原型 settings-cleanup 的存储卡）：
 // 三段容量全部来自 /api/account/file-cleanup-overview 的真实统计，
 // 「立即清理」走 /api/account/file-cleanup/run，按当前账号自己的清理规则执行。
-function CleanupStorageCard({ user }) {
+function CleanupStorageCard({ user, settings, settingsBusy, settingsError, onRunningChange }) {
   const [overview, setOverview] = useState(() => getCachedAccountData('/api/account/file-cleanup-overview'))
   const [running, setRunning] = useState(false)
   const [feedback, setFeedback] = useState(null)
-  const load = () => apiRequest('/api/account/file-cleanup-overview').then((data) => setOverview(data)).catch(() => {})
-  useEffect(() => { load() }, [])
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState('')
+  const [refreshVersion, setRefreshVersion] = useState(0)
+  const preferenceChanged = useRef(false)
+  useEffect(() => {
+    if (settingsBusy) {
+      preferenceChanged.current = true
+      setFeedback(null)
+      setRefreshError('')
+      return
+    }
+    const controller = new AbortController()
+    setRefreshing(true)
+    setRefreshError('')
+    apiRequest('/api/account/file-cleanup-overview', { force: true, signal: controller.signal }).then(data => {
+      if (controller.signal.aborted) return
+      setOverview(data)
+      if (preferenceChanged.current && !settingsError) {
+        setFeedback({ tone: 'success', text: settings.enabled
+          ? '自动清理已按当前规则执行，容量已更新'
+          : '自动清理已关闭，容量已更新' })
+      }
+      preferenceChanged.current = false
+    }).catch(error => {
+      if (!controller.signal.aborted) setRefreshError(error.message || '容量更新失败，请重试')
+    }).finally(() => {
+      if (!controller.signal.aborted) setRefreshing(false)
+    })
+    return () => controller.abort()
+  }, [user.id, settings.enabled, settings.days, settingsBusy, settingsError, refreshVersion])
+  const busy = running || settingsBusy || refreshing
+  const progress = settingsBusy ? (settings.enabled ? '正在执行自动清理，请稍候' : '正在关闭自动清理，请稍候')
+    : running ? '正在执行清理操作，请稍候' : '正在更新清理结果，请稍候'
   const runNow = async () => {
-    if (running) return
+    if (busy || !settings.enabled) return
     setRunning(true)
+    onRunningChange(true)
     setFeedback(null)
+    setRefreshError('')
     try {
       const result = await apiRequest('/api/account/file-cleanup/run', { method: 'POST', body: JSON.stringify({}) })
       if (result.skipped) {
@@ -32,14 +65,23 @@ function CleanupStorageCard({ user }) {
       } else {
         setFeedback({ tone: 'success', text: result.files > 0 ? `已清理 ${result.shares} 个分享与 ${result.collections} 个收集任务（共 ${result.files} 个文件），释放 ${formatBytes(result.freedBytes)}。` : '没有满足清理条件的过期文件，无需清理。' })
       }
-      load()
+      try {
+        const data = await apiRequest('/api/account/file-cleanup-overview', { force: true })
+        setOverview(data)
+      } catch (error) {
+        setRefreshError(error.message || '容量更新失败，请重试')
+      }
     } catch (err) {
       setFeedback({ tone: 'error', text: err.message || '清理失败，请稍后再试' })
     } finally {
       setRunning(false)
+      onRunningChange(false)
     }
   }
-  if (!overview) return <div className="cleanup-storage-card is-loading"><span className="loading-dot" /> 正在读取容量使用…</div>
+  if (!overview) return <div className="cleanup-storage-card is-loading" role="status">
+    {refreshError ? <>{refreshError}<ActionButton onClick={() => setRefreshVersion(version => version + 1)}>重试</ActionButton></>
+      : <><span className="loading-dot" /> {settingsBusy ? progress : '正在读取容量使用…'}</>}
+  </div>
   const total = Math.max(0, Number(overview.totalBytes) || 0)
   const pct = (bytes) => total > 0 ? Math.min(100, (bytes / total) * 100) : 0
   const expired = Math.max(0, Number(overview.expiredBytes) || 0)
@@ -49,7 +91,7 @@ function CleanupStorageCard({ user }) {
   if (overview.expiredCollectionCount > 0) expiredParts.push(`${overview.expiredCollectionCount} 个收集任务`)
   const expiredDetail = expiredParts.length ? `（${expiredParts.join(' · ')}）` : ''
   return (
-    <div className="cleanup-storage-card">
+    <div className="cleanup-storage-card" aria-busy={busy}>
       <div className="cleanup-storage-head">
         <h2><HardDrive size={18} /> 存储与清理</h2>
         <span className="cleanup-plan-chip">{planLabel} {formatBytes(total)}</span>
@@ -69,12 +111,13 @@ function CleanupStorageCard({ user }) {
         </div>
         <div className={`cleanup-storage-action ${expired > 0 ? 'has-expired' : ''}`}>
           <AlertTriangle size={16} />
-          <span>{expired > 0 ? `已过期文件仍占用容量，清理后才会释放${expiredDetail}。` : '当前没有已过期占用容量的文件。'}</span>
-          <ActionButton type="button" className="primary-button" onClick={runNow} disabled={running || !overview.settings.enabled} title={overview.settings.enabled ? '' : '请先开启自动清理开关'}>
-            <Trash2 size={14} /> {running ? '清理中…' : '立即清理'}
+          <span role="status" aria-live="polite">{busy ? progress : expired > 0 ? `已过期文件仍占用容量，清理后才会释放${expiredDetail}。` : '当前没有已过期占用容量的文件。'}</span>
+          <ActionButton type="button" className="primary-button" onClick={runNow} disabled={busy || !settings.enabled} aria-busy={busy} title={settings.enabled ? '' : '请先开启自动清理开关'}>
+            <Trash2 size={14} /> {busy ? '处理中…' : '立即清理'}
           </ActionButton>
         </div>
-        {feedback && <p className={`cleanup-storage-feedback is-${feedback.tone}`}>{feedback.text}</p>}
+        {!busy && feedback && <p className={`cleanup-storage-feedback is-${feedback.tone}`} role="status">{feedback.text}</p>}
+        {refreshError && <p className="cleanup-storage-feedback is-error" role="alert">{refreshError} <ActionButton className="settings-row-action" onClick={() => setRefreshVersion(version => version + 1)} disabled={busy}>刷新容量</ActionButton></p>}
       </div>
     </div>
   )
@@ -101,7 +144,8 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
     onUpdateUser?.(next)
   }
   const [noticeSettings, updateNotice, noticeError] = useSerializedPreference(user?.notificationSettings, user?.id, normalizeNoticeSettings, saveCloudNoticeSettings, saved => updatePreferenceUser('notificationSettings', saved))
-  const [fileCleanupSettings, updateFileCleanup, fileCleanupError] = useSerializedPreference(user?.fileCleanup, user?.id, normalizeFileCleanupSettings, saveCloudFileCleanupSettings, saved => updatePreferenceUser('fileCleanup', saved))
+  const [fileCleanupSettings, updateFileCleanup, fileCleanupError, fileCleanupSaving] = useSerializedPreference(user?.fileCleanup, user?.id, normalizeFileCleanupSettings, saveCloudFileCleanupSettings, saved => updatePreferenceUser('fileCleanup', saved))
+  const [manualCleanupRunning, setManualCleanupRunning] = useState(false)
   const [bindingType, setBindingType] = useState('')
   const [avatarPreview, setAvatarPreview] = useState('')
   const [avatarError, setAvatarError] = useState('')
@@ -334,19 +378,20 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
 
           {section === 'cleanup' && (
             <>
-              <CleanupStorageCard user={user} />
+              <CleanupStorageCard key={user.id} user={user} settings={fileCleanupSettings} settingsBusy={fileCleanupSaving} settingsError={fileCleanupError} onRunningChange={setManualCleanupRunning} />
               <div className="settings-notice-group file-cleanup-settings">
                 <h2><PrototypeAsset className="settings-prototype-heading-icon" name="act-trash.png" size={22} /> 过期文件自动清理</h2>
                 <NoticeToggle
                   label="自动删除过期文件"
                   detail="关闭后文件不会自动删除，但会继续占用空间；开启后按下方规则清理。"
                   checked={fileCleanupSettings.enabled}
+                  disabled={fileCleanupSaving || manualCleanupRunning}
                   onChange={() => updateFileCleanup({ enabled: !fileCleanupSettings.enabled })}
                 />
                 <div className={`file-cleanup-options ${fileCleanupSettings.enabled ? '' : 'disabled'}`}>
                   <div className="settings-row-label"><strong>过期后多久删除</strong><span>仅清理已过期的分享文件和收集任务文件。</span></div>
                   <div className="option-grid compact-grid">
-                    {[1, 3, 7].map((days) => <ActionButton type="button" key={days} disabled={!fileCleanupSettings.enabled} className={fileCleanupSettings.days === days ? 'selected' : ''} onClick={() => updateFileCleanup({ days })}>{days} 天{fileCleanupSettings.days === days && <Check size={14} />}</ActionButton>)}
+                    {[1, 3, 7].map((days) => <ActionButton type="button" key={days} disabled={!fileCleanupSettings.enabled || fileCleanupSaving || manualCleanupRunning} className={fileCleanupSettings.days === days ? 'selected' : ''} onClick={() => updateFileCleanup({ days })}>{days} 天{fileCleanupSettings.days === days && <Check size={14} />}</ActionButton>)}
                   </div>
                 </div>
                 {fileCleanupError && <p className="settings-form-error">{fileCleanupError}</p>}
@@ -499,11 +544,11 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
   )
 }
 
-export function NoticeToggle({ label, detail, checked, onChange }) {
+export function NoticeToggle({ label, detail, checked, onChange, disabled = false }) {
   return (
     <div className="settings-notice-row">
       <div><strong>{label}</strong>{detail && <span>{detail}</span>}</div>
-      <ActionButton className={`switch ${checked ? 'on' : ''}`} aria-label={`${checked ? '关闭' : '开启'}${label}`} aria-pressed={checked} onClick={onChange}><span /></ActionButton>
+      <ActionButton className={`switch ${checked ? 'on' : ''}`} aria-label={`${checked ? '关闭' : '开启'}${label}`} aria-pressed={checked} disabled={disabled} onClick={onChange}><span /></ActionButton>
     </div>
   )
 }

@@ -510,6 +510,12 @@
 .state-block > svg { color: var(--accent); }
 .state-block h1 { margin: 18px 0 8px; font-size: 23px; }
 .state-block p { margin: 0 0 23px; color: #616e81; font-size: 13px; }
+.state-block-actions { display: flex; align-items: center; justify-content: center; flex-wrap: nowrap; gap: 12px; max-width: 100%; }
+.state-block-actions > .primary-button, .state-block-actions > .secondary-button { min-width: 0; min-height: 44px; padding-inline: 14px; white-space: nowrap; }
+@media (max-width: 380px) {
+  .state-block-actions { gap: 8px; }
+  .state-block-actions > .primary-button, .state-block-actions > .secondary-button { padding-inline: 10px; font-size: 13px; }
+}
 .loading-dot { width: 22px; height: 22px; border: 3px solid #dbe2ec; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes toastIn {
