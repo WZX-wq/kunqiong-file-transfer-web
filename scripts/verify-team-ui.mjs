@@ -40,7 +40,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
    return new Response(method==='HEAD'?null:'团队正文',{headers:{'content-type':'text/plain'}})
   }
   if(url==='/api/auth/me')data={user:currentRole?{id:currentRole==='owner'?'owner':currentRole==='peer'?'peer':currentRole==='admin'?'admin':'member',nickname:'UI测试',plan,organization:hasTeam?{id:'org',slug:'team-slug',name,ownerUserId:currentRole==='owner'?'owner':'new-owner'}:null}:null}
-  else if(url==='/api/account/team/overview'){
+  else if(new URL(url,'http://fixture.local').pathname==='/api/account/team/overview'){
    if(removed){status=404;data={message:'你尚未加入团队空间'}}
    else {
     data=overview()
@@ -92,7 +92,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
   else if(url==='/api/account/workspace/dissolve'){removed=true;data={dissolvedOrganizationId:'org'}}
   else if(url.startsWith('/api/organizations/'))data=url.includes('wrong')?{available:false,reason:'unavailable'}:{available:!!currentRole,reason:currentRole?'eligible':'anonymous',organizationName:name}
   else if(url==='/api/account/upgrade-pricing')data={source:'local',pricing:{}}
-  else if(url==='/api/account/messages')data={messages:[],settings:{}}
+  else if(new URL(url,'http://fixture.local').pathname==='/api/account/messages')data={messages:[],settings:{},unreadCount:0,total:0}
    else if(url==='/api/upload-sessions'){status=navigation.uploadFailure?415:400;data=navigation.uploadFailure||{message:'fixture: stop before uploading bytes'}}
   return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}})
  }
@@ -430,7 +430,7 @@ await scenario('TEAM-UPLOAD-RISK-DETAILS', async () => {
   } finally {f.dom.window.close()}
  }
 })
-await scenario('TEAM-001',async()=>{for(const [route,title] of [['/team','登录后查看团队'],['/workspace','登录后使用团队空间']]){const f=await mount(route,'');try{check('游客页面要求登录 '+route,f.document.body.textContent.includes(title));check('游客不读取团队管理数据 '+route,!f.calls.some(c=>c.url==='/api/account/team/overview'||c.url==='/api/account/workspace'));check('游客无团队名称/管理按钮 '+route,!f.document.body.textContent.includes('隔离验证团队')&&!f.find('解散团队'))}finally{f.dom.window.close()}}})
+await scenario('TEAM-001',async()=>{for(const [route,title] of [['/team','登录后查看团队'],['/workspace','登录后使用团队空间']]){const f=await mount(route,'');try{check('游客页面要求登录 '+route,f.document.body.textContent.includes(title));check('游客不读取团队管理数据 '+route,!f.calls.some(c=>new URL(c.url,'http://fixture.local').pathname==='/api/account/team/overview'||c.url==='/api/account/workspace'));check('游客无团队名称/管理按钮 '+route,!f.document.body.textContent.includes('隔离验证团队')&&!f.find('解散团队'))}finally{f.dom.window.close()}}})
 await scenario('TEAM-NAME-BOUNDARIES', async () => {
  const f = await mount('/workspace')
  try {

@@ -11,6 +11,14 @@ import { protectCredential } from './private-key.js'
 // silently drop distinct access IDs through INSERT IGNORE.
 export const LOCAL_AUDIT_JOURNAL_MIGRATION = 'local-audit-journal-v2'
 
+export function auditRetentionCutoffs(value) {
+  return typeof value === 'number' ? { accessCutoff: value, criticalCutoff: value } : value
+}
+export function retainedAuditLog(log, value) {
+  const { accessCutoff, criticalCutoff } = auditRetentionCutoffs(value)
+  return new Date(log.createdAt).getTime() >= (log.type === 'access' ? accessCutoff : criticalCutoff)
+}
+
 export function mergeAuditEntries(logs, normalize, limit) {
   const byId = new Map()
   for (const entry of logs) {
@@ -209,11 +217,21 @@ export class DatabaseAuditStore {
   purgeBefore(cutoff) {
     if (this.error) throw this.error
     const before = this.logs.length
-    this.logs = this.logs.filter(log => new Date(log.createdAt).getTime() >= cutoff)
+    this.logs = this.logs.filter(log => retainedAuditLog(log, cutoff))
     this.enqueue(async () => {
-      const at = new Date(cutoff).toISOString()
-      await this.pool.execute('DELETE FROM kunqiong_audit_log WHERE created_at < ?', [at])
-      if (this.relationalAuditEnabled) await this.pool.execute('DELETE FROM kq_audit_log WHERE gmt_create < ?', [at.slice(0, 23).replace('T', ' ')])
+      const policy = auditRetentionCutoffs(cutoff)
+      for (const [critical, at] of [[0, policy.accessCutoff], [1, policy.criticalCutoff]]) {
+        for (let batch=0; batch<10; batch++) {
+          const [result] = await this.pool.execute('DELETE FROM kunqiong_audit_log WHERE critical = ? AND created_at < ? ORDER BY created_at, id LIMIT 500', [critical, new Date(at).toISOString()])
+          if (result.affectedRows < 500) break
+          await new Promise(resolve => setImmediate(resolve))
+        }
+        if (this.relationalAuditEnabled) for (let batch=0; batch<10; batch++) {
+          const [result] = await this.pool.execute(`DELETE FROM kq_audit_log WHERE event_type ${critical ? '<>' : '='} 'access' AND gmt_create < ? ORDER BY gmt_create, id LIMIT 500`, [new Date(at).toISOString().slice(0,23).replace('T',' ')])
+          if (result.affectedRows < 500) break
+          await new Promise(resolve => setImmediate(resolve))
+        }
+      }
     })
     return { logs: this.logs, removed: before - this.logs.length }
   }
@@ -224,7 +242,12 @@ export class DatabaseAuditStore {
   // access noise goes first, then oldest non-access (critical) events. Batches
   // are capped so a DELETE never holds a long lock or grows one huge undo log.
   // Safe no-op for JSON/local stores and for databases without the table.
-  async trimToLimit() {
+  trimToLimit() {
+    if (!this.trimming) this.trimming = this.trimBatch().finally(() => { this.trimming = null })
+    return this.trimming
+  }
+
+  async trimBatch() {
     const batchSize = 1000
     const limit = Math.max(1, Math.floor(Number(this.limit) || 0))
     const tableExists = async () => {
@@ -238,11 +261,11 @@ export class DatabaseAuditStore {
     const [[totalRow]] = await this.pool.query('SELECT COUNT(*) AS total FROM kq_audit_log')
     let excess = Number(totalRow?.total || 0) - limit
     if (excess <= 0) return 0
-    let removed = 0
+    let removed = 0, batches = 0
     // 1) oldest access events, 2) oldest critical events. Both statements use
     // the (event_type, gmt_create) index and stop at a hard per-batch ceiling.
     for (const predicate of [`event_type = 'access'`, `event_type <> 'access'`]) {
-      while (excess > 0) {
+      while (excess > 0 && batches++ < 10) {
         const batch = Math.min(batchSize, excess)
         let result
         try {
@@ -258,6 +281,7 @@ export class DatabaseAuditStore {
         excess -= affected
         // Fewer rows than requested means this priority class is exhausted.
         if (affected < batch) break
+        await new Promise(resolve => setImmediate(resolve))
       }
     }
     // The in-memory list is already bounded by append/refresh; the next
@@ -490,7 +514,7 @@ export class LocalAuditStore {
     return this.locked(() => {
       this.refresh()
       const before = this.logs.length
-      this.logs = this.logs.filter(log => new Date(log.createdAt).getTime() >= cutoff)
+      this.logs = this.logs.filter(log => retainedAuditLog(log, cutoff))
       if (this.logs.length !== before) this.checkpoint()
       return { logs: this.logs, removed: before - this.logs.length }
     })

@@ -110,7 +110,10 @@ export function hydrateRows(rowsByTable, next, decode) {
     return ordinal(a) - ordinal(b)
   })
   for (const row of rows('kq_system_setting')) if (['systemConfig', 'collectionTemplates'].includes(row.setting_key)) next[row.setting_key] = jsonValue(row.setting_value_json)
-  for (const row of rows('kq_user')) next.users[row.legacy_id] = payload('kq_user', row, `user:${row.legacy_id}`)
+  for (const row of rows('kq_user')) {
+    next.users[row.legacy_id] = payload('kq_user', row, `user:${row.legacy_id}`)
+    next.users[row.legacy_id].status = row.status
+  }
   for (const row of rows('kq_organization')) {
     const org = payload('kq_organization', row, `organization:${row.legacy_id}`)
     const stored = storedFor(row, `organization:${row.legacy_id}`)
@@ -161,7 +164,24 @@ export function hydrateRows(rowsByTable, next, decode) {
     next.distributions.push(value)
   }
   for (const [table, domain, context] of [['kq_auth_session', 'sessions', 'session'], ['kq_verification_code', 'verificationCodes', 'verification'], ['kq_upgrade_order', 'upgradeOrders', 'upgrade-order']]) {
-    for (const row of rows(table)) next[domain].push(payload(table, row, `${context}:${row.legacy_id}`))
+    for (const row of rows(table)) {
+      const value = payload(table, row, `${context}:${row.legacy_id}`)
+      // Revocation must also invalidate an unconverted legacy payload. These
+      // two SQL columns are authoritative regardless of its encoding version.
+      if (table === 'kq_auth_session') {
+        // The SQL foreign key identifies the current account. A historical
+        // encrypted profile inside a session is never an identity authority.
+        const userId = maps.user.get(String(row.user_id))
+        if (userId) value.user = { ...value.user, id: userId }
+        value.expiresAt = iso(row.expires_at)
+        if (row.revoked_at != null) {
+          value.revokedAt = iso(row.revoked_at)
+          if (row.replacement_session_id) value.revokeReason = 'replaced'
+        }
+        else delete value.revokedAt
+      }
+      next[domain].push(value)
+    }
   }
   for (const row of rows('kq_message')) {
     const owner = maps.user.get(String(row.user_id))

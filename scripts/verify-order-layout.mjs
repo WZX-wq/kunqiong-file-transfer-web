@@ -17,7 +17,7 @@ const chromePath = process.env.CHROME_PATH || [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
 ].find(existsSync)
 assert.ok(chromePath, 'Set CHROME_PATH to a Chromium browser to run layout checks')
-const bundle = await build({ root, configFile: false, logLevel: 'silent', build: {
+const bundle = await build({ root, configFile: false, logLevel: 'silent', worker: { format: 'es' }, build: {
   write: false, minify: false,
   rollupOptions: { input: path.join(root, 'src/main.jsx'), output: { format: 'iife', inlineDynamicImports: true } },
 } })
@@ -49,7 +49,7 @@ const server = http.createServer((req, res) => {
     data = { order }
     if (url.pathname.endsWith('/confirm')) {
       const payment = order.payType === 1 ? { qrcode_img_url: qr } : {
-        alipaysubmit_html: `<style>body{margin:0}img{width:130px;height:130px}</style><img src="${qr}" alt="支付宝测试二维码">`,
+        alipaysubmit_html: '<base href="https://excashier.alipay.com/standard/auth.htm?payOrderId=layout-fixture">',
       }
       data = { order: { ...order, payment }, payment }
     }
@@ -60,7 +60,7 @@ const server = http.createServer((req, res) => {
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const profile = await mkdtemp(path.join(os.tmpdir(), 'kunqiong-order-layout-'))
-const chrome = spawn(chromePath, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+const chrome = spawn(chromePath, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--host-resolver-rules=MAP excashier.alipay.com ~NOTFOUND',
   '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' })
 let socket, nextId = 0
 const pending = new Map(), failures = [], runtimeErrors = []
@@ -128,7 +128,7 @@ try {
       await click('查看订单 ' + order.orderNo)
       await waitFor(() => evaluate('!document.querySelector(".orders-inline-note[role=status]")'), 'Pending order details')
       await evaluate('[...document.querySelectorAll("button")].find(el => el.textContent.trim() === "继续支付").click()')
-      const qrSelector = order.payType === 1 ? '.upgrade-payment-qr img' : '.upgrade-payment-alipay iframe'
+      const qrSelector = order.payType === 1 ? '.upgrade-payment-qr img' : '.upgrade-payment-alipay-frame'
       await waitFor(() => evaluate(`!!document.querySelector(${JSON.stringify(qrSelector)})`), 'Payment QR')
       const backdrop = '.upgrade-modal'
       // Check the backdrop independently of its class so the regression also runs against the old layout.
@@ -141,6 +141,7 @@ try {
       await check(size + ' ' + order.id + ' countdown is fully readable', visible('.upgrade-payment-countdown'))
       await evaluate(`document.querySelector(${JSON.stringify(qrSelector)}).scrollIntoView({block:'center'})`)
       await check(size + ' ' + order.id + ' QR is completely visible', visible(qrSelector))
+      if (order.payType === 2) await check(size + ' Alipay checkout is displayed inline', visible('.upgrade-payment-alipay-frame iframe'))
       await evaluate('document.querySelector(".upgrade-order-actions").scrollIntoView({block:"center"})')
       await check(size + ' ' + order.id + ' payment actions are reachable', visible('.upgrade-order-actions'))
       if (process.env.ORDER_LAYOUT_SCREENSHOT && width === 1551 && order.id === 'wechat') {

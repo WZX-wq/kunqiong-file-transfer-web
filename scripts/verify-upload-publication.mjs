@@ -89,6 +89,16 @@ try {
   const storedCollectionFile = JSON.parse(fs.readFileSync(path.join(storage, 'metadata.json'), 'utf8')).collections[0].submissions[0].files[0]
   check('collection submission uses the same hashed randomized storage naming', submittedFile.name === 'fixture.txt' && /^[0-9a-f]{16}-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.txt$/.test(storedCollectionFile.storedName))
   check('collection submitter owns the physical storage directory', storedCollectionFile.storageOwnerId === 'owner' && fs.existsSync(path.join(storage, 'users', 'owner', storedCollectionFile.storedName)))
+  const metadataBeforeOverwrite = fs.readFileSync(path.join(storage, 'metadata.json'))
+  const oldCollectionPath = path.join(storage, 'users', 'owner', storedCollectionFile.storedName)
+  const userFilesBeforeOverwrite = fs.readdirSync(path.dirname(oldCollectionPath)).sort()
+  await api('/__fixture/fail', { body: {} })
+  const overwriteBody = form({ participantName: 'fixture', overwriteExisting: 'true' })
+  overwriteBody.set('files', new Blob(['new']), 'fixture.txt')
+  const failedOverwrite = await api('/api/collections/collection-token/submissions', { body: overwriteBody })
+  check('failed replacement reports persistence failure', failedOverwrite.status === 503)
+  check('failed replacement keeps committed metadata and original file bytes', metadataBeforeOverwrite.equals(fs.readFileSync(path.join(storage, 'metadata.json'))) && fs.readFileSync(oldCollectionPath, 'utf8') === 'safe')
+  check('failed replacement leaves no new physical files', JSON.stringify(fs.readdirSync(path.dirname(oldCollectionPath)).sort()) === JSON.stringify(userFilesBeforeOverwrite))
   for (const collection of [false, true]) {
     await start()
     await api('/__fixture/fail', { body: {} })

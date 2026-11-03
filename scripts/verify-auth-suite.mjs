@@ -68,9 +68,11 @@ const cdir=path.join(fixture,'storage','collections','task','submission');fs.mkd
 const shareFilePath=id=>resolveStoredFilePath(stored().shares.find(share=>share.id===id)?.files?.[0],path.join(fixture,'storage','files',id),path.join(fixture,'storage','users'))
 const collectionFilePath=()=>resolveStoredFilePath(stored().collections.find(task=>task.id==='task')?.submissions?.[0]?.files?.[0],cdir,path.join(fixture,'storage','users'))
 let exchanges=[]
+let slowExchangeGate = Promise.resolve(), releaseSlowExchange = () => {}
 const oauth=http.createServer(async(req,res)=>{
   let raw='';for await(const part of req)raw+=part
   const data=JSON.parse(raw||'{}');exchanges.push(data)
+  if (String(data.code).startsWith('slow-duplicate')) await slowExchangeGate
   res.setHeader('content-type','application/json')
   if(data.code==='fail') res.end(JSON.stringify({code:400,message:'secret=FIXTURE_CLIENT_SECRET token=PRIVATE_FIXTURE_TOKEN'}))
   else {
@@ -125,6 +127,35 @@ function check(label,value){assert.ok(value,label);passed++;console.log('PASS '+
 async function group(id,fn){try{await fn();cases.push({id,status:'PASS'});console.log('CASE '+id+' PASS')}catch(e){failures.push({id,message:e.message});cases.push({id,status:'FAIL',message:e.message});console.log('CASE '+id+' FAIL: '+e.message)}}
 try {
  await start()
+ await group('AUTH-slow-browser-callback', async () => {
+  slowExchangeGate = new Promise(resolve => { releaseSlowExchange = resolve })
+  const flow = await login(), before = exchanges.length
+  const headers = { cookie: flow.cookie, accept: 'text/html' }
+  const begin = await fetch(base+`/auth/callback?code=slow-duplicate&state=${flow.state}`, { redirect:'manual', headers })
+  check('browser callback immediately leaves consent page', begin.status===302 && begin.headers.get('location').startsWith('/auth/pending?'))
+  const pendingUrl = base+begin.headers.get('location')
+  const again = await fetch(base+`/auth/callback?code=slow-duplicate-second&state=${flow.state}`, { redirect:'manual', headers })
+  check('second click joins original login', again.headers.get('location')===begin.headers.get('location'))
+  const pending = await fetch(pendingUrl, { redirect:'manual', headers })
+  check('pending page has automatic progress and no premature login cookie', pending.status===200 && (await pending.text()).includes('正在完成登录') && !pending.headers.get('set-cookie'))
+  const wrongBrowser = await fetch(pendingUrl, { redirect:'manual' })
+  check('pending result is browser bound', new URL(wrongBrowser.headers.get('location')).searchParams.get('login')==='failed')
+  for (let i=0;i<50 && exchanges.length===before;i++) await delay(10)
+  check('duplicate callbacks exchange one code', exchanges.length===before+1)
+  releaseSlowExchange()
+  let completed
+  for (let i=0;i<100;i++) {
+   completed=await fetch(pendingUrl,{redirect:'manual',headers})
+   if(completed.status===302)break
+   await delay(20)
+  }
+  check('progress completes after durable login', completed.status===302 && new URL(completed.headers.get('location')).searchParams.get('login')==='success')
+  const cookie=cookieOf(completed)
+  const me=await fetch(base+'/api/auth/me',{headers:{cookie,'X-Kunqiong-Auth-View':'identity'}})
+  check('completed browser flow has a usable session', (await me.json()).user?.id==='oauth-fixture')
+  const replay=await callback(flow)
+  check('completed browser flow refuses callback replay',new URL(replay.headers.get('location')).searchParams.get('login')==='failed' && exchanges.length===before+1)
+ })
  await group('AUTH-001',async()=>{
   const l=await login();check('authorization parameters',l.location.pathname==='/authorize'&&l.location.searchParams.get('client_id')==='fixture-client'&&/^[a-f0-9]{32,}$/.test(l.state))
   const r=await callback(l);const target=new URL(r.headers.get('location'));check('callback restores original settings route',target.pathname==='/settings/security'&&target.searchParams.get('login')==='success')
@@ -312,7 +343,7 @@ try {
    check('verified contact survives restart',(await api('/api/auth/me')).data.user.phone==='13900004444')
   })
  }
-} finally {await stop();await Promise.all([new Promise(r=>oauth.close(r)),new Promise(r=>smtp.close(r))])}
+} finally {releaseSlowExchange();await stop();await Promise.all([new Promise(r=>oauth.close(r)),new Promise(r=>smtp.close(r))])}
 const result={executedAt:new Date().toISOString(),passed,failures,cases,fixture}
 if(process.env.AUTH_TEST_EVIDENCE_DIR){fs.mkdirSync(process.env.AUTH_TEST_EVIDENCE_DIR,{recursive:true});fs.writeFileSync(path.join(process.env.AUTH_TEST_EVIDENCE_DIR,'auth-api-results.json'),JSON.stringify({...result,requests},null,2))}
 console.log(JSON.stringify(result,null,2))

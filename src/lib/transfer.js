@@ -213,7 +213,7 @@ export function readCollectionUploadResume(token) {
   try {
     const manifest = JSON.parse(entry?.signature || 'null')
     if (!entry?.sessionId || manifest?.mode?.mode !== 'collection' || manifest.mode.collectionToken !== token || !Array.isArray(manifest.files)) return null
-    return { ...entry, files: manifest.files, fileLastModified: manifest.mode.fileLastModified, participantName: manifest.mode.participantName || '', fieldValues: manifest.mode.fieldValues || {}, materialIds: Array.isArray(manifest.mode.materialIds) ? manifest.mode.materialIds : [], fileMaterialIds: Array.isArray(manifest.mode.fileMaterialIds) ? manifest.mode.fileMaterialIds : [] }
+    return { ...entry, files: manifest.files, fileLastModified: manifest.mode.fileLastModified, participantName: manifest.mode.participantName || '', fieldValues: manifest.mode.fieldValues || {}, materialIds: Array.isArray(manifest.mode.materialIds) ? manifest.mode.materialIds : [], fileMaterialIds: Array.isArray(manifest.mode.fileMaterialIds) ? manifest.mode.fileMaterialIds : [], ...(manifest.mode.overwriteExisting ? { overwriteExisting: true } : {}) }
   } catch { return null }
 }
 
@@ -281,6 +281,14 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
     if (session.paused) throw new UploadPausedError()
   }
   const report = state => { assertActive(); onState(state) }
+  const confirmOverwrite = async error => {
+    if (error.code !== 'collection_file_exists' || !uploadConfig.confirmOverwrite) throw error
+    const confirmed = await uploadConfig.confirmOverwrite(error.existingFiles || [])
+    assertActive()
+    if (!confirmed) throw Object.assign(new Error('已取消覆盖，原文件未修改'), { code: 'overwrite_cancelled' })
+    uploadConfig.sessionBody = { ...uploadConfig.sessionBody, overwriteExisting: true }
+    uploadConfig.completeBody = { ...uploadConfig.completeBody, overwriteExisting: true }
+  }
   assertActive()
   session.totalBytes = files.reduce((sum, item) => sum + item.size, 0)
   session.startedAt = session.startedAt || Date.now()
@@ -303,7 +311,7 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
       session.speedStartBytes = session.displayedBytes
       report(uploadStateFromProgress(session, session.uploadedBytes, '已恢复上次上传进度', '', 0))
     } else {
-      const response = await apiRequest('/api/upload-sessions', {
+      const createSession = () => apiRequest('/api/upload-sessions', {
         method: 'POST',
         body: JSON.stringify({
           files: files.map((item) => ({ name: item.name, relativePath: item.relativePath, size: item.size, mimeType: item.file.type })),
@@ -312,6 +320,9 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
           ...(uploadConfig.sessionBody || {}),
         }),
       })
+      let response
+      try { response = await createSession() }
+      catch (error) { await confirmOverwrite(error); response = await createSession() }
       session.sessionId = response.sessionId
       if (session.cancelled || uploadRef.current !== session) {
         await cancelUploadSession(session, uploadConfig)
@@ -430,7 +441,11 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
   reportCompletion(session.completion)
   let result
   try {
-    result = await finishUploadSession(session, chunkSize, uploadConfig, reportCompletion, assertActive)
+    try { result = await finishUploadSession(session, chunkSize, uploadConfig, reportCompletion, assertActive) }
+    catch (error) {
+      await confirmOverwrite(error)
+      result = await finishUploadSession(session, chunkSize, uploadConfig, reportCompletion, assertActive)
+    }
   } catch (error) {
     error.completionPending = !String(error.code || '').startsWith('scan_') && (!error.status || [408, 429, 502, 503, 504].includes(error.status))
     if ([404, 410].includes(error.status)) {

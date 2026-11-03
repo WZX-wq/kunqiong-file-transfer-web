@@ -23,7 +23,7 @@ async function mount({ fail = false } = {}) {
     const method = options.method || 'GET'; calls.push({ url, method, body: options.body })
     let data = {}, status = 200
     if (url === '/api/auth/me') data = { user: { id: 'recipient', nickname: '接收者', planId: 'free' } }
-    else if (url === '/api/account/messages') data = { messages, settings: {} }
+    else if (new URL(url, 'http://fixture.local').pathname === '/api/account/messages') data = url.includes('summary=1') ? { unreadCount: messages.filter(item => item.unread).length, total: messages.length } : { messages, settings: {} }
     else if (url.startsWith('/api/account/workspace/ownership-handovers/')) {
       if (hold) await new Promise(resolve => { release = resolve })
       if (fail) { status = 409; data = { message: '该交接已取消，请刷新后查看' } }
@@ -66,7 +66,7 @@ try {
   await failed.click('接受交接'); await failed.click('确认接受')
   await waitFor(() => failed.document.body.textContent.includes('该交接已取消'), 'failure feedback')
   check('失败显示服务端原因并恢复按钮', !failed.find('接受交接').disabled && failed.document.body.textContent.includes('该交接已取消'))
-  check('失败会重新读取服务端消息', failed.calls.filter(call => call.url === '/api/account/messages').length >= 2)
+  check('失败会重新读取服务端消息页', failed.calls.filter(call => call.url.startsWith('/api/account/messages?limit=')).length >= 2)
   check('失败不会误报接受成功', !failed.document.querySelector('.toast.success'))
 } finally { failed.dom.window.close() }
 const report = { executedAt: new Date().toISOString(), passed, environment: 'JSDOM real React production bundle; HTTP fixtures' }

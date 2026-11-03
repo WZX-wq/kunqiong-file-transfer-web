@@ -1,3 +1,4 @@
+import { ActionButton } from './action-button.jsx'
 // 全局通用组件（由 main.jsx 抽取）
 // 被多个页面共用，抽到这里作为共享层，供各页面子树 import。
 
@@ -61,8 +62,8 @@ export function ConfirmModal({ state, onCancel, onConfirm }) {
         {state.subject && <p className="confirm-modal-subject" title={state.subject}>{state.subject}</p>}
         {state.detail && <p>{state.detail}</p>}
         <div className="modal-footer confirm-modal-footer">
-          <button className="secondary-button" onClick={onCancel}>{state.cancelText || '取消'}</button>
-          <button className={`primary-button ${state.tone === 'danger' ? 'danger-button' : ''}`} onClick={onConfirm}>{state.confirmText || '确定'}</button>
+          <ActionButton className="secondary-button" onClick={onCancel}>{state.cancelText || '取消'}</ActionButton>
+          <ActionButton className={`primary-button ${state.tone === 'danger' ? 'danger-button' : ''}`} onClick={onConfirm}>{state.confirmText || '确定'}</ActionButton>
         </div>
       </div>
     </div>,
@@ -99,6 +100,6 @@ export function PublicShell({ children, className = '' }) {
   </div>
 }
 
-export function StateBlock({ title, detail }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p><a className="primary-button" href="/">返回鲲穹首页</a></div> }
+export function StateBlock({ title, detail, onRetry }) { return <div className="state-block"><ShieldCheck size={26} /><h1>{title}</h1><p>{detail}</p>{onRetry && <ActionButton className="primary-button" onClick={onRetry}>重新加载</ActionButton>}<a className={onRetry ? 'secondary-button' : 'primary-button'} href="/">返回鲲穹首页</a></div> }
 
 export function LoadingBlock() { return <div className="state-block"><span className="loading-dot" /><h1>正在打开</h1><p>正在检查分享状态，请稍候。</p></div> }

@@ -106,6 +106,23 @@ async function test(name, run) {
   finally { f.s.releaseCreate?.(); f.s.releaseDelete?.(); f.s.releaseComplete?.(); f.close() }
 }
 
+await test('In-app navigation protects active uploads', async f => {
+  await f.choose([file('navigation.bin')]); await f.start()
+  await waitFor(() => f.s.pending.length, 'Upload starts before navigation')
+  await f.click('会员与团队')
+  check('Active upload stays mounted when membership navigation is attempted', f.window.location.pathname === '/' && !f.s.pending[0].aborted && f.document.body.textContent.includes('请完成或取消上传后再切换页面'))
+  const detailLink = f.document.createElement('a')
+  detailLink.href = '/collect/manage/example'; f.document.body.append(detailLink); detailLink.click(); detailLink.remove()
+  await delay(20)
+  check('Active upload is protected when opening a collection detail', f.window.location.pathname === '/' && !f.s.pending[0].aborted)
+  await f.click('暂停'); await waitFor(() => f.button('继续上传'), 'Upload pauses')
+  await f.click('会员与团队')
+  check('Paused upload retains its resumable state during navigation', f.window.location.pathname === '/' && !!f.button('继续上传'))
+  await f.click('继续上传'); await f.finish()
+  await f.click('会员与团队')
+  check('Completed upload permits membership navigation', f.window.location.pathname === '/workspace' && f.s.completed.length === 1)
+})
+
 function watchProgress(f) {
   const values = []
   const read = () => {
@@ -383,7 +400,7 @@ for (const guest of [true, false]) {
   const limit = guest ? Math.round(1.2 * 1024 ** 3) : 2 * 1024 ** 3
   const f = await mount({ guest, currentUploadLimitBytes: limit })
   try {
-    await waitFor(() => f.document.querySelector('.send-prototype-stats')?.textContent.includes('20.00 GB'), 'Runtime configuration populates the homepage maximum')
+    await waitFor(() => f.document.querySelector('.send-prototype-stats')?.textContent.includes('20 GB'), 'Homepage displays the fixed platform maximum')
     check('Homepage advertises system maximum for ' + (guest ? 'guest' : 'account'), f.document.querySelector('.send-prototype-stats')?.textContent.includes('单文件最高支持'))
     await f.choose([{ name: 'too-large.bin', size: limit + 1, lastModified: 123 }])
     const toast = f.document.querySelector('.toast')?.textContent || ''

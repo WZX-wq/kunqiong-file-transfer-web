@@ -49,7 +49,7 @@ test('request-scoped relational persistence against isolated MySQL', { skip: !po
   await ensureRelationalStoreSchema(pool)
   const now = new Date().toISOString(), future = new Date(Date.now() + 86400000).toISOString()
   const seed = normalizeMetadata({
-    users: { alice: { id: 'alice', username: 'alice', nickname: 'Alice', status: 'active', planId: 'member', createdAt: now }, bob: { id: 'bob', username: 'bob', nickname: 'Bob', status: 'active', planId: 'member', createdAt: now } },
+    users: { alice: { id: 'alice', username: 'alice', nickname: 'Alice', avatar: 'https://avatar.example.test/alice.png', providerAvatar: 'https://avatar.example.test/alice.png', status: 'active', planId: 'member', createdAt: now }, bob: { id: 'bob', username: 'bob', nickname: 'Bob', status: 'active', planId: 'member', createdAt: now } },
     sessions: [{ id: 'alice-token', user: { id: 'alice', username: 'alice' }, expiresAt: future, createdAt: now }, { id: 'bob-token', user: { id: 'bob', username: 'bob' }, expiresAt: future, createdAt: now }],
     shares: ['alice', 'bob'].map((id, index) => ({ id: `${id}-share`, ownerUserId: id, manageToken: `${id}-manage`, code: `TEST${index}`, status: 'active', createdAt: now, expiresAt: future, downloadCount: 0, files: [{ name: 'file.txt', storedName: `${id}.txt`, storageOwnerId: id, size: 12, mimeType: 'text/plain' }] })),
     messages: { alice: [{ id: 'a-message', title: 'A', body: 'A', unread: true, createdAt: now }], bob: [{ id: 'b-message', title: 'B', body: 'B', unread: true, createdAt: now }] },
@@ -90,19 +90,87 @@ test('request-scoped relational persistence against isolated MySQL', { skip: !po
     assert.deepEqual(Object.keys(scope.data.users), ['alice'])
     assert.equal(scope.data.sessions.length, 1)
     assert.equal(scope.data.shares.length, 0)
-    assert.ok(queries.every(sql => /WHERE/.test(sql)))
-    assert.ok(queries.every(sql => !/kq_resource|kunqiong_app_state/.test(sql)))
+    assert.equal(queries.length, 2, 'cold access reads a live session and the versioned user payload')
+    await scope.session('alice-token')
+    assert.equal(queries.length, 3, 'warm access still verifies the live session with one SQL round trip')
+    assert.ok(queries.every(sql => /WHERE/.test(sql.sql || sql)))
+    assert.ok(queries.every(sql => !/kq_resource|kunqiong_app_state/.test(sql.sql || sql)))
+  })
+
+  await t.test('identity projection omits all encrypted snapshots and still checks live revocation and status', async () => {
+    const recording = { query(sql, params) {
+      assert.doesNotMatch(sql.sql, /SELECT\s+\*|s\.\*|u\.\*|entity_payload_json|provider_credential_ciphertext/)
+      return pool.query(sql, params)
+    } }
+    const context = createRelationalContext(recording)
+    await context.store.identity('alice-token')
+    context.normalize()
+    assert.equal(context.data.users.alice.id, 'alice')
+    assert.equal(context.data.users.alice.status, 'active')
+    assert.equal(context.data.users.alice.avatar, 'https://avatar.example.test/alice.png')
+    assert.equal(context.data.sessions[0].user.id, 'alice')
+    assert.equal(context.data.sessions[0].apiWebToken, undefined)
   })
 
   await t.test('OAuth account loading is independent of order, settings and resource queries', async () => {
     const criticalOnly = { query(sql, params) {
-      assert.doesNotMatch(sql, /kq_upgrade_order|kq_user_setting|kq_resource/)
+      assert.doesNotMatch(sql, /kq_upgrade_order|kq_user_setting|kq_resource|kq_organization/)
       return pool.query(sql, params)
     } }
     const context = createRelationalContext(criticalOnly)
     await context.loadAccount('alice', true)
     assert.equal(context.data.users.alice.id, 'alice')
     assert.ok(context.data.sessions.some(session => session.id === 'alice-token'))
+  })
+
+  await t.test('compact OAuth issuance preserves large local profiles and serializes simultaneous logins', async () => {
+    const { issueExistingAuthSession } = await import('../../server/db/auth-session.js')
+    const fixture = new RelationalRequestStore(pool)
+    fixture.data.users['compact-login'] = { id: 'compact-login', username: 'compact-login', status: 'active',
+      avatar: 'data:image/webp;base64,' + 'a'.repeat(50000), avatarSource: 'custom',
+      planId: 'enterprise', planPermanent: true, planManagedAt: now, email: 'local@example.test', loginMethods: ['email_bound'] }
+    await fixture.commit()
+    const [[before]] = await pool.query('SELECT entity_payload_json, plan_json, write_version FROM kq_user WHERE legacy_id=?', ['compact-login'])
+    const sessions = [0, 1].map(index => ({ id: `compact-login-${index}`, user: { id: 'compact-login' },
+      apiWebToken: 'provider-fixture', createdAt: new Date(Date.now() + index).toISOString(), expiresAt: future }))
+    assert.deepEqual(await Promise.all(sessions.map(session => issueExistingAuthSession(pool, 'compact-login', session))), [true, true])
+    const [[after]] = await pool.query('SELECT entity_payload_json, plan_json, write_version FROM kq_user WHERE legacy_id=?', ['compact-login'])
+    assert.deepEqual(after, before, 'login never overwrites local contacts, avatar or entitlements')
+    const readers = await Promise.all(sessions.map(async session => new RelationalRequestStore(pool).session(session.id)))
+    assert.equal(readers.filter(session => !session.revokedAt).length, 1)
+    assert.equal(readers.find(session => session.revokedAt).revokeReason, 'replaced')
+    const reader = new RelationalRequestStore(pool)
+    const active = await reader.session(readers.find(session => !session.revokedAt).id)
+    assert.equal(reader.data.users['compact-login'].avatarSource, 'custom')
+    assert.equal(reader.data.users['compact-login'].planPermanent, true)
+    assert.equal(active.apiWebToken, 'provider-fixture')
+    const [[sizes]] = await pool.query('SELECT MAX(OCTET_LENGTH(entity_payload_json)) AS bytes FROM kq_auth_session WHERE user_id=(SELECT id FROM kq_user WHERE legacy_id=?)', ['compact-login'])
+    assert.ok(sizes.bytes < 1500, 'session does not duplicate the avatar/profile')
+    await pool.query('DELETE s FROM kq_auth_session s JOIN kq_user u ON u.id=s.user_id WHERE u.legacy_id=?', ['compact-login'])
+    await pool.query('DELETE FROM kq_user WHERE legacy_id=?', ['compact-login'])
+  })
+
+  await t.test('single-statement logout revokes normalized and legacy sessions across fresh readers', async () => {
+    const { revokeAuthSession } = await import('../../server/db/auth-session.js')
+    const { protectCredential, keyedDigest } = await import('../../server/lib/private-key.js')
+    const seed = new RelationalRequestStore(pool)
+    seed.data.users['logout-fixture'] = { id: 'logout-fixture', username: 'logout-fixture', status: 'active', createdAt: now }
+    seed.data.sessions.push({ id: 'logout-normalized', user: { id: 'logout-fixture' }, expiresAt: future, createdAt: now }, { id: 'logout-legacy', user: { id: 'logout-fixture' }, expiresAt: future, createdAt: now })
+    await seed.commit()
+    const legacyKey = keyedDigest('session-id:logout-legacy').slice(0, 120)
+    const legacy = JSON.stringify(protectCredential(JSON.stringify({ id: 'logout-legacy', user: { id: 'logout-fixture' }, expiresAt: future }), 'relational:session:' + legacyKey))
+    await pool.execute('UPDATE kq_auth_session SET entity_payload_json=? WHERE legacy_id=?', [legacy, legacyKey])
+    for (const token of ['logout-normalized', 'logout-legacy']) {
+      await revokeAuthSession(pool, token)
+      const reader = new RelationalRequestStore(pool)
+      assert.ok((await reader.session(token)).revokedAt)
+      const [[first]] = await pool.query('SELECT write_version FROM kq_auth_session WHERE token_hash=?', [keyedDigest('session-cookie:' + token)])
+      await revokeAuthSession(pool, token)
+      const [[second]] = await pool.query('SELECT write_version FROM kq_auth_session WHERE token_hash=?', [keyedDigest('session-cookie:' + token)])
+      assert.equal(first.write_version, second.write_version, 'replay cannot un-revoke or rewrite the session')
+    }
+    await pool.query('DELETE s FROM kq_auth_session s JOIN kq_user u ON u.id=s.user_id WHERE u.legacy_id=?', ['logout-fixture'])
+    await pool.query('DELETE FROM kq_user WHERE legacy_id=?', ['logout-fixture'])
   })
 
   await t.test('partial profile update preserves every unseen table and Bob', async () => {
@@ -420,6 +488,30 @@ test('request-scoped relational persistence against isolated MySQL', { skip: !po
     assert.equal(scope.data.shares.length, 0)
   })
 
+  await t.test('record SQL filters and projections paginate across all rows without crossing owners', async () => {
+    const seed = new RelationalRequestStore(pool)
+    seed.data.users.listing = { id: 'listing', username: 'listing', status: 'active', planId: 'free' }
+    seed.data.sessions.push({ id: 'listing-token', user: { id: 'listing' }, expiresAt: future, createdAt: now })
+    seed.data.records.listing = Array.from({length:125}, (_,index) => ({ id: 'fixture-' + index, kind: 'share', scope: index % 2 ? 'my_sent' : 'sent_to_me', name: 'Findable ' + index, code: '', status: 'active', createdAt: now, files: [{name: index % 2 ? 'photo.png' : 'report.pdf', size:1}], expiresAt: future }))
+    await seed.commit()
+    const query = async options => { const store = new RelationalRequestStore(pool); await store.users(['listing']); const pagination = await store.recordList('listing',options); return {store,pagination} }
+    const first=await query({page:1,limit:8}), second=await query({page:2,limit:8})
+    assert.equal(first.pagination.total,125);assert.equal(first.store.data.records.listing.length,8)
+    assert.equal(first.pagination.scopeCounts.my_sent,62)
+    assert.equal(first.pagination.categoryCounts.image,62)
+    assert.ok(second.store.data.records.listing.every(item=>!first.store.data.records.listing.some(other=>other.id===item.id)))
+    const searched=await query({page:1,q:'Findable 120'})
+    assert.equal(searched.pagination.total,1);assert.equal(searched.store.data.records.listing[0].name,'Findable 120')
+    const category=await query({page:1,category:'image'})
+    assert.equal(category.pagination.total,62)
+    assert.ok(category.store.data.records.listing.every(record=>record.scope==='my_sent'))
+    const other=new RelationalRequestStore(pool);await other.users(['bob']);const bob=await other.recordList('bob',{page:1})
+    assert.ok(bob.total<125);assert.ok((other.data.records.bob||[]).every(record=>!record.id.startsWith('fixture-')))
+    searched.store.data.records.listing[0].alias='Changed projection'
+    await searched.store.commit()
+    assert.equal((await query({page:1,q:'Changed projection'})).pagination.total,1)
+  })
+
   await t.test('real logical backup restores normalized rows, schema markers and cleanup intent', async t => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kq-mysql-backup-'))
     const restored = `${name}_restore`
@@ -532,6 +624,20 @@ test('request-scoped relational persistence against isolated MySQL', { skip: !po
     }
     await start()
     assert.equal((await fetch(base)).status, 200)
+    const identity = await request('/api/auth/me', {headers:{'X-Kunqiong-Auth-View':'identity'}})
+    assert.equal(identity.body.user.id,'alice');assert.equal(identity.body.user.capacity,undefined)
+    assert.match(identity.response.headers.get('server-timing'),/db;dur=/)
+    const summary = await request('/api/auth/me', {headers:{'X-Kunqiong-Auth-View':'summary'}})
+    assert.equal(summary.body.user.capacity,undefined);assert.ok(summary.body.user.plan)
+    const pageOne = await request('/api/account/records?page=1&limit=8',{},'listing-token')
+    const pageTwo = await request('/api/account/records?page=2&limit=8',{},'listing-token')
+    assert.equal(pageOne.body.pagination.total,125);assert.equal(pageOne.body.records.length,8)
+    assert.ok(pageTwo.body.records.every(item=>!pageOne.body.records.some(other=>other.id===item.id)))
+    await request('/api/account/records',{method:'DELETE',body:JSON.stringify({all:true,scope:'my_sent'})},'listing-token')
+    const cleared = await request('/api/account/records?page=1&limit=8',{},'listing-token')
+    assert.equal(cleared.body.pagination.total,63);assert.equal(cleared.body.pagination.scopeCounts.my_sent,undefined)
+    const unread = await request('/api/account/messages?summary=1',{},'paged-token')
+    assert.equal(unread.body.total,125);assert.equal(unread.body.unreadCount,125);assert.equal(unread.body.messages,undefined)
     const me = await request('/api/auth/me')
     assert.equal(me.body.user.id, 'alice')
     assert.equal(me.body.user.capacity.shareBytes, 20)
@@ -556,7 +662,7 @@ test('request-scoped relational persistence against isolated MySQL', { skip: !po
     assert.ok((await loadRelationalMetadata(pool)).metadata.messages.bob.some(item => item.id === 'b-message'), 'idempotent delete cannot touch another mailbox')
     await request('/api/account/messages', { method: 'PATCH' }, 'paged-token')
     const readPage = await request('/api/account/messages?cursor=' + paged.body.pagination.nextCursor, {}, 'paged-token')
-    assert.ok(readPage.body.messages.every(message => message.unread === false))
+    assert.ok(readPage.body.messages.every(message => message.unread === false), JSON.stringify(readPage.body.messages.slice(0,3)))
     await request('/api/account/messages', { method: 'DELETE' }, 'paged-token')
     assert.equal((await pool.query('SELECT COUNT(*) AS total FROM kq_message m JOIN kq_user u ON u.id = m.user_id WHERE u.legacy_id = ?', ['paged']))[0][0].total, 0)
     assert.equal((await request('/api/account/messages', {}, 'paged-token')).body.messages.length, 0)
@@ -589,10 +695,15 @@ test('request-scoped relational persistence against isolated MySQL', { skip: !po
       await settings.config()
       settings.data.systemConfig.planOverrides = { member: { activeCollectionLimit: 1 } }
       await settings.commit()
-      const created = await request('/api/collections', { method: 'POST', body: JSON.stringify({ title: 'SQL collection', maxFileSizeMb: 10 }) })
+      const createOptions = { method: 'POST', headers: { 'Idempotency-Key': 'mysql-create-retry-key' }, body: JSON.stringify({ title: 'SQL collection', maxFileSizeMb: 10 }) }
+      const creations = await Promise.all(Array.from({ length: 4 }, () => request('/api/collections', createOptions)))
+      const created = creations.find(item => item.response.status === 201)
+      assert.ok(created, JSON.stringify(creations.map(item => item.body)))
       assert.equal(created.response.status, 201, JSON.stringify(created.body))
       const task = created.body.collection
       const manager = created.body.manageToken
+      assert.ok(creations.every(item => [200,201].includes(item.response.status) && item.body.collection?.token === task.token && item.body.manageToken === manager), 'SQL concurrent retries return one task and manager')
+      assert.equal((await request('/api/collections', createOptions)).body.collection.token, task.token, 'SQL replay works after the active quota is reached')
       const usage = new RelationalRequestStore(pool)
       assert.equal(await usage.activeCollections('alice'), 1)
       assert.equal(await usage.activeCollections('bob'), 0)
@@ -602,6 +713,30 @@ test('request-scoped relational persistence against isolated MySQL', { skip: !po
       assert.equal(submitted.response.status, 201, JSON.stringify(submitted.body))
       const managed = await request(`/api/collections/manage/${manager}`)
       assert.equal(managed.body.collection.submissions.length, 1)
+      const owned = await request('/api/account/collections?limit=6')
+      const ownedTask = owned.body.collections.find(item => item.id === task.id)
+      assert.ok(ownedTask, 'new SQL task is visible without a browser/account-record snapshot')
+      assert.equal(ownedTask.manageToken, manager)
+      assert.equal(ownedTask.title, 'SQL collection')
+      assert.equal(ownedTask.submissionCount, 1)
+      assert.equal(ownedTask.fileCount, 1)
+      assert.equal(ownedTask.usedBytes, 9)
+      assert.equal(ownedTask.submissions, undefined, 'history does not download private submissions or file graphs')
+      assert.ok(!(await request('/api/account/collections?limit=6', {}, 'bob-token')).body.collections.some(item => item.id === task.id))
+      assert.equal((await request('/api/account/collections?limit=6', {}, 'bad-token')).response.status, 401)
+      assert.equal((await request(`/api/collections/manage/${manager}`, {}, 'bob-token')).response.status, 403)
+      assert.equal((await request('/api/account/collections?cursor=invalid')).response.status, 400)
+      const sameFile = () => { const body = new FormData(); body.append('files', new Blob(['replaced!']), 'submitted.txt'); return body }
+      const conflict = await request(`/api/collections/${task.token}/submissions`, { method: 'POST', body: sameFile() }, 'bob-token')
+      assert.equal(conflict.response.status, 409, JSON.stringify(conflict.body))
+      assert.equal(conflict.body.code, 'collection_file_exists')
+      const overwrite = sameFile(); overwrite.append('overwriteExisting', 'true')
+      const replaced = await request(`/api/collections/${task.token}/submissions`, { method: 'POST', body: overwrite }, 'bob-token')
+      assert.equal(replaced.response.status, 201, JSON.stringify(replaced.body))
+      const afterOverwrite = (await request(`/api/collections/manage/${manager}`)).body.collection
+      assert.equal(afterOverwrite.submissions.flatMap(item => item.files).length, 1)
+      const replacementDownload = await fetch(`${base}/api/collections/manage/${manager}/submissions/${replaced.body.submission.id}/files/0/download`, { headers: { cookie: 'kunqiong_session=alice-token' } })
+      assert.equal(await replacementDownload.text(), 'replaced!', 'SQL overwrite publishes replacement bytes')
       assert.equal((await request(`/api/collections/manage/${manager}`, {}, 'bob-token')).response.status, 403)
       assert.equal((await request('/api/auth/me')).body.user.capacity.collectionBytes, 9)
       assert.equal((await request(`/api/collections/manage/${manager}`, { method: 'PATCH', body: JSON.stringify({ title: 'SQL updated', status: 'closed' }) })).response.status, 200)
@@ -636,6 +771,38 @@ test('request-scoped relational persistence against isolated MySQL', { skip: !po
       assert.equal(uploaded.response.status, 201, JSON.stringify(uploaded.body))
       const duplicateForm = new FormData(); duplicateForm.append('files', new Blob(['team']), 'team.txt'); duplicateForm.append('mode', 'team_resource')
       assert.equal((await request('/api/shares?mode=team_resource', { method: 'POST', body: duplicateForm }, 'bob-token')).response.status, 409)
+      const pagingSeed = new RelationalRequestStore(pool)
+      await pagingSeed.resource({ kind: 'share', id: uploaded.body.share.id })
+      const template = pagingSeed.data.shares.find(share => share.id === uploaded.body.share.id)
+      for (let index = 0; index < 18; index++) pagingSeed.data.shares.push({ ...structuredClone(template),
+        id: `team-paged-${index}`, code: `TP${index}`, manageToken: `team-paged-manage-${index}`, ownerUserId: 'alice',
+        files: template.files.map(file => ({ ...file, id: `team-file-${index}`, name: `page-${index}.txt`, storedName: `team-paged-${index}.txt` })),
+        deliveryRecipients: index >= 9 ? ['hidden@example.test'] : [], recipientUserIds: index >= 9 ? ['absent-user'] : [],
+      })
+      await pagingSeed.commit()
+      const first = await request('/api/account/team/overview?page=1&limit=8')
+      const second = await request('/api/account/team/overview?page=2&limit=8')
+      assert.equal(first.response.status, 200, JSON.stringify(first.body))
+      assert.equal(first.body.pagination.total, 19)
+      assert.equal(first.body.resources.length, 8)
+      assert.ok(second.body.resources.every(item => !first.body.resources.some(previous => previous.id === item.id)))
+      assert.equal(first.body.resourceSummary.total, 19)
+      const last = await request('/api/account/team/overview?page=999&limit=8')
+      assert.equal(last.body.pagination.page, 3); assert.equal(last.body.resources.length, 3)
+      const memberFirst = await request('/api/account/team/overview?page=1&limit=8', {}, 'bob-token')
+      assert.equal(memberFirst.body.pagination.total, 10, JSON.stringify(memberFirst.body))
+      assert.equal(memberFirst.body.resourceSummary.total, 10)
+      assert.ok(memberFirst.body.resources.every(item => item.id !== 'team-paged-17'))
+      const memberLast = await request('/api/account/team/overview?page=999&limit=8', {}, 'bob-token')
+      assert.equal(memberLast.body.pagination.page, 2); assert.equal(memberLast.body.resources.length, 2)
+      const search = await request('/api/account/team/overview?page=1&limit=8&q=page-1.txt', {}, 'bob-token')
+      assert.equal(search.body.pagination.total, 1); assert.equal(search.body.resources[0].id, 'team-paged-1')
+      const hidden = await request('/api/account/team/overview?page=1&limit=8&q=page-17.txt', {}, 'bob-token')
+      assert.equal(hidden.body.pagination.total, 0); assert.equal(hidden.body.resources.length, 0)
+      const pagingCleanup = new RelationalRequestStore(pool)
+      await pagingCleanup.select('kq_resource', "legacy_id LIKE 'team-paged-%'", [])
+      pagingCleanup.hydrate(); pagingCleanup.data.shares = []
+      await pagingCleanup.commit()
       const memberId = after.organizations[org.id].members.find(item => item.userId === 'bob').id
       assert.equal((await request(`/api/account/workspace/members/${memberId}`, { method: 'DELETE' })).response.status, 200)
       assert.equal((await request(`/api/shares/token/${uploaded.body.share.id}`, {}, 'bob-token')).response.status, 403)
@@ -696,6 +863,30 @@ test('request-scoped relational persistence against isolated MySQL', { skip: !po
       await stop()
       await start()
       assert.equal((await request('/api/auth/me', { headers: { cookie: replacementCookie } })).body.user.id, 'new-sql-user')
+      const logout = await request('/api/auth/logout', { method: 'POST', body: '{}', headers: { cookie: replacementCookie } })
+      assert.equal(logout.response.status, 200)
+      assert.match(logout.response.headers.get('set-cookie'), /Max-Age=0/)
+      await stop(); await start()
+      assert.equal((await request('/api/auth/me', { headers: { cookie: replacementCookie, 'X-Kunqiong-Auth-View': 'identity' } })).body.user, null, 'logout survives process restart')
+      const browserLogin = await fetch(`${base}/api/auth/login`, { redirect: 'manual' })
+      const browserState = new URL(browserLogin.headers.get('location')).searchParams.get('state')
+      const browserHeaders = { accept: 'text/html', cookie: browserLogin.headers.getSetCookie().map(value => value.split(';')[0]).join('; ') }
+      const browserCallback = await fetch(`${base}/auth/callback?code=new&state=${browserState}`, { redirect: 'manual', headers: browserHeaders })
+      assert.equal(browserCallback.status, 302)
+      assert.match(browserCallback.headers.get('location'), /^\/auth\/pending\?state=/)
+      let browserResult
+      for (let attempt = 0; attempt < 100; attempt++) {
+        browserResult = await fetch(`${base}${browserCallback.headers.get('location')}`, { redirect: 'manual', headers: browserHeaders })
+        if (browserResult.status === 302) break
+        assert.equal(browserResult.status, 200)
+        assert.match(await browserResult.text(), /正在完成登录/)
+        await delay(20)
+      }
+      assert.equal(new URL(browserResult.headers.get('location')).searchParams.get('login'), 'success', logs)
+      const browserCookie = browserResult.headers.getSetCookie().find(value => value.startsWith('kunqiong_session=')).split(';')[0]
+      assert.equal((await request('/api/auth/me', { headers: { cookie: browserCookie, 'X-Kunqiong-Auth-View': 'identity' } })).body.user.id, 'new-sql-user')
+      await stop(); await start()
+      assert.equal((await request('/api/auth/me', { headers: { cookie: browserCookie, 'X-Kunqiong-Auth-View': 'identity' } })).body.user.id, 'new-sql-user', 'browser progress login survives process restart')
       const disabled = new RelationalRequestStore(pool)
       disabled.data.users['disabled-sql'] = { id: 'disabled-sql', username: 'disabled-sql', status: 'disabled', planId: 'free' }
       await disabled.commit()

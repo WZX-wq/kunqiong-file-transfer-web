@@ -1,3 +1,4 @@
+import { ActionButton } from './action-button.jsx'
 import React, { Children, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
@@ -38,8 +39,8 @@ export function PlanCarousel({ children, className }) {
       <div className="workspace-plan-catalog-heading">
         <strong>个人套餐价格</strong>
         <div className="plan-carousel-nav" hidden={!hasOverflow}>
-          <button type="button" aria-label="向左查看套餐" aria-controls={trackId} disabled={!scroll.previous} onClick={() => move(-1)}><ChevronLeft size={16} /></button>
-          <button type="button" aria-label="向右查看套餐" aria-controls={trackId} disabled={!scroll.next} onClick={() => move(1)}><ChevronRight size={16} /></button>
+          <ActionButton type="button" aria-label="向左查看套餐" aria-controls={trackId} disabled={!scroll.previous} onClick={() => move(-1)}><ChevronLeft size={16} /></ActionButton>
+          <ActionButton type="button" aria-label="向右查看套餐" aria-controls={trackId} disabled={!scroll.next} onClick={() => move(1)}><ChevronRight size={16} /></ActionButton>
         </div>
       </div>
       <div id={trackId} ref={track} className={`plan-carousel-track ${className}`} role="group" aria-label="选择套餐" tabIndex={hasOverflow ? 0 : undefined} onScroll={updateScroll} onKeyDown={event => {

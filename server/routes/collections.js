@@ -11,7 +11,7 @@ import {
 } from '../lib/http.js'
 import { removeStoredFiles, resolveStoredFilePath } from '../lib/file-storage.js'
 import {
-  metadata, persistMetadata
+  metadata, persistMetadata, flushMetadataWrites
 } from '../lib/metadata-store.js'
 import {
   normalizeUploadedFileNames, upload
@@ -37,6 +37,10 @@ import {
   uploadReservations
 } from '../state.js'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
+import { keyedDigest } from '../lib/private-key.js'
+import { currentDataContext } from '../lib/data-context.js'
+import { acquireOperationLock } from '../lib/operation-lock.js'
 import QRCode from 'qrcode'
 import { integerInput, textInput } from '../lib/input-validation.js'
 import { relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
@@ -54,7 +58,8 @@ function assertCollectionManager(task, req) {
   if (!task.ownerUserId) return
   const viewer = authSessionFromRequest(req)?.user
   if (!viewer) throw httpError(401, '请先登录任务所有者账号')
-  if (viewer.id !== task.ownerUserId) throw httpError(403, '仅任务所有者可以管理该收集任务')
+  if (viewer.id !== task.ownerUserId) throw Object.assign(httpError(403,
+    `当前账号${viewer.username ? `（${viewer.username}）` : ''}不是此任务的所有者，请切换创建任务的账号`), { code: 'collection_owner_required' })
 }
 
 function assertCollectionStillManaged(task, req) {
@@ -64,13 +69,24 @@ function assertCollectionStillManaged(task, req) {
 
 export function registerCollectionRoutes(app) {
   app.post('/api/collections', async (req, res, next) => {
+    let releaseCreation = () => {}
     try {
       assertServiceWritable(req)
       const ownerSession = authSessionFromRequest(req)
       const ownerGuestKey = ownerSession?.user?.id ? '' : resolveGuestKey(req, res)
       const entitlement = personalEntitlements(ownerSession?.user?.id)
-      assertActiveCollectionLimit(ownerSession?.user?.id, ownerGuestKey)
       const source = req.body || {}
+      const creationKey = String(req.get('Idempotency-Key') || source.idempotencyKey || '').trim()
+      if (creationKey && (creationKey.length < 8 || creationKey.length > 200)) {
+        return res.status(400).json({ message: 'Idempotency-Key 长度必须为 8 至 200 个字符' })
+      }
+      // A deterministic, private identity is a bounded PK lookup in MySQL and
+      // also its uniqueness boundary across processes and server restarts.
+      const creationId = creationKey ? keyedDigest(`collection-create:${JSON.stringify([ownerSession?.user?.id || `guest:${ownerGuestKey}`, creationKey])}`).slice(0, 32) : ''
+      if (creationId) {
+        releaseCreation = await acquireOperationLock(`collection-create:${creationId}`)
+        await currentDataContext()?.store?.resource({ kind: 'collection', id: creationId })
+      }
       // 与 applyCollectionUpdate 保持一致的服务端校验：
       // 标题/说明超长直接拒绝（400 + 可理解的错误信息，不再静默截断入库），
       // 单人大小限制必须为有限正数（此前负数/NaN 会被接受并创建出「永远无法提交」的废任务）。
@@ -82,11 +98,31 @@ export function registerCollectionRoutes(app) {
       const descriptionRaw = textInput(source.description ?? '', '收集说明', COLLECTION_DESCRIPTION_MAX, {optional:true,multiline:true})
       if (descriptionRaw.length > COLLECTION_DESCRIPTION_MAX) return res.status(400).json({ message: `收集说明不能超过 ${COLLECTION_DESCRIPTION_MAX} 个字` })
       const description = descriptionRaw || '请上传你负责的文件'
-      const token = createToken(10)
-      const manageToken = createToken(18)
       const deadline = normalizeExpiryInput(source.deadline === undefined ? new Date(Date.now() + 7 * 86400000).toISOString() : source.deadline, '截止时间')
       if (!deadline) return res.status(400).json({ message: '截止时间格式不正确' })
+      const allowedTypes = source.allowedTypes === undefined ? ['全部格式'] : collectionTypesInput(source.allowedTypes)
+      const materials = normalizeCollectionMaterials(source.materials)
+      const customFields = normalizeCollectionCustomFields(source.customFields)
+      const maxFileSizeMb = Math.floor(maxFileSizeMbRaw)
+      const creationSignature = creationKey ? createHash('sha256').update(JSON.stringify({ title, description, deadline: source.deadline === undefined ? 'default' : deadline, allowedTypes, materials, customFields, maxFileSizeMb })).digest('hex') : ''
+      const findIdempotentCollection = () => creationKey && metadata.collections.find(item => item.creationKey === creationKey && (
+        ownerSession?.user?.id ? item.ownerUserId === ownerSession.user.id : item.ownerGuestKey === ownerGuestKey
+      ))
+      const replayExisting = () => {
+        const existing = findIdempotentCollection()
+        if (!existing) return false
+        if (existing.creationSignature !== creationSignature) {
+          res.status(409).json({ code: 'idempotency_key_reused', message: '此创建请求标识已用于其他内容，请重新提交' })
+          return true
+        }
+        res.status(200).json({ collection: publicCollection(existing, req, true), manageToken: existing.manageToken })
+        return true
+      }
+      if (replayExisting()) return
       if (new Date(deadline).getTime() <= Date.now()) return res.status(400).json({ message: '截止时间必须晚于当前时间' })
+      assertActiveCollectionLimit(ownerSession?.user?.id, ownerGuestKey)
+      const token = creationId || createToken(10)
+      const manageToken = createToken(18)
       const task = {
         id: token,
         token,
@@ -94,26 +130,31 @@ export function registerCollectionRoutes(app) {
         title,
         description,
         deadline,
-        allowedTypes: source.allowedTypes === undefined ? ['全部格式'] : collectionTypesInput(source.allowedTypes),
-        materials: normalizeCollectionMaterials(source.materials),
-        customFields: normalizeCollectionCustomFields(source.customFields),
-        maxFileSizeMb: Math.floor(maxFileSizeMbRaw),
+        allowedTypes,
+        materials,
+        customFields,
+        maxFileSizeMb,
         capacityBytes: ownerSession?.user?.id ? null : guestQuotaLimitBytes() || 1024 * 1024 * 1024,
         createdAt: new Date().toISOString(),
         ownerUserId: ownerSession?.user?.id || '',
+        ...(creationKey ? { creationKey, creationSignature } : {}),
         brandingOrganizationId: enterpriseOrganizationForUser(ownerSession?.user?.id)?.id || '',
         ownerGuestKey,
         status: 'active',
         submissions: [],
       }
       task.qrDataUrl = await QRCode.toDataURL(`${getOrigin(req)}/collect/${token}`, { width: 180, margin: 1 })
+      // A concurrent retry may have passed the first lookup while QR generation was pending.
+      // Recheck immediately before the synchronous metadata insert to keep one task per key.
+      if (replayExisting()) return
       assertActiveCollectionLimit(task.ownerUserId, ownerGuestKey)
       metadata.collections.push(task)
       persistMetadata()
+      await flushMetadataWrites()
       res.status(201).json({ collection: publicCollection(task, req, true), manageToken })
     } catch (error) {
       next(error)
-    }
+    } finally { releaseCreation() }
   })
   app.get('/api/collections/:token', async (req, res, next) => {
     try {
@@ -180,7 +221,7 @@ export function registerCollectionRoutes(app) {
         const relativePath = safeRelativePath(relativePaths[index] || file.originalname)
         return { name: file.originalname, relativePath, tempPath: file.path, size: file.size, mimeType: file.mimetype || 'application/octet-stream', reviewStatus: file.reviewStatus, scanEngine: file.scanEngine, scannedAt: file.scannedAt }
       })
-      const submission = await publishCollectionSubmission(task, files, { ...submitter, ...submissionData }, req, { guestKey })
+      const submission = await publishCollectionSubmission(task, files, { ...submitter, ...submissionData }, req, { guestKey, overwriteExisting: req.body.overwriteExisting === true || req.body.overwriteExisting === 'true' })
       res.status(201).json({ submission: publicSubmission(submission) })
     } catch (error) {
       cleanupUploadedFiles(req.files)

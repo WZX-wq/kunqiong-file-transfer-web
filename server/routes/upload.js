@@ -32,7 +32,7 @@ import {
   cleanupUploadedFiles, createShareFromTempFiles, discardUploadSession, isAllowedType, normalizeUploadChunkSize,
   issueGuestCookie, validGuestId, persistUploadSession, publicShare, publicSubmission, publishCollectionSubmission, readShareOptions,
   requireUploadSessionOwner, assertUploadSessionOwner, publicUploadCompletion, uploadCompletionResult,
-  releaseUploadDiskReservation, reserveUploadDisk, resolveCollectionSubmitter, uploadSessionSignature, validateCollection
+  releaseUploadDiskReservation, reserveUploadDisk, resolveCollectionSubmitter, uploadSessionSignature, validateCollection, findCollectionFileConflicts
 } from '../services/shares.js'
 import {
   uploadSessions
@@ -64,6 +64,7 @@ export function registerUploadRoutes(app) {
   let teamOrganization = null
   let collectionSubmitter = null
   let collectionSubmissionData = { fieldValues: {}, materialIds: [] }
+  const overwriteExisting = req.body.overwriteExisting === true
   if (req.body.mode === 'collection') {
     collectionTask = metadata.collections.find((item) => item.token === String(req.body.collectionToken || ''))
     if (!collectionTask) return res.status(404).json({ message: '收集任务不存在' })
@@ -73,6 +74,10 @@ export function registerUploadRoutes(app) {
     assertCollectionParticipant(collectionTask, collectionSubmitter)
     if (!collectionSubmitter.participantName) return res.status(400).json({ message: '请先登录，或填写提交人名称' })
     collectionSubmissionData = validateCollectionSubmissionInput(collectionTask, req.body.fieldValues, req.body.materialIds, req.body.fileMaterialIds, normalizedFiles.length)
+    if (!overwriteExisting) {
+      const existingFiles = findCollectionFileConflicts(collectionTask, normalizedFiles, collectionSubmitter, collectionSubmissionData.fileMaterialIds)
+      if (existingFiles.length) return res.status(409).json({ code: 'collection_file_exists', message: '以下文件已存在，是否继续上传并覆盖？', existingFiles })
+    }
     const invalidCollectionFile = normalizedFiles.find((file) => file.size > collectionTask.maxFileSizeMb * 1024 * 1024 || !isAllowedType(file.name, collectionTask.allowedTypes))
     if (invalidCollectionFile) return res.status(413).json({ message: `${invalidCollectionFile.name} 不符合当前收集任务的文件限制` })
   }
@@ -123,6 +128,7 @@ export function registerUploadRoutes(app) {
     fieldValues: collectionSubmissionData.fieldValues,
     materialIds: collectionSubmissionData.materialIds,
     fileMaterialIds: collectionSubmissionData.fileMaterialIds,
+    overwriteExisting,
     relativePaths: paths,
     directory: sessionDirectory,
     createdAt: new Date().toISOString(),
@@ -252,8 +258,12 @@ export function registerUploadRoutes(app) {
   const session = req.uploadSession
   const background = req.body.background === true
   try {
+    if (session.mode === 'collection' && req.body.overwriteExisting === true && !session.overwriteExisting) {
+      session.overwriteExisting = true
+      await persistUploadSession(session)
+    }
     if (session.completion) {
-      const retryable = session.completion.status === 'failed' && (['scan_timeout', 'scan_unavailable', 'scan_incomplete', 'scan_size_limit', 'scan_interrupted'].includes(session.completion.error?.code) || [503, 502, 504].includes(session.completion.error?.status))
+      const retryable = session.completion.status === 'failed' && (['scan_timeout', 'scan_unavailable', 'scan_incomplete', 'scan_size_limit', 'scan_interrupted'].includes(session.completion.error?.code) || [503, 502, 504].includes(session.completion.error?.status) || (session.overwriteExisting && session.completion.error?.code === 'collection_file_exists'))
       if (!(req.body.retry === true && retryable)) return res.json({ completion: publicUploadCompletion(session, req) })
     }
     if (session.completing) return res.status(409).json({ message: '此上传正在发布，请稍后重试' })
@@ -279,6 +289,7 @@ export function registerUploadRoutes(app) {
             status, message: error.status ? error.message : '文件处理失败，请稍后重试', code: error.code || 'upload_completion_failed',
             ...(error.scanLimit ? { scanLimit: error.scanLimit } : {}), ...(error.guestQuota ? { guestQuota: error.guestQuota } : {}),
             ...(error.scanFile ? { scanFile: error.scanFile } : {}), ...(error.scanFinding ? { scanFinding: error.scanFinding } : {}),
+            ...(Array.isArray(error.existingFiles) ? { existingFiles: error.existingFiles } : {}),
           } }
           console.error(JSON.stringify({ event: 'upload_completion_failed', code: session.completion.error.code }))
         }
@@ -365,7 +376,7 @@ async function completeUpload(req, session, mergedFiles) {
     assertCollectionFiles(task, mergedFiles)
     assertUploadCapacity(session, session.id)
     const participantName = textInput(session.participantName, '提交人名称', 40)
-    const submission = await publishCollectionSubmission(task, mergedFiles, { participantName, participantKey: session.participantKey, submitterUserId: session.submitterUserId, submitterName: session.submitterName, fieldValues: session.fieldValues || {}, materialIds: session.materialIds || [], fileMaterialIds: session.fileMaterialIds || [] }, req, { uploadSessionId: session.id, guestKey: session.guestKey })
+    const submission = await publishCollectionSubmission(task, mergedFiles, { participantName, participantKey: session.participantKey, submitterUserId: session.submitterUserId, submitterName: session.submitterName, fieldValues: session.fieldValues || {}, materialIds: session.materialIds || [], fileMaterialIds: session.fileMaterialIds || [] }, req, { uploadSessionId: session.id, guestKey: session.guestKey, overwriteExisting: Boolean(session.overwriteExisting) })
     return { submission: publicSubmission(submission) }
   }
   if (session.mode === 'team_resource') {

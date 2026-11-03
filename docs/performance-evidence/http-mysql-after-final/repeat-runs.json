@@ -1,0 +1,21 @@
+[
+  {
+    "label": "run-20261102T084250",
+    "database": "kq_perf_http_20261102084250_0c0aa92b",
+    "startedAt": "2026-11-02T08:42:50.121Z",
+    "finishedAt": "2026-11-02T08:44:48.728Z",
+    "healthRps": 7779.91,
+    "pageRps": 3268.06,
+    "mixedC1Rps": 26.93,
+    "mixedC10Rps": 48.46,
+    "mixedC30Rps": 51.63,
+    "mixedC50Rps": 49.59,
+    "sustainedC30Rps": 41.02,
+    "sustainedC30P95Ms": 1093.33,
+    "diagnosticC30Rps": 49.42,
+    "collectionAccepted": 40,
+    "collectionPersisted": 40,
+    "deadlocks": 0,
+    "failures": 0
+  }
+]

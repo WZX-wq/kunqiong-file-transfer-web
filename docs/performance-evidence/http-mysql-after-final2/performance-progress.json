@@ -1,0 +1,141 @@
+{
+  "fixture": "C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-mysql-p08eK9",
+  "database": "kq_perf_http_20261102084540_3f283b82",
+  "stages": [
+    {
+      "name": "健康检查基线",
+      "concurrency": 50,
+      "requests": 36505,
+      "rps": 7298.61,
+      "p95Ms": 12.52,
+      "errors": 0,
+      "questions": 0
+    },
+    {
+      "name": "前端页面基线",
+      "concurrency": 50,
+      "requests": 16470,
+      "rps": 3282.61,
+      "p95Ms": 20.8,
+      "errors": 0,
+      "questions": 0
+    },
+    {
+      "name": "业务混合读取 C1",
+      "concurrency": 1,
+      "requests": 218,
+      "rps": 27.13,
+      "p95Ms": 59.75,
+      "errors": 0,
+      "questions": 4626
+    },
+    {
+      "name": "业务混合读取 C10",
+      "concurrency": 10,
+      "requests": 410,
+      "rps": 50.24,
+      "p95Ms": 283.29,
+      "errors": 0,
+      "questions": 8675
+    },
+    {
+      "name": "业务混合读取 C30",
+      "concurrency": 30,
+      "requests": 303,
+      "rps": 35.78,
+      "p95Ms": 1532.79,
+      "errors": 0,
+      "questions": 6298
+    },
+    {
+      "name": "业务混合读取 C50",
+      "concurrency": 50,
+      "requests": 464,
+      "rps": 52.6,
+      "p95Ms": 1195.73,
+      "errors": 0,
+      "questions": 9547
+    },
+    {
+      "name": "业务读取持续稳定性 C30",
+      "concurrency": 30,
+      "requests": 839,
+      "rps": 27.07,
+      "p95Ms": 1621.16,
+      "errors": 0,
+      "questions": 18351
+    },
+    {
+      "name": "16MiB分片上传 C1",
+      "concurrency": 1,
+      "requests": 1,
+      "rps": 1.28,
+      "p95Ms": 779.51,
+      "errors": 0,
+      "questions": 155
+    },
+    {
+      "name": "16MiB分片上传 C4",
+      "concurrency": 4,
+      "requests": 4,
+      "rps": 1.82,
+      "p95Ms": 2198.25,
+      "errors": 0,
+      "questions": 723
+    },
+    {
+      "name": "16MiB分片上传 C8",
+      "concurrency": 8,
+      "requests": 8,
+      "rps": 2.01,
+      "p95Ms": 3978.89,
+      "errors": 0,
+      "questions": 1690
+    },
+    {
+      "name": "16MiB完整下载 C1",
+      "concurrency": 1,
+      "requests": 2,
+      "rps": 6.46,
+      "p95Ms": 163.29,
+      "errors": 0,
+      "questions": 79
+    },
+    {
+      "name": "16MiB完整下载 C4",
+      "concurrency": 4,
+      "requests": 8,
+      "rps": 8.06,
+      "p95Ms": 515.13,
+      "errors": 0,
+      "questions": 320
+    },
+    {
+      "name": "16MiB完整下载 C8",
+      "concurrency": 8,
+      "requests": 16,
+      "rps": 7.92,
+      "p95Ms": 1178.79,
+      "errors": 0,
+      "questions": 592
+    },
+    {
+      "name": "收集任务多人提交 C4",
+      "concurrency": 4,
+      "requests": 40,
+      "rps": 6.86,
+      "p95Ms": 803.04,
+      "errors": 0,
+      "questions": 3838
+    },
+    {
+      "name": "诊断对照：临时关闭访问审计 C30",
+      "concurrency": 30,
+      "requests": 295,
+      "rps": 32.84,
+      "p95Ms": 1427.38,
+      "errors": 0,
+      "questions": 5964
+    }
+  ]
+}

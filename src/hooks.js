@@ -2,7 +2,7 @@
 //
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  createDownloadState, downloadBinaryWithProgress, isDownloadBusy, upgradeApiRequest,
+  apiRequest, createDownloadState, downloadBinaryWithProgress, isDownloadBusy,
 } from './lib/api.js'
 
 export function useToast() {
@@ -59,7 +59,7 @@ export function useRemotePlanPricing(enabledId) {
     setRemotePricing(null)
     if (!enabledId) return undefined
     let cancelled = false
-    upgradeApiRequest('/api/account/upgrade-pricing').then((data) => {
+    apiRequest('/api/account/upgrade-pricing').then((data) => {
       if (!cancelled) setRemotePricing(data?.source === 'remote' ? data.pricing || {} : { error: '套餐价格暂不可用，请稍后重试' })
     }).catch(() => {
       if (!cancelled) setRemotePricing({ error: '套餐价格加载失败，请稍后重试' })

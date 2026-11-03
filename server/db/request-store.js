@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
+import { readAuthSession, readAuthIdentity } from './auth-session.js'
+import { hasRecordListProjection, writeRecordListProjection } from './record-list.js'
 import { keyedDigest } from '../lib/private-key.js'
 import { decodeProtected, identityKey, readRelationalState, synchronizeRelationalMetadata } from './relational-store.js'
 import { writeResourceUsage } from './on-demand-schema.js'
@@ -10,6 +12,7 @@ import { filePathDigest } from './file-path-key.js'
 import { readAdminOverview } from './admin-read-model.js'
 import { readVersionedRows } from './versioned-read-cache.js'
 import { commitAttempts, commitRetryDelay, isRetryableCommitError, isTransactionConnectionError } from './commit-retry.js'
+import { assertMergedCollectionPaths } from '../lib/collection-conflicts.js'
 
 const TABLES = [
   'kq_user', 'kq_organization', 'kq_organization_member', 'kq_ownership_handover',
@@ -110,7 +113,7 @@ export class RelationalRequestStore {
         await this.by('kq_submission_file', 'submission_id', [...this.rows.get('kq_collection_submission').values()].map(row => row.id))
         await this.by('kq_user', 'id', [...rows.map(row => row.owner_user_id), ...[...this.rows.get('kq_collection_submission').values()].map(row => row.submitter_user_id)])
       }
-      if (table === 'kq_organization') {
+      if (table === 'kq_organization' && options.children !== false) {
         for (const child of ['kq_organization_member', 'kq_ownership_handover']) await this.by(child, 'organization_id', rows.map(row => row.id))
         await this.by('kq_user', 'id', [...this.rows.get('kq_organization_member').values()].map(row => row.user_id))
       }
@@ -169,6 +172,92 @@ export class RelationalRequestStore {
     return pagination
   }
 
+  async recordList(id, query = {}) {
+    if (!await hasRecordListProjection(this.pool, { requireMigration: true })) throw Object.assign(new Error('记录分页结构尚未更新，请执行 db:on-demand:apply'), { status: 503, code: 'RECORD_LIST_MIGRATION_REQUIRED' })
+    const user = [...this.rows.get('kq_user').values()].find(row => row.legacy_id === id)
+    const limit = Math.min(50, Math.max(1, Math.floor(Number(query.limit) || 8)))
+    const page = Math.min(100000, Math.max(1, Math.floor(Number(query.page) || 1)))
+    const scope = ['my_sent', 'sent_to_me', 'my_collections', 'collect_from_me'].includes(query.scope) ? query.scope : ''
+    const source = `kq_account_record a LEFT JOIN kq_resource r ON r.legacy_id = a.resource_legacy_id`
+    const base = 'a.user_id = ? AND (r.id IS NULL OR r.deleted_at IS NULL)'
+    const params = [user?.id || -1], conditions = [base]
+    const expiry = 'COALESCE(r.expires_at, a.list_deadline)'
+    const closed = `(COALESCE(r.status, a.status, '') IN ('closed', 'expired', '已关闭', '已过期', '已截止', '已失效', '无管理权限') OR ${expiry} <= UTC_TIMESTAMP(3))`
+    const expiring = `(NOT COALESCE(${closed}, 0) AND ${expiry} <= DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 1 DAY))`
+    if (scope) { conditions.push('a.scope = ?'); params.push(scope) }
+    const search = String(query.q || '').trim().slice(0, 200)
+    if (search) { conditions.push('a.list_search LIKE ?'); params.push(`%${search.replace(/[\\%_]/g, '\\$&')}%`) }
+    for (const [field, operator] of [['from', '>='], ['to', '<']]) if (query[field]) {
+      const date = new Date(query[field])
+      if (!Number.isFinite(date.getTime())) throw Object.assign(new Error('筛选日期无效'), { status: 400 })
+      conditions.push(`a.gmt_create ${operator} ?`); params.push(date.toISOString().slice(0,23).replace('T',' '))
+    }
+    if (query.status === 'expired') conditions.push(`COALESCE(${closed}, 0)`)
+    if (query.status === 'expiring' || query.expiring === '1') conditions.push(expiring)
+    if (query.status === 'active') conditions.push(`NOT COALESCE(${closed}, 0) AND NOT COALESCE(${expiring}, 0)`)
+    if (['image','document','video','audio','archive','code','other','collection','mixed'].includes(query.category)) {
+      conditions.push('FIND_IN_SET(?, a.list_categories) > 0'); params.push(query.category)
+    }
+    const where = conditions.join(' AND ')
+    const [[count]] = await this.pool.query(`SELECT COUNT(*) AS total FROM ${source} WHERE ${where}`, params)
+    const total = Number(count.total), current = Math.min(page, Math.max(1, Math.ceil(total / limit)))
+    const [rows] = await this.pool.query(`SELECT a.id FROM ${source} WHERE ${where} ORDER BY a.id DESC LIMIT ${limit} OFFSET ${(current - 1) * limit}`, params)
+    await this.by('kq_account_record', 'id', rows.map(row => row.id))
+    this.hydrate()
+    this.data.records[id] ??= []; this.base.records[id] ??= []
+    const [counts] = await this.pool.query(`SELECT a.scope, COUNT(*) AS total FROM ${source} WHERE ${base} GROUP BY a.scope`, [user?.id || -1])
+    const scopeCounts = Object.fromEntries(counts.map(row => [row.scope, Number(row.total)]))
+    scopeCounts.all = counts.reduce((sum,row) => sum + Number(row.total), 0)
+    const [[categories]] = await this.pool.query(`SELECT ${['image','document','video','audio','archive','code','other','collection','mixed'].map(key => `SUM(FIND_IN_SET('${key}', a.list_categories) > 0) AS ${key}`).join(',')}, SUM(${expiring}) AS expiring FROM ${source} WHERE ${base}`, [user?.id || -1])
+    return { page: current, limit, total, scopeCounts, categoryCounts: { all: scopeCounts.all, ...Object.fromEntries(Object.entries(categories).map(([key,value]) => [key, Number(value || 0)])) }, nextCursor: null }
+  }
+
+  async teamResourcePage(org, userId, { page = 1, limit = 8, q = '' } = {}, allowed) {
+    const size = Math.min(50, Math.max(1, Math.floor(Number(limit) || 8)))
+    const requested = Math.min(100000, Math.max(1, Math.floor(Number(page) || 1)))
+    const search = String(q).trim().slice(0, 200).replace(/[\\%_]/g, '\\$&')
+    const base = `r.organization_id = ? AND r.team_resource = 1 AND r.deleted_at IS NULL AND r.resource_kind = 'share'`
+    const matches = search ? `(EXISTS (SELECT 1 FROM kq_resource_file f WHERE f.resource_id = r.id AND f.file_name LIKE ?) OR owner.nickname LIKE ? OR owner.username LIKE ?)` : '1'
+    const where = `${base} AND ${matches}`
+    const active = `r.status = 'active' AND (r.expires_at IS NULL OR r.expires_at > UTC_TIMESTAMP(3))`
+    const source = 'kq_resource r LEFT JOIN kq_user owner ON owner.id = r.owner_user_id LEFT JOIN kq_resource_usage u ON u.resource_id = r.id'
+    const params = [org.id, ...(search ? Array(3).fill(`%${search}%`) : [])]
+    let ids, total, current, summary
+    if (!allowed) {
+      const [[count]] = await this.pool.query(`SELECT COUNT(*) AS total FROM ${source} WHERE ${where}`, params)
+      total = Number(count.total)
+      current = Math.min(requested, Math.max(1, Math.ceil(total / size)))
+      ;[ids] = await this.pool.query(`SELECT r.id FROM ${source} WHERE ${where} ORDER BY r.id DESC LIMIT ${size} OFFSET ${(current - 1) * size}`, params)
+      const [[counts]] = await this.pool.query(`SELECT COUNT(*) AS total, SUM(COALESCE(u.live_file_count, 0)) AS fileCount, SUM(${active}) AS active FROM ${source} WHERE ${base}`, [org.id])
+      summary = Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, Number(value || 0)]))
+    } else {
+      // Recipient rules are encrypted. Filter bounded metadata batches before paging;
+      // hydrate file graphs only for the accessible page, never expose hidden rows/counts.
+      ids = []; total = 0; let cursor = null, lastPage = []
+      summary = { total: 0, fileCount: 0, active: 0 }
+      while (true) {
+        const [rows] = await this.pool.query(`SELECT r.id, r.legacy_id, r.status, r.entity_payload_json, owner.legacy_id AS owner_id, COALESCE(u.live_file_count, 0) AS file_count, (${active}) AS active, ${matches} AS matched FROM ${source} WHERE ${base}${cursor ? ' AND r.id < ?' : ''} ORDER BY r.id DESC LIMIT 50`, [...(search ? Array(3).fill(`%${search}%`) : []), org.id, ...(cursor ? [cursor] : [])])
+        if (!rows.length) break
+        for (const row of rows) {
+          const stored = decodeProtected(row.entity_payload_json, `resource:share:${row.legacy_id}`)
+          if (!allowed({ ...(stored.__columns_v === 1 ? stored.extra : stored), id: row.legacy_id, ownerUserId: row.owner_id, status: row.status, teamResource: true, teamOrganizationId: org.legacy_id })) continue
+          summary.total++; summary.fileCount += Number(row.file_count); summary.active += Number(row.active || 0)
+          if (!row.matched) continue
+          if (total % size === 0) lastPage = []
+          lastPage.push({ id: row.id })
+          if (Math.floor(total / size) === requested - 1) ids.push({ id: row.id })
+          total++
+        }
+        cursor = rows.at(-1).id
+      }
+      current = Math.min(requested, Math.max(1, Math.ceil(total / size)))
+      if (current !== requested) ids = lastPage
+    }
+    await this.by('kq_resource', 'id', ids.map(row => row.id))
+    this.hydrate()
+    return { page: current, limit: size, total, nextCursor: null, summary }
+  }
+
   async conflictingTeamPaths(organizationId, files, executor = this.pool, excludeId = '') {
     const digests = [...new Set(files.map(filePathDigest))]
     if (!digests.length) return false
@@ -214,10 +303,34 @@ export class RelationalRequestStore {
 
   async session(token) {
     if (!token) return null
-    const rows = await this.by('kq_auth_session', 'token_hash', [keyedDigest(`session-cookie:${token}`)])
-    await this.by('kq_user', 'id', rows.map(row => row.user_id))
+    const result = await readAuthSession(this.pool, token)
+    if (result) {
+      if (result.replacement?.id) result.s.replacement_session_id = result.replacement.id
+      for (const [table, row] of [['kq_auth_session', result.s], ['kq_user', result.u]]) {
+        this.rows.get(table).set(identityKey(table, row), row)
+        this.lookups.add(`${table}:id:${row.id}`)
+        this.lookups.add(`${table}:legacy_id:${row.legacy_id}`)
+      }
+    }
     this.hydrate()
     return this.data.sessions.find(session => session.id === token) || null
+  }
+
+  async identity(token) {
+    const result = await readAuthIdentity(this.pool, token)
+    if (!result) return null
+    const user = result.u, plan = parseJson(user.plan_json) || {}
+    // Native URLs restore the provider avatar on a cold refresh without loading blobs.
+    const avatar = /^https?:\/\//i.test(user.avatar_url || '') ? user.avatar_url : null
+    this.data.users[user.legacy_id] = { id: user.legacy_id, username: user.username, nickname: user.nickname,
+      email: user.email, phone: user.phone, avatar, status: user.status, provider: user.provider,
+      loginMethods: parseJson(user.login_methods_json) || [], planId: plan.planId,
+      planStartedAt: plan.startedAt, planExpiresAt: plan.expiresAt }
+    const session = { id: token, user: { id: user.legacy_id }, expiresAt: result.s.expires_at,
+      ...(result.s.revoked_at ? { revokedAt: result.s.revoked_at, revokeReason: result.replacement?.id ? 'replaced' : 'invalid' } : {}) }
+    this.data.sessions.push(session)
+    this.base = structuredClone(this.data)
+    return session
   }
 
   async users(ids) { await this.by('kq_user', 'legacy_id', ids); this.hydrate() }
@@ -237,13 +350,25 @@ export class RelationalRequestStore {
     if (messages) await this.select('kq_message', 'user_id = ?', [user.id], this.pool, this.rows, { limit: MAX_ACCOUNT_MESSAGES })
     if (records) await this.select('kq_account_record', 'user_id = ?', [user.id], this.pool, this.rows, { limit: MAX_ACCOUNT_RECORDS })
     if (settings) await this.by('kq_user_setting', 'user_id', [user.id])
-    if (orders) await this.by('kq_upgrade_order', 'user_id', [user.id])
+    if (orders) await this.select('kq_upgrade_order', 'user_id = ?', [user.id], this.pool, this.rows, typeof orders === 'number' ? { limit: orders } : {})
     if (organizations) {
       const members = await this.by('kq_organization_member', 'user_id', [user.id])
       await this.by('kq_organization', 'id', members.map(row => row.organization_id))
       await this.by('kq_organization', 'owner_user_id', [user.id])
     }
     if (resources) await this.by('kq_resource', 'owner_user_id', [user.id])
+    this.hydrate()
+  }
+
+  async accountSummary(id) {
+    await this.users([id])
+    const user = [...this.rows.get('kq_user').values()].find(row => row.legacy_id === id)
+    if (!user) return
+    const memberships = await this.by('kq_organization_member', 'user_id', [user.id])
+    const ids = [...new Set(memberships.map(row => row.organization_id))]
+    const organizations = await this.select('kq_organization', `owner_user_id = ?${ids.length ? ` OR id IN (${placeholders(ids)})` : ''}`,
+      [user.id, ...ids], this.pool, this.rows, { children: false })
+    await this.by('kq_user', 'id', organizations.map(row => row.owner_user_id))
     this.hydrate()
   }
 
@@ -341,7 +466,8 @@ export class RelationalRequestStore {
   async recordResources() {
     const records = [...this.rows.get('kq_account_record').values()]
     await this.by('kq_resource', 'id', records.map(row => row.resource_id))
-    await this.recordReferences(Object.values(this.data.records).flat())
+    const linked = new Set(records.filter(row => row.resource_id).map(row => row.legacy_id))
+    await this.recordReferences(Object.entries(this.data.records).flatMap(([owner,list]) => list.filter(record => !linked.has(`${owner}:${record.id}`))))
     this.hydrate()
   }
 
@@ -442,6 +568,7 @@ export class RelationalRequestStore {
           if (!isDeepStrictEqual(oldItems.get(id), actual.get(id))) throw conflict()
           if (desired.has(id)) actual.set(id, desired.get(id)); else actual.delete(id)
         }
+        assertMergedCollectionPaths(before, entry.value, [...actual.values()])
         const original = structuredClone(entry.value.submissions)
         entry.value.submissions = [...actual.values()]
         const baseIndex = this.base.collections.findIndex(task => (task.id || task.token) === entry.key)
@@ -511,6 +638,7 @@ export class RelationalRequestStore {
     const changes = [...keys].filter(key => (normalize && after.get(key)?.table !== 'kq_system_setting') || !isDeepStrictEqual(before.get(key)?.value, after.get(key)?.value))
       .map(key => ({ ...(after.get(key) || before.get(key)), deleted: !after.has(key) }))
     if (!changes.length && !this.cleanupTasks.length && !this.bulkOperations.length) return
+    const projectRecords = changes.some(entry => entry.table === 'kq_account_record' && !entry.deleted) && await hasRecordListProjection(this.pool)
     const cleanupTasks = this.cleanupTasks.splice(0)
     const bulkOperations = this.bulkOperations.splice(0)
     const changedResources = new Set(changes.filter(entry => entry.table === 'kq_resource').map(entry => entry.key))
@@ -522,7 +650,7 @@ export class RelationalRequestStore {
     // back cleanly and replayed. A lost connection before COMMIT may recover once.
     // Commit acknowledgement loss is NOT retried here
     // because MySQL may already have committed; callers handle that as uncertain.
-    const maxAttempts = commitAttempts()
+    const maxAttempts = this.commitAttemptLimit || commitAttempts()
     let attempt = 0
     let connectionRetries = 0
     while (true) {
@@ -587,6 +715,7 @@ export class RelationalRequestStore {
           return row.legacy_id === entry.key
         })
         if (identity && !entry.deleted) {
+          if (projectRecords && entry.table === 'kq_account_record') await writeRecordListProjection(connection, identity.id, entry.value)
           await connection.execute(`UPDATE \`${entry.table}\` SET write_version = write_version + 1, gmt_modified = gmt_modified WHERE id = ?`, [identity.id])
           identity.write_version = Number(identity.write_version || 0) + 1
         }

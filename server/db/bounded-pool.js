@@ -1,3 +1,5 @@
+import { measureDatabaseOperation } from '../lib/request-metrics.js'
+
 export function positiveSetting(value, fallback, max = 1000000) {
   const number = Number(value)
   return Number.isSafeInteger(number) && number > 0 && number <= max ? number : fallback
@@ -15,7 +17,7 @@ export function boundedPool(pool, { acquireTimeoutMs = 30000, queryTimeoutMs = 6
     const timer = setTimeout(() => { connection.destroy(); reject(unavailable('DATABASE_QUERY_TIMEOUT')) }, timeout)
     Promise.resolve(operation).then(value => { clearTimeout(timer); resolve(value) }, error => { clearTimeout(timer); reject(error) })
   })
-  const acquire = (timeout = acquireTimeoutMs) => new Promise((resolve, reject) => {
+  const acquire = (timeout = acquireTimeoutMs) => measureDatabaseOperation('queue', () => new Promise((resolve, reject) => {
     let expired = false
     const timer = setTimeout(() => { expired = true; reject(unavailable('DATABASE_QUEUE_TIMEOUT')) }, timeout)
     const connect = async () => {
@@ -36,7 +38,7 @@ export function boundedPool(pool, { acquireTimeoutMs = 30000, queryTimeoutMs = 6
           if (key === 'query' || key === 'execute') return async (sql, params) => {
             const timeout = Math.min(queryTimeoutMs, positiveSetting(sql?.timeout, queryTimeoutMs))
             try {
-              return await deadline(target[key](typeof sql === 'string' ? { sql, timeout } : { ...sql, timeout }, params), target, timeout)
+              return await measureDatabaseOperation('sql', () => deadline(target[key](typeof sql === 'string' ? { sql, timeout } : { ...sql, timeout }, params), target, timeout))
             } catch (error) {
               if (error.code === 'PROTOCOL_SEQUENCE_TIMEOUT') { target.destroy(); throw unavailable('DATABASE_QUERY_TIMEOUT') }
               const text = typeof sql === 'string' ? sql : sql.sql
@@ -55,7 +57,7 @@ export function boundedPool(pool, { acquireTimeoutMs = 30000, queryTimeoutMs = 6
       clearTimeout(timer)
       if (!expired) reject(error.status ? error : unavailable(error.code || 'DATABASE_UNAVAILABLE'))
     })
-  })
+  }))
   return new Proxy(pool, {
     get(target, key) {
       if (key === 'getConnection') return acquire
@@ -63,20 +65,22 @@ export function boundedPool(pool, { acquireTimeoutMs = 30000, queryTimeoutMs = 6
         const statement = typeof sql === 'string' ? { sql } : sql
         const retry = retryableRead(statement.sql)
         const budget = Math.min(queryTimeoutMs, positiveSetting(statement.timeout, queryTimeoutMs))
-        let expiresAt
+        const expiresAt = Date.now() + budget
         for (let attempt = 0; ; attempt++) {
-          const remaining = expiresAt ? expiresAt - Date.now() : budget
+          const remaining = expiresAt - Date.now()
           if (remaining <= 0) throw unavailable('DATABASE_QUERY_TIMEOUT')
           const connection = await acquire(Math.min(acquireTimeoutMs, remaining))
-          expiresAt ??= Date.now() + budget
-          const timeout = Math.min(expiresAt - Date.now(), retry && attempt === 0 ? Math.min(5000, Math.max(1, Math.floor(budget / 3))) : budget)
+          // A proxy may leave several idle connections unusable at once. Do not
+          // spend the remaining minute on the second bad connection. Four short
+          // read attempts share one deadline including connection acquisition.
+          const timeout = Math.min(expiresAt - Date.now(), retry ? Math.min(5000, Math.max(1, Math.floor(budget / 4))) : budget)
           try {
             if (timeout <= 0) throw unavailable('DATABASE_QUERY_TIMEOUT')
             return await connection[key]({ ...statement, timeout }, params)
           } catch (error) {
             // Replay only a non-locking application read, on a fresh connection,
-            // once within the original deadline. Leased transactions never retry.
-            if (!retry || attempt !== 0 || !reconnectable.has(error.code) || Date.now() >= expiresAt) {
+            // within the original deadline. Leased transactions never retry.
+            if (!retry || attempt >= 3 || !reconnectable.has(error.code) || Date.now() >= expiresAt) {
               console.error(JSON.stringify({ event: 'database_query_failed', code: error.code || 'DATABASE_QUERY_FAILED',
                 table: statement.sql.match(/\b(?:FROM|UPDATE|INTO)\s+`?(kq_\w+)/i)?.[1] || '',
                 projection: /^\s*SELECT\s+id,\s*write_version/i.test(statement.sql) ? 'versions' : /^\s*SELECT\s+\*/i.test(statement.sql) ? 'rows' : 'other' }))

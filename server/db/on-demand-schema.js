@@ -88,5 +88,7 @@ export async function migrateOnDemandSchema(pool) {
   // pagination indexes that remain missing.
   const { migratePaginationIndexes } = await import('./pagination-indexes.js')
   const pagination = await migratePaginationIndexes(pool)
-  return { ...usage, normalized, pagination }
+  const { migrateRecordListProjection } = await import('./record-list.js')
+  const records = await migrateRecordListProjection(pool)
+  return { ...usage, normalized, pagination, records }
 }

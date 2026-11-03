@@ -1,0 +1,89 @@
+{
+  "executedAt": "2026-11-02T08:11:41.969Z",
+  "base": "http://127.0.0.1:8045",
+  "stageSeconds": 5,
+  "stages": [
+    {
+      "name": "健康检查 C20",
+      "concurrency": 20,
+      "requests": 48865,
+      "requestsPerSecond": 9773,
+      "latency": {
+        "count": 48865,
+        "p50Ms": 1.61,
+        "p95Ms": 3.81,
+        "p99Ms": 7.44,
+        "maxMs": 21.48
+      },
+      "failures": 0,
+      "errorSamples": []
+    },
+    {
+      "name": "前端页面 C20",
+      "concurrency": 20,
+      "requests": 29800,
+      "requestsPerSecond": 5960,
+      "latency": {
+        "count": 29800,
+        "p50Ms": 2.97,
+        "p95Ms": 5.82,
+        "p99Ms": 9.03,
+        "maxMs": 12.31
+      },
+      "failures": 0,
+      "errorSamples": []
+    },
+    {
+      "name": "管理会话 C5",
+      "concurrency": 5,
+      "requests": 2136,
+      "requestsPerSecond": 427.2,
+      "latency": {
+        "count": 2136,
+        "p50Ms": 11.47,
+        "p95Ms": 20.1,
+        "p99Ms": 29.3,
+        "maxMs": 43.26
+      },
+      "failures": 0,
+      "errorSamples": []
+    },
+    {
+      "name": "管理总览只读 C5",
+      "concurrency": 5,
+      "requests": 511,
+      "requestsPerSecond": 102.2,
+      "latency": {
+        "count": 511,
+        "p50Ms": 39.4,
+        "p95Ms": 62.31,
+        "p99Ms": 221.43,
+        "maxMs": 580
+      },
+      "failures": 0,
+      "errorSamples": []
+    }
+  ],
+  "errors": [],
+  "account": {
+    "authenticated": true
+  },
+  "health": {
+    "ok": true,
+    "ready": true,
+    "status": "ready",
+    "stage": "ready",
+    "service": "kunqiong-local-api",
+    "release": "",
+    "now": "2026-11-02T08:11:41.992Z",
+    "test": false,
+    "testEnterpriseForAllUsers": false,
+    "verification": {
+      "email": false,
+      "sms": false,
+      "debugFallback": false
+    }
+  },
+  "finishedAt": "2026-11-02T08:12:02.158Z",
+  "failed": false
+}

@@ -118,3 +118,11 @@ _panel_overflow_*.png
 
 # Word 打开文档时生成的临时锁文件
 ~$*.docx
+
+# 本机压测证据：CPU profile 体积大且可重生成，不入库（结果 JSON/日志/报告保留）
+*.cpuprofile
+# 构建/升级备份与临时构建目录
+dist_backup_*/
+build-mysql-verification/
+# 自动生成的临时测试素材包
+test-kits/.test-kit-*/

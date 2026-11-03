@@ -28,7 +28,7 @@ async function waitFor(condition, name) {
   for (let i = 0; i < 150; i++) { if (condition()) return; await delay(10) }
   assert.fail(name)
 }
-async function mount({ pending = false, paymentReady = true, confirmationFailures = 0, statusFailures = 0, conflict = false, ageMs = 0, currentPlan = plans[0], availablePlans = plans, pricing = { member: { available: true, priceCents: 1900, validityDays: 30 } } } = {}) {
+async function mount({ pending = false, paymentReady = true, confirmationFailures = 0, statusFailures = 0, conflict = false, ageMs = 0, alipayHtml = '<base href="https://excashier.alipay.com/standard/auth.htm?payOrderId=fixture-order">', currentPlan = plans[0], availablePlans = plans, pricing = { member: { available: true, priceCents: 1900, validityDays: 30 } } } = {}) {
   const jsErrors = []
   const console = new VirtualConsole()
   console.on('jsdomError', (error) => jsErrors.push(error))
@@ -44,6 +44,8 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
     order = { ...initialOrder(), createdAt: new Date(clock - ageMs).toISOString(), ...(paymentReady ? { remoteOrderNo: 'fixture-remote-order', payment: { qrcode_img_url: 'data:image/png;base64,YQ==' } } : {}) }
     workspace.orders = [order]; workspace.paymentReconciliation.pending = true
   }
+  let popupCalls = 0
+  window.open = () => { popupCalls++; return null }
   let holdStatus = false, statusAborts = 0, createCalls = 0, confirmCalls = 0
   let holdNextWorkspace = false, heldWorkspace = null, workspaceCalls = 0, active = 0, maxActive = 0, statusCalls = 0
   window.setInterval = (callback, ms) => { const id = ++nextTimer; timers.set(id, { callback, ms }); return id }
@@ -72,7 +74,7 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
         confirmationFailures--; status = 502; payload = { message: '支付服务暂不可用' }
       } else {
         const payType = JSON.parse(options.body).payType
-        order = { ...order, payType, remoteOrderNo: 'fixture-remote-order', payment: payType === 2 ? { alipaysubmit_html: '<form>支付宝测试收银台</form>' } : { qrcode_img_url: 'data:image/png;base64,YQ==' } }
+        order = { ...order, payType, remoteOrderNo: 'fixture-remote-order', payment: payType === 2 ? { alipaysubmit_html: alipayHtml } : { qrcode_img_url: 'data:image/png;base64,YQ==' } }
         workspace.orders = [order]; workspace.paymentReconciliation.pending = true
         payload = { order, payment: order.payment }
       }
@@ -107,10 +109,11 @@ async function mount({ pending = false, paymentReady = true, confirmationFailure
     holdStatus: () => { holdStatus = true }, statusAborts: () => statusAborts,
     paid: () => { workspace = { ...workspace, plan: plans[1], orders: [{ ...order, status: 'paid', remoteExpireAt: new Date(Date.now() + 30 * 86400000).toISOString() }], paymentReconciliation: { pending: false, requiresLogin: false } } },
     requiresLogin: () => { workspace.paymentReconciliation = { pending: false, requiresLogin: true } },
-    logout: () => { loggedIn = false },
-    tick: async (ms) => { for (const timer of [...timers.values()]) if (timer.ms === ms) timer.callback(); await delay(20) },
+    logout: () => { loggedIn = false; clock += 1100 },
+    tick: async (ms) => { clock += ms; for (const timer of [...timers.values()]) if (timer.ms === ms || timer.ms === 1000) timer.callback(); await delay(20) },
     advance: async (ms) => { clock += ms; for (const timer of [...timers.values()]) if (timer.ms === 1000) timer.callback(); await delay(20) },
     returnAfter: async (ms) => { clock += ms; window.dispatchEvent(new window.Event('focus')); document.dispatchEvent(new window.Event('visibilitychange')); await delay(20) },
+    popupCalls: () => popupCalls,
     close: () => dom.window.close(),
   }
 }
@@ -127,15 +130,16 @@ try {
   await fixture.click('关闭升级窗口')
   fixture.release()
   await waitFor(() => fixture.calls() >= 3, 'Checkout refresh is queued behind the earlier workspace snapshot')
-  await waitFor(() => [...fixture.timers.values()].some((timer) => timer.ms === 15000), 'Workbench tracks the pending remote payment')
+  await waitFor(() => fixture.text().includes('待支付升级订单'), 'Workbench tracks the pending remote payment')
   check('Delayed workspace snapshot cannot discard checkout refresh', fixture.maxActive() === 1)
   const modalQueries = fixture.statusCalls()
   fixture.paid()
   await fixture.tick(15000)
   await waitFor(() => fixture.document.querySelector('.workspace-plan-hero .ph-badge')?.textContent.includes('会员版'), 'Entitlements refresh after the payment dialog closes')
   check('Closed payment dialog still refreshes paid entitlements', fixture.statusCalls() === modalQueries)
-  await waitFor(() => ![...fixture.timers.values()].some((timer) => timer.ms === 15000), 'Paid workspace stops pending-payment polling')
-  check('Paid workspace stops periodic payment refresh', true)
+  const paidReads = fixture.calls()
+  await fixture.tick(15000)
+  check('Paid workspace stops periodic payment refresh', fixture.calls() === paidReads)
 
   fixture.requiresLogin()
   fixture.window.dispatchEvent(new fixture.window.Event('focus'))
@@ -153,9 +157,20 @@ try {
   await alipayFixture.click('立即升级', '.workspace-benefits-cta button')
   await alipayFixture.click('支付宝')
   await alipayFixture.click('创建升级订单')
-  await waitFor(() => alipayFixture.document.querySelector('iframe[title="支付宝收银台"]'), 'Selected Alipay checkout loads automatically')
-  check('Choosing Alipay before creation directly loads its checkout', alipayFixture.createCalls() === 1 && alipayFixture.confirmCalls() === 1 && !alipayFixture.document.querySelector('img[alt="微信支付二维码"]'))
+  await waitFor(() => alipayFixture.document.querySelector('.upgrade-payment-alipay-frame iframe'), 'Selected Alipay cashier loads inside the order dialog')
+  const alipayFrame = alipayFixture.document.querySelector('.upgrade-payment-alipay-frame iframe')
+  check('Choosing Alipay displays its HTTPS cashier inline without opening a new window', alipayFixture.createCalls() === 1 && alipayFixture.confirmCalls() === 1 && alipayFrame.src === 'https://excashier.alipay.com/standard/auth.htm?payOrderId=fixture-order' && alipayFixture.popupCalls() === 0)
+  check('Alipay cashier runs at its own origin without srcDoc or sandbox origin errors', !alipayFrame.hasAttribute('srcdoc') && !alipayFrame.hasAttribute('sandbox') && alipayFixture.jsErrors.length === 0)
 } finally { alipayFixture.close() }
+
+const unsafeAlipay = await mount({ alipayHtml: '<base href="https://attacker.example/collect">' })
+try {
+  await unsafeAlipay.click('立即升级', '.workspace-benefits-cta button')
+  await unsafeAlipay.click('支付宝')
+  await unsafeAlipay.click('创建升级订单')
+  await waitFor(() => unsafeAlipay.document.querySelector('.upgrade-payment-alipay-error'), 'Unsafe checkout destination is rejected')
+  check('A non-Alipay cashier URL is rejected without opening a window or iframe', unsafeAlipay.createCalls() === 1 && unsafeAlipay.confirmCalls() === 1 && !unsafeAlipay.document.querySelector('.upgrade-payment-alipay-frame iframe') && unsafeAlipay.popupCalls() === 0)
+} finally { unsafeAlipay.close() }
 
 const retryFixture = await mount({ confirmationFailures: 1 })
 try {
@@ -253,9 +268,9 @@ try {
   await expiryAlipay.click('立即升级', '.workspace-benefits-cta button')
   await expiryAlipay.click('支付宝')
   await expiryAlipay.click('创建升级订单')
-  await waitFor(() => expiryAlipay.document.querySelector('iframe'), 'Alipay is ready')
+  await waitFor(() => expiryAlipay.document.querySelector('.upgrade-payment-alipay-frame'), 'Alipay is ready')
   await expiryAlipay.advance(15 * 60000)
-  check('Expiry removes the Alipay checkout iframe as well', !expiryAlipay.document.querySelector('iframe') && expiryAlipay.text().includes('支付已超时'))
+  check('Expiry removes the Alipay checkout panel as well', !expiryAlipay.document.querySelector('.upgrade-payment-alipay-frame') && expiryAlipay.text().includes('支付已超时'))
   expiryAlipay.paid()
   await expiryAlipay.tick(2000)
   await waitFor(() => expiryAlipay.document.querySelector('.upgrade-success-view'), 'Payment at the deadline is still reconciled')

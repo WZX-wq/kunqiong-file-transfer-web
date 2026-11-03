@@ -1,3 +1,4 @@
+import { ActionButton } from './action-button.jsx'
 import React, { useEffect, useState } from 'react'
 import {
   ArrowDown, ArrowUp, Bookmark, ChevronDown, ChevronUp, Copy, FolderOpen, GripVertical,
@@ -50,7 +51,7 @@ function MaterialRow({
       }}
     >
       <div className="collection-rule-main">
-        <button
+        <ActionButton
           type="button"
           className="collection-drag-handle"
           draggable
@@ -64,7 +65,7 @@ function MaterialRow({
           onDragEnd={() => setDragId('')}
         >
           <GripVertical size={15} />
-        </button>
+        </ActionButton>
         <label className="collection-rule-name">
           <span className="collection-inline-label">
             <span>材料名称</span>
@@ -85,10 +86,10 @@ function MaterialRow({
             必交
           </label>
           <div className="collection-rule-actions">
-            <button type="button" className="ghost-icon" disabled={index === 0} aria-label={`上移材料 ${index + 1}`} title="上移" onClick={() => move(-1)}><ArrowUp size={14} /></button>
-            <button type="button" className="ghost-icon" disabled={index === total - 1} aria-label={`下移材料 ${index + 1}`} title="下移" onClick={() => move(1)}><ArrowDown size={14} /></button>
-            <button type="button" className="ghost-icon" aria-label={`复制材料 ${index + 1}`} title="复制" onClick={onCopy}><Copy size={14} /></button>
-            <button type="button" className="ghost-icon collection-rule-delete" aria-label={`删除材料 ${index + 1}`} title="删除材料" onClick={onRemove}><Trash2 size={15} /></button>
+            <ActionButton type="button" className="ghost-icon" disabled={index === 0} aria-label={`上移材料 ${index + 1}`} title="上移" onClick={() => move(-1)}><ArrowUp size={14} /></ActionButton>
+            <ActionButton type="button" className="ghost-icon" disabled={index === total - 1} aria-label={`下移材料 ${index + 1}`} title="下移" onClick={() => move(1)}><ArrowDown size={14} /></ActionButton>
+            <ActionButton type="button" className="ghost-icon" aria-label={`复制材料 ${index + 1}`} title="复制" onClick={onCopy}><Copy size={14} /></ActionButton>
+            <ActionButton type="button" className="ghost-icon collection-rule-delete" aria-label={`删除材料 ${index + 1}`} title="删除材料" onClick={onRemove}><Trash2 size={15} /></ActionButton>
           </div>
         </div>
       </div>
@@ -114,13 +115,13 @@ function MaterialRow({
           <div className="collection-naming-presets" aria-label="常用命名格式">
             <small>常用格式</small>
             {COLLECTION_NAMING_PRESETS.map((preset) => (
-              <button key={preset.pattern} type="button" onClick={() => onUpdate({ namingPattern: preset.pattern })}>{preset.label}</button>
+              <ActionButton key={preset.pattern} type="button" onClick={() => onUpdate({ namingPattern: preset.pattern })}>{preset.label}</ActionButton>
             ))}
           </div>
           <div className="collection-naming-tokens">
             <span>插入变量</span>
             {COLLECTION_FILENAME_TOKENS.map((token) => (
-              <button key={token} type="button" onClick={() => onUpdate({ namingPattern: appendNamingToken(material.namingPattern, token) })}>{`{${token}}`}</button>
+              <ActionButton key={token} type="button" onClick={() => onUpdate({ namingPattern: appendNamingToken(material.namingPattern, token) })}>{`{${token}}`}</ActionButton>
             ))}
           </div>
           {material.namingPattern
@@ -197,8 +198,8 @@ export function CollectionMaterialsEditor({
           <small>{materials.length ? `${materials.length} 项 · ${requiredCount} 项必交 · 至少选 1 项` : '列出需要提交的材料，可设必交和命名规则'}</small>
         </div>
         <div className="collection-builder-section-actions">
-          {materials.length > 0 && <button type="button" className="secondary-button collection-ghost-action" onClick={() => setBulkOpen((open) => !open)}>批量添加</button>}
-          <button type="button" className="secondary-button" disabled={materials.length >= maxItems} onClick={() => addMaterial()}><Plus size={14} /><span>添加材料</span></button>
+          {materials.length > 0 && <ActionButton type="button" className="secondary-button collection-ghost-action" onClick={() => setBulkOpen((open) => !open)}>批量添加</ActionButton>}
+          <ActionButton type="button" className="secondary-button" disabled={materials.length >= maxItems} onClick={() => addMaterial()}><Plus size={14} /><span>添加材料</span></ActionButton>
         </div>
       </div>
       {bulkOpen && (
@@ -206,8 +207,8 @@ export function CollectionMaterialsEditor({
           <textarea aria-label="批量添加材料" value={bulkText} onChange={(event) => setBulkText(event.target.value)} rows={3} placeholder={'每行一个材料名称，例如：\n营业执照\n身份证正反面\n合同文件'} />
           <div className="collection-bulk-actions">
             <small>支持换行、逗号或分号分隔，重复项会自动跳过</small>
-            <button type="button" className="secondary-button" onClick={() => setBulkOpen(false)}>取消</button>
-            <button type="button" className="primary-button" disabled={!bulkText.trim()} onClick={applyBulk}>添加到清单</button>
+            <ActionButton type="button" className="secondary-button" onClick={() => setBulkOpen(false)}>取消</ActionButton>
+            <ActionButton type="button" className="primary-button" disabled={!bulkText.trim()} onClick={applyBulk}>添加到清单</ActionButton>
           </div>
         </div>
       )}
@@ -215,7 +216,7 @@ export function CollectionMaterialsEditor({
         <div className="collection-builder-empty collection-empty-state">
           <p>当前允许提交人上传任意文件。</p>
           {showTemplates && <CollectionPresetDisclosure label="常用材料" count={COLLECTION_MATERIAL_TEMPLATES.slice(0, 8).length}>
-            {COLLECTION_MATERIAL_TEMPLATES.slice(0, 8).map((name) => <button key={name} type="button" onClick={() => addMaterial(name)}><Plus size={12} />{name}</button>)}
+            {COLLECTION_MATERIAL_TEMPLATES.slice(0, 8).map((name) => <ActionButton key={name} type="button" onClick={() => addMaterial(name)}><Plus size={12} />{name}</ActionButton>)}
           </CollectionPresetDisclosure>}
         </div>
       ) : (
@@ -238,10 +239,10 @@ export function CollectionMaterialsEditor({
               />
             )
           })}
-          {materials.length > 3 && <button type="button" className="collection-expand-toggle" onClick={() => setExpanded((value) => !value)}>
+          {materials.length > 3 && <ActionButton type="button" className="collection-expand-toggle" onClick={() => setExpanded((value) => !value)}>
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             {expanded ? '收起材料' : `展开其余 ${materials.length - 3} 项`}
-          </button>}
+          </ActionButton>}
         </>
       )}
       {materials.length >= maxItems && <p className="collection-field-limit-note">已达到 {maxItems} 项上限，删除后可继续添加。</p>}
@@ -272,7 +273,7 @@ function FieldOptionsEditor({ field, index, onUpdate }) {
         />
       </label>
       {options.length > 0 && <div className="collection-option-chips">
-        {options.map((option) => <span key={option} className="collection-option-chip">{option}<button type="button" aria-label={`删除选项 ${option}`} onClick={() => onUpdate({ options: options.filter((item) => item !== option) })}>×</button></span>)}
+        {options.map((option) => <span key={option} className="collection-option-chip">{option}<ActionButton type="button" aria-label={`删除选项 ${option}`} onClick={() => onUpdate({ options: options.filter((item) => item !== option) })}>×</ActionButton></span>)}
       </div>}
     </div>
   )
@@ -346,10 +347,10 @@ function FieldRow({
             必填
           </label>
           <div className="collection-field-actions">
-            <button type="button" className="ghost-icon" disabled={index === 0} aria-label={`上移字段 ${index + 1}`} title="上移" onClick={() => move(-1)}><ArrowUp size={14} /></button>
-            <button type="button" className="ghost-icon" disabled={index === total - 1} aria-label={`下移字段 ${index + 1}`} title="下移" onClick={() => move(1)}><ArrowDown size={14} /></button>
-            <button type="button" className="ghost-icon" aria-label={`复制字段 ${index + 1}`} title="复制" onClick={onCopy}><Copy size={14} /></button>
-            <button type="button" className="ghost-icon collection-rule-delete" aria-label={`删除字段 ${index + 1}`} title="删除字段" onClick={onRemove}><Trash2 size={15} /></button>
+            <ActionButton type="button" className="ghost-icon" disabled={index === 0} aria-label={`上移字段 ${index + 1}`} title="上移" onClick={() => move(-1)}><ArrowUp size={14} /></ActionButton>
+            <ActionButton type="button" className="ghost-icon" disabled={index === total - 1} aria-label={`下移字段 ${index + 1}`} title="下移" onClick={() => move(1)}><ArrowDown size={14} /></ActionButton>
+            <ActionButton type="button" className="ghost-icon" aria-label={`复制字段 ${index + 1}`} title="复制" onClick={onCopy}><Copy size={14} /></ActionButton>
+            <ActionButton type="button" className="ghost-icon collection-rule-delete" aria-label={`删除字段 ${index + 1}`} title="删除字段" onClick={onRemove}><Trash2 size={15} /></ActionButton>
           </div>
         </div>
       </div>
@@ -427,14 +428,14 @@ export function CollectionFieldsEditor({
           <small>{customFields.length ? `${customFields.length} 项 · ${requiredCount} 项必填` : '按需收集联系人、电话等补充信息'}</small>
         </div>
         <div className="collection-builder-section-actions">
-          <button type="button" className="secondary-button" disabled={customFields.length >= maxItems} onClick={() => addField()}><Plus size={14} /><span>添加字段</span></button>
+          <ActionButton type="button" className="secondary-button" disabled={customFields.length >= maxItems} onClick={() => addField()}><Plus size={14} /><span>添加字段</span></ActionButton>
         </div>
       </div>
       {!customFields.length ? (
         <div className="collection-builder-empty collection-empty-state">
           <p>不添加字段时，提交人只需上传文件。</p>
           {showTemplates && <CollectionPresetDisclosure label="常用字段" count={COLLECTION_FIELD_TEMPLATES.length}>
-            {COLLECTION_FIELD_TEMPLATES.map((template) => <button key={template.label} type="button" onClick={() => addField(template)}><Plus size={12} />{template.label}</button>)}
+            {COLLECTION_FIELD_TEMPLATES.map((template) => <ActionButton key={template.label} type="button" onClick={() => addField(template)}><Plus size={12} />{template.label}</ActionButton>)}
           </CollectionPresetDisclosure>}
         </div>
       ) : (
@@ -456,10 +457,10 @@ export function CollectionFieldsEditor({
               />
             )
           })}
-          {customFields.length > 3 && <button type="button" className="collection-expand-toggle" onClick={() => setExpanded((value) => !value)}>
+          {customFields.length > 3 && <ActionButton type="button" className="collection-expand-toggle" onClick={() => setExpanded((value) => !value)}>
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             {expanded ? '收起字段' : `展开其余 ${customFields.length - 3} 个`}
-          </button>}
+          </ActionButton>}
         </>
       )}
       {customFields.length >= maxItems && <p className="collection-field-limit-note">已达到 {maxItems} 个上限，删除后可继续添加。</p>}
@@ -541,8 +542,8 @@ export function CollectionStructureAssistant({ form, onApplyStructure, copySourc
               {COLLECTION_SCENARIOS.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name} · {scenario.hint}</option>)}
             </select>
           </label>
-          <button type="button" className="secondary-button" disabled={!scenarioId} onClick={applyScenario}>套用场景</button>
-          <button type="button" className="primary-button" onClick={smartGenerate}><Wand2 size={14} /> 根据说明智能推荐</button>
+          <ActionButton type="button" className="secondary-button" disabled={!scenarioId} onClick={applyScenario}>套用场景</ActionButton>
+          <ActionButton type="button" className="primary-button" onClick={smartGenerate}><Wand2 size={14} /> 根据说明智能推荐</ActionButton>
         </div>
         <p className="collection-assistant-tip">智能推荐会读取上面的任务名称和收集说明，自动补充材料与字段；结果可以继续手动修改。</p>
         {copySources.length > 0 && <div className="collection-assistant-row">
@@ -553,21 +554,21 @@ export function CollectionStructureAssistant({ form, onApplyStructure, copySourc
               {copySources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
             </select>
           </label>
-          <button type="button" className="secondary-button" disabled={!copyId || busy} onClick={copyExisting}>{busy ? '读取中…' : '复制任务结构'}</button>
+          <ActionButton type="button" className="secondary-button" disabled={!copyId || busy} onClick={copyExisting}>{busy ? '读取中…' : '复制任务结构'}</ActionButton>
         </div>}
         <div className="collection-assistant-row collection-assistant-save">
           <label className="collection-assistant-field">
             <span><Bookmark size={13} />常用结构</span>
             <input aria-label="结构名称" value={saveName} maxLength={40} onChange={(event) => setSaveName(event.target.value)} placeholder="给当前结构起个名字（可选）" />
           </label>
-          <button type="button" className="secondary-button" onClick={saveCurrent}>存为常用结构</button>
+          <ActionButton type="button" className="secondary-button" onClick={saveCurrent}>存为常用结构</ActionButton>
           {saved.length > 0 && <>
             <select aria-label="选择已保存结构" value={savedId} onChange={(event) => setSavedId(event.target.value)}>
               <option value="">已保存结构</option>
               {saved.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
-            <button type="button" className="secondary-button" disabled={!savedId} onClick={applySaved}>套用</button>
-            <button type="button" className="ghost-icon" disabled={!savedId} aria-label="删除已保存结构" title="删除已保存结构" onClick={deleteSaved}><Trash2 size={15} /></button>
+            <ActionButton type="button" className="secondary-button" disabled={!savedId} onClick={applySaved}>套用</ActionButton>
+            <ActionButton type="button" className="ghost-icon" disabled={!savedId} aria-label="删除已保存结构" title="删除已保存结构" onClick={deleteSaved}><Trash2 size={15} /></ActionButton>
           </>}
         </div>
         {message && <p className="collection-assistant-message" role="status">{message}</p>}

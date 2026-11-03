@@ -50,7 +50,7 @@ export function registerWorkspaceRoutes(app) {
   app.get('/api/account/workspace', async (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
-    await reconcileUserUpgradeOrders(session)
+    // External payment reconciliation runs in the independent maintenance job.
     reconcileOwnershipHandover(accountOrganizationForUser(session.user.id))
     res.json(accountWorkspacePayload(session.user))
   })
@@ -115,6 +115,7 @@ export function registerWorkspaceRoutes(app) {
       memberUsage,
       joinRequests: isOrganizationManager(organization, session.user.id) ? publicJoinRequestsForOrganization(organization) : [],
       resources: resources.slice(0, 200),
+      resourceSummary: req.dataContext?.pagination?.summary || { total: resources.length, fileCount: resources.reduce((sum, item) => sum + item.fileCount, 0), active: resources.filter(item => item.status === 'active').length },
       ...(req.dataContext?.pagination ? { pagination: req.dataContext.pagination } : {}),
     })
   })

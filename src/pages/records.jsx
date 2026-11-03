@@ -1,3 +1,4 @@
+import { ActionButton } from '../components/action-button.jsx'
 import React from 'react'
 import { fetchPagedAccountList } from '../lib/records.js'
 import { createPortal } from 'react-dom'
@@ -11,7 +12,7 @@ import { useDownloadTask } from '../hooks.js'
 import { FILE_CATEGORY_FILTERS, RECORD_DATE_FILTERS, RECORD_SCOPE_TABS, RECORD_STATUS_FILTERS, RECORD_VIEW_MODES } from '../lib/constants.js'
 import { recordPreviewConfigs } from '../lib/transfer.js'
 import QRCode from 'qrcode'
-import { AdminPagination } from './AdminPage.jsx'
+import { AdminPagination } from '../components/pagination.jsx'
 import { apiRequest } from '../lib/api.js'
 
 const FILE_CATEGORY_ICONS = {
@@ -83,14 +84,14 @@ export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
       <div className="modal share-expiry-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">分享管理</p><h2>设置截至时间</h2></div>
-          <button className="ghost-icon modal-close" aria-label="关闭截至时间设置" onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon modal-close" aria-label="关闭截至时间设置" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body share-expiry-form">
           <div className="setting-block">
             <span>分享截止时间</span>
             <div className="option-grid compact-grid">
-              <button className={mode === 'date' ? 'selected' : ''} onClick={() => setMode('date')}>自定义日期{mode === 'date' && <Check size={14} />}</button>
-              <button className={mode === 'permanent' ? 'selected' : ''} onClick={() => canUsePermanent && setMode('permanent')} disabled={!canUsePermanent} title={!canUsePermanent ? '永久保存需要企业版权益' : ''}>永久保存{mode === 'permanent' && <Check size={14} />}</button>
+              <ActionButton className={mode === 'date' ? 'selected' : ''} onClick={() => setMode('date')}>自定义日期{mode === 'date' && <Check size={14} />}</ActionButton>
+              <ActionButton className={mode === 'permanent' ? 'selected' : ''} onClick={() => canUsePermanent && setMode('permanent')} disabled={!canUsePermanent} title={!canUsePermanent ? '永久保存需要企业版权益' : ''}>永久保存{mode === 'permanent' && <Check size={14} />}</ActionButton>
             </div>
             {mode === 'date' && <DatePicker value={expiryDate} onChange={setExpiryDate} ariaLabel="分享截止日期" />}
             {!canUsePermanent && <small className="setting-hint">永久保存需要企业版权益，会员可自定义截止时间。</small>}
@@ -98,15 +99,15 @@ export function ShareExpiryModal({ record, canUsePermanent, onClose, onSave }) {
           {error && <p className="manage-form-error">{error}</p>}
         </div>
         <div className="modal-footer">
-          <button className="secondary-button" onClick={onClose}>取消</button>
-          <button className="primary-button" disabled={saving || (mode === 'permanent' && !canUsePermanent)} onClick={submit}>{saving ? '保存中' : '保存设置'}</button>
+          <ActionButton className="secondary-button" onClick={onClose}>取消</ActionButton>
+          <ActionButton className="primary-button" disabled={saving || (mode === 'permanent' && !canUsePermanent)} onClick={submit}>{saving ? '保存中' : '保存设置'}</ActionButton>
         </div>
       </div>
     </div>
   )
 }
 
-export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrImage, onDelete, onRename, onClear, onRefresh, onOpen, onOpenCollectionManager, onUpload, onManage, onCloseManaged, onReopenManaged, onSaveShareExpiry, onNotify }) {
+export function RecordsView({ records, user, revision = 0, syncing = false, onCopy, onCopyQrImage, onDelete, onRename, onClear, onRefresh, onOpen, onOpenCollectionManager, onUpload, onManage, onCloseManaged, onReopenManaged, onSaveShareExpiry, onNotify }) {
   const [viewMode, setViewMode] = useState(() => new URLSearchParams(window.location.search).get('center') === 'files' ? 'files' : 'records')
   const [scopeFilter, setScopeFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('all')
@@ -132,6 +133,22 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   const [refreshing, setRefreshing] = useState(false)
   const [recordPage, setRecordPage] = useState(1)
   const [filePage, setFilePage] = useState(1)
+  const [pagination, setPagination] = useState(null)
+  const requestVersion = useRef(0)
+  const firstQuery = useRef(true)
+  const remote = Boolean(user?.id)
+  const listQuery = JSON.stringify({ page: viewMode === 'files' ? filePage : recordPage, limit: viewMode === 'files' ? 7 : 8,
+    ...(viewMode === 'files' ? { q: fileQuery, category: fileCategory, expiring: expiringOnly ? '1' : '0' }
+      : { scope: scopeFilter, q: recordQuery, status: statusFilter,
+        ...(() => {
+          const today = new Date(); today.setHours(0,0,0,0)
+          let from, to
+          if (dateFilter === 'range') { from = dateFrom && new Date(`${dateFrom}T00:00:00`); to = dateTo && new Date(`${dateTo}T00:00:00`); if (to) to.setDate(to.getDate()+1) }
+          else if (dateFilter !== 'all') { from = new Date(today); from.setDate(from.getDate() - (dateFilter === '7d' ? 6 : dateFilter === '30d' ? 29 : 0)); to = new Date(today); to.setDate(to.getDate()+1) }
+          return { ...(from ? { from: from.toISOString() } : {}), ...(to ? { to: to.toISOString() } : {}) }
+        })(),
+      }),
+  })
   const { startDownload: startRecordPreviewDownload, downloadBusy: previewDownloadBusy } = useDownloadTask()
 
   const normalizedRecords = records.map(normalizeRecord)
@@ -149,23 +166,25 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   ))
   const recordsPageSize = 8
   const filePageSize = 7
-  const recordPageCount = Math.max(1, Math.ceil(filteredRecords.length / recordsPageSize))
-  const filePageCount = Math.max(1, Math.ceil(filteredFileItems.length / filePageSize))
+  const recordTotal = remote ? pagination?.total || 0 : filteredRecords.length
+  const fileTotal = remote ? pagination?.total || 0 : filteredFileItems.length
+  const recordPageCount = Math.max(1, Math.ceil(recordTotal / recordsPageSize))
+  const filePageCount = Math.max(1, Math.ceil(fileTotal / filePageSize))
   const safeRecordPage = Math.min(recordPage, recordPageCount)
   const safeFilePage = Math.min(filePage, filePageCount)
-  const visibleRecords = filteredRecords.slice((safeRecordPage - 1) * recordsPageSize, safeRecordPage * recordsPageSize)
-  const visibleFileItems = filteredFileItems.slice((safeFilePage - 1) * filePageSize, safeFilePage * filePageSize)
+  const visibleRecords = remote ? normalizedRecords : filteredRecords.slice((safeRecordPage - 1) * recordsPageSize, safeRecordPage * recordsPageSize)
+  const visibleFileItems = remote ? fileItems : filteredFileItems.slice((safeFilePage - 1) * filePageSize, safeFilePage * filePageSize)
   const expiringItems = fileItems.filter((item) => item.expiringSoon)
   const visibleIds = Array.from(new Set((viewMode === 'files' ? visibleFileItems.map((item) => item.record.id) : visibleRecords.map((record) => record.id))))
   const selectedVisibleCount = visibleIds.filter((id) => selectedIds.has(id)).length
   const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
   const recordCounts = RECORD_SCOPE_TABS.reduce((acc, tab) => {
-    acc[tab.key] = tab.key === 'all' ? normalizedRecords.length : normalizedRecords.filter((record) => record.scope === tab.key).length
+    acc[tab.key] = remote ? pagination?.scopeCounts?.[tab.key] || 0 : tab.key === 'all' ? normalizedRecords.length : normalizedRecords.filter((record) => record.scope === tab.key).length
     return acc
   }, {})
   const activeScopeTab = RECORD_SCOPE_TABS.find((tab) => tab.key === scopeFilter) || null
   const scopeClearLabel = scopeFilter === 'all' ? '清空全部' : `清空「${activeScopeTab?.label || '本分类'}」`
-  const scopeClearDisabled = !(scopeFilter === 'all' ? normalizedRecords.length : recordCounts[scopeFilter])
+  const scopeClearDisabled = !recordCounts[scopeFilter]
   const storageUsedBytes = Math.max(0, Number(user?.capacity?.usedBytes) || 0)
   const storageTotalBytes = Math.max(0, Number(user?.capacity?.totalBytes || user?.plan?.totalBytes) || 0)
   const storageUsagePercent = storageTotalBytes ? Math.min(100, storageUsedBytes / storageTotalBytes * 100) : 0
@@ -185,8 +204,12 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   }, [])
 
   useEffect(() => {
-    handleRefresh({ silent: true }).catch(() => {})
-  }, [])
+    const controller = new AbortController()
+    const debounce = remote && !firstQuery.current ? 120 : 0
+    firstQuery.current = false
+    const timer = window.setTimeout(() => handleRefresh({ silent: true, signal: controller.signal, force: false }).catch(() => {}), debounce)
+    return () => { window.clearTimeout(timer); controller.abort(); requestVersion.current++ }
+  }, [remote, user?.id, listQuery, revision])
 
   useEffect(() => {
     setSelectedIds(new Set())
@@ -235,11 +258,13 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   }, [fileFilterOpen])
 
   const handleRefresh = async (options = {}) => {
+    const version = ++requestVersion.current
     setRefreshing(true)
     try {
-      await onRefresh(options)
+      const data = await onRefresh({ ...JSON.parse(listQuery), ...options })
+      if (version === requestVersion.current && data?.pagination) setPagination(data.pagination)
     } finally {
-      setRefreshing(false)
+      if (version === requestVersion.current) setRefreshing(false)
     }
   }
 
@@ -275,7 +300,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   const runMenuAction = (action) => (event) => {
     event.stopPropagation()
     setOpenMenu(null); setMenuRecord(null); setMenuAnchor(null)
-    action()
+    return action()
   }
 
   const toggleRecord = (recordId) => {
@@ -299,8 +324,9 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   const deleteSelected = () => {
     const ids = Array.from(selectedIds)
     if (!ids.length) return
-    onDelete(ids)
+    const result = onDelete(ids)
     setSelectedIds(new Set())
+    return result
   }
 
   const hasRecordFilters = dateFilter !== 'all' || Boolean(dateFrom) || Boolean(dateTo) || statusFilter !== 'all' || Boolean(recordQuery.trim())
@@ -319,7 +345,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     setFileFilterOpen(false)
   }
 
-  const fileCategoryCount = (category) => category === 'all'
+  const fileCategoryCount = (category) => remote ? pagination?.categoryCounts?.[category] || 0 : category === 'all'
     ? fileItems.length
     : fileItems.filter((item) => matchesManagedFileCategory(item, category)).length
 
@@ -341,9 +367,9 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
     setRenameTarget(normalizeRecord(record))
   }
 
-  const saveRename = (nextName) => {
+  const saveRename = async (nextName) => {
     if (!renameTarget || !onRename) return
-    onRename(renameTarget, nextName)
+    await onRename(renameTarget, nextName)
     setRenameTarget(null)
   }
 
@@ -401,27 +427,26 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
         onClick={(event) => event.stopPropagation()}
       >
         {record.scope !== 'my_collections' && (
-          <button disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</button>
+          <ActionButton disabled={!copyTarget} onClick={runMenuAction(() => onCopy(copyTarget))}><Copy size={14} /> {recordCopyLabel(record)}</ActionButton>
         )}
         {record.scope === 'my_sent' && record.kind === 'share' ? (
           <>
-            <button disabled={!shareUrl} onClick={runMenuAction(() => onCopy(shareUrl))}><Link2 size={14} /> 复制分享链接</button>
-            <button disabled={!shareUrl} onClick={runMenuAction(() => openShareQr(record))}><QrCode size={14} /> 分享二维码</button>
+            <ActionButton disabled={!shareUrl} onClick={runMenuAction(() => onCopy(shareUrl))}><Link2 size={14} /> 复制分享链接</ActionButton>
+            <ActionButton disabled={!shareUrl} onClick={runMenuAction(() => openShareQr(record))}><QrCode size={14} /> 分享二维码</ActionButton>
           </>
         ) : (
-          <button disabled={!link} onClick={runMenuAction(() => {
+          <ActionButton disabled={!link} onClick={runMenuAction(() => {
             if (record.scope === 'my_collections' && onOpenCollectionManager) {
-              onOpenCollectionManager(recordManageUrl(record))
-              return
+              return onOpenCollectionManager(recordManageUrl(record))
             }
             onOpen(record)
-          })}><ExternalLink size={14} /> {record.scope === 'my_collections' ? '查看已收文件' : recordOpenLabel(record)}</button>
+          })}><ExternalLink size={14} /> {record.scope === 'my_collections' ? '查看已收文件' : recordOpenLabel(record)}</ActionButton>
         )}
-        <button disabled={!onRename} onClick={runMenuAction(() => requestRename(record))}><PencilLine size={14} /> 重命名</button>
+        <ActionButton disabled={!onRename} onClick={runMenuAction(() => requestRename(record))}><PencilLine size={14} /> 重命名</ActionButton>
         {record.scope === 'my_sent' && (
           <>
-            <button disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</button>
-            <button disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => {
+            <ActionButton disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理分享设置</ActionButton>
+            <ActionButton disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => {
               // 与服务端 applyShareUpdate 同口径：改有效期 = 会员特权（付费且在有效期内），
               // 永久保存才要求 permanent。此前误用 plan.permanent 预检，把月卡/季卡会员拦在门外。
               const hasMembership = Boolean(user?.plan?.permanent || (user?.plan?.id && user?.plan?.id !== 'free'))
@@ -430,29 +455,29 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                 return
               }
               setShareExpiryTarget(record)
-            })}><CalendarDays size={14} /> 设置截至时间</button>
+            })}><CalendarDays size={14} /> 设置截至时间</ActionButton>
             {closedShare ? (
-              <button disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启分享</button>
+              <ActionButton disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启分享</ActionButton>
             ) : (
-              <button className="danger" disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</button>
+              <ActionButton className="danger" disabled={!recordManageUrl(record) || noShareManagement} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭分享链接</ActionButton>
             )}
           </>
         )}
         {record.scope === 'my_collections' && (
           <>
-            <button disabled={!record.publicUrl && !record.shareUrl} onClick={runMenuAction(() => onCopy(record.publicUrl || record.shareUrl))}><Link2 size={14} /> 复制提交链接</button>
-            <button disabled={!record.publicUrl && !record.shareUrl} onClick={runMenuAction(() => openCollectionQr(record))}><QrCode size={14} /> 查看提交二维码</button>
-            <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理收集设置</button>
+            <ActionButton disabled={!record.publicUrl && !record.shareUrl} onClick={runMenuAction(() => onCopy(record.publicUrl || record.shareUrl))}><Link2 size={14} /> 复制提交链接</ActionButton>
+            <ActionButton disabled={!record.publicUrl && !record.shareUrl} onClick={runMenuAction(() => openCollectionQr(record))}><QrCode size={14} /> 查看提交二维码</ActionButton>
+            <ActionButton disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><Settings2 size={14} /> 管理收集设置</ActionButton>
             {record.status === '已关闭' && reopenableCollection ? (
-              <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启收集任务</button>
+              <ActionButton disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onReopenManaged(record))}><RefreshCw size={14} /> 重新开启收集任务</ActionButton>
             ) : statusGroup === 'expired' ? (
-              <button disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><CalendarDays size={14} /> 延长后开启</button>
+              <ActionButton disabled={!recordManageUrl(record)} onClick={runMenuAction(() => onManage(record))}><CalendarDays size={14} /> 延长后开启</ActionButton>
             ) : (
-              <button className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭收集任务</button>
+              <ActionButton className="danger" disabled={!recordManageUrl(record) || statusGroup === 'expired'} onClick={runMenuAction(() => onCloseManaged(record))}><X size={14} /> 关闭收集任务</ActionButton>
             )}
           </>
         )}
-        <button className="danger" onClick={runMenuAction(() => onDelete(record.id))}><Trash2 size={14} /> {user?.id ? '删除记录' : '删除本机记录'}</button>
+        <ActionButton className="danger" onClick={runMenuAction(() => onDelete(record.id))}><Trash2 size={14} /> {user?.id ? '删除记录' : '删除本机记录'}</ActionButton>
       </div>
     )
   }
@@ -460,10 +485,10 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
   const recordModeTabs = (
     <div className="records-mode-tabs" role="tablist" aria-label="记录视图">
       {RECORD_VIEW_MODES.map(([key, label]) => (
-        <button key={key} role="tab" aria-selected={viewMode === key} className={viewMode === key ? 'active' : ''} onClick={() => changeViewMode(key)}>
+        <ActionButton key={key} role="tab" aria-selected={viewMode === key} className={viewMode === key ? 'active' : ''} onClick={() => changeViewMode(key)}>
           <span>{label}</span>
-          <strong>{key === 'files' ? fileItems.length : normalizedRecords.length}</strong>
-        </button>
+          <strong>{remote ? pagination?.scopeCounts?.all || 0 : key === 'files' ? fileItems.length : normalizedRecords.length}</strong>
+        </ActionButton>
       ))}
     </div>
   )
@@ -478,12 +503,12 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
         <div className="records-heading-actions">
           {viewMode === 'records' ? recordModeTabs : (
             <>
-              <button type="button" className="secondary-button" onClick={() => changeViewMode('records')}><ArrowLeft size={15} /> 返回收发记录</button>
-              <button type="button" className="primary-button" onClick={onUpload}><Upload size={15} /> 上传文件</button>
+              <ActionButton type="button" className="secondary-button" onClick={() => changeViewMode('records')}><ArrowLeft size={15} /> 返回收发记录</ActionButton>
+              <ActionButton type="button" className="primary-button" onClick={onUpload}><Upload size={15} /> 上传文件</ActionButton>
             </>
           )}
           {viewMode === 'records' && (
-            <button type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { onClear(scopeFilter); setSelectedIds(new Set()) }}><Trash2 size={15} /> 清空记录</button>
+            <ActionButton type="button" className="secondary-button records-clear-button" aria-label={scopeClearLabel} title={scopeClearLabel} disabled={scopeClearDisabled} onClick={() => { const request = onClear(scopeFilter); setSelectedIds(new Set()); return request }}><Trash2 size={15} /> 清空记录</ActionButton>
           )}
         </div>
       </div>
@@ -494,10 +519,10 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
             <div className="records-toolbar-main">
               <div className="record-scope-tabs" role="tablist" aria-label="记录分类">
                 {RECORD_SCOPE_TABS.map((tab) => (
-                  <button key={tab.key} role="tab" aria-selected={scopeFilter === tab.key} className={scopeFilter === tab.key ? 'active' : ''} onClick={() => setScopeFilter(tab.key)}>
+                  <ActionButton key={tab.key} role="tab" aria-selected={scopeFilter === tab.key} className={scopeFilter === tab.key ? 'active' : ''} onClick={() => setScopeFilter(tab.key)}>
                     <span>{tab.label}</span>
                     <strong>{recordCounts[tab.key] || 0}</strong>
-                  </button>
+                  </ActionButton>
                 ))}
               </div>
               <label className="record-date-select record-status-select">
@@ -529,16 +554,16 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                 )}
                 <label className="record-select-all">
                   <input type="checkbox" checked={allVisibleSelected} disabled={!visibleIds.length} onChange={toggleVisibleSelection} />
-                  <span>已选 {selectedIds.size} 条 · 本页 {visibleRecords.length} 条 / 筛选 {filteredRecords.length} 条</span>
+                  <span>已选 {selectedIds.size} 条 · 本页 {visibleRecords.length} 条 / 筛选 {recordTotal} 条</span>
                 </label>
               </div>
               <div className="records-secondary-actions">
                 <div className="record-filter-actions">
-                  <button className="secondary-button filter-reset-button" onClick={resetRecordFilters} disabled={!hasRecordFilters}><RotateCcw size={15} /> 重置</button>
-                  <button className="secondary-button" aria-label="刷新记录" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</button>
+                  <ActionButton className="secondary-button filter-reset-button" onClick={resetRecordFilters} disabled={!hasRecordFilters}><RotateCcw size={15} /> 重置</ActionButton>
+                  <ActionButton className="secondary-button" aria-label="刷新记录" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={16} /> {refreshing ? '刷新中' : '刷新'}</ActionButton>
                 </div>
                 <div className="record-bulk-actions">
-                  <button className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</button>
+                  <ActionButton className="secondary-button danger-lite" disabled={!selectedIds.size} onClick={deleteSelected}><Trash2 size={15} /> 删除所选</ActionButton>
                 </div>
               </div>
           </div>
@@ -549,7 +574,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
               {['文件名', '方向', '取件码/入口', '大小', '有效期', '状态', '操作'].map((label) => <span role="columnheader" key={label}>{label}</span>)}
             </div>
           <div className="records-list enhanced-records-list" role="rowgroup">
-            {filteredRecords.length ? visibleRecords.map((record) => {
+            {visibleRecords.length ? visibleRecords.map((record) => {
               const Icon = recordIconForScope(record.scope)
               const statusGroup = recordStatusGroup(record)
               const selected = selectedIds.has(record.id)
@@ -570,16 +595,16 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                   </div>
                   <span className={`record-direction ${record.scope}`} role="cell">{record.scope === 'my_sent' ? '发出' : record.scope === 'sent_to_me' ? '接收' : record.scope === 'my_collections' ? '收集' : '提交'}</span>
                   {record.scope === 'collect_from_me' ? (
-                    <button type="button" role="cell" className="record-code record-submit-button" disabled={!recordLink(record) || !onOpen} aria-label={`${recordOpenLabel(record)}：${recordDisplayName(record)}`} onClick={() => onOpen(record)}><ExternalLink size={14} />{recordOpenLabel(record)}</button>
+                    <ActionButton type="button" role="cell" className="record-code record-submit-button" disabled={!recordLink(record) || !onOpen} aria-label={`${recordOpenLabel(record)}：${recordDisplayName(record)}`} onClick={() => onOpen(record)}><ExternalLink size={14} />{recordOpenLabel(record)}</ActionButton>
                   ) : <span className="record-code" role="cell">{record.code || '-'}</span>}
                   <span className="record-size" role="cell">{record.totalSize > 0 ? formatBytes(record.totalSize) : '—'}</span>
                   <span className={`record-expiry ${statusGroup}`} role="cell">{recordValidityLabel(record)}</span>
                   <span className={`record-type ${statusGroup} tone-${recordStatusTone(record)}`} role="cell">{recordDisplayStatus(record)}</span>
                   <div className="menu-wrap row-menu-wrap" role="cell">
                     <span className="record-preview-slot">
-                      {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <button className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></button>}
+                      {recordPreviewConfigs(record).length > 0 && !(record.scope === 'my_sent' && record.status === '无管理权限') && <ActionButton className="ghost-icon record-preview-button" aria-label={`预览文件：${recordDisplayName(record)}`} title="预览文件" onClick={() => openRecordPreview(record)}><Eye size={16} /></ActionButton>}
                     </span>
-                    <button className="ghost-icon" aria-label={`更多操作：${recordDisplayName(record)}`} onClick={(event) => toggleMenu(record.id, event, record)}><MoreHorizontal size={17} /></button>
+                    <ActionButton className="ghost-icon" aria-label={`更多操作：${recordDisplayName(record)}`} onClick={(event) => toggleMenu(record.id, event, record)}><MoreHorizontal size={17} /></ActionButton>
                   </div>
                 </div>
               )
@@ -588,7 +613,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
             )}
           </div>
           </div>
-          <AdminPagination page={safeRecordPage} pageCount={recordPageCount} total={filteredRecords.length} pageSize={recordsPageSize} onPageChange={setRecordPage} />
+          <AdminPagination page={safeRecordPage} pageCount={recordPageCount} total={recordTotal} pageSize={recordsPageSize} onPageChange={setRecordPage} />
         </>
       ) : (
         <>
@@ -598,7 +623,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
               <div className="file-category-list" role="tablist" aria-label="按文件类型筛选">
                 {FILE_CATEGORY_FILTERS.map(([value, label]) => {
                   const Icon = FILE_CATEGORY_ICONS[value] || FileQuestion
-                  return <button type="button" role="tab" aria-selected={fileCategory === value} className={fileCategory === value ? 'active' : ''} key={value} onClick={() => setFileCategory(value)}><Icon size={15} /><span>{label}</span><em>{fileCategoryCount(value)}</em></button>
+                  return <ActionButton type="button" role="tab" aria-selected={fileCategory === value} className={fileCategory === value ? 'active' : ''} key={value} onClick={() => setFileCategory(value)}><Icon size={15} /><span>{label}</span><em>{fileCategoryCount(value)}</em></ActionButton>
                 })}
               </div>
               <div className="cat-divider" />
@@ -612,16 +637,16 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
 
             <section className="file-center-card" aria-label="文件列表">
               <div className="file-center-card-heading">
-                <div className="file-center-title"><h2>{fileCategory === 'all' ? '全部文件' : FILE_CATEGORY_FILTERS.find(([value]) => value === fileCategory)?.[1]}</h2><span>{filteredFileItems.length}</span></div>
+                <div className="file-center-title"><h2>{fileCategory === 'all' ? '全部文件' : FILE_CATEGORY_FILTERS.find(([value]) => value === fileCategory)?.[1]}</h2><span>{fileTotal}</span></div>
                 <div className="file-center-controls">
                   <label className="file-center-search"><Search size={14} /><input maxLength={160} value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="搜索文件" aria-label="搜索文件" /></label>
                   <div className="file-filter-wrap">
-                    <button type="button" className="secondary-button file-filter-button" aria-expanded={fileFilterOpen} onClick={(event) => { event.stopPropagation(); setFileFilterOpen((open) => !open) }}><Filter size={14} /> 筛选</button>
+                    <ActionButton type="button" className="secondary-button file-filter-button" aria-expanded={fileFilterOpen} onClick={(event) => { event.stopPropagation(); setFileFilterOpen((open) => !open) }}><Filter size={14} /> 筛选</ActionButton>
                     {fileFilterOpen && <div className="file-filter-popover" onClick={(event) => event.stopPropagation()}>
-                      <label><input type="checkbox" checked={expiringOnly} onChange={(event) => setExpiringOnly(event.target.checked)} /><span>只看即将过期</span><em>{expiringItems.length}</em></label>
-                      <button type="button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={14} /> {refreshing ? '刷新中' : '刷新列表'}</button>
-                      <button type="button" onClick={resetFileFilters} disabled={!hasFileFilters}><RotateCcw size={14} /> 重置筛选</button>
-                      <button type="button" className="danger" disabled={!normalizedRecords.length} onClick={() => { setFileFilterOpen(false); onClear(); setSelectedIds(new Set()) }}><Trash2 size={14} /> 清空全部记录</button>
+                      <label><input type="checkbox" checked={expiringOnly} onChange={(event) => setExpiringOnly(event.target.checked)} /><span>只看即将过期</span><em>{remote ? pagination?.categoryCounts?.expiring || 0 : expiringItems.length}</em></label>
+                      <ActionButton type="button" onClick={() => handleRefresh()} disabled={refreshing}><RefreshCw className={refreshing ? 'spinning' : ''} size={14} /> {refreshing ? '刷新中' : '刷新列表'}</ActionButton>
+                      <ActionButton type="button" onClick={resetFileFilters} disabled={!hasFileFilters}><RotateCcw size={14} /> 重置筛选</ActionButton>
+                      <ActionButton type="button" className="danger" disabled={!normalizedRecords.length} onClick={() => { setFileFilterOpen(false); const request = onClear(); setSelectedIds(new Set()); return request }}><Trash2 size={14} /> 清空全部记录</ActionButton>
                     </div>}
                   </div>
                 </div>
@@ -633,7 +658,7 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                   {['文件名', '类型', '来源', '大小', '状态', '操作'].map((label) => <span role="columnheader" key={label}>{label}</span>)}
                 </div>
                 <div className="file-center-list" role="rowgroup">
-                  {filteredFileItems.length ? visibleFileItems.map((item) => {
+                  {visibleFileItems.length ? visibleFileItems.map((item) => {
                     const record = item.record
                     const Icon = fileCategoryIcon(record.kind === 'collection' ? 'collection' : item.category)
                     const selected = selectedIds.has(record.id)
@@ -650,10 +675,10 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
                         <span className="mono rec-size">{item.size ? formatBytes(item.size) : `${item.fileCount || 1} 项`}</span>
                         <span className="file-status-cell"><span className={`file-status-badge ${item.statusGroup}`}><i />{recordDisplayStatus(record)}</span></span>
                         <div className="row-acts file-row-actions menu-wrap row-menu-wrap" role="cell">
-                          <button className="icon-act" title="预览" aria-label={`预览：${item.name}`} disabled={!previews.length || (record.scope === 'my_sent' && record.status === '无管理权限')} onClick={() => openRecordPreview(record)}><Eye size={15} /></button>
-                          <button className="icon-act" title="下载" aria-label={`下载：${item.name}`} disabled={previewDownloadBusy} onClick={() => downloadFileItem(record)}><Download size={15} /></button>
-                          <button className="icon-act danger" title="删除" aria-label={`删除：${item.name}`} onClick={() => onDelete(record.id)}><Trash2 size={15} /></button>
-                          <button className="icon-act file-more-button" title="更多操作" aria-label={`更多操作：${item.name}`} onClick={(event) => toggleMenu(item.id, event, record)}><MoreHorizontal size={15} /></button>
+                          <ActionButton className="icon-act" title="预览" aria-label={`预览：${item.name}`} disabled={!previews.length || (record.scope === 'my_sent' && record.status === '无管理权限')} onClick={() => openRecordPreview(record)}><Eye size={15} /></ActionButton>
+                          <ActionButton className="icon-act" title="下载" aria-label={`下载：${item.name}`} disabled={previewDownloadBusy} onClick={() => downloadFileItem(record)}><Download size={15} /></ActionButton>
+                          <ActionButton className="icon-act danger" title="删除" aria-label={`删除：${item.name}`} onClick={() => onDelete(record.id)}><Trash2 size={15} /></ActionButton>
+                          <ActionButton className="icon-act file-more-button" title="更多操作" aria-label={`更多操作：${item.name}`} onClick={(event) => toggleMenu(item.id, event, record)}><MoreHorizontal size={15} /></ActionButton>
                         </div>
                       </div>
                     )
@@ -662,8 +687,8 @@ export function RecordsView({ records, user, syncing = false, onCopy, onCopyQrIm
               </div>
 
               <div className="file-center-footer">
-                <div><span>共 {filteredFileItems.length} 个文件 · 已选择 {selectedIds.size} 个</span>{selectedIds.size > 0 && <button type="button" className="file-bulk-delete" onClick={deleteSelected}><Trash2 size={14} /> 删除所选</button>}</div>
-                <div className="file-center-pagination"><button type="button" disabled={safeFilePage <= 1} onClick={() => setFilePage(Math.max(1, safeFilePage - 1))}>上一页</button><span>{safeFilePage} / {filePageCount}</span><button type="button" disabled={safeFilePage >= filePageCount} onClick={() => setFilePage(Math.min(filePageCount, safeFilePage + 1))}>下一页</button></div>
+                <div><span>共 {fileTotal} 个文件 · 已选择 {selectedIds.size} 个</span>{selectedIds.size > 0 && <ActionButton type="button" className="file-bulk-delete" onClick={deleteSelected}><Trash2 size={14} /> 删除所选</ActionButton>}</div>
+                <div className="file-center-pagination"><ActionButton type="button" disabled={safeFilePage <= 1} onClick={() => setFilePage(Math.max(1, safeFilePage - 1))}>上一页</ActionButton><span>{safeFilePage} / {filePageCount}</span><ActionButton type="button" disabled={safeFilePage >= filePageCount} onClick={() => setFilePage(Math.min(filePageCount, safeFilePage + 1))}>下一页</ActionButton></div>
               </div>
             </section>
           </div>
@@ -889,16 +914,16 @@ export function TrashView({ user, authLoading = false, onLogin, onBack, onRefres
           <div><h1>回收站</h1><p>{hasTeam ? '统一管理个人与团队的已删除资源' : '管理已删除的文件分享和收集任务'}</p></div>
         </div>
         <div className="trash-page-actions">
-          <button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} />返回收发记录</button>
-          {user?.id && <button type="button" className="secondary-button trash-refresh-button" onClick={refreshTrash} disabled={activeLoading || Boolean(activeBusyAction)}><RefreshCw size={15} className={activeLoading ? 'trash-refresh-icon is-spinning' : ''} />{activeLoading ? '刷新中' : '刷新'}</button>}
-          {canEmptyTrash && <button type="button" className="secondary-button danger-lite trash-empty-button" onClick={emptyTrash} disabled={Boolean(activeBusyAction)}>{activeBusyAction === 'empty' ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <Trash2 size={15} />}{activeBusyAction === 'empty' ? '清空中' : '清空回收站'}</button>}
+          <ActionButton type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} />返回收发记录</ActionButton>
+          {user?.id && <ActionButton type="button" className="secondary-button trash-refresh-button" onClick={refreshTrash} disabled={activeLoading || Boolean(activeBusyAction)}><RefreshCw size={15} className={activeLoading ? 'trash-refresh-icon is-spinning' : ''} />{activeLoading ? '刷新中' : '刷新'}</ActionButton>}
+          {canEmptyTrash && <ActionButton type="button" className="secondary-button danger-lite trash-empty-button" onClick={emptyTrash} disabled={Boolean(activeBusyAction)}>{activeBusyAction === 'empty' ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <Trash2 size={15} />}{activeBusyAction === 'empty' ? '清空中' : '清空回收站'}</ActionButton>}
         </div>
       </div>
 
       {hasTeam && (
         <div className="trash-scope-tabs" role="tablist" aria-label="回收站分类">
-          <button type="button" role="tab" aria-selected={!isTeam} className={!isTeam ? 'active' : ''} onClick={() => changeScope('personal')}><Trash2 size={15} />个人回收站{!loading && <strong>{items.length}</strong>}</button>
-          <button type="button" role="tab" aria-selected={isTeam} className={isTeam ? 'active' : ''} onClick={() => changeScope('team')}><Building2 size={15} />团队回收站{!teamLoading && teamItems.length > 0 && <strong>{teamItems.length}</strong>}</button>
+          <ActionButton type="button" role="tab" aria-selected={!isTeam} className={!isTeam ? 'active' : ''} onClick={() => changeScope('personal')}><Trash2 size={15} />个人回收站{!loading && <strong>{items.length}</strong>}</ActionButton>
+          <ActionButton type="button" role="tab" aria-selected={isTeam} className={isTeam ? 'active' : ''} onClick={() => changeScope('team')}><Building2 size={15} />团队回收站{!teamLoading && teamItems.length > 0 && <strong>{teamItems.length}</strong>}</ActionButton>
         </div>
       )}
 
@@ -913,11 +938,11 @@ export function TrashView({ user, authLoading = false, onLogin, onBack, onRefres
         {authLoading ? (
           <div className="trash-page-state"><RefreshCw size={22} className="trash-refresh-icon is-spinning" /><span>正在确认登录状态...</span></div>
         ) : !user?.id ? (
-          <div className="trash-page-state"><Trash2 size={30} /><strong>登录后查看回收站</strong><span>回收站保存的是账号下已删除的个人资源与团队文件。</span><button type="button" className="primary-button" onClick={onLogin}>登录后查看</button></div>
+          <div className="trash-page-state"><Trash2 size={30} /><strong>登录后查看回收站</strong><span>回收站保存的是账号下已删除的个人资源与团队文件。</span><ActionButton type="button" className="primary-button" onClick={onLogin}>登录后查看</ActionButton></div>
         ) : activeLoading ? (
           <div className="trash-page-state"><RefreshCw size={22} className="trash-refresh-icon is-spinning" /><span>正在加载{isTeam ? '团队' : ''}回收站...</span></div>
         ) : activeLoadError ? (
-          <div className="trash-page-state trash-page-error"><strong>{isTeam ? '团队' : ''}回收站暂时无法加载</strong><span>{activeLoadError}</span><button type="button" className="secondary-button" onClick={refreshTrash}><RefreshCw size={14} />重试</button></div>
+          <div className="trash-page-state trash-page-error"><strong>{isTeam ? '团队' : ''}回收站暂时无法加载</strong><span>{activeLoadError}</span><ActionButton type="button" className="secondary-button" onClick={refreshTrash}><RefreshCw size={14} />重试</ActionButton></div>
         ) : activeItems.length ? (
           <>
             <div className="trash-list">
@@ -936,8 +961,8 @@ export function TrashView({ user, authLoading = false, onLogin, onBack, onRefres
                       <small>删除于 {item.deletedAt ? new Date(item.deletedAt).toLocaleString('zh-CN') : '未知时间'} · {expired ? '已到期，等待自动清理' : `保留至 ${item.trashExpiresAt ? new Date(item.trashExpiresAt).toLocaleString('zh-CN') : '未知'}`}</small>
                     </div>
                     <div className="trash-row-actions">
-                      <button type="button" className="secondary-button trash-restore-button" disabled={restoreDisabled} onClick={() => isTeam ? restoreTeamItem(item) : restoreItem(item)}>{activeBusyAction === restoreKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <RotateCcw size={15} />}{activeBusyAction === restoreKey ? '恢复中' : '恢复'}</button>
-                      {(!isTeam || item.canDelete === true) && <button type="button" className="danger-button trash-permanent-delete" disabled={deleteDisabled} onClick={() => isTeam ? permanentlyDeleteTeamItem(item) : permanentlyDeleteItem(item)}>{activeBusyAction === deleteKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <Trash2 size={15} />}{activeBusyAction === deleteKey ? '删除中' : '彻底删除'}</button>}
+                      <ActionButton type="button" className="secondary-button trash-restore-button" disabled={restoreDisabled} onClick={() => isTeam ? restoreTeamItem(item) : restoreItem(item)}>{activeBusyAction === restoreKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <RotateCcw size={15} />}{activeBusyAction === restoreKey ? '恢复中' : '恢复'}</ActionButton>
+                      {(!isTeam || item.canDelete === true) && <ActionButton type="button" className="danger-button trash-permanent-delete" disabled={deleteDisabled} onClick={() => isTeam ? permanentlyDeleteTeamItem(item) : permanentlyDeleteItem(item)}>{activeBusyAction === deleteKey ? <RefreshCw size={15} className="trash-refresh-icon is-spinning" /> : <Trash2 size={15} />}{activeBusyAction === deleteKey ? '删除中' : '彻底删除'}</ActionButton>}
                     </div>
                   </article>
                 )
@@ -946,11 +971,11 @@ export function TrashView({ user, authLoading = false, onLogin, onBack, onRefres
             <div className="trash-list-footer">
               <span>共 {activeItems.length} 个项目 · 第 {(safePage - 1) * TRASH_PAGE_SIZE + 1}–{Math.min(safePage * TRASH_PAGE_SIZE, activeItems.length)} 个</span>
               <div className="trash-pagination" role="navigation" aria-label="回收站分页">
-                <button type="button" disabled={safePage <= 1} onClick={() => setPage(Math.max(1, safePage - 1))}>上一页</button>
+                <ActionButton type="button" disabled={safePage <= 1} onClick={() => setPage(Math.max(1, safePage - 1))}>上一页</ActionButton>
                 {trashPageNumbers(safePage, pageCount).map(entry => typeof entry === 'number'
-                  ? <button type="button" key={entry} className={entry === safePage ? 'active' : ''} aria-current={entry === safePage ? 'page' : undefined} onClick={() => setPage(entry)}>{entry}</button>
+                  ? <ActionButton type="button" key={entry} className={entry === safePage ? 'active' : ''} aria-current={entry === safePage ? 'page' : undefined} onClick={() => setPage(entry)}>{entry}</ActionButton>
                   : <span className="trash-pagination-gap" key={entry}>…</span>)}
-                <button type="button" disabled={safePage >= pageCount} onClick={() => setPage(Math.min(pageCount, safePage + 1))}>下一页</button>
+                <ActionButton type="button" disabled={safePage >= pageCount} onClick={() => setPage(Math.min(pageCount, safePage + 1))}>下一页</ActionButton>
               </div>
             </div>
           </>

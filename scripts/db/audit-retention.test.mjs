@@ -10,6 +10,7 @@ process.env.KUNQIONG_DATA_KEY ||= 'ab'.repeat(32)
 const { applyRelationalSchema } = await import('../../server/db/apply-relational-schema.js')
 const { DatabaseAuditStore } = await import('../../server/lib/audit-store.js')
 const { normalizeAuditLog } = await import('../../server/lib/audit-normalizer.js')
+const { RelationalAuditStore } = await import('../../server/db/request-audit-store.js')
 
 const port = Number(process.env.KUNQIONG_TEST_DB_PORT || 0)
 // Same convention as the other scripts/db fixtures: local root without a
@@ -51,6 +52,25 @@ const countByType = async pool => {
     SUM(event_type = 'access') AS access, SUM(event_type <> 'access') AS critical FROM kq_audit_log`)
   return { total: Number(row.total), access: Number(row.access), critical: Number(row.critical) }
 }
+
+test('scheduled retention separates age classes, bounds transactions and resumes backlog', { skip: !port }, async t => {
+  const pool=await createFixture(t), now=Date.now(), day=86400000
+  await seedAudit(pool,'ages',[
+    ...Array.from({length:55},(_,i)=>({id:'access-'+i,type:'access',createdAt:now-8*day})),
+    ...Array.from({length:35},(_,i)=>({id:'security-'+i,type:'security',createdAt:now-31*day})),
+    {id:'kept-security',type:'security',createdAt:now-8*day},
+    {id:'kept-access',type:'access',createdAt:now-day},
+  ])
+  const writer=new RelationalAuditStore(pool,normalizeAuditLog,5000)
+  const options={accessCutoff:now-7*day,criticalCutoff:now-30*day,batchSize:10,maxBatches:2}
+  assert.equal(await writer.deleteExpired(options),40)
+  assert.equal(writer.retentionHasMore,true)
+  assert.deepEqual(await countByType(pool),{total:52,access:36,critical:16})
+  let rounds=1
+  while(writer.retentionHasMore && rounds++<10) await writer.deleteExpired(options)
+  assert.deepEqual(await countByType(pool),{total:2,access:1,critical:1})
+  assert.equal(writer.retentionHasMore,false)
+})
 
 test('audit retention trims the MySQL table to MAX_AUDIT_LOGS without touching critical events', { skip: !port, timeout: 120000 }, async t => {
   const pool = await createFixture(t)

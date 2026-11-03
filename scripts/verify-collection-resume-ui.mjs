@@ -40,6 +40,8 @@ async function mount(s, storage = {}, token = 'resume-test') {
     } }
     else if (url === '/api/upload-sessions') {
       const body = JSON.parse(options.body), id = 'session-' + (s.sessions.size + 1)
+      s.createBodies ||= []; s.createBodies.push(body)
+      if (s.existing && !body.overwriteExisting) return new Response(JSON.stringify({ code: 'collection_file_exists', message: '文件已存在', existingFiles: [{ name: '续传.bin', relativePath: '续传.bin' }] }), { status: 409 })
       s.sessions.set(id, { ...body, sessionId: id, chunks: new Map() })
       if (s.deferCreate) await new Promise((resolve) => { s.releaseCreate = resolve })
       status = 201; data = { sessionId: id }
@@ -49,6 +51,9 @@ async function mount(s, storage = {}, token = 'resume-test') {
       if (!session) { status = 404; data = { message: '上传会话不存在' } }
       else if (options.method === 'DELETE') { s.sessions.delete(session.sessionId); status = 204 }
       else if (match[2]) {
+        const completeBody = JSON.parse(options.body || '{}')
+        if (completeBody.overwriteExisting) session.overwriteExisting = true
+        if (s.conflictAtComplete && !session.overwriteExisting) return new Response(JSON.stringify({ code: 'collection_file_exists', message: '发布前文件已存在', existingFiles: [{ name: '续传.bin', relativePath: '续传.bin' }] }), { status: 409 })
         if (s.background) {
           if (!session.completion) {
             s.scanStarts = (s.scanStarts || 0) + 1
@@ -266,5 +271,35 @@ try {
   await waitFor(() => f.button('重试安全检查'), 'Refresh restores failed safety check rather than upload pause')
   check('Refresh preserves scanner reason as an error', f.document.querySelector('.upload-security-failure[role=alert]')?.textContent.includes(message) && !f.button('继续上传'))
   check('Restoring scan failure does not resend the installer or restart checking', exceeded.uploads.length === 4 && exceeded.scanStarts === 1 && f.errors.length === 0)
+} finally { f.close() }
+const overwrite = server(); overwrite.existing = true
+f = await mount(overwrite)
+try {
+  await f.choose([file()])
+  f.button('提交文件').click(); f.button('提交文件')?.click()
+  await waitFor(() => f.button('继续上传并覆盖'), 'Conflict confirmation appears')
+  check('Repeated submit checks conflicts once and uploads no bytes before consent', overwrite.createBodies.length === 1 && overwrite.uploads.length === 0 && overwrite.sessions.size === 0)
+  check('Submit remains disabled throughout confirmation', f.document.querySelector('.collection-submit-actions > .primary-button')?.disabled)
+  await f.click('取消上传')
+  await waitFor(() => f.button('提交文件')?.disabled === false, 'Cancel unlocks submission')
+  check('Declining overwrite keeps the selected file and existing server file', f.document.querySelectorAll('.file-row').length === 1 && overwrite.existing && overwrite.uploads.length === 0)
+  await f.click('提交文件'); await waitFor(() => f.button('继续上传并覆盖'), 'Second confirmation appears')
+  await f.click('继续上传并覆盖')
+  await waitFor(() => overwrite.pending.length > 0, 'Confirmed upload starts')
+  check('Explicit consent creates one overwrite session', overwrite.sessions.size === 1 && overwrite.createBodies.at(-1).overwriteExisting === true)
+  await finish(overwrite, f)
+  check('Confirmed overwrite completes without runtime errors', f.errors.length === 0)
+} finally { f.close() }
+const lateConflict = server(); lateConflict.conflictAtComplete = true
+f = await mount(lateConflict)
+try {
+  await f.choose([file()]); await f.click('提交文件')
+  for (let i=0;i<100 && !f.button('继续上传并覆盖');i++) {
+    await Promise.all(lateConflict.pending.filter(xhr=>!xhr.done).map(xhr=>xhr.accept())); await delay(20)
+  }
+  await waitFor(() => f.button('继续上传并覆盖'), 'Conflict discovered during publication prompts consent')
+  check('Publication conflict retains uploaded bytes without success', lateConflict.uploads.length === 4 && !lateConflict.completed.length)
+  await f.click('继续上传并覆盖'); await finish(lateConflict, f)
+  check('Confirmed publication retry reuses the same session and all uploaded chunks', lateConflict.sessions.size === 1 && lateConflict.uploads.length === 4 && lateConflict.sessions.get('session-1').overwriteExisting)
 } finally { f.close() }
 console.log(`Collection resume UI: ${passed} passed`)

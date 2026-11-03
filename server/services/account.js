@@ -811,14 +811,14 @@ export function currentCollectionStatus(task = {}) {
   return task.status || 'active'
 }
 
-export function publicAccountUser(user = {}) {
+export function publicAccountUser(user = {}, { summary = false } = {}) {
   const stored = accountUserById(user.id) || normalizeAccountUser(user) || publicUser(user)
   const organization = accountOrganizationForUser(stored.id)
   const personalPlan = accountPersonalPlanForUser(stored)
   const teamPlan = accountOrganizationPlanForUser(stored, organization)
   return {
     ...publicUser(stored),
-    capacity: accountUsageForUser(stored.id),
+    ...(!summary ? { capacity: accountUsageForUser(stored.id) } : {}),
     benefits: accountBenefitsForUser(stored),
     // plan = 个人套餐（自己的空间与权益），加入团队不会改变它。
     plan: personalPlan,
@@ -838,8 +838,8 @@ export function publicAccountUser(user = {}) {
     },
     // 不再下发 isAdmin：后台入口由账号口令控制，不由鲲穹账号身份决定。
     // 前端顶栏据此不再给白名单账号显示「后台管理」按钮，避免误导。
-    organization: publicOrganization(organization, stored.id),
-    notificationSettings: accountNotificationSettingsForUser(stored.id),
+    organization: summary ? organization ? { id: organization.id, name: organization.name, slug: organization.slug, ownerUserId: organization.ownerUserId } : null : publicOrganization(organization, stored.id),
+    ...(!summary ? { notificationSettings: accountNotificationSettingsForUser(stored.id) } : {}),
   }
 }
 
@@ -1246,7 +1246,7 @@ export function maybeNotifyExpiringCollection(task, now) {
 }
 
 export function displayAccountName(user = {}) {
-  return trimRecordString(user?.nickname || user?.username || user?.email || user?.phone, 80) || '对方'
+  return trimRecordString(user?.username || user?.nickname || user?.email || user?.phone, 80) || '对方'
 }
 
 export function requireAuthSession(req, res) {
@@ -1690,11 +1690,11 @@ export function authSessionFromRequest(req) {
   }
   if (!Number.isFinite(new Date(session.expiresAt).getTime()) || new Date(session.expiresAt).getTime() <= Date.now()) {
     req.accountSessionInvalidationReason = 'expired'
-    removeAuthSession(sessionId)
+    if (!currentDataContext()) removeAuthSession(sessionId)
     return null
   }
   if (accountUserById(session.user?.id)?.status === 'disabled') {
-    removeAuthSession(sessionId)
+    if (!currentDataContext()) removeAuthSession(sessionId)
     return null
   }
   const storedUser = accountUserById(session.user?.id)

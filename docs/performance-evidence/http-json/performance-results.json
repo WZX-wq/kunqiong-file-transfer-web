@@ -1,0 +1,1235 @@
+{
+  "executedAt": "2026-11-02T07:56:46.754Z",
+  "fixture": "C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3",
+  "environment": {
+    "os": "Windows_NT 10.0.26200",
+    "node": "v24.12.0",
+    "cpu": "Intel(R) Core(TM) i5-14400",
+    "logicalCpus": 16,
+    "availableParallelism": 16,
+    "cpuQuotaCores": null,
+    "memoryLimitGiB": null,
+    "totalMemoryGiB": 31.62,
+    "freeMemoryGiB": 11.12,
+    "mode": "single Node process, local JSON metadata, loopback, client and server on same host",
+    "fixtureCounts": {
+      "users": 20,
+      "teamMembers": 20,
+      "seededShares": 201,
+      "records": 400,
+      "auditLogs": 5000
+    },
+    "baselineMetadataBytes": 674608,
+    "scanMode": "required INSTREAM emulator; real antivirus processing not measured"
+  },
+  "stages": [
+    {
+      "name": "健康检查基线",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 50,
+      "elapsedSeconds": 5.01,
+      "requests": 42035,
+      "successful": 42035,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 8396.19,
+      "latency": {
+        "count": 42035,
+        "p50Ms": 5.28,
+        "p95Ms": 11.4,
+        "p99Ms": 14.4,
+        "maxMs": 35.36
+      },
+      "endpoints": {
+        "健康检查基线": {
+          "count": 42035,
+          "p50Ms": 5.28,
+          "p95Ms": 11.4,
+          "p99Ms": 14.4,
+          "maxMs": 35.36
+        }
+      },
+      "statusCounts": {
+        "200": 42035
+      },
+      "responseBytes": 11139275,
+      "throughputMiBPerSecond": 2.12,
+      "server": {
+        "cpuSingleCorePercent": 77.08,
+        "baselineRssMiB": 170.75,
+        "peakRssMiB": 173.25,
+        "endRssMiB": 171.64,
+        "heapUsedMiB": 51.13,
+        "eventLoop": {
+          "p95Ms": 10.526719,
+          "p99Ms": 11.747327,
+          "maxMs": 12.812287
+        },
+        "syncMetadataIo": {
+          "calls": 0,
+          "milliseconds": 0,
+          "writeBytes": 0,
+          "copyBytes": 0
+        },
+        "metadataBytes": 674608
+      },
+      "clientEluPercent": 99.99,
+      "errors": []
+    },
+    {
+      "name": "前端页面基线",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 50,
+      "elapsedSeconds": 5.02,
+      "requests": 20785,
+      "successful": 20785,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 4143.75,
+      "latency": {
+        "count": 20785,
+        "p50Ms": 11.67,
+        "p95Ms": 16.07,
+        "p99Ms": 19.26,
+        "maxMs": 27.42
+      },
+      "endpoints": {
+        "前端页面基线": {
+          "count": 20785,
+          "p50Ms": 11.67,
+          "p95Ms": 16.07,
+          "p99Ms": 19.26,
+          "maxMs": 27.42
+        }
+      },
+      "statusCounts": {
+        "200": 20785
+      },
+      "responseBytes": 54955540,
+      "throughputMiBPerSecond": 10.45,
+      "server": {
+        "cpuSingleCorePercent": 120.53,
+        "baselineRssMiB": 171.64,
+        "peakRssMiB": 262.28,
+        "endRssMiB": 259.82,
+        "heapUsedMiB": 82.24,
+        "eventLoop": {
+          "p95Ms": 15.065087,
+          "p99Ms": 17.825791,
+          "maxMs": 21.004287
+        },
+        "syncMetadataIo": {
+          "calls": 0,
+          "milliseconds": 0,
+          "writeBytes": 0,
+          "copyBytes": 0
+        },
+        "metadataBytes": 674608
+      },
+      "clientEluPercent": 64.49,
+      "errors": []
+    },
+    {
+      "name": "业务混合读取 C1",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 1,
+      "elapsedSeconds": 8.03,
+      "requests": 146,
+      "successful": 146,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 18.17,
+      "latency": {
+        "count": 146,
+        "p50Ms": 38.87,
+        "p95Ms": 134.04,
+        "p99Ms": 149.59,
+        "maxMs": 160.66
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 30,
+          "p50Ms": 68.99,
+          "p95Ms": 82.35,
+          "p99Ms": 90.36,
+          "maxMs": 90.36
+        },
+        "团队概览": {
+          "count": 29,
+          "p50Ms": 121.23,
+          "p95Ms": 149.59,
+          "p99Ms": 160.66,
+          "maxMs": 160.66
+        },
+        "收发记录": {
+          "count": 29,
+          "p50Ms": 20.6,
+          "p95Ms": 25.13,
+          "p99Ms": 25.42,
+          "maxMs": 25.42
+        },
+        "分享详情": {
+          "count": 29,
+          "p50Ms": 38.87,
+          "p95Ms": 45.77,
+          "p99Ms": 46.51,
+          "maxMs": 46.51
+        },
+        "收集详情": {
+          "count": 29,
+          "p50Ms": 23.79,
+          "p95Ms": 27.4,
+          "p99Ms": 30.75,
+          "maxMs": 30.75
+        }
+      },
+      "statusCounts": {
+        "200": 146
+      },
+      "responseBytes": 4559889,
+      "throughputMiBPerSecond": 0.54,
+      "server": {
+        "cpuSingleCorePercent": 101.14,
+        "baselineRssMiB": 259.82,
+        "peakRssMiB": 353.6,
+        "endRssMiB": 333.28,
+        "heapUsedMiB": 79.39,
+        "eventLoop": {
+          "p95Ms": 132.513791,
+          "p99Ms": 143.392767,
+          "maxMs": 155.451391
+        },
+        "syncMetadataIo": {
+          "calls": 0,
+          "milliseconds": 0,
+          "writeBytes": 0,
+          "copyBytes": 0
+        },
+        "metadataBytes": 674608
+      },
+      "clientEluPercent": 2.13,
+      "errors": []
+    },
+    {
+      "name": "业务混合读取 C10",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 10,
+      "elapsedSeconds": 8.8,
+      "requests": 113,
+      "successful": 113,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 12.85,
+      "latency": {
+        "count": 113,
+        "p50Ms": 748.55,
+        "p95Ms": 1053,
+        "p99Ms": 1120.79,
+        "maxMs": 1122.02
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 23,
+          "p50Ms": 733.34,
+          "p95Ms": 820.47,
+          "p99Ms": 826.16,
+          "maxMs": 826.16
+        },
+        "团队概览": {
+          "count": 23,
+          "p50Ms": 757.59,
+          "p95Ms": 1100.48,
+          "p99Ms": 1120.79,
+          "maxMs": 1120.79
+        },
+        "收发记录": {
+          "count": 23,
+          "p50Ms": 747.11,
+          "p95Ms": 841.44,
+          "p99Ms": 1075.4,
+          "maxMs": 1075.4
+        },
+        "分享详情": {
+          "count": 22,
+          "p50Ms": 748.8,
+          "p95Ms": 835.7,
+          "p99Ms": 1102.88,
+          "maxMs": 1102.88
+        },
+        "收集详情": {
+          "count": 22,
+          "p50Ms": 746.97,
+          "p95Ms": 832.43,
+          "p99Ms": 1122.02,
+          "maxMs": 1122.02
+        }
+      },
+      "statusCounts": {
+        "200": 113
+      },
+      "responseBytes": 3387184,
+      "throughputMiBPerSecond": 0.37,
+      "server": {
+        "cpuSingleCorePercent": 103.19,
+        "baselineRssMiB": 333.28,
+        "peakRssMiB": 370.96,
+        "endRssMiB": 335.71,
+        "heapUsedMiB": 56.28,
+        "eventLoop": {
+          "p95Ms": 823.656447,
+          "p99Ms": 1066.926079,
+          "maxMs": 1066.926079
+        },
+        "syncMetadataIo": {
+          "calls": 0,
+          "milliseconds": 0,
+          "writeBytes": 0,
+          "copyBytes": 0
+        },
+        "metadataBytes": 674608
+      },
+      "clientEluPercent": 1.69,
+      "errors": []
+    },
+    {
+      "name": "业务混合读取 C30",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 30,
+      "elapsedSeconds": 10.46,
+      "requests": 118,
+      "successful": 118,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 11.28,
+      "latency": {
+        "count": 118,
+        "p50Ms": 2497,
+        "p95Ms": 3200.61,
+        "p99Ms": 3338.33,
+        "maxMs": 3359.91
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 24,
+          "p50Ms": 2461.63,
+          "p95Ms": 2964.79,
+          "p99Ms": 3169.26,
+          "maxMs": 3169.26
+        },
+        "团队概览": {
+          "count": 24,
+          "p50Ms": 2511.55,
+          "p95Ms": 3230.76,
+          "p99Ms": 3288.66,
+          "maxMs": 3288.66
+        },
+        "收发记录": {
+          "count": 24,
+          "p50Ms": 2487.49,
+          "p95Ms": 3193.43,
+          "p99Ms": 3307.62,
+          "maxMs": 3307.62
+        },
+        "分享详情": {
+          "count": 23,
+          "p50Ms": 2497,
+          "p95Ms": 3179.85,
+          "p99Ms": 3338.33,
+          "maxMs": 3338.33
+        },
+        "收集详情": {
+          "count": 23,
+          "p50Ms": 2499.59,
+          "p95Ms": 3173.23,
+          "p99Ms": 3359.91,
+          "maxMs": 3359.91
+        }
+      },
+      "statusCounts": {
+        "200": 118
+      },
+      "responseBytes": 3381958,
+      "throughputMiBPerSecond": 0.31,
+      "server": {
+        "cpuSingleCorePercent": 99.6,
+        "baselineRssMiB": 328.7,
+        "peakRssMiB": 362.25,
+        "endRssMiB": 348.17,
+        "heapUsedMiB": 89.35,
+        "eventLoop": {
+          "p95Ms": 3303.014399,
+          "p99Ms": 3303.014399,
+          "maxMs": 3303.014399
+        },
+        "syncMetadataIo": {
+          "calls": 0,
+          "milliseconds": 0,
+          "writeBytes": 0,
+          "copyBytes": 0
+        },
+        "metadataBytes": 674608
+      },
+      "clientEluPercent": 1.21,
+      "errors": []
+    },
+    {
+      "name": "业务混合读取 C50",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 50,
+      "elapsedSeconds": 12,
+      "requests": 136,
+      "successful": 136,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 11.34,
+      "latency": {
+        "count": 136,
+        "p50Ms": 4322.45,
+        "p95Ms": 4562.08,
+        "p99Ms": 4810.01,
+        "maxMs": 4898.98
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 28,
+          "p50Ms": 4254.37,
+          "p95Ms": 4502.39,
+          "p99Ms": 4577.59,
+          "maxMs": 4577.59
+        },
+        "团队概览": {
+          "count": 27,
+          "p50Ms": 4341.92,
+          "p95Ms": 4810.01,
+          "p99Ms": 4898.98,
+          "maxMs": 4898.98
+        },
+        "收发记录": {
+          "count": 27,
+          "p50Ms": 4322.95,
+          "p95Ms": 4490.65,
+          "p99Ms": 4562.08,
+          "maxMs": 4562.08
+        },
+        "分享详情": {
+          "count": 27,
+          "p50Ms": 4321.34,
+          "p95Ms": 4507.69,
+          "p99Ms": 4574.51,
+          "maxMs": 4574.51
+        },
+        "收集详情": {
+          "count": 27,
+          "p50Ms": 4322.45,
+          "p95Ms": 4498.94,
+          "p99Ms": 4570.86,
+          "maxMs": 4570.86
+        }
+      },
+      "statusCounts": {
+        "200": 136
+      },
+      "responseBytes": 3770990,
+      "throughputMiBPerSecond": 0.3,
+      "server": {
+        "cpuSingleCorePercent": 98.58,
+        "baselineRssMiB": 348.17,
+        "peakRssMiB": 363.81,
+        "endRssMiB": 360.68,
+        "heapUsedMiB": 127.71,
+        "eventLoop": {
+          "p95Ms": 4424.990719,
+          "p99Ms": 4424.990719,
+          "maxMs": 4424.990719
+        },
+        "syncMetadataIo": {
+          "calls": 0,
+          "milliseconds": 0,
+          "writeBytes": 0,
+          "copyBytes": 0
+        },
+        "metadataBytes": 674608
+      },
+      "clientEluPercent": 1.25,
+      "errors": []
+    },
+    {
+      "name": "业务读取持续稳定性 C30",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 30,
+      "elapsedSeconds": 32.2,
+      "requests": 386,
+      "successful": 386,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 11.99,
+      "latency": {
+        "count": 386,
+        "p50Ms": 2460.27,
+        "p95Ms": 2736.22,
+        "p99Ms": 2787.83,
+        "maxMs": 2790.51
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 78,
+          "p50Ms": 2456.67,
+          "p95Ms": 2746.65,
+          "p99Ms": 2787.83,
+          "maxMs": 2787.83
+        },
+        "团队概览": {
+          "count": 77,
+          "p50Ms": 2460.96,
+          "p95Ms": 2742.28,
+          "p99Ms": 2787.56,
+          "maxMs": 2787.56
+        },
+        "收发记录": {
+          "count": 77,
+          "p50Ms": 2460.27,
+          "p95Ms": 2739.28,
+          "p99Ms": 2789.15,
+          "maxMs": 2789.15
+        },
+        "分享详情": {
+          "count": 77,
+          "p50Ms": 2460.51,
+          "p95Ms": 2738.58,
+          "p99Ms": 2788.76,
+          "maxMs": 2788.76
+        },
+        "收集详情": {
+          "count": 77,
+          "p50Ms": 2460.8,
+          "p95Ms": 2736.22,
+          "p99Ms": 2790.51,
+          "maxMs": 2790.51
+        }
+      },
+      "statusCounts": {
+        "200": 386
+      },
+      "responseBytes": 10689128,
+      "throughputMiBPerSecond": 0.32,
+      "server": {
+        "cpuSingleCorePercent": 99.9,
+        "baselineRssMiB": 360.73,
+        "peakRssMiB": 360.73,
+        "endRssMiB": 342.94,
+        "heapUsedMiB": 64.33,
+        "eventLoop": {
+          "p95Ms": 2636.120063,
+          "p99Ms": 2753.560575,
+          "maxMs": 2753.560575
+        },
+        "syncMetadataIo": {
+          "calls": 0,
+          "milliseconds": 0,
+          "writeBytes": 0,
+          "copyBytes": 0
+        },
+        "metadataBytes": 674608
+      },
+      "clientEluPercent": 1.07,
+      "errors": []
+    },
+    {
+      "name": "16MiB分片上传 C1",
+      "kind": "upload",
+      "diagnostic": false,
+      "concurrency": 1,
+      "elapsedSeconds": 0.38,
+      "requests": 1,
+      "successful": 0,
+      "errorCount": 1,
+      "errorRate": 100,
+      "requestsPerSecond": 2.63,
+      "latency": {
+        "count": 1,
+        "p50Ms": 379.6,
+        "p95Ms": 379.6,
+        "p99Ms": 379.6,
+        "maxMs": 379.6
+      },
+      "endpoints": {},
+      "statusCounts": {
+        "transport_error": 1
+      },
+      "responseBytes": 0,
+      "throughputMiBPerSecond": 0,
+      "server": {
+        "cpuSingleCorePercent": 152.24,
+        "baselineRssMiB": 342.94,
+        "peakRssMiB": 358.89,
+        "endRssMiB": 357.73,
+        "heapUsedMiB": 55.07,
+        "eventLoop": {
+          "p95Ms": 32.653311,
+          "p99Ms": 78.249983,
+          "maxMs": 78.249983
+        },
+        "syncMetadataIo": {
+          "calls": 8,
+          "milliseconds": 5.61170000002312,
+          "writeBytes": 120,
+          "copyBytes": 0
+        },
+        "metadataBytes": 677728
+      },
+      "clientEluPercent": 29.24,
+      "errors": [
+        {
+          "sequence": 0,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\6386fd4df5\\1a2c191fe89c34cf-e912a08d-1040-4123-bc8f-4901d09f220a.bin'"
+        }
+      ]
+    },
+    {
+      "name": "16MiB分片上传 C4",
+      "kind": "upload",
+      "diagnostic": false,
+      "concurrency": 4,
+      "elapsedSeconds": 1.28,
+      "requests": 4,
+      "successful": 0,
+      "errorCount": 4,
+      "errorRate": 100,
+      "requestsPerSecond": 3.12,
+      "latency": {
+        "count": 4,
+        "p50Ms": 1085.66,
+        "p95Ms": 1283.01,
+        "p99Ms": 1283.01,
+        "maxMs": 1283.01
+      },
+      "endpoints": {},
+      "statusCounts": {
+        "transport_error": 4
+      },
+      "responseBytes": 0,
+      "throughputMiBPerSecond": 0,
+      "server": {
+        "cpuSingleCorePercent": 127.88,
+        "baselineRssMiB": 357.73,
+        "peakRssMiB": 440.77,
+        "endRssMiB": 345.45,
+        "heapUsedMiB": 37.36,
+        "eventLoop": {
+          "p95Ms": 107.675647,
+          "p99Ms": 293.076991,
+          "maxMs": 293.076991
+        },
+        "syncMetadataIo": {
+          "calls": 32,
+          "milliseconds": 35.85640000004787,
+          "writeBytes": 480,
+          "copyBytes": 0
+        },
+        "metadataBytes": 690181
+      },
+      "clientEluPercent": 19.73,
+      "errors": [
+        {
+          "sequence": 3,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\e2001df698\\286b421fef2dce33-b0e46fa1-8a49-4487-b594-138764ac1362.bin'"
+        },
+        {
+          "sequence": 2,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\defaa151a5\\9c964ced10e8c58c-f07deb1b-cf78-43d6-a160-3e46a63c5b0a.bin'"
+        },
+        {
+          "sequence": 0,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\167b505684\\00c3e042530bab55-92c22b7b-89ae-4c21-a7a5-892c8a55eda1.bin'"
+        },
+        {
+          "sequence": 1,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\df3607cfaf\\08066e55904ce7b6-7c0b614a-4b90-4ffd-9eba-361183ff0b80.bin'"
+        }
+      ]
+    },
+    {
+      "name": "16MiB分片上传 C8",
+      "kind": "upload",
+      "diagnostic": false,
+      "concurrency": 8,
+      "elapsedSeconds": 2.5,
+      "requests": 8,
+      "successful": 0,
+      "errorCount": 8,
+      "errorRate": 100,
+      "requestsPerSecond": 3.2,
+      "latency": {
+        "count": 8,
+        "p50Ms": 2134.11,
+        "p95Ms": 2501.1,
+        "p99Ms": 2501.1,
+        "maxMs": 2501.1
+      },
+      "endpoints": {},
+      "statusCounts": {
+        "transport_error": 8
+      },
+      "responseBytes": 0,
+      "throughputMiBPerSecond": 0,
+      "server": {
+        "cpuSingleCorePercent": 138,
+        "baselineRssMiB": 345.46,
+        "peakRssMiB": 427.68,
+        "endRssMiB": 336.16,
+        "heapUsedMiB": 43.07,
+        "eventLoop": {
+          "p95Ms": 101.908479,
+          "p99Ms": 277.610495,
+          "maxMs": 471.859199
+        },
+        "syncMetadataIo": {
+          "calls": 64,
+          "milliseconds": 64.46839999996882,
+          "writeBytes": 960,
+          "copyBytes": 0
+        },
+        "metadataBytes": 715209
+      },
+      "clientEluPercent": 17.95,
+      "errors": [
+        {
+          "sequence": 0,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\f94ef6fd08\\5eb07067d0461192-d6d36c8b-4136-4d36-904c-acd1ba264b7e.bin'"
+        },
+        {
+          "sequence": 5,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\9812461046\\1a122935db721866-20831baf-f2d5-4255-a433-1664cead8744.bin'"
+        },
+        {
+          "sequence": 6,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\173344d4ff\\1ca82c0b92c4d724-4d5dc52a-f9a8-44a7-8d86-67406e18d295.bin'"
+        },
+        {
+          "sequence": 1,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\69e977c69a\\d9aee7d3f4835900-e25b8de9-a407-4d2e-ab57-792c4a1b6015.bin'"
+        },
+        {
+          "sequence": 4,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\d0ff94e9a0\\fe11721b551d42ea-ca193717-5ec5-477d-a5cd-223badc0c776.bin'"
+        },
+        {
+          "sequence": 7,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\32a63debd8\\f9b6f062c6adc644-71f791d6-367e-4ae6-95bd-10f2adf2ed66.bin'"
+        },
+        {
+          "sequence": 2,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\875fb0aeb7\\8a6478fd2ab1cf9c-a06cbead-eea4-4b24-b087-ff272cde9e27.bin'"
+        },
+        {
+          "sequence": 3,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\7d9986b0e8\\9426633eeaa7380c-eb875072-cc41-4e12-be3f-4700f7418364.bin'"
+        }
+      ]
+    },
+    {
+      "name": "16MiB完整下载 C1",
+      "kind": "download",
+      "diagnostic": false,
+      "concurrency": 1,
+      "elapsedSeconds": 0.23,
+      "requests": 2,
+      "successful": 2,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 8.83,
+      "latency": {
+        "count": 2,
+        "p50Ms": 82.82,
+        "p95Ms": 143.72,
+        "p99Ms": 143.72,
+        "maxMs": 143.72
+      },
+      "endpoints": {
+        "16MiB完整下载 C1": {
+          "count": 2,
+          "p50Ms": 82.82,
+          "p95Ms": 143.72,
+          "p99Ms": 143.72,
+          "maxMs": 143.72
+        }
+      },
+      "statusCounts": {
+        "200": 2
+      },
+      "responseBytes": 33554432,
+      "throughputMiBPerSecond": 141.23,
+      "server": {
+        "cpuSingleCorePercent": 158.45,
+        "baselineRssMiB": 336.18,
+        "peakRssMiB": 347.8,
+        "endRssMiB": 352.76,
+        "heapUsedMiB": 41.93,
+        "eventLoop": {
+          "p95Ms": 51.740671,
+          "p99Ms": 51.937279,
+          "maxMs": 51.937279
+        },
+        "syncMetadataIo": {
+          "calls": 8,
+          "milliseconds": 8.68839999998454,
+          "writeBytes": 120,
+          "copyBytes": 0
+        },
+        "metadataBytes": 716116
+      },
+      "clientEluPercent": 34.32,
+      "errors": []
+    },
+    {
+      "name": "16MiB完整下载 C4",
+      "kind": "download",
+      "diagnostic": false,
+      "concurrency": 4,
+      "elapsedSeconds": 0.76,
+      "requests": 8,
+      "successful": 8,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 10.56,
+      "latency": {
+        "count": 8,
+        "p50Ms": 327.67,
+        "p95Ms": 445.62,
+        "p99Ms": 445.62,
+        "maxMs": 445.62
+      },
+      "endpoints": {
+        "16MiB完整下载 C4": {
+          "count": 8,
+          "p50Ms": 327.67,
+          "p95Ms": 445.62,
+          "p99Ms": 445.62,
+          "maxMs": 445.62
+        }
+      },
+      "statusCounts": {
+        "200": 8
+      },
+      "responseBytes": 134217728,
+      "throughputMiBPerSecond": 168.98,
+      "server": {
+        "cpuSingleCorePercent": 148.65,
+        "baselineRssMiB": 343.99,
+        "peakRssMiB": 375.17,
+        "endRssMiB": 345.39,
+        "heapUsedMiB": 45.22,
+        "eventLoop": {
+          "p95Ms": 45.187071,
+          "p99Ms": 64.520191,
+          "maxMs": 64.520191
+        },
+        "syncMetadataIo": {
+          "calls": 32,
+          "milliseconds": 30.704500000036205,
+          "writeBytes": 480,
+          "copyBytes": 0
+        },
+        "metadataBytes": 719558
+      },
+      "clientEluPercent": 41.1,
+      "errors": []
+    },
+    {
+      "name": "16MiB完整下载 C8",
+      "kind": "download",
+      "diagnostic": false,
+      "concurrency": 8,
+      "elapsedSeconds": 1.6,
+      "requests": 16,
+      "successful": 16,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 10.02,
+      "latency": {
+        "count": 16,
+        "p50Ms": 675.85,
+        "p95Ms": 1538.69,
+        "p99Ms": 1538.69,
+        "maxMs": 1538.69
+      },
+      "endpoints": {
+        "16MiB完整下载 C8": {
+          "count": 16,
+          "p50Ms": 675.85,
+          "p95Ms": 1538.69,
+          "p99Ms": 1538.69,
+          "maxMs": 1538.69
+        }
+      },
+      "statusCounts": {
+        "200": 16
+      },
+      "responseBytes": 268435456,
+      "throughputMiBPerSecond": 160.3,
+      "server": {
+        "cpuSingleCorePercent": 120.35,
+        "baselineRssMiB": 345.39,
+        "peakRssMiB": 390.02,
+        "endRssMiB": 365.66,
+        "heapUsedMiB": 58.78,
+        "eventLoop": {
+          "p95Ms": 51.019775,
+          "p99Ms": 74.973183,
+          "maxMs": 169.607167
+        },
+        "syncMetadataIo": {
+          "calls": 64,
+          "milliseconds": 64.75720000005094,
+          "writeBytes": 960,
+          "copyBytes": 0
+        },
+        "metadataBytes": 726454
+      },
+      "clientEluPercent": 37.52,
+      "errors": []
+    },
+    {
+      "name": "诊断对照：临时关闭访问审计 C30",
+      "kind": "read",
+      "diagnostic": true,
+      "concurrency": 30,
+      "elapsedSeconds": 10.18,
+      "requests": 131,
+      "successful": 131,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 12.87,
+      "latency": {
+        "count": 131,
+        "p50Ms": 2251.3,
+        "p95Ms": 2530.72,
+        "p99Ms": 2575.36,
+        "maxMs": 2576.3
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 27,
+          "p50Ms": 2240.56,
+          "p95Ms": 2535.27,
+          "p99Ms": 2575.36,
+          "maxMs": 2575.36
+        },
+        "团队概览": {
+          "count": 26,
+          "p50Ms": 2251.3,
+          "p95Ms": 2530.07,
+          "p99Ms": 2568.09,
+          "maxMs": 2568.09
+        },
+        "收发记录": {
+          "count": 26,
+          "p50Ms": 2250.03,
+          "p95Ms": 2530.3,
+          "p99Ms": 2569.01,
+          "maxMs": 2569.01
+        },
+        "分享详情": {
+          "count": 26,
+          "p50Ms": 2245.07,
+          "p95Ms": 2530.72,
+          "p99Ms": 2574.8,
+          "maxMs": 2574.8
+        },
+        "收集详情": {
+          "count": 26,
+          "p50Ms": 2244.86,
+          "p95Ms": 2530.66,
+          "p99Ms": 2576.3,
+          "maxMs": 2576.3
+        }
+      },
+      "statusCounts": {
+        "200": 131
+      },
+      "responseBytes": 3620328,
+      "throughputMiBPerSecond": 0.34,
+      "server": {
+        "cpuSingleCorePercent": 97.94,
+        "baselineRssMiB": 118.54,
+        "peakRssMiB": 144.24,
+        "endRssMiB": 144.24,
+        "heapUsedMiB": 54.88,
+        "eventLoop": {
+          "p95Ms": 2514.485247,
+          "p99Ms": 2514.485247,
+          "maxMs": 2514.485247
+        },
+        "syncMetadataIo": {
+          "calls": 0,
+          "milliseconds": 0,
+          "writeBytes": 0,
+          "copyBytes": 0
+        },
+        "metadataBytes": 726454
+      },
+      "clientEluPercent": 1.17,
+      "errors": []
+    }
+  ],
+  "rateLimit": {
+    "attempts": 65,
+    "validationRejected": 60,
+    "rateLimited": 5,
+    "unexpected": 0,
+    "passed": true
+  },
+  "auditVerification": {
+    "retained": 5000,
+    "checkedRequestIds": 50,
+    "matchedRequestIds": 50
+  },
+  "scanner": {
+    "files": 3,
+    "bytes": 50331648
+  },
+  "failures": [
+    {
+      "stage": "16MiB分片上传 C1",
+      "errors": 1,
+      "samples": [
+        {
+          "sequence": 0,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\6386fd4df5\\1a2c191fe89c34cf-e912a08d-1040-4123-bc8f-4901d09f220a.bin'"
+        }
+      ]
+    },
+    {
+      "stage": "16MiB分片上传 C4",
+      "errors": 4,
+      "samples": [
+        {
+          "sequence": 3,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\e2001df698\\286b421fef2dce33-b0e46fa1-8a49-4487-b594-138764ac1362.bin'"
+        },
+        {
+          "sequence": 2,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\defaa151a5\\9c964ced10e8c58c-f07deb1b-cf78-43d6-a160-3e46a63c5b0a.bin'"
+        },
+        {
+          "sequence": 0,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\167b505684\\00c3e042530bab55-92c22b7b-89ae-4c21-a7a5-892c8a55eda1.bin'"
+        },
+        {
+          "sequence": 1,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\df3607cfaf\\08066e55904ce7b6-7c0b614a-4b90-4ffd-9eba-361183ff0b80.bin'"
+        }
+      ]
+    },
+    {
+      "stage": "16MiB分片上传 C8",
+      "errors": 8,
+      "samples": [
+        {
+          "sequence": 0,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\f94ef6fd08\\5eb07067d0461192-d6d36c8b-4136-4d36-904c-acd1ba264b7e.bin'"
+        },
+        {
+          "sequence": 5,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\9812461046\\1a122935db721866-20831baf-f2d5-4255-a433-1664cead8744.bin'"
+        },
+        {
+          "sequence": 6,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\173344d4ff\\1ca82c0b92c4d724-4d5dc52a-f9a8-44a7-8d86-67406e18d295.bin'"
+        },
+        {
+          "sequence": 1,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\69e977c69a\\d9aee7d3f4835900-e25b8de9-a407-4d2e-ab57-792c4a1b6015.bin'"
+        },
+        {
+          "sequence": 4,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\d0ff94e9a0\\fe11721b551d42ea-ca193717-5ec5-477d-a5cd-223badc0c776.bin'"
+        },
+        {
+          "sequence": 7,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\32a63debd8\\f9b6f062c6adc644-71f791d6-367e-4ae6-95bd-10f2adf2ed66.bin'"
+        },
+        {
+          "sequence": 2,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\875fb0aeb7\\8a6478fd2ab1cf9c-a06cbead-eea4-4b24-b087-ff272cde9e27.bin'"
+        },
+        {
+          "sequence": 3,
+          "message": "ENOENT: no such file or directory, open 'C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-Xhjqe3\\storage\\files\\7d9986b0e8\\9426633eeaa7380c-eb875072-cc41-4e12-be3f-4700f7418364.bin'"
+        }
+      ]
+    }
+  ],
+  "diagnosticComparison": {
+    "baselineRps": 11.28,
+    "noAccessAuditRps": 12.87,
+    "throughputMultiplier": 1.14,
+    "baselineP95Ms": 3200.61,
+    "noAccessAuditP95Ms": 2530.72,
+    "note": "Attribution experiment only; access audit must remain enabled in deployed service."
+  },
+  "profiles": {
+    "normal": [
+      {
+        "frame": "open|:0",
+        "samples": 13111,
+        "activeSamplePercent": 23.64
+      },
+      {
+        "frame": "unlink|:0",
+        "samples": 9489,
+        "activeSamplePercent": 17.11
+      },
+      {
+        "frame": "link|:0",
+        "samples": 4986,
+        "activeSamplePercent": 8.99
+      },
+      {
+        "frame": "normalizeRecordDate|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-Xhjqe3/server/lib/audit-normalizer.js:9",
+        "samples": 3203,
+        "activeSamplePercent": 5.77
+      },
+      {
+        "frame": "readLocalMetadataRevision|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-Xhjqe3/server/lib/metadata-store.js:225",
+        "samples": 2548,
+        "activeSamplePercent": 4.59
+      },
+      {
+        "frame": "writeBuffer|:0",
+        "samples": 1863,
+        "activeSamplePercent": 3.36
+      },
+      {
+        "frame": "readFileUtf8|:0",
+        "samples": 1687,
+        "activeSamplePercent": 3.04
+      },
+      {
+        "frame": "readFileSync|node:fs:433",
+        "samples": 1360,
+        "activeSamplePercent": 2.45
+      },
+      {
+        "frame": "stat|:0",
+        "samples": 1146,
+        "activeSamplePercent": 2.07
+      },
+      {
+        "frame": "existsSync|:0",
+        "samples": 1042,
+        "activeSamplePercent": 1.88
+      },
+      {
+        "frame": "close|:0",
+        "samples": 989,
+        "activeSamplePercent": 1.78
+      },
+      {
+        "frame": "writev|:0",
+        "samples": 975,
+        "activeSamplePercent": 1.76
+      },
+      {
+        "frame": "legacyOrganizationTeamPlanSnapshot|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-Xhjqe3/server/services/account.js:221",
+        "samples": 948,
+        "activeSamplePercent": 1.71
+      },
+      {
+        "frame": "trimRecordString|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-Xhjqe3/server/lib/audit-normalizer.js:3",
+        "samples": 713,
+        "activeSamplePercent": 1.29
+      },
+      {
+        "frame": "URL|node:internal/url:812",
+        "samples": 638,
+        "activeSamplePercent": 1.15
+      }
+    ],
+    "diagnostic": [
+      {
+        "frame": "open|:0",
+        "samples": 2148,
+        "activeSamplePercent": 31.79
+      },
+      {
+        "frame": "unlink|:0",
+        "samples": 1545,
+        "activeSamplePercent": 22.87
+      },
+      {
+        "frame": "link|:0",
+        "samples": 771,
+        "activeSamplePercent": 11.41
+      },
+      {
+        "frame": "writeBuffer|:0",
+        "samples": 302,
+        "activeSamplePercent": 4.47
+      },
+      {
+        "frame": "close|:0",
+        "samples": 173,
+        "activeSamplePercent": 2.56
+      },
+      {
+        "frame": "readFileUtf8|:0",
+        "samples": 169,
+        "activeSamplePercent": 2.5
+      },
+      {
+        "frame": "readLocalMetadataRevision|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-Xhjqe3/server/lib/metadata-store.js:225",
+        "samples": 169,
+        "activeSamplePercent": 2.5
+      },
+      {
+        "frame": "existsSync|:0",
+        "samples": 168,
+        "activeSamplePercent": 2.49
+      },
+      {
+        "frame": "(anonymous)|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-Xhjqe3/server/services/account.js:222",
+        "samples": 120,
+        "activeSamplePercent": 1.78
+      },
+      {
+        "frame": "stat|:0",
+        "samples": 117,
+        "activeSamplePercent": 1.73
+      },
+      {
+        "frame": "readFileSync|node:fs:433",
+        "samples": 88,
+        "activeSamplePercent": 1.3
+      },
+      {
+        "frame": "legacyOrganizationTeamPlanSnapshot|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-Xhjqe3/server/services/account.js:221",
+        "samples": 77,
+        "activeSamplePercent": 1.14
+      },
+      {
+        "frame": "locked|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-Xhjqe3/server/lib/audit-store.js:240",
+        "samples": 59,
+        "activeSamplePercent": 0.87
+      },
+      {
+        "frame": "read|:0",
+        "samples": 57,
+        "activeSamplePercent": 0.84
+      },
+      {
+        "frame": "wrapSafe|node:internal/modules/cjs/loader:1650",
+        "samples": 46,
+        "activeSamplePercent": 0.68
+      }
+    ]
+  },
+  "collectionStages": []
+}

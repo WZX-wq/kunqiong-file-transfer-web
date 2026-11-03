@@ -49,7 +49,7 @@ window.fetch = async (url, options = {}) => {
   let payload = {}, status = 200
   const method = String(options.method || 'GET').toUpperCase()
   if (url === '/api/auth/me') payload = { user: { id: 'fixture-user', nickname: '测试用户' } }
-  else if (url === '/api/account/messages' && method === 'GET') payload = { messages, settings: {} }
+  else if (url.startsWith('/api/account/messages?') && method === 'GET') payload = url.includes('summary=1') ? { unreadCount: messages.filter(m => m.unread).length, total: messages.length } : { messages, settings: {} }
   else if (url === '/api/account/messages' && method === 'PATCH') {
     messages = messages.map(message => ({ ...message, unread: false }))
     payload = { messages }

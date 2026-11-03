@@ -171,6 +171,103 @@ export function getUrlParts(value) {
 export const ACCOUNT_SESSION_EVENT = 'kunqiong:account-session'
 let sessionUserId = ''
 let sessionGeneration = 0
+let sessionSnapshot = null
+let profileRevision = 0
+let logoutState = 'idle'
+let logoutFlight = null
+const accountReads = new Map()
+const requestFlights = new Map()
+const READ_TTL = 30000
+const SNAPSHOT_MAX_AGE = 5 * 60 * 1000
+const MAX_READ_ENTRIES = 80
+const sharedReadPaths = new Set(['/api/auth/me', '/api/runtime-config', '/api/account/workspace', '/api/account/upgrade-pricing', '/api/account/team/overview', '/api/account/records', '/api/account/collections', '/api/account/upgrade-orders', '/api/account/file-cleanup-overview'])
+function pruneReadCache() {
+  for (const [key, entry] of accountReads) {
+    if (!entry.promise && (Date.now() - entry.updatedAt > SNAPSHOT_MAX_AGE || accountReads.size > MAX_READ_ENTRIES)) accountReads.delete(key)
+  }
+}
+
+const requestBodyObjectIds = new WeakMap()
+let requestBodyObjectId = 0
+let dataRevision = 0
+
+function objectRequestId(value) {
+  if (!value || (typeof value !== 'object' && typeof value !== 'function')) return ''
+  let id = requestBodyObjectIds.get(value)
+  if (!id) { id = ++requestBodyObjectId; requestBodyObjectIds.set(value, id) }
+  return id
+}
+
+function stableRequestValue(value) {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(stableRequestValue)
+  if (value instanceof Date) return value.toISOString()
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableRequestValue(value[key])]))
+}
+
+function requestBodyKey(body) {
+  if (body === undefined || body === null) return ''
+  if (typeof body === 'string') return `text:${body}`
+  if (body instanceof URLSearchParams) return `params:${body.toString()}`
+  if (typeof FormData !== 'undefined' && body instanceof FormData) {
+    return `form:${JSON.stringify([...body.entries()].map(([key, value]) => [key, typeof value === 'string' ? value : [value.name, value.size, value.type, value.lastModified, objectRequestId(value)]]))}`
+  }
+  if (typeof Blob !== 'undefined' && body instanceof Blob) return `blob:${objectRequestId(body)}`
+  if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return `buffer:${objectRequestId(body)}`
+  try { return `json:${JSON.stringify(stableRequestValue(body))}` }
+  catch { return `object:${objectRequestId(body)}` }
+}
+
+function requestHeadersKey(headers = {}) {
+  return JSON.stringify(Object.entries(plainRequestHeaders(headers)).sort(([left], [right]) => left.localeCompare(right)))
+}
+
+function plainRequestHeaders(headers = {}) {
+  const entries = typeof headers?.entries === 'function' ? [...headers.entries()] : Array.isArray(headers) ? headers : Object.entries(headers)
+  return Object.fromEntries(entries.map(([key, value]) => [String(key).toLowerCase(), String(value)]))
+}
+
+function requestWithSingleflight(url, options = {}, signal) {
+  const method = (options.method || 'GET').toUpperCase()
+  const { headers = {}, body, ...fetchOptions } = options
+  const key = JSON.stringify([accountSessionKey(), ['GET', 'HEAD'].includes(method) ? dataRevision : '', method, String(url), requestHeadersKey(headers), requestBodyKey(body), stableRequestValue(fetchOptions)])
+  let entry = requestFlights.get(key)
+  if (!entry) {
+    entry = { promise: null }
+    entry.promise = performApiRequest(url, options).finally(() => {
+      if (requestFlights.get(key) === entry) requestFlights.delete(key)
+    })
+    requestFlights.set(key, entry)
+  }
+  return withConsumerSignal(entry.promise, signal)
+}
+
+export function getCachedAccountSession() {
+  if (sessionSnapshot?.sessionExpiresAt && Date.now() >= new Date(sessionSnapshot.sessionExpiresAt).getTime()) return null
+  return sessionSnapshot
+}
+
+export function getCachedAccountData(url) {
+  const entry = accountReads.get(url)
+  return getCachedAccountSession()?.user?.id && entry?.owner === accountSessionKey() && Date.now() - entry.updatedAt <= SNAPSHOT_MAX_AGE ? entry.data || null : null
+}
+
+// Keep confirmed identity visible while revalidating it. Protected API routes
+// still authorize every read/write; a 401 clears all snapshots immediately.
+export function getPageAccountSession({ signal } = {}) {
+  const cached = getCachedAccountSession()
+  const refresh = apiRequest('/api/auth/me', { signal, authView: 'identity' })
+  if (!cached) return refresh
+  refresh.catch(() => {})
+  return Promise.resolve(cached)
+}
+
+export function updateCachedAccountUser(user) {
+  if (!user?.id || user.id !== sessionUserId || !sessionSnapshot) return
+  profileRevision += 1
+  sessionSnapshot = { ...sessionSnapshot, user }
+  reportSession(user.id, sessionSnapshot.sessionExpiresAt || '')
+}
 
 export function accountSessionKey() {
   return `${sessionGeneration}:${sessionUserId}`
@@ -179,26 +276,145 @@ export function accountSessionKey() {
 function reportSession(userId = '', expiresAt = '', message = '', code = '') {
   const previousId = sessionUserId
   sessionUserId = userId
-  if (previousId && previousId !== userId) sessionGeneration += 1
-  window.dispatchEvent(new CustomEvent(ACCOUNT_SESSION_EVENT, { detail: { userId, previousId, expiresAt, message, code } }))
+  if (previousId !== userId) {
+    if (previousId) sessionGeneration += 1
+    const identityRequests = [...accountReads].filter(([key, entry]) => key.startsWith('/api/auth/me:') && entry.promise)
+    accountReads.clear()
+    for (const [key, entry] of identityRequests) accountReads.set(key, entry)
+  }
+  window.dispatchEvent(new CustomEvent(ACCOUNT_SESSION_EVENT, { detail: { userId, previousId, expiresAt, message, code, user: sessionSnapshot?.user || null } }))
 }
 
 export function invalidateAccountSession(message = '', code = '') {
-  if (sessionUserId || code) reportSession('', '', message, code)
+  sessionSnapshot = null
+  accountReads.clear()
+  // Also invalidate requests started before an explicit logout while identity was pending.
+  if (!sessionUserId) sessionGeneration += 1
+  reportSession('', '', message, code)
 }
 
-export async function apiRequest(url, options = {}) {
+const anonymousSession = () => ({ user: null, sessionExpiresAt: null, view: 'identity' })
+export function isAccountLogoutPending() { return logoutState === 'pending' }
+
+function logoutAccount(options) {
+  if (logoutFlight) return logoutFlight
+  logoutState = 'pending'
+  invalidateAccountSession('', 'account_logout_pending')
+  sessionSnapshot = anonymousSession()
+  logoutFlight = requestWithSingleflight('/api/auth/logout', options).then(data => {
+    logoutState = 'idle'
+    sessionSnapshot = anonymousSession()
+    reportSession('', '', '', 'account_logged_out')
+    return data
+  }).catch(error => {
+    logoutState = 'failed'
+    invalidateAccountSession('退出登录尚未完成，请重试', 'account_logout_failed')
+    sessionSnapshot = anonymousSession()
+    throw error
+  }).finally(() => { logoutFlight = null })
+  return logoutFlight
+}
+
+function withConsumerSignal(promise, signal) {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(new DOMException('请求已取消', 'AbortError'))
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener('abort', abort); reject(new DOMException('请求已取消', 'AbortError')) }
+    signal.addEventListener('abort', abort, { once: true })
+    promise.then(value => { signal.removeEventListener('abort', abort); resolve(value) }, error => { signal.removeEventListener('abort', abort); reject(error) })
+  })
+}
+
+export function apiRequest(url, options = {}) {
+  if (options.signal?.aborted) return Promise.reject(new DOMException('请求已取消', 'AbortError'))
+  const { force = false, authView: selectedView, ...requestOptions } = options
+  const method = (options.method || 'GET').toUpperCase()
+  if (url === '/api/auth/logout' && method === 'POST') {
+    const { signal, ...logoutOptions } = requestOptions
+    return withConsumerSignal(logoutAccount(logoutOptions), signal)
+  }
+  // An old cookie can remain until the revocation response arrives. During a
+  // pending or failed logout, background refreshes must never restore it.
+  if (logoutState !== 'idle') {
+    if (url === '/api/auth/me') return withConsumerSignal(Promise.resolve(anonymousSession()), options.signal)
+    if (String(url).startsWith('/api/account/')) return Promise.reject(Object.assign(new Error('退出登录尚未完成，请重试'), { status: 401, code: 'account_logout_pending' }))
+  }
+  const authView = url === '/api/auth/me' ? selectedView || (window.location.pathname.startsWith('/settings') || window.location.pathname.startsWith('/trash') || new URLSearchParams(window.location.search).get('view') === 'records' ? 'full' : 'summary') : ''
+  if (authView) {
+    requestOptions.headers = plainRequestHeaders(requestOptions.headers)
+    delete requestOptions.headers['x-kunqiong-auth-view']
+    requestOptions.headers['X-Kunqiong-Auth-View'] = authView
+  }
+  const key = authView ? `${url}:${authView}` : url
+  const shared = method === 'GET' && sharedReadPaths.has(String(url).split('?')[0])
+  const { signal, ...sharedOptions } = requestOptions
+  if (!shared) return requestWithSingleflight(url, sharedOptions, signal)
+  if (sessionSnapshot && !getCachedAccountSession()) invalidateAccountSession()
+  const owner = accountSessionKey()
+  let entry = accountReads.get(key)
+  if (entry?.owner === owner) {
+    if (entry.promise) return withConsumerSignal(entry.promise, options.signal)
+    if (!force && entry.data && Date.now() - entry.updatedAt < READ_TTL) return withConsumerSignal(Promise.resolve(entry.data), options.signal)
+  }
+  entry = { owner, data: entry?.owner === owner ? entry.data : null, updatedAt: 0, promise: null }
+  accountReads.set(key, entry)
+  entry.promise = requestWithSingleflight(url, sharedOptions).then(data => {
+    // Initial identity discovery can change the owner; only auth may adopt that new owner.
+    if (accountReads.get(key) === entry) {
+      entry.owner = accountSessionKey()
+      entry.data = data
+      entry.updatedAt = Date.now()
+      accountReads.set(key, entry)
+      pruneReadCache()
+    }
+    return data
+  }).finally(() => { entry.promise = null })
+  return withConsumerSignal(entry.promise, signal)
+}
+
+async function performApiRequest(url, options = {}) {
   const generation = sessionGeneration
+  const revision = profileRevision
   const { headers = {}, ...fetchOptions } = options
-  const response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'Content-Type': 'application/json', ...headers } })
-  const data = await response.json().catch(() => ({}))
+  let response, data
+  for (let attempt = 0; ; attempt++) {
+    response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'content-type': 'application/json', ...plainRequestHeaders(headers) } })
+    data = await response.json().catch(() => ({}))
+    // Only retry a transient database read. Permission failures and writes are
+    // never replayed, and every subscriber shares this one recovery request.
+    if (attempt || !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())
+      || response.status !== 503 || !/^DATABASE_(?:QUERY_TIMEOUT|QUEUE_TIMEOUT|UNAVAILABLE)$/.test(data.code || '')
+      || generation !== sessionGeneration) break
+    await wait(250)
+    if (generation !== sessionGeneration) break
+  }
   if (generation !== sessionGeneration) {
     const error = new Error('登录状态已更新，请重试')
     error.status = 401
     throw error
   }
-  if (url === '/api/auth/me' && response.ok) reportSession(data.user?.id || '', data.sessionExpiresAt || '')
+  if (url === '/api/auth/me' && response.ok) {
+    // A slower identity check must not overwrite a profile saved after it started.
+    if (revision !== profileRevision && data.user?.id && data.user.id === sessionSnapshot?.user?.id) data.user = sessionSnapshot.user
+    else if (data.user?.id && data.user.id === sessionSnapshot?.user?.id && plainRequestHeaders(headers)['x-kunqiong-auth-view'] !== 'full') {
+      // Identity is deliberately a small projection. It must not downgrade an
+      // already loaded avatar, local plan or capacity to its absent defaults.
+      data.user = plainRequestHeaders(headers)['x-kunqiong-auth-view'] === 'identity'
+        ? { ...data.user, ...sessionSnapshot.user, ...Object.fromEntries(['id', 'username', 'nickname', 'email', 'phone', 'status'].map(key => [key, data.user[key]])),
+          ...(!sessionSnapshot.user.avatar && data.user.avatar ? { avatar: data.user.avatar, providerAvatar: data.user.providerAvatar || data.user.avatar } : {}) }
+        : { ...sessionSnapshot.user, ...data.user }
+    }
+    sessionSnapshot = data
+    reportSession(data.user?.id || '', data.sessionExpiresAt || '')
+  }
   if (url === '/api/auth/logout' && response.ok) invalidateAccountSession()
+  if (response.ok && !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())) {
+    dataRevision += 1
+    // A completed mutation invalidates paged snapshots too. An older in-flight
+    // read may finish, but cannot repopulate a replaced/deleted cache entry.
+    accountReads.clear()
+    if (['/api/auth/profile', '/api/account/bind'].includes(url)) updateCachedAccountUser(data.user)
+  }
   if (!response.ok) {
     if (response.status === 401 && data.code !== 'share_password_invalid' && !String(url).startsWith('/api/admin/')) invalidateAccountSession(data.message || '', data.code || '')
     const error = new Error(data.message || ([502, 504].includes(response.status) ? '服务连接暂时中断，请稍后重试' : '请求失败'))
@@ -208,6 +424,8 @@ export async function apiRequest(url, options = {}) {
     error.shareMeta = data.share || null
     error.collectionMeta = data.collection || null
     error.guestQuota = data.guestQuota || null
+    error.existingFiles = Array.isArray(data.existingFiles) ? data.existingFiles : []
+    error.order = data.order || null
     error.scanLimit = data.scanLimit || ''
     error.scanFile = data.scanFile || ''
     error.scanFinding = data.scanFinding || null
@@ -503,16 +721,7 @@ export async function downloadBinaryWithProgress(config, onProgress) {
 }
 
 export async function upgradeApiRequest(url, options = {}) {
-  const { headers = {}, ...fetchOptions } = options
-  const response = await fetch(url, { ...fetchOptions, credentials: 'include', headers: { 'Content-Type': 'application/json', ...headers } })
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    if (response.status === 401) invalidateAccountSession()
-    const error = new Error(data.message || '请求失败')
-    error.order = data.order || null
-    throw error
-  }
-  return data
+  return apiRequest(url, options)
 }
 
 // 把远端实价合并进套餐对象（只改展示字段，不动 permanent/team 等权益字段；

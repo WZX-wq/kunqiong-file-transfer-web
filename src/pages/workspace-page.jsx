@@ -1,9 +1,11 @@
+import { ActionButton, ActionForm } from '../components/action-button.jsx'
 import React from 'react'
+import { subscribeRefresh } from '../lib/refresh-scheduler.js'
 import { copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { createPortal } from 'react-dom'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useRemotePlanPricing, useToast } from '../hooks.js'
-import { apiRequest, mergePlanPricing, upgradeApiRequest } from '../lib/api.js'
+import { apiRequest, getCachedAccountData, getCachedAccountSession, getPageAccountSession, mergePlanPricing, upgradeApiRequest } from '../lib/api.js'
 import { parseAlipayCheckout } from '../lib/alipay-checkout.js'
 import { ConfirmModal, FeedbackMessage, PublicShell, Toast } from '../components/common.jsx'
 import { ArrowLeft, BadgeCheck, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, History, Info, Link2, PencilLine, RefreshCw, RotateCcw, ScanLine, ShieldCheck, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
@@ -49,9 +51,9 @@ function AlipayCheckoutFrame({ html }) {
 
 export function WorkspacePage() {
   const { toast, notify } = useToast()
-  const [user, setUser] = useState(null)
-  const [workspace, setWorkspace] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState(() => getCachedAccountSession()?.user || null)
+  const [workspace, setWorkspace] = useState(() => getCachedAccountData('/api/account/workspace'))
+  const [loading, setLoading] = useState(() => !getCachedAccountData('/api/account/workspace'))
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [teamName, setTeamName] = useState('')
@@ -69,26 +71,34 @@ export function WorkspacePage() {
   // 远端主站套餐实价：工作台展示价与升级弹窗/订单支付同源，拉不到时回落本地配置价
   const remotePricing = useRemotePlanPricing(user?.id)
 
-  const load = ({ silent = false } = {}) => {
+  const load = ({ silent = false, force = true } = {}) => {
     if (!mounted.current) return Promise.resolve()
     if (loadRunning.current) {
       // Checkout may finish after the current request took its workspace snapshot.
       loadRunning.current.queued = true
+      loadRunning.current.force ||= force
       return loadRunning.current.promise
     }
-    const request = { queued: false, controller: new AbortController(), promise: null }
+    const request = { queued: false, force, controller: new AbortController(), promise: null }
     loadRunning.current = request
-    if (!silent) setLoading(true)
+    if (!silent && !getCachedAccountData('/api/account/workspace')) setLoading(true)
     request.promise = (async () => {
       const signal = request.controller.signal
       try {
         do {
+          const refreshForce = request.force
+          request.force = false
           request.queued = false
           try {
-            const auth = await apiRequest('/api/auth/me', { signal })
+            // With a known account, identity revalidation and workspace read need not queue behind one another.
+            const knownUser = getCachedAccountSession()?.user
+            const workspaceRequest = knownUser ? apiRequest('/api/account/workspace', { signal, force: refreshForce }).then(data => ({ data }), error => ({ error })) : null
+            const auth = await getPageAccountSession({ signal })
             if (!mounted.current || signal.aborted) return
             setUser(auth.user || null)
-            const data = auth.user ? await apiRequest('/api/account/workspace', { signal }) : null
+            const result = auth.user && workspaceRequest ? await workspaceRequest : null
+            if (result?.error) throw result.error
+            const data = auth.user ? result ? result.data : await apiRequest('/api/account/workspace', { signal, force: refreshForce }) : null
             if (!mounted.current || signal.aborted) return
             setWorkspace(data)
             setError('')
@@ -123,7 +133,7 @@ export function WorkspacePage() {
 
   useEffect(() => {
     mounted.current = true
-    load()
+    load({ force: false })
     return () => {
       mounted.current = false
       loadRunning.current?.controller.abort()
@@ -133,16 +143,9 @@ export function WorkspacePage() {
   useEffect(() => {
     if (!user) return undefined
     const refresh = () => {
-      if (document.visibilityState === 'visible') load({ silent: true })
+      if (document.visibilityState === 'visible') load({ silent: true, force: true })
     }
-    const timer = workspace?.paymentReconciliation?.pending ? window.setInterval(refresh, 15000) : null
-    window.addEventListener('focus', refresh)
-    document.addEventListener('visibilitychange', refresh)
-    return () => {
-      if (timer !== null) window.clearInterval(timer)
-      window.removeEventListener('focus', refresh)
-      document.removeEventListener('visibilitychange', refresh)
-    }
+    return subscribeRefresh('membership-overview', refresh, { interval: workspace?.paymentReconciliation?.pending ? 15000 : 0 })
   }, [user?.id, workspace?.paymentReconciliation?.pending])
   useEffect(() => {
     if (workspace?.organization?.name && !editingTeamName) setWorkspaceName(workspace.organization.name)
@@ -203,9 +206,9 @@ export function WorkspacePage() {
   }
 
   if (loading) return <PublicShell><div className="state-block"><span className="loading-dot" /><h1>正在打开团队空间</h1><p>正在读取账号权益和团队数据。</p></div></PublicShell>
-  if (error && !workspace) return <PublicShell><div className="state-block" data-workspace-load-error role="alert"><div className="settings-state-icon"><Building2 size={24} /></div><h1>{user ? '团队空间暂时无法加载' : '暂时无法确认登录状态'}</h1><p>{error}</p><button className="primary-button" onClick={() => load()}><RefreshCw size={16} /> 重新加载</button></div></PublicShell>
+  if (error && !workspace) return <PublicShell><div className="state-block" data-workspace-load-error role="alert"><div className="settings-state-icon"><Building2 size={24} /></div><h1>{user ? '团队空间暂时无法加载' : '暂时无法确认登录状态'}</h1><p>{error}</p><ActionButton className="primary-button" onClick={() => load()}><RefreshCw size={16} /> 重新加载</ActionButton></div></PublicShell>
   if (!user) {
-    return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和入团申请会与鲲穹账号关联。</p><button className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</button></div></PublicShell>
+    return <PublicShell><div className="state-block"><div className="settings-state-icon"><Building2 size={24} /></div><h1>登录后使用团队空间</h1><p>会员容量、团队成员和入团申请会与鲲穹账号关联。</p><ActionButton className="primary-button" onClick={login}><UserRound size={16} /> 使用鲲穹登录</ActionButton></div></PublicShell>
   }
   const plan = workspace?.plan || {}
   const plans = (workspace?.plans || []).filter(item => !item.retired).map((item) => mergePlanPricing(item, remotePricing))
@@ -290,7 +293,7 @@ export function WorkspacePage() {
               <h2>{formatBytes(currentTotalBytes)} 空间，套餐权益一处管理</h2>
               <p>{planValidity} · {formatPlanPrice(planDisplay)} · 容量、上传上限与协作权益按当前账号配置执行。</p>
               <div className="ph-actions">
-                <button type="button" className="primary-button" onClick={() => setUpgradeOpen(true)}>{plan.id === 'enterprise' ? <BadgeCheck size={15} /> : <Zap size={15} />} {plan.id === 'enterprise' ? '查看已购权益' : hasMaximumTeamEntitlement ? '对比可购套餐' : '升级或续费'}</button>
+                <ActionButton type="button" className="primary-button" onClick={() => setUpgradeOpen(true)}>{plan.id === 'enterprise' ? <BadgeCheck size={15} /> : <Zap size={15} />} {plan.id === 'enterprise' ? '查看已购权益' : hasMaximumTeamEntitlement ? '对比可购套餐' : '升级或续费'}</ActionButton>
                 <a className="secondary-button workspace-back-button" href="/"><ArrowLeft size={14} /> 返回首页</a>
               </div>
             </div>
@@ -318,9 +321,9 @@ export function WorkspacePage() {
               <div>{plan.id === 'free' ? '免费版容量与上传上限固定，升级后按新套餐额度立即生效。' : `${currentPlanLabel}${planValidity === '永久有效' ? '永久有效' : planValidity}；套餐到期后按免费版额度重新计算容量。`}</div>
             </div>
             {hasMaximumPersonalEntitlement && <div className="upgrade-maximum-notice workspace-team-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong></div></div>}
-            {pendingOrder && <button type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</button>}
-            {workspace?.paymentReconciliation?.requiresLogin && <div className="workspace-payment-warning" role="status">支付订单需要重新登录核对状态。<button type="button" className="team-manage-link" onClick={login}><UserRound size={14} /> 重新登录</button></div>}
-            <div className="workspace-benefits-cta"><span>{hasMaximumTeamEntitlement ? '团队空间已拥有最高等级权益' : '套餐升级与支付'}</span><button className="primary-button" onClick={() => setUpgradeOpen(true)}>{plan.id === 'enterprise' ? <BadgeCheck size={15} /> : <Zap size={15} />} {plan.id === 'enterprise' ? '查看已购权益' : hasMaximumTeamEntitlement ? '个人套餐对比' : '立即升级'}</button></div>
+            {pendingOrder && <ActionButton type="button" className="workspace-pending-banner" onClick={() => setUpgradeOpen(true)}><Clock3 size={14} /> 有 1 个待支付升级订单，点击查看</ActionButton>}
+            {workspace?.paymentReconciliation?.requiresLogin && <div className="workspace-payment-warning" role="status">支付订单需要重新登录核对状态。<ActionButton type="button" className="team-manage-link" onClick={login}><UserRound size={14} /> 重新登录</ActionButton></div>}
+            <div className="workspace-benefits-cta"><span>{hasMaximumTeamEntitlement ? '团队空间已拥有最高等级权益' : '套餐升级与支付'}</span><ActionButton className="primary-button" onClick={() => setUpgradeOpen(true)}>{plan.id === 'enterprise' ? <BadgeCheck size={15} /> : <Zap size={15} />} {plan.id === 'enterprise' ? '查看已购权益' : hasMaximumTeamEntitlement ? '个人套餐对比' : '立即升级'}</ActionButton></div>
           </div>
 
           <aside className="workspace-side-col">
@@ -334,22 +337,22 @@ export function WorkspacePage() {
 
               <div className="workspace-side-card-body">
               {!organization ? (
-                hasTeamPlan ? <form className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} placeholder="例如：鲲穹设计团队" /><button className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</button></form> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
+                hasTeamPlan ? <ActionForm className="workspace-inline-form" onSubmit={createTeam}><input value={teamName} onChange={(event) => setTeamName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} placeholder="例如：鲲穹设计团队" /><ActionButton className="primary-button" disabled={saving || !teamName.trim()}><Building2 size={15} /> 创建团队</ActionButton></ActionForm> : <div className="workspace-upgrade-notice"><Sparkles size={18} /><div><strong>团队空间属于团队版/企业版权益</strong><span>升级至团队版/企业版后，即可创建团队、邀请成员，生成企业专属分享链接。</span></div></div>
               ) : (
                 <>
                   <div className="team-mini">
                     <span className="team-logo"><Building2 size={18} /></span>
                     <div className="workspace-team-mini-copy">
                       {organization.ownerUserId === user.id && editingTeamName ? (
-                        <form className="workspace-name-form" onSubmit={saveWorkspaceName}>
+                        <ActionForm className="workspace-name-form" onSubmit={saveWorkspaceName}>
                           <input value={workspaceName} onChange={(event) => setWorkspaceName(limitInputText(event.target.value, TEAM_NAME_MAX))} maxLength={TEAM_NAME_MAX} title={`团队名称最多 ${TEAM_NAME_MAX} 个字符`} autoFocus aria-label="团队名称" />
-                          <button type="submit" className="ghost-icon" disabled={saving || !workspaceName.trim()} aria-label="保存团队名称" title="保存团队名称"><Check size={16} /></button>
-                          <button type="button" className="ghost-icon" disabled={saving} onClick={() => { setWorkspaceName(organization.name); setEditingTeamName(false) }} aria-label="取消编辑团队名称" title="取消编辑"><X size={16} /></button>
-                        </form>
+                          <ActionButton type="submit" className="ghost-icon" disabled={saving || !workspaceName.trim()} aria-label="保存团队名称" title="保存团队名称"><Check size={16} /></ActionButton>
+                          <ActionButton type="button" className="ghost-icon" disabled={saving} onClick={() => { setWorkspaceName(organization.name); setEditingTeamName(false) }} aria-label="取消编辑团队名称" title="取消编辑"><X size={16} /></ActionButton>
+                        </ActionForm>
                       ) : (
                         <div className="workspace-name-line">
                           <b>{organization.name}</b>
-                          {organization.ownerUserId === user.id && canManageTeam && <button type="button" className="ghost-icon" onClick={() => setEditingTeamName(true)} aria-label="编辑团队名称" title="编辑团队名称"><PencilLine size={14} /></button>}
+                          {organization.ownerUserId === user.id && canManageTeam && <ActionButton type="button" className="ghost-icon" onClick={() => setEditingTeamName(true)} aria-label="编辑团队名称" title="编辑团队名称"><PencilLine size={14} /></ActionButton>}
                         </div>
                       )}
                       <small>{ownerMember ? `所有者 ${ownerMember.displayName || ownerMember.email || '当前账号'}` : '团队共享空间'}{organization.createdAt ? ` · 创建于 ${new Date(organization.createdAt).toISOString().slice(0, 10)}` : ''}</small>
@@ -369,7 +372,7 @@ export function WorkspacePage() {
                       <span className="workspace-block-label"><Link2 size={13} /> 邀请链接</span>
                       <div className="workspace-invite-link-row">
                         <code title={enterpriseInviteLink}>{enterpriseInviteLink}</code>
-                        <button type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={13} /> 复制</button>
+                        <ActionButton type="button" className="copy-button" onClick={copyEnterpriseLink}><Copy size={13} /> 复制</ActionButton>
                       </div>
                     </div>
                   ) : (
@@ -382,9 +385,9 @@ export function WorkspacePage() {
                       {activeMembers.length > 4 && <span className="avatar sm more">+{activeMembers.length - 4}</span>}
                     </div>
                     {canUseTeamSpace
-                      ? <button type="button" className="team-manage-link" title="查看团队成员、入团申请和使用情况" onClick={() => { window.location.href = '/team' }}>团队管理 <ChevronRight size={13} /></button>
+                      ? <ActionButton type="button" className="team-manage-link" title="查看团队成员、入团申请和使用情况" onClick={() => { window.location.href = '/team' }}>团队管理 <ChevronRight size={13} /></ActionButton>
                       : (!organization || teamRole === 'owner')
-                        ? <button type="button" className="team-manage-link" onClick={() => setUpgradeOpen(true)}>购买团队套餐 <ChevronRight size={13} /></button>
+                        ? <ActionButton type="button" className="team-manage-link" onClick={() => setUpgradeOpen(true)}>购买团队套餐 <ChevronRight size={13} /></ActionButton>
                         : <span className="team-manage-link">联系团队所有者</span>}
                   </div>
                 </>
@@ -433,7 +436,7 @@ function PlanCatalogPage({ plans, currentPlan, selectedPlanId, isSelectablePlan,
         <h1>选择适合你的套餐</h1>
         <p>套餐权益与价格以当前账号可购买配置为准，选择后通过现有订单流程完成升级。</p>
       </div>
-      <button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回会员空间</button>
+      <ActionButton type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回会员空间</ActionButton>
     </div>
 
     <div className="plan-catalog-grid">
@@ -453,9 +456,9 @@ function PlanCatalogPage({ plans, currentPlan, selectedPlanId, isSelectablePlan,
           <ul className="plan-catalog-features">
             {(item.features || []).map((feature) => <li key={feature}><Check size={14} /> <span>{feature}</span></li>)}
           </ul>
-          <button type="button" className={selectable ? 'primary-button' : 'secondary-button'} disabled={!selectable} aria-pressed={selectedPlanId === item.id} onClick={() => selectable && onUpgrade(item.id)}>
+          <ActionButton type="button" className={selectable ? 'primary-button' : 'secondary-button'} disabled={!selectable} aria-pressed={selectedPlanId === item.id} onClick={() => selectable && onUpgrade(item.id)}>
             {isCurrent ? '当前套餐' : selectable ? (selectedPlanId === item.id ? '立即升级' : '选择并升级') : '已包含'}
-          </button>
+          </ActionButton>
         </article>
       })}
     </div>
@@ -566,7 +569,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
     const controller = new AbortController()
     let running = false
     const timer = window.setInterval(async () => {
-      if (running || controller.signal.aborted) return
+      if (document.visibilityState === 'hidden' || running || controller.signal.aborted) return
       running = true
       try {
         const result = await upgradeApiRequest(`/api/account/upgrade-orders/${encodeURIComponent(orderView.id)}/pay-status`, { method: 'POST', signal: controller.signal })
@@ -700,7 +703,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
     }
   }
 
-  const paymentMethodSelector = <div className="upgrade-pay-type" role="group" aria-label="支付方式"><button type="button" className={payType === 1 ? 'selected' : ''} aria-pressed={payType === 1} onClick={() => setPayType(1)} disabled={busy}><ScanLine size={15} /> 微信扫码</button><button type="button" className={payType === 2 ? 'selected' : ''} aria-pressed={payType === 2} onClick={() => setPayType(2)} disabled={busy}><Wallet size={15} /> 支付宝</button></div>
+  const paymentMethodSelector = <div className="upgrade-pay-type" role="group" aria-label="支付方式"><ActionButton type="button" className={payType === 1 ? 'selected' : ''} aria-pressed={payType === 1} onClick={() => setPayType(1)} disabled={busy}><ScanLine size={15} /> 微信扫码</ActionButton><ActionButton type="button" className={payType === 2 ? 'selected' : ''} aria-pressed={payType === 2} onClick={() => setPayType(2)} disabled={busy}><Wallet size={15} /> 支付宝</ActionButton></div>
 
   return createPortal(
     <div className="modal-backdrop upgrade-backdrop" onMouseDown={onClose}>
@@ -708,7 +711,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
       <div className={`modal upgrade-modal${orderView ? '' : ' upgrade-modal-compare'}`} role="dialog" aria-modal="true" aria-labelledby="upgrade-modal-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">会员与企业版</p><h2 id="upgrade-modal-title">{orderView ? (orderView.status === 'paid' ? '支付成功' : '升级订单') : '升级权益'}</h2></div>
-          <button className="ghost-icon modal-close" aria-label="关闭升级窗口" onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon modal-close" aria-label="关闭升级窗口" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body upgrade-modal-body">
           {error && <FeedbackMessage message={error} tone="error" />}
@@ -722,11 +725,11 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
               <dl className="upgrade-order-meta">
                 <div><dt>支付金额</dt><dd><strong className="upgrade-success-amount">{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '—'}</strong></dd></div>
                 <div><dt>有效期至</dt><dd>{(orderView.permanent ?? (orderView.planId === 'enterprise' && !orderView.remoteExpireAt)) ? '永久有效' : orderView.remoteExpireAt ? formatDate(orderView.remoteExpireAt) : '以主站权益为准'}</dd></div>
-                <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={() => copyTextWithFeedback(orderView.orderNo, notify, '订单号已复制')}><Copy size={13} /> 复制</button></dd></div>
+                <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><ActionButton type="button" className="copy-button" onClick={() => copyTextWithFeedback(orderView.orderNo, notify, '订单号已复制')}><Copy size={13} /> 复制</ActionButton></dd></div>
                 {orderView.paidAt && <div><dt>支付时间</dt><dd>{formatDate(orderView.paidAt)}</dd></div>}
               </dl>
               <div className="upgrade-order-actions">
-                <button className="primary-button upgrade-success-done" onClick={onClose}><Check size={15} /> 完成</button>
+                <ActionButton className="primary-button upgrade-success-done" onClick={onClose}><Check size={15} /> 完成</ActionButton>
               </div>
             </div>
           ) : (
@@ -736,7 +739,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
                 <span className={`upgrade-order-status ${orderView.status}`}>{UPGRADE_ORDER_STATUS_LABELS[orderView.status] || orderView.status}</span>
               </div>
               <dl className="upgrade-order-meta">
-                <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><button type="button" className="copy-button" onClick={() => copyTextWithFeedback(orderView.orderNo, notify, '订单号已复制')}><Copy size={13} /> 复制</button></dd></div>
+                <div><dt>订单号</dt><dd><code>{orderView.orderNo}</code><ActionButton type="button" className="copy-button" onClick={() => copyTextWithFeedback(orderView.orderNo, notify, '订单号已复制')}><Copy size={13} /> 复制</ActionButton></dd></div>
                 <div><dt>创建时间</dt><dd>{formatDate(orderView.createdAt)}</dd></div>
                 {Object.hasOwn(orderView, 'entitlementDays') && <div><dt>权益期限</dt><dd>{orderView.entitlementDays === null ? '永久有效' : `${orderView.entitlementDays} 天`}</dd></div>}
                 <div><dt>应付金额</dt><dd>{Number.isFinite(Number(orderView.amount)) ? `¥${(Number(orderView.amount) / 100).toFixed(2)}` : '价格以支付通道为准'}</dd></div>
@@ -752,17 +755,17 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
               <div className="upgrade-order-note" role="status"><Clock3 size={15} /><span>{orderView.retired ? '请选择当前在售套餐，或查看已购权益。' : orderPurchaseBlocked ? `${orderPurchaseBlockedReason}。如已付款，可核对原单支付状态。` : orderView.status === 'expired' ? '支付已超时，请重新创建订单支付；如已付款，可核对原单支付状态。' : notice || '支付成功后会员权益会自动开通。'}</span></div>
               {orderView.status === 'pending_payment' ? (
                 <div className="upgrade-order-actions">
-                  {canPurchaseOrder && !payment && error && <button className="primary-button" onClick={loadPayment} disabled={busy}><RefreshCw size={15} /> {busy ? '正在加载…' : '重新加载支付码'}</button>}
-                  {(payment || orderView.remoteOrderNo) && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</button>}
-                  <button className="secondary-button" onClick={() => requireCancelConfirmation ? setCancelConfirmation(true) : cancelOrder()} disabled={busy}><X size={15} /> 取消订单</button>
+                  {canPurchaseOrder && !payment && error && <ActionButton className="primary-button" onClick={loadPayment} disabled={busy}><RefreshCw size={15} /> {busy ? '正在加载…' : '重新加载支付码'}</ActionButton>}
+                  {(payment || orderView.remoteOrderNo) && <ActionButton className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 刷新支付状态</ActionButton>}
+                  <ActionButton className="secondary-button" onClick={() => requireCancelConfirmation ? setCancelConfirmation(true) : cancelOrder()} disabled={busy}><X size={15} /> 取消订单</ActionButton>
                 </div>
               ) : (
                 <div className="upgrade-order-actions">
                   {orderView.status === 'expired' && !orderView.retired ? <>
-                    {canCreateOrder && canPurchaseOrder && <button className="primary-button" onClick={() => createOrder(orderView.planId)} disabled={busy}><RotateCcw size={15} /> {busy ? '正在创建…' : '重新创建订单'}</button>}
-                    {orderPurchaseBlocked && <button className="secondary-button" onClick={() => { setOrderView(null); setPayment(null); setError('') }}><RotateCcw size={15} /> 重新选择套餐</button>}
-                    {orderView.remoteOrderNo && <button className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 核对支付状态</button>}
-                  </> : <button className="primary-button" onClick={() => { setOrderView(null); setPayment(null); onRefresh?.({ silent: true }) }}><RotateCcw size={15} /> 重新选择套餐</button>}
+                    {canCreateOrder && canPurchaseOrder && <ActionButton className="primary-button" onClick={() => createOrder(orderView.planId)} disabled={busy}><RotateCcw size={15} /> {busy ? '正在创建…' : '重新创建订单'}</ActionButton>}
+                    {orderPurchaseBlocked && <ActionButton className="secondary-button" onClick={() => { setOrderView(null); setPayment(null); setError('') }}><RotateCcw size={15} /> 重新选择套餐</ActionButton>}
+                    {orderView.remoteOrderNo && <ActionButton className="secondary-button" onClick={checkPayStatus} disabled={busy}><RefreshCw size={15} /> 核对支付状态</ActionButton>}
+                  </> : <ActionButton className="primary-button" onClick={() => { setOrderView(null); setPayment(null); onRefresh?.({ silent: true }) }}><RotateCcw size={15} /> 重新选择套餐</ActionButton>}
                 </div>
               )}
             </div>
@@ -771,7 +774,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
               <p className="upgrade-intro">当前个人套餐：<strong>{plan.label || '基础版'}</strong>。价格由主站提供，权益有效期以本站套餐配置为准{canCreateOrder ? '；创建订单时会确认金额和期限。' : '。'}</p>
               <PlanCarousel className="upgrade-plan-grid">
                 {comparisonPlans.map((item) => (
-                  <button
+                  <ActionButton
                     type="button"
                     key={item.id}
                     className={`upgrade-plan-card ${item.id === selectedPlanId ? 'selected' : ''} ${item.id === 'free' || isIncludedPlan(item) ? 'is-current' : ''}`}
@@ -785,7 +788,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
                     <ul className="upgrade-plan-features">
                       {(item.features || []).map((feature) => <li key={feature}><Check size={12} /> {feature}</li>)}
                     </ul>
-                  </button>
+                  </ActionButton>
                 ))}
               </PlanCarousel>
               {hasMaximumPersonalEntitlement && <div className="upgrade-maximum-notice" role="status"><BadgeCheck size={20} /><div><strong>你已拥有当前最高等级权益，无需继续升级。</strong></div></div>}
@@ -793,7 +796,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
               {canCreateOrder && selectedPlan && (
                 <div className="upgrade-summary">
                   <span><Sparkles size={14} /> {plan.label || '基础版'} → <strong>{selectedPlan.label}</strong>：{selectedPlan.tagline}</span>
-                  <button className="primary-button" onClick={createOrder} disabled={busy || !priceAvailable(selectedPlan.id)}><Zap size={15} /> {busy ? '正在创建…' : '创建升级订单'}</button>
+                  <ActionButton className="primary-button" onClick={createOrder} disabled={busy || !priceAvailable(selectedPlan.id)}><Zap size={15} /> {busy ? '正在创建…' : '创建升级订单'}</ActionButton>
                 </div>
               )}
               {canCreateOrder && <p className="upgrade-hint">套餐有效期内仅可升级至更高档套餐，到期后可重新购买。支付成功后权益自动生效。</p>}

@@ -145,7 +145,12 @@ export function formatMessageTime(value) {
   return Number.isNaN(date.getTime()) ? '刚刚' : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-export function displayUserName(user = {}) { return user.nickname || user.username || user.email || '鲲穹用户' }
+export function displayUserName(user = {}) { return user.username || user.nickname || user.email || user.phone || '用户' }
+
+export function displayCompactUserName(user = {}) {
+  const name = String(displayUserName(user)).trim()
+  return /^1\d{10}$/.test(name) ? name.slice(-4) : name
+}
 
 export function maskPhone(value = '') {
   const phone = String(value)

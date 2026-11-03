@@ -1,8 +1,11 @@
+import { ActionButton, ActionForm } from '../components/action-button.jsx'
 import React from 'react'
 import { copyImageWithFeedback, copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { SecurityCheckFailure, SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { useEffect, useRef, useState } from 'react'
-import { apiRequest, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState } from '../lib/api.js'
+import { apiRequest, getCachedAccountSession, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState } from '../lib/api.js'
+import { navigateApp } from '../lib/navigation.js'
+import { useResourceRead } from '../lib/resource-read.js'
 import { ConfirmModal, FeedbackMessage, LoadingBlock, PublicShell, StateBlock, Toast } from '../components/common.jsx'
 import { AlertTriangle, ArrowLeft, Building2, CalendarDays, CheckCircle2, Clock3, Copy, Download, Eye, FileText, FolderOpen, Inbox, Info, KeyRound, Link2, Lock, Pause, Play, QrCode, RefreshCw, Settings2, ShieldCheck, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
@@ -45,7 +48,7 @@ export function TeamInvitePage({ slug }) {
             <p>该团队不存在或已解散，请联系邀请你的人重新获取链接。</p>
           </div>
         )}
-        {probe?.reason === 'error' && <><FeedbackMessage message={probe.message} tone="error" /><button className="secondary-button" onClick={() => setProbeVersion(value => value + 1)}>重新加载</button></>}
+        {probe?.reason === 'error' && <><FeedbackMessage message={probe.message} tone="error" /><ActionButton className="secondary-button" onClick={() => setProbeVersion(value => value + 1)}>重新加载</ActionButton></>}
         {!invalid && probe?.reason !== 'error' && probe && <TeamInviteLandingCard slug={slug} probe={probe} />}
       </section>
     </PublicShell>
@@ -129,7 +132,7 @@ function TeamInviteLandingCard({ slug, probe }) {
       {feedback && <FeedbackMessage message={feedback} tone="error" />}
       {action.href
         ? <a className="primary-button invite-cta" href={action.href}>{action.label}</a>
-        : <button className="primary-button invite-cta" onClick={action.onClick} disabled={action.disabled || submitting}>{submitting ? '提交中…' : action.label}</button>}
+        : <ActionButton className="primary-button invite-cta" onClick={action.onClick} disabled={action.disabled || submitting}>{submitting ? '提交中…' : action.label}</ActionButton>}
       <p className="tiny center invite-note">加入需要登录鲲穹账号 · 管理员审批后生效</p>
       {(statusText || state.requestedAt) && <p className="invite-status">{statusText}{state.requestedAt && statusText ? ' · ' : ''}{state.requestedAt ? `申请于 ${formatDate(state.requestedAt)} 提交` : ''}</p>}
       <div className="invite-foot">
@@ -245,7 +248,7 @@ function ShareDownloadingPage({ share, task, onBack, onRetry }) {
             </>
           )}
           <div className="download-actions">
-            <button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回文件列表</button>
+            <ActionButton type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回文件列表</ActionButton>
           </div>
         </div>
       </div>
@@ -257,28 +260,20 @@ export function SharePage({ token, enterpriseSlug = '' }) {
   const { toast, notify } = useToast()
   const [data, setData] = useState(null)
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [goneInfo, setGoneInfo] = useState(null)
   const [actionError, setActionError] = useState('')
-  const [requiresLogin, setRequiresLogin] = useState(false)
   const [qrOpen, setQrOpen] = useState(false)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
   // 下载任务的独立页面（对齐原型 share.js · download-progress）：点击下载后进入，
   // 返回文件列表时关闭；任务状态本身仍由 useDownloadTask 持有。
   const [downloadPageOpen, setDownloadPageOpen] = useState(false)
-  useEffect(() => {
-    const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
-    apiRequest(`/api/shares/token/${token}${query}`).then((result) => {
+  const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
+  const { error, retry } = useResourceRead(`/api/shares/token/${encodeURIComponent(token)}${query}`, result => {
       setData(result)
       savePublicRecord(createShareRecord(result.share, 'sent_to_me'))
-    }).catch((err) => {
-      setError(err.message)
-      setRequiresLogin(err.code === 'directed_login_required')
-      // 已过期 / 已关闭走原型里的专用状态页；次数用尽等仍用通用不可用页。
-      if (err.status === 410 && ['expired', 'closed'].includes(err.shareMeta?.state)) setGoneInfo(err.shareMeta)
-    })
-  }, [token, enterpriseSlug])
+  }, () => { setData(null); setPassword(''); setPreviewItem(null) })
+  const requiresLogin = error?.code === 'directed_login_required'
+  const goneInfo = error?.status === 410 ? error.shareMeta : null
   const findShare = async () => {
     try {
       const query = enterpriseSlug ? `?organization=${encodeURIComponent(enterpriseSlug)}` : ''
@@ -290,7 +285,7 @@ export function SharePage({ token, enterpriseSlug = '' }) {
   }
   if (goneInfo?.state === 'expired') return <PublicShell><ShareExpiredCard info={goneInfo} /></PublicShell>
   if (goneInfo?.state === 'closed') return <PublicShell><ShareClosedCard /></PublicShell>
-  if (error) return <PublicShell><StateBlock title="这个分享暂时不可用" detail={error} />{requiresLogin && <button className="primary-button" onClick={() => { window.location.href = `/api/auth/login?return_to=${encodeURIComponent(window.location.href)}` }}><UserRound size={16} /> 使用收件账号登录</button>}</PublicShell>
+  if (error) return <PublicShell><StateBlock title="这个分享暂时不可用" detail={error.message} onRetry={retry} />{requiresLogin && <ActionButton className="primary-button" onClick={() => { window.location.href = `/api/auth/login?return_to=${encodeURIComponent(window.location.href)}` }}><UserRound size={16} /> 使用收件账号登录</ActionButton>}</PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   const share = data.share
   const beginDownload = (config) => {
@@ -324,10 +319,10 @@ export function SharePage({ token, enterpriseSlug = '' }) {
             <PrototypeAsset className="big-ico-image" name="ico-lock.png" width={70} height={70} />
             <h2>此分享已加密</h2>
             <p>请输入发送人提供的提取密码，验证后即可查看文件。</p>
-            <form className="public-password" onSubmit={(event) => { event.preventDefault(); findShare() }}>
+            <ActionForm className="public-password" onSubmit={(event) => { event.preventDefault(); return findShare() }}>
               <input maxLength={128} type="password" value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} placeholder="请输入提取密码，最多 128 个字符" />
-              <button className="primary-button" type="submit" disabled={!password}><KeyRound size={15} /> 验证密码</button>
-            </form>
+              <ActionButton className="primary-button" type="submit" disabled={!password}><KeyRound size={15} /> 验证密码</ActionButton>
+            </ActionForm>
             <small>{password.length}/128</small>
             {actionError && <FeedbackMessage message={actionError} tone="error" />}
           </div>
@@ -347,8 +342,8 @@ export function SharePage({ token, enterpriseSlug = '' }) {
                   {(share.files || []).map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={downloadBusy} />)}
                 </div>
                 <div className="share-actions">
-                  <button className="primary-button" onClick={downloadAll} disabled={downloadBusy || !(share.files || []).length}><Download size={17} /> {(share.files || []).length > 1 ? `全部下载（${formatBytes(totalSize)}）` : '下载文件'}</button>
-                  <button className="secondary-button" onClick={() => setQrOpen(true)} disabled={!share.qrDataUrl}><QrCode size={16} /> 二维码</button>
+                  <ActionButton className="primary-button" onClick={downloadAll} disabled={downloadBusy || !(share.files || []).length}><Download size={17} /> {(share.files || []).length > 1 ? `全部下载（${formatBytes(totalSize)}）` : '下载文件'}</ActionButton>
+                  <ActionButton className="secondary-button" onClick={() => setQrOpen(true)} disabled={!share.qrDataUrl}><QrCode size={16} /> 二维码</ActionButton>
                 </div>
                 <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
               </div>
@@ -368,7 +363,6 @@ export function SharePage({ token, enterpriseSlug = '' }) {
 export function ShareManagePage({ token }) {
   const { toast, notify } = useToast()
   const [share, setShare] = useState(null)
-  const [error, setError] = useState('')
   const [editing, setEditing] = useState(false)
   const [qrOpen, setQrOpen] = useState(false)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
@@ -381,9 +375,10 @@ export function ShareManagePage({ token }) {
     savePublicRecord(createShareRecord(result.share, 'my_sent'))
   }
 
-  useEffect(() => {
-    refreshShare().catch((err) => setError(err.message))
-  }, [token])
+  const { error, retry } = useResourceRead(`/api/shares/manage/${encodeURIComponent(token)}`, result => {
+    setShare(result.share)
+    savePublicRecord(createShareRecord(result.share, 'my_sent'))
+  }, () => { setShare(null); setEditing(false); setPreviewItem(null) })
 
   const saveShareSettings = async (payload) => {
     try {
@@ -431,7 +426,7 @@ export function ShareManagePage({ token }) {
     }
   }
 
-  if (error) return <PublicShell><StateBlock title="分享管理不可用" detail={error} /></PublicShell>
+  if (error) return <PublicShell><StateBlock title={error.status >= 500 || !error.status ? '分享暂时加载失败' : '分享管理不可用'} detail={error.message} onRetry={retry} /></PublicShell>
   if (!share) return <PublicShell><LoadingBlock /></PublicShell>
 
   const isActive = share.status === 'active'
@@ -455,8 +450,8 @@ export function ShareManagePage({ token }) {
             <p>创建于 {formatDate(share.createdAt)} · 管理链接含访问凭证，请勿公开转发</p>
           </div>
           <div className="share-manage-actions">
-            <button className="secondary-button" onClick={copyShareUrl}><Link2 size={15} /> 复制链接</button>
-            <button className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 分享设置</button>
+            <ActionButton className="secondary-button" onClick={copyShareUrl}><Link2 size={15} /> 复制链接</ActionButton>
+            <ActionButton className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 分享设置</ActionButton>
           </div>
         </header>
         <div className="manage-stats">
@@ -479,9 +474,9 @@ export function ShareManagePage({ token }) {
             <section className="public-card share-info-card">
               <div className="manage-panel-heading"><h2>分享信息</h2></div>
               <dl className="sum-list"><div><dt>取件码</dt><dd className="mono">{share.code}</dd></div><div><dt>提取密码</dt><dd>{share.requiresPassword ? '已启用' : '未启用'}</dd></div><div><dt>下载限制</dt><dd>{share.downloadLimit ? `${share.downloadLimit} 次` : '不限次数'}</dd></div><div><dt>已下载</dt><dd>{share.downloadCount || 0} 次</dd></div><div><dt>到期时间</dt><dd>{share.expiresAt ? formatDate(share.expiresAt) : '长期有效'}</dd></div></dl>
-              {share.qrDataUrl && <button type="button" className="manage-qr-button" onClick={() => setQrOpen(true)} aria-label="放大分享二维码"><img src={share.qrDataUrl} alt="分享二维码" /><span>扫码取件 · 放大二维码</span></button>}
+              {share.qrDataUrl && <ActionButton type="button" className="manage-qr-button" onClick={() => setQrOpen(true)} aria-label="放大分享二维码"><img src={share.qrDataUrl} alt="分享二维码" /><span>扫码取件 · 放大二维码</span></ActionButton>}
             </section>
-            <section className="danger-zone"><h2>关闭分享</h2><p>关闭后链接和取件码立即失效，已下载文件不受影响。</p>{isActive ? <button className="secondary-button danger-lite" onClick={closeShare}><X size={15} /> 立即关闭</button> : <button className="secondary-button" onClick={() => reopenShare({})}><RefreshCw size={15} /> 重新开启</button>}</section>
+            <section className="danger-zone"><h2>关闭分享</h2><p>关闭后链接和取件码立即失效，已下载文件不受影响。</p>{isActive ? <ActionButton className="secondary-button danger-lite" onClick={closeShare}><X size={15} /> 立即关闭</ActionButton> : <ActionButton className="secondary-button" onClick={() => reopenShare({})}><RefreshCw size={15} /> 重新开启</ActionButton>}</section>
           </aside>
         </div>
       </div>
@@ -525,8 +520,8 @@ function CollectionSubmittedPage({ collection, submission, onAgain }) {
         <div><span>关联账号</span><b>{account || '匿名提交'}</b></div>
       </div>
       <div className="collect-state-actions">
-        <button type="button" className="secondary-button" onClick={copyReceipt}><Copy size={15} /> {copied ? '已复制回执' : '复制回执'}</button>
-        <button type="button" className="primary-button" onClick={onAgain}>再提交一份</button>
+        <ActionButton type="button" className="secondary-button" onClick={copyReceipt}><Copy size={15} /> {copied ? '已复制回执' : '复制回执'}</ActionButton>
+        <ActionButton type="button" className="primary-button" onClick={onAgain}>再提交一份</ActionButton>
       </div>
       <p className="collect-state-note">提交已记录，文件已完成安全检查。如需补充材料，请在截止前再次提交。</p>
     </div>
@@ -557,6 +552,7 @@ function CollectionClosedPage({ info, signedIn }) {
 }
 
 export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
+  const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
   const inputRef = useRef(null)
   const folderInputRef = useRef(null)
   const materialUploadRef = useRef(null)
@@ -565,8 +561,8 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
   const submitRunRef = useRef(0)
   const [collection, setCollection] = useState(null)
   const [files, setFiles] = useState([])
-  const [user, setUser] = useState(null)
-  const [authChecked, setAuthChecked] = useState(false)
+  const [user, setUser] = useState(() => getCachedAccountSession()?.user || null)
+  const [authChecked, setAuthChecked] = useState(() => Boolean(getCachedAccountSession()))
   const [name, setName] = useState('')
   const [fieldValues, setFieldValues] = useState({})
   const [fieldTouched, setFieldTouched] = useState({})
@@ -599,10 +595,11 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
       if (err.status === 410 && err.collectionMeta) setClosedInfo(err.collectionMeta)
       setMessage(err.message)
     })
-    apiRequest('/api/auth/me').then(({ user: current }) => {
+    apiRequest('/api/auth/me', { authView: 'identity' }).then(({ user: current }) => {
+      if (!active) return
       setUser(current || null)
       if (current) setName((existing) => existing.trim() ? existing : (current.nickname || current.username || ''))
-    }).catch(() => {}).finally(() => setAuthChecked(true))
+    }).catch(() => {}).finally(() => { if (active) setAuthChecked(true) })
     const entry = readCollectionUploadResume(token)
     if (entry) {
       setPendingUpload(entry)
@@ -785,15 +782,22 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
         previousSession.sessionId === pendingUpload.sessionId ? previousSession.displayedBytes || 0 : 0)
     }
     uploadRef.current = nextSession
-    uploadShareInChunks(orderedFiles, {}, uploadRef, ({ progress, status, ...check }) => {
+    return uploadShareInChunks(orderedFiles, {}, uploadRef, ({ progress, status, ...check }) => {
       if (submitRunRef.current === submitRun) {
         setProgress(progress)
         if (status === 'finalizing') { setUploadPhase('finalizing'); setCheckState(check) }
       }
     }, {
       ...resumeConfig,
+      confirmOverwrite: existingFiles => requestConfirm({
+        title: '文件已存在',
+        detail: `你已在此任务提交过以下文件：${existingFiles.slice(0, 10).map(file => file.relativePath || file.name).join('、')}${existingFiles.length > 10 ? ` 等 ${existingFiles.length} 个文件` : ''}。是否继续上传并覆盖？其他提交者的文件不会被覆盖。`,
+        confirmText: '继续上传并覆盖',
+        cancelText: '取消上传',
+      }),
       sessionBody: {
         mode: 'collection',
+        ...(pendingUpload?.overwriteExisting ? { overwriteExisting: true } : {}),
         collectionToken: token,
         participantName,
         fieldValues: activeFieldValues,
@@ -868,7 +872,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                     <strong>{displayUserName(user)}</strong>
                     <span>本次提交会记录你的鲲穹账号，收集方可以核对是谁提交的</span>
                   </div>
-                  <button type="button" className="collection-identity-switch" disabled={submitting || Boolean(pendingUpload)} onClick={() => setUser(null)}><UserRound size={14} /> 改用其他名称</button>
+                  <ActionButton type="button" className="collection-identity-switch" disabled={submitting || Boolean(pendingUpload)} onClick={() => setUser(null)}><UserRound size={14} /> 改用其他名称</ActionButton>
                 </div>
               ) : (
                 <div className="collection-identity anonymous">
@@ -878,7 +882,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                     <strong>当前未登录</strong>
                     <span>登录后提交会带上你的账号信息，方便收集方识别；也可以直接填写名称匿名提交</span>
                   </div>
-                  <button type="button" className="secondary-button collection-identity-login" disabled={submitting} onClick={startLogin}><UserRound size={15} /> 登录后提交</button>
+                  <ActionButton type="button" className="secondary-button collection-identity-login" disabled={submitting} onClick={startLogin}><UserRound size={15} /> 登录后提交</ActionButton>
                 </div>
               )
             )}
@@ -906,7 +910,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
                   }} />
                   <span>{material.name}{material.required ? <em>必交</em> : <small>选交</small>}</span>
                 </label>
-                <button type="button" className="collection-material-upload" disabled={submitting || completionPending || Boolean(pendingUpload)} onClick={() => selectFilesForMaterial(material.id)}><UploadCloud size={13} /> 上传到此材料</button>
+                <ActionButton type="button" className="collection-material-upload" disabled={submitting || completionPending || Boolean(pendingUpload)} onClick={() => selectFilesForMaterial(material.id)}><UploadCloud size={13} /> 上传到此材料</ActionButton>
               </div>)}</div>
             </fieldset>}
             {visibleFields.length > 0 && <fieldset className="collection-submit-form-section collection-submit-fields-card">
@@ -951,8 +955,8 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
               <strong>{files.length ? '继续添加文件或文件夹' : '选择要提交的文件或文件夹'}</strong>
               <span>支持追加选择，保留文件夹目录 · 单次最多 {MAX_FILES} 个文件</span>
               <div className="collection-picker-buttons">
-                <button type="button" className="primary-button" disabled={submitting || completionPending} onClick={() => inputRef.current?.click()}><FileText size={16} /> 选择文件</button>
-                <button type="button" className="secondary-button" disabled={submitting || completionPending} onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> 选择文件夹</button>
+                <ActionButton type="button" className="primary-button" disabled={submitting || completionPending} onClick={() => inputRef.current?.click()}><FileText size={16} /> 选择文件</ActionButton>
+                <ActionButton type="button" className="secondary-button" disabled={submitting || completionPending} onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> 选择文件夹</ActionButton>
               </div>
             </div>
             {files.length > 0 && <div className="public-files collection-selected-files" role="region" aria-label="已选文件列表" tabIndex={0}>{files.map((file) => <FileRow key={file.id} file={file} showPath onRemove={submitting || completionPending ? undefined : () => removeSelectedFile(file.id)} />)}</div>}
@@ -980,15 +984,15 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
             <div className="collection-submit-actions">
               <div className="collection-selection-summary">
                 <span aria-live="polite"><strong>{files.length}</strong> / {MAX_FILES} 个文件 · 共 {formatBytes(selectedBytes)}</span>
-                {files.length > 0 && !pendingUpload && <button type="button" className="collection-clear-files" disabled={submitting} onClick={() => { setFiles([]); setMessage(''); setProgress(0) }}><Trash2 size={13} /> 清空</button>}
+                {files.length > 0 && !pendingUpload && <ActionButton type="button" className="collection-clear-files" disabled={submitting} onClick={() => { setFiles([]); setMessage(''); setProgress(0) }}><Trash2 size={13} /> 清空</ActionButton>}
               </div>
               {(submitting || pendingUpload) && <div className="progress-wrap"><div className="progress-label"><span>{uploadPhase === 'finalizing' ? '正在校验文件并完成提交...' : uploadPhase === 'blocked' ? '安全检查发现风险，已阻止提交' : uploadPhase === 'scan-failed' ? '文件已上传，安全检查未完成' : uploadPhase === 'query' ? '文件已上传，处理结果待查询' : uploadPhase === 'pausing' ? '正在暂停...' : submitting ? '正在分片上传...' : '已暂停 · 可继续上传'}</span><strong>{progress}%</strong></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div>}
               {uploadPhase === 'finalizing' && <SecurityCheckStatus startedAt={checkState.checkStartedAt} stage={checkState.checkStage} currentFile={checkState.currentFile} fileIndex={checkState.checkFileIndex} fileCount={checkState.checkFileCount} completedCount={checkState.checkCompletedCount} activeCount={checkState.checkActiveCount} connectionMessage={checkState.connectionMessage} />}
               {['blocked', 'scan-failed'].includes(uploadPhase) && <SecurityCheckFailure message={scanFailure?.message || message} code={scanFailure?.code} fileName={scanFailure?.scanFile} finding={scanFailure?.scanFinding} />}
               {(selectionError || formError || namingError || (message && !['blocked', 'scan-failed'].includes(uploadPhase))) && <FeedbackMessage message={selectionError || formError || namingError || message} tone={selectionError || formError || namingError || uploadPhase === 'query' ? 'error' : feedbackTone(message)} />}
-              {submitting && ['uploading', 'pausing'].includes(uploadPhase) && <button className="secondary-button wide" disabled={uploadPhase === 'pausing'} onClick={pauseSubmit}><Pause size={16} /> {uploadPhase === 'pausing' ? '正在暂停...' : '暂停上传'}</button>}
-              {pendingUpload && !submitting && !completionPending && <button className="secondary-button wide" onClick={abandonUpload}><X size={16} /> 放弃本次上传</button>}
-              <button className="primary-button wide" onClick={submit} disabled={submitting || uploadPhase === 'blocked' || !files.length || Boolean(selectionError) || Boolean(formError) || Boolean(namingError) || !resumeMatches}>{pendingUpload ? <Play size={17} /> : <UploadCloud size={17} />} {submitting ? uploadPhase === 'finalizing' ? '正在完成提交...' : '提交中...' : uploadPhase === 'blocked' ? '风险文件已阻止' : completionPending ? '查询处理结果' : uploadPhase === 'scan-failed' ? '重试安全检查' : pendingUpload ? '继续上传' : '提交文件'}</button>
+              {submitting && ['uploading', 'pausing'].includes(uploadPhase) && <ActionButton className="secondary-button wide" disabled={uploadPhase === 'pausing'} onClick={pauseSubmit}><Pause size={16} /> {uploadPhase === 'pausing' ? '正在暂停...' : '暂停上传'}</ActionButton>}
+              {pendingUpload && !submitting && !completionPending && <ActionButton className="secondary-button wide" onClick={abandonUpload}><X size={16} /> 放弃本次上传</ActionButton>}
+              <ActionButton className="primary-button wide" onClick={submit} disabled={submitting || uploadPhase === 'blocked' || !files.length || Boolean(selectionError) || Boolean(formError) || Boolean(namingError) || !resumeMatches}>{pendingUpload ? <Play size={17} /> : <UploadCloud size={17} />} {submitting ? uploadPhase === 'finalizing' ? '正在完成提交...' : '提交中...' : uploadPhase === 'blocked' ? '风险文件已阻止' : completionPending ? '查询处理结果' : uploadPhase === 'scan-failed' ? '重试安全检查' : pendingUpload ? '继续上传' : '提交文件'}</ActionButton>
             </div>
             </div>
           </>
@@ -1000,6 +1004,7 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
         )}
       </div>
       <TeamJoinRequestCard enterpriseSlug={enterpriseSlug} />
+      <ConfirmModal state={confirmState} onCancel={() => settleConfirm(false)} onConfirm={() => settleConfirm(true)} />
     </PublicShell>
   )
 }
@@ -1007,7 +1012,6 @@ export function CollectionSubmitPage({ token, enterpriseSlug = '' }) {
 export function CollectionManagePage({ token }) {
   const { toast, notify } = useToast()
   const [data, setData] = useState(null)
-  const [error, setError] = useState('')
   // 删除任务通过管理接口完成；删除后再次打开此管理链接会进入 error 分支。
   const [editing, setEditing] = useState(false)
   const [submissionPage, setSubmissionPage] = useState(1)
@@ -1022,11 +1026,8 @@ export function CollectionManagePage({ token }) {
     saveAuthoritativeLocalRecord(createCollectionRecord(collection, 'my_collections'))
   }
 
-  useEffect(() => {
-    apiRequest(`/api/collections/manage/${token}`).then((result) => {
-      saveManagedCollection(result.collection)
-    }).catch((err) => setError(err.message))
-  }, [token])
+  const { error, retry } = useResourceRead(`/api/collections/manage/${encodeURIComponent(token)}`,
+    result => saveManagedCollection(result.collection), () => { setData(null); setEditing(false); setPreviewItem(null) })
 
   const saveTaskSettings = async (payload) => {
     try {
@@ -1104,7 +1105,7 @@ export function CollectionManagePage({ token }) {
       const record = createCollectionRecord(data, 'my_collections')
       writeRecords(readRecords().filter((item) => item.id !== record.id))
       await deleteCloudRecords([record.id]).catch(() => {})
-      window.location.href = '/?view=collect'
+      navigateApp('/?view=collect')
     } catch (err) {
       notify(err.message || '删除收集任务失败，请重试', 'error')
     }
@@ -1128,7 +1129,7 @@ export function CollectionManagePage({ token }) {
       setRefreshing(false)
     }
   }
-  if (error) return <PublicShell><StateBlock title="管理链接不可用" detail={error} /></PublicShell>
+  if (error) return <PublicShell><StateBlock title={error.status >= 500 || !error.status ? '收集任务暂时加载失败' : '管理链接不可用'} detail={error.message} onRetry={retry} /></PublicShell>
   if (!data) return <PublicShell><LoadingBlock /></PublicShell>
   const isActive = data.status === 'active'
   const submissions = data.submissions || []
@@ -1195,10 +1196,10 @@ export function CollectionManagePage({ token }) {
             <p>截止 {deadlineText} · 无需登录 · {typesText} ≤ {sizeText}</p>
           </div>
           <div className="cm-head-actions">
-            <button type="button" className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 收集设置</button>
-            <button type="button" className="secondary-button" disabled={!data.publicUrl} onClick={() => copyPublicValue(data.publicUrl)}><Link2 size={15} /> 提交链接</button>
-            <button type="button" className="secondary-button" disabled={refreshing} onClick={refreshTask}><RefreshCw className={refreshing ? 'spinning' : ''} size={15} /> {refreshing ? '刷新中' : '刷新'}</button>
-            <button type="button" className="secondary-button cm-danger-action" onClick={deleteCollection}><Trash2 size={15} /> 删除收集</button>
+            <ActionButton type="button" className="secondary-button" onClick={() => setEditing(true)}><Settings2 size={15} /> 收集设置</ActionButton>
+            <ActionButton type="button" className="secondary-button" disabled={!data.publicUrl} onClick={() => copyPublicValue(data.publicUrl)}><Link2 size={15} /> 提交链接</ActionButton>
+            <ActionButton type="button" className="secondary-button" disabled={refreshing} onClick={refreshTask}><RefreshCw className={refreshing ? 'spinning' : ''} size={15} /> {refreshing ? '刷新中' : '刷新'}</ActionButton>
+            <ActionButton type="button" className="secondary-button cm-danger-action" onClick={deleteCollection}><Trash2 size={15} /> 删除收集</ActionButton>
           </div>
         </div>
         <div className="cm-stats">
@@ -1213,8 +1214,8 @@ export function CollectionManagePage({ token }) {
               <div className="cm-card-head">
                 <h2>已收提交</h2>
                 <div className="cm-card-actions">
-                  <button type="button" className="secondary-button" disabled={!submissions.length || downloadBusy} onClick={downloadAll}><Download size={14} /> 全部下载</button>
-                  <button type="button" className="secondary-button" disabled={!submissions.length} onClick={() => { exportSubmissionsSheet().catch(() => notify('导出失败，请稍后重试', 'error')) }}><FileText size={14} /> 导出清单</button>
+                  <ActionButton type="button" className="secondary-button" disabled={!submissions.length || downloadBusy} onClick={downloadAll}><Download size={14} /> 全部下载</ActionButton>
+                  <ActionButton type="button" className="secondary-button" disabled={!submissions.length} onClick={() => { exportSubmissionsSheet().catch(() => notify('导出失败，请稍后重试', 'error')) }}><FileText size={14} /> 导出清单</ActionButton>
                 </div>
               </div>
               <div className="cm-card-body">
@@ -1235,8 +1236,8 @@ export function CollectionManagePage({ token }) {
                           </b>
                           <small>{formatDate(submission.submittedAt)} · {submission.files.length} 个文件 · {formatBytes(submissionSize)}</small>
                         </div>
-                        <button type="button" className="secondary-button" disabled={downloadBusy} onClick={() => downloadSubmissionItem(submission)}><Download size={14} /> 下载全部</button>
-                        <button type="button" className="ghost-icon cm-delete" title="删除提交" aria-label={`删除 ${submission.participantName || '匿名'} 的提交`} onClick={() => deleteSubmission(submission.id)}><Trash2 size={15} /></button>
+                        <ActionButton type="button" className="secondary-button" disabled={downloadBusy} onClick={() => downloadSubmissionItem(submission)}><Download size={14} /> 下载全部</ActionButton>
+                        <ActionButton type="button" className="ghost-icon cm-delete" title="删除提交" aria-label={`删除 ${submission.participantName || '匿名'} 的提交`} onClick={() => deleteSubmission(submission.id)}><Trash2 size={15} /></ActionButton>
                       </div>
                       <div className="cm-files">
                         {submission.files.map((file, fileIndex) => (
@@ -1249,12 +1250,12 @@ export function CollectionManagePage({ token }) {
                             <small>{formatBytes(file.size)}</small>
                             <div className="cm-file-actions">
                               {canPreviewFile(file) ? (
-                                <button type="button" className="ghost-icon" aria-label={`预览 ${file.name}`} title="预览" onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>
+                                <ActionButton type="button" className="ghost-icon" aria-label={`预览 ${file.name}`} title="预览" onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></ActionButton>
                               ) : (
                                 // 不可预览时保留同尺寸占位，避免大小文字与下载按钮左右跳动
                                 <span className="ghost-icon cm-action-slot" aria-hidden="true" />
                               )}
-                              <button type="button" className="ghost-icon" aria-label={`下载 ${file.name}`} title="下载" disabled={downloadBusy} onClick={() => downloadFile(submission, fileIndex)}><Download size={15} /></button>
+                              <ActionButton type="button" className="ghost-icon" aria-label={`下载 ${file.name}`} title="下载" disabled={downloadBusy} onClick={() => downloadFile(submission, fileIndex)}><Download size={15} /></ActionButton>
                             </div>
                           </div>
                         ))}
@@ -1281,9 +1282,9 @@ export function CollectionManagePage({ token }) {
                 <span>共 {data.participantCount ?? submissions.length} 位提交人 · {totalFileCount} 个文件 · {formatBytes(usedBytes || totalBytes)}</span>
                 {pageCount > 1 && (
                   <div className="cm-pager">
-                    <button type="button" className="secondary-button" disabled={safePage <= 1} onClick={() => setSubmissionPage(Math.max(1, safePage - 1))}>上一页</button>
+                    <ActionButton type="button" className="secondary-button" disabled={safePage <= 1} onClick={() => setSubmissionPage(Math.max(1, safePage - 1))}>上一页</ActionButton>
                     <span>{safePage} / {pageCount}</span>
-                    <button type="button" className="secondary-button" disabled={safePage >= pageCount} onClick={() => setSubmissionPage(Math.min(pageCount, safePage + 1))}>下一页</button>
+                    <ActionButton type="button" className="secondary-button" disabled={safePage >= pageCount} onClick={() => setSubmissionPage(Math.min(pageCount, safePage + 1))}>下一页</ActionButton>
                   </div>
                 )}
               </div>
@@ -1300,7 +1301,7 @@ export function CollectionManagePage({ token }) {
                   <div><dt>单文件上限</dt><dd>{sizeText}</dd></div>
                   <div><dt>提交人身份</dt><dd>无需登录 · 支持匿名提交</dd></div>
                 </dl>
-                {data.qrDataUrl && <button type="button" className="cm-qr-trigger" onClick={() => setQrOpen(true)} aria-label="放大收集任务二维码"><img className="cm-qr" src={data.qrDataUrl} alt="收集任务二维码" /></button>}
+                {data.qrDataUrl && <ActionButton type="button" className="cm-qr-trigger" onClick={() => setQrOpen(true)} aria-label="放大收集任务二维码"><img className="cm-qr" src={data.qrDataUrl} alt="收集任务二维码" /></ActionButton>}
                 <p className="cm-qr-note">扫码提交材料</p>
               </div>
             </div>
@@ -1308,16 +1309,16 @@ export function CollectionManagePage({ token }) {
               <div className="cm-danger">
                 <h3><AlertTriangle size={15} /> 关闭收集</h3>
                 <p>关闭后提交链接立即失效，已收到的文件仍会保留。</p>
-                <button type="button" className="cm-danger-button" onClick={closeTask}>立即关闭</button>
+                <ActionButton type="button" className="cm-danger-button" onClick={closeTask}>立即关闭</ActionButton>
               </div>
             ) : (
               <div className="cm-closed-card">
                 <h3><Clock3 size={15} /> 任务{collectionStatusText(data.status, data.deadline)}</h3>
                 <p>提交链接当前不可用；已收到的文件仍保留在上方，可随时下载。</p>
                 {canReopenCollection(data) ? (
-                  <button type="button" className="secondary-button" onClick={() => reopenTask()}><RefreshCw size={15} /> 重新开启任务</button>
+                  <ActionButton type="button" className="secondary-button" onClick={() => reopenTask()}><RefreshCw size={15} /> 重新开启任务</ActionButton>
                 ) : (
-                  <button type="button" className="secondary-button" onClick={() => setEditing(true)}><CalendarDays size={15} /> 延长后开启</button>
+                  <ActionButton type="button" className="secondary-button" onClick={() => setEditing(true)}><CalendarDays size={15} /> 延长后开启</ActionButton>
                 )}
               </div>
             )}

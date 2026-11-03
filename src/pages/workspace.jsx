@@ -1,25 +1,31 @@
+import { ActionButton, ActionForm } from '../components/action-button.jsx'
 import { collectionSizeOptions } from '../lib/plan-limits.js'
 import { copyImageWithFeedback, copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { AuthButton } from '../components/account.jsx'
+import { PageLoading } from '../components/page-load-boundary.jsx'
 import React from 'react'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { SecurityCheckFailure, SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { defaultDeadline, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_TITLE_MAX, COLLECTION_TYPE_OPTIONS, FOOTER_CONTENT, MAIN_VIEWS, MAX_FILES, RECORD_SCOPE_TABS, SETTINGS_NAV_ITEMS, defaultSettings } from '../lib/constants.js'
 import { useEffect, useRef, useState } from 'react'
-import { apiRequest, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState } from '../lib/api.js'
+import { ACCOUNT_SESSION_EVENT, apiRequest, getCachedAccountSession, updateCachedAccountUser, createShareFileDownloadConfig, createSubmissionFileDownloadConfig, createUploadSessionState, createUploadState } from '../lib/api.js'
+import { BEFORE_APP_NAVIGATION, isAppRoute, navigateApp } from '../lib/navigation.js'
 import { useConfirmDialog, useDownloadTask, useToast } from '../hooks.js'
-import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
+import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, fetchCloudRecordPage, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
 import { cancelUploadSession, canPreviewFile, clearUploadResume, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, readUploadResume, uploadShareInChunks } from '../lib/transfer.js'
 import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock3, CloudUpload, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Layers, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
-import { SettingsPage } from './settings.jsx'
-import { RecordsView, TrashView } from './records.jsx'
-import { DistributionView } from './distribution.jsx'
+import { loadPage } from '../lib/page-loaders.js'
+import { subscribeRefresh } from '../lib/refresh-scheduler.js'
+const SettingsPage = React.lazy(() => loadPage('settings').then(module => ({ default: module.SettingsPage })))
+const RecordsView = React.lazy(() => loadPage('records').then(module => ({ default: module.RecordsView })))
+const TrashView = React.lazy(() => loadPage('records').then(module => ({ default: module.TrashView })))
+const DistributionView = React.lazy(() => loadPage('distribution').then(module => ({ default: module.DistributionView })))
 import { CollectionLimitInfo, ContentModal, DatePicker, DownloadProgressPanel, FilePreviewModal, FileRow, ManageItemModal, QrPreviewModal, ValueItem } from '../components/ui.jsx'
 import { CollectionFieldsEditor, CollectionMaterialsEditor, CollectionStructureAssistant, CollectionSubmitPreview } from '../components/collection-builder.jsx'
 import { CollectionMaterialMatrix } from '../components/collection-material-matrix.jsx'
 import { ConfirmModal, ProductBrand, Toast } from '../components/common.jsx'
-import { getRecordOwner } from '../lib/records.js'
+import { fetchOwnedCollectionPage, getRecordOwner } from '../lib/records.js'
 import { RECIPIENT_TEXT_MAX, recipientInputError } from '../../server/lib/contact-input.js'
 import { limitInputText } from '../lib/input-limits.js'
 import { respondWorkspaceOwnershipHandover } from '../lib/records.js'
@@ -57,7 +63,8 @@ export function WorkspaceApp() {
   const uploadRef = useRef(createUploadSessionState())
   const uploadRunRef = useRef(0)
   const uploadCleanupRef = useRef(Promise.resolve())
-  const recordSyncUserRef = useRef('')
+  const recordLoadVersion = useRef(0)
+  const runtimeDefaultsAppliedRef = useRef(false)
   const { confirmState, requestConfirm, settleConfirm } = useConfirmDialog()
   const [activeView, setActiveView] = useState(() => window.location.pathname.startsWith('/trash') ? 'records' : normalizeMainView(new URLSearchParams(window.location.search).get('view')))
   const [files, setFiles] = useState([])
@@ -71,6 +78,8 @@ export function WorkspaceApp() {
   const [retrieveResult, setRetrieveResult] = useState(null)
   const [shareResult, setShareResult] = useState(null)
   const [collectionResult, setCollectionResult] = useState(null)
+  const [collectionCreating, setCollectionCreating] = useState(false)
+  const collectionCreateRequestRef = useRef({ signature: '', key: '', promise: null })
   const [collectionManageData, setCollectionManageData] = useState(null)
   const [collectionManageLoading, setCollectionManageLoading] = useState(false)
   const [managementTarget, setManagementTarget] = useState(null)
@@ -78,15 +87,20 @@ export function WorkspaceApp() {
   const [settings, setSettings] = useState(defaultSettings)
   const [records, setRecords] = useState(() => readRecords())
   const [recordsSyncing, setRecordsSyncing] = useState(false)
+  const [recordRevision, setRecordRevision] = useState(0)
   const [runtimeConfig, setRuntimeConfig] = useState(null)
   const uploadLimitBytes = runtimeConfig?.upload?.singleFileLimitBytes || 1.2 * 1024 ** 3
   const maxSupportedFileSizeBytes = runtimeConfig?.maxSupportedFileSizeBytes
   const batchLimit = runtimeConfig?.maxBatchFiles || MAX_FILES
-  const [authUser, setAuthUser] = useState(null)
-  const [authLoading, setAuthLoading] = useState(true)
+  const [authUser, setAuthUser] = useState(() => getCachedAccountSession()?.user || null)
+  const [authLoading, setAuthLoading] = useState(() => !getCachedAccountSession())
   const [authMenuOpen, setAuthMenuOpen] = useState(false)
   const [messageOpen, setMessageOpen] = useState(() => new URLSearchParams(window.location.search).get('panel') === 'messages')
   const [messages, setMessages] = useState([])
+  const [messageUnread, setMessageUnread] = useState(0)
+  const [messageCursor, setMessageCursor] = useState(null)
+  const [messageLoading, setMessageLoading] = useState(false)
+  const messageLoadRef = useRef(false)
   const handoverDecisionRef = useRef(false)
   const [handoverDecisionId, setHandoverDecisionId] = useState('')
   const [footerContentKey, setFooterContentKey] = useState('')
@@ -118,20 +132,43 @@ export function WorkspaceApp() {
     return () => window.removeEventListener('popstate', syncRoute)
   }, [])
 
-  const refreshAuthUser = async () => {
-    setAuthLoading(true)
+  const refreshAuthUser = async ({ force = true, authView } = {}) => {
+    if (!getCachedAccountSession()) setAuthLoading(true)
     try {
-      const data = await apiRequest('/api/auth/me')
+      const data = await apiRequest('/api/auth/me', { force, authView })
       const user = data.user || null
       setAuthUser(user)
       return user
-    } catch {
-      setAuthUser(null)
-      return null
+    } catch (error) {
+      if (error.status === 401) setAuthUser(null)
+      else setToast(error.message || '登录状态暂时无法更新，请稍后重试')
+      return getCachedAccountSession()?.user || null
     } finally {
       setAuthLoading(false)
     }
   }
+
+  useEffect(() => {
+    const changed = ({ detail }) => { setAuthUser(detail.user || null); setAuthLoading(false) }
+    window.addEventListener(ACCOUNT_SESSION_EVENT, changed)
+    return () => window.removeEventListener(ACCOUNT_SESSION_EVENT, changed)
+  }, [])
+
+  useEffect(() => {
+    if (authUser?.id && (isSettingsRoute || isTrashRoute || settingsOpen)) refreshAuthUser({ force: false })
+  }, [isSettingsRoute, isTrashRoute, authUser?.id, settingsOpen])
+
+  useEffect(() => {
+    const protectUpload = (event) => {
+      // Main workspace tabs keep this component mounted. Leaving it would detach an active upload.
+      if ((isUploading || uploadState.status === 'paused') && !/^\/(?:$|settings(?:\/[^/]+)*\/?$|trash\/?$)/.test(event.detail.url.pathname)) {
+        event.preventDefault()
+        setToast('文件正在上传，请完成或取消上传后再切换页面')
+      }
+    }
+    window.addEventListener(BEFORE_APP_NAVIGATION, protectUpload)
+    return () => window.removeEventListener(BEFORE_APP_NAVIGATION, protectUpload)
+  }, [isUploading, uploadState.status])
 
   // 未登录时拉取游客传输配额（顺带让服务端签发游客 cookie），登录后清空。
   const refreshGuestQuota = () => apiRequest('/api/guest/quota')
@@ -184,54 +221,36 @@ export function WorkspaceApp() {
     refreshGuestQuota()
   }, [authUser?.id, authLoading])
 
-  const syncAccountRecords = async ({ silent = true } = {}) => {
-    if (!authUser?.id) return readRecords()
-    const owner = authUser.id
-    setRecordsSyncing(true)
-    try {
-      const cloudRecords = await fetchCloudRecords()
-      if (getRecordOwner() !== owner) return []
-      const merged = writeRecords(upsertRecords(readRecords(owner), cloudRecords), owner)
-      const refreshed = await syncRecords(merged)
-      if (getRecordOwner() !== owner) return []
-      const synced = writeRecords(refreshed, owner)
-      setRecords(synced)
-      const persisted = await replaceCloudRecords(synced)
-      if (getRecordOwner() !== owner) return []
-      const finalRecords = writeRecords(upsertRecords(synced, persisted.records || []), owner)
-      setRecords(finalRecords)
-      if (!silent) setToast('账号记录已同步')
-      return finalRecords
-    } catch (error) {
-      if (!silent) setToast(`账号记录同步失败：${error.message}`)
-      throw error
-    } finally {
-      setRecordsSyncing(false)
-    }
-  }
-
   const syncRecordMutation = (action) => {
     if (!authUser?.id) return
-    action().catch((error) => setToast(`账号记录同步失败：${error.message}`))
+    return action().then(() => setRecordRevision(value => value + 1)).catch((error) => setToast(`账号记录同步失败：${error.message}`))
   }
 
-  const refreshMessages = async (user = authUser, { silent = true } = {}) => {
-    if (!user?.id) {      setMessages([])
-      return []
-    }
-    try {
-      const data = await fetchCloudMessages()
-      const nextMessages = normalizeMessages(data.messages || [])
-      setMessages(nextMessages)
-      if (data.settings) {
-        setAuthUser((current) => current?.id === user.id ? { ...current, notificationSettings: normalizeNoticeSettings(data.settings) } : current)
-      }
-      return nextMessages
-    } catch (error) {
-      if (!silent) setToast(`消息同步失败：${error.message}`)
-      return []
-    }
+  const refreshMessageSummary = async (user = authUser) => {
+    if (!user?.id) { setMessageUnread(0); return }
+    const data = await apiRequest('/api/account/messages?summary=1')
+    if (getRecordOwner() === user.id) setMessageUnread(Number(data.unreadCount || 0))
   }
+  const refreshMessages = async (user = authUser, { silent = true, more = false } = {}) => {
+    if (!user?.id) { setMessages([]); setMessageCursor(null); setMessageUnread(0); return [] }
+    if (messageLoadRef.current) return
+    messageLoadRef.current = true; setMessageLoading(true)
+    try {
+      const data = await fetchCloudMessages(more ? messageCursor : '')
+      if (getRecordOwner() !== user.id) return []
+      const nextMessages = normalizeMessages(data.messages || [])
+      setMessages(current => more ? normalizeMessages([...new Map([...current,...nextMessages].map(item => [item.id,item])).values()]) : nextMessages)
+      setMessageCursor(data.pagination?.nextCursor || null)
+      if (data.settings) setAuthUser(current => current?.id === user.id ? { ...current, notificationSettings: normalizeNoticeSettings(data.settings) } : current)
+      await refreshMessageSummary(user).catch(() => {})
+      return nextMessages
+    } catch (error) { if (!silent) setToast('消息同步失败：' + error.message); return [] }
+    finally { messageLoadRef.current = false; setMessageLoading(false) }
+  }
+
+  useEffect(() => {
+    if (messageOpen && authUser?.id) refreshMessages(authUser)
+  }, [messageOpen, authUser?.id])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -244,31 +263,31 @@ export function WorkspaceApp() {
       const query = params.toString()
       window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
     }
-    refreshAuthUser().then((user) => {
+    refreshAuthUser({ force: false, authView: 'identity' }).then((user) => {
       if (loginStatus === 'success') {
         setToast(user ? '登录成功' : '登录回调完成，但会话未生效，请使用同一地址重新登录')
       } else if (loginStatus) {
         setToast(loginMessage || '登录失败')
       }
     })
-    apiRequest('/api/runtime-config').then((config) => {
-      setRuntimeConfig(config)
-      const days = String(config.defaultShareDays || '')
-      if (!['1', '3', '7'].includes(days)) return
-      setSettings((current) => current.expiryDays === defaultSettings.expiryDays
-        ? { ...current, expiry: `${days} 天`, expiryDays: days }
-        : current)
-    }).catch(() => {})
   }, [])
 
   useEffect(() => {
+    if (authLoading) return undefined
     let cancelled = false
-    const refreshLimits = () => apiRequest('/api/runtime-config').then(config => { if (!cancelled) setRuntimeConfig(config) }).catch(() => {})
+    const refreshLimits = () => apiRequest('/api/runtime-config').then(config => {
+      if (cancelled) return
+      setRuntimeConfig(config)
+      if (!runtimeDefaultsAppliedRef.current) {
+        runtimeDefaultsAppliedRef.current = true
+        const days = String(config.defaultShareDays || '')
+        if (['1', '3', '7'].includes(days)) setSettings(current => current.expiryDays === defaultSettings.expiryDays ? { ...current, expiry: `${days} 天`, expiryDays: days } : current)
+      }
+    }).catch(() => {})
     refreshLimits()
-    window.addEventListener('focus', refreshLimits)
-    const timer = window.setInterval(refreshLimits, 30000)
-    return () => { cancelled = true; window.removeEventListener('focus', refreshLimits); window.clearInterval(timer) }
-  }, [authUser?.id])
+    const unsubscribe = subscribeRefresh('runtime-limits', refreshLimits)
+    return () => { cancelled = true; unsubscribe() }
+  }, [authUser?.id, authLoading])
 
 
   useEffect(() => {
@@ -281,14 +300,12 @@ export function WorkspaceApp() {
   useEffect(() => {
     if (!authUser?.id) {
       setMessages([])
-      recordSyncUserRef.current = ''
+      recordLoadVersion.current++
       setRecords(readRecords())
       return
     }
-    refreshMessages(authUser).catch((error) => setToast(`消息同步失败：${error.message}`))
-    if (recordSyncUserRef.current === authUser.id) return
-    recordSyncUserRef.current = authUser.id
-    syncAccountRecords({ silent: true }).catch((error) => setToast(`账号记录同步失败：${error.message}`))
+    // Keep the unread indicator current; the much larger record sync is demand-loaded below.
+    refreshMessageSummary(authUser).catch(() => {})
   }, [authUser?.id])
 
   const cancelSendUpload = ({ discardSaved = false } = {}) => {
@@ -392,7 +409,7 @@ export function WorkspaceApp() {
       saveRecord(createShareRecord(data.share, 'my_sent'))
       if (authUser?.id) {
         refreshAuthUser().catch(() => {})
-        refreshMessages(authUser).catch(() => {})
+        (messageOpen ? refreshMessages(authUser) : refreshMessageSummary(authUser)).catch(() => {})
       }
       setToast(data.share.deliveryRecipients?.length ? '文件已上传，通知状态已更新' : '文件已上传，分享信息已生成')
       if (!authUser?.id) refreshGuestQuota()
@@ -442,6 +459,8 @@ export function WorkspaceApp() {
   }
 
   const logout = async () => {
+    setAuthMenuOpen(false)
+    changeMessagePanel(false)
     try {
       await apiRequest('/api/auth/logout', { method: 'POST' })
       setAuthUser(null)
@@ -501,7 +520,8 @@ export function WorkspaceApp() {
     setMessages((current) => current.map((item) => item.id === message.id ? { ...item, unread: false } : item))
     try {
       const data = await markCloudMessageRead(message.id)
-      setMessages(normalizeMessages(data.messages || []))
+      if (data.message) setMessages(current => current.map(item => item.id === message.id ? { ...item, ...data.message } : item))
+      await refreshMessageSummary()
     } catch (error) {
       setToast(`消息更新失败：${error.message}`)
       refreshMessages(authUser).catch(() => {})
@@ -512,8 +532,8 @@ export function WorkspaceApp() {
     if (!authUser?.id) return
     setMessages((current) => current.map((message) => ({ ...message, unread: false })))
     try {
-      const data = await markAllCloudMessagesRead()
-      setMessages(normalizeMessages(data.messages || []))
+      await markAllCloudMessagesRead()
+      setMessageUnread(0)
       setToast('全部消息已标为已读', 'success')
     } catch (error) {
       setToast(`消息更新失败：${error.message}`)
@@ -525,8 +545,8 @@ export function WorkspaceApp() {
     if (!authUser?.id || !message?.id) return
     setMessages((current) => current.filter((item) => item.id !== message.id))
     try {
-      const data = await deleteCloudMessage(message.id)
-      setMessages(normalizeMessages(data.messages || []))
+      await deleteCloudMessage(message.id)
+      await refreshMessageSummary()
       setToast('消息已删除', 'success')
     } catch (error) {
       setToast(`消息删除失败：${error.message}`)
@@ -538,8 +558,8 @@ export function WorkspaceApp() {
     if (!authUser?.id || !message?.actionId) return
     setMessages((current) => current.map((item) => item.id === message.id ? { ...item, unread: false, actionType: 'workspace_invite_resolved', body: decision === 'accept' ? '正在加入团队空间…' : '正在拒绝团队邀请…' } : item))
     try {
-      const data = await respondWorkspaceInvitation(message.actionId, decision)
-      setMessages(normalizeMessages(data.messages || []))
+      await respondWorkspaceInvitation(message.actionId, decision)
+      await refreshMessages(authUser)
       if (decision === 'accept') await refreshAuthUser()
       setToast(decision === 'accept' ? '已接受团队邀请' : '已拒绝团队邀请')
     } catch (error) {
@@ -559,8 +579,8 @@ export function WorkspaceApp() {
       })
       if (!confirmed) return
       setHandoverDecisionId(message.actionId)
-      const data = await respondWorkspaceOwnershipHandover(message.actionId, decision)
-      setMessages(normalizeMessages(data.messages || []))
+      await respondWorkspaceOwnershipHandover(message.actionId, decision)
+      await refreshMessages(authUser)
       await refreshAuthUser()
       setToast(decision === 'accept' ? '交接已完成，你现在是团队所有者' : '已拒绝负责人交接', 'success')
     } catch (error) {
@@ -581,8 +601,8 @@ export function WorkspaceApp() {
     if (!confirmed) return
     setMessages([])
     try {
-      const data = await deleteAllCloudMessages()
-      setMessages(normalizeMessages(data.messages || []))
+      await deleteAllCloudMessages()
+      setMessageUnread(0); setMessageCursor(null)
       setToast('全部消息已清除', 'success')
     } catch (error) {
       setToast(`消息清除失败：${error.message}`)
@@ -591,8 +611,9 @@ export function WorkspaceApp() {
   }
 
   const updateAccountUser = (user) => {
+    updateCachedAccountUser(user)
     setAuthUser(user || null)
-    if (user?.id) refreshMessages(user).catch(() => {})
+    if (user?.id) (messageOpen ? refreshMessages(user) : refreshMessageSummary(user)).catch(() => {})
   }
 
   const saveRecord = (record) => {
@@ -606,14 +627,17 @@ export function WorkspaceApp() {
     const current = readRecords()
     const next = writeRecords(typeof updater === 'function' ? updater(current) : updater)
     setRecords(next)
+    let pending
     if (cloudOptions.mode === 'delete') {
-      syncRecordMutation(() => deleteCloudRecords(cloudOptions.ids || []))
+      pending = syncRecordMutation(() => deleteCloudRecords(cloudOptions.ids || []))
     } else if (cloudOptions.mode === 'clear') {
-      syncRecordMutation(() => clearCloudRecords())
+      pending = syncRecordMutation(() => clearCloudRecords())
     } else if (cloudOptions.mode !== 'local') {
-      syncRecordMutation(() => replaceCloudRecords(next))
+      const previous = new Map(current.map(record => [record.id, JSON.stringify(record)]))
+      const changed = next.filter(record => previous.get(record.id) !== JSON.stringify(record))
+      if (changed.length) pending = syncRecordMutation(() => upsertCloudRecords(changed))
     }
-    return next
+    return pending || next
   }
 
   const replaceRecordEntry = (record) => {
@@ -644,16 +668,41 @@ export function WorkspaceApp() {
       setToast('截止时间不能早于今天，请重新选择')
       return
     }
-    apiRequest('/api/collections', { method: 'POST', body: JSON.stringify(payload) })
-      .then((data) => {
+    if (collectionCreateRequestRef.current.promise) return collectionCreateRequestRef.current.promise
+    const signature = JSON.stringify([authUser?.id || 'guest', payload])
+    const savedRequestKey = 'kunqiong:pending-collection-create'
+    let requestState = collectionCreateRequestRef.current
+    if (requestState.signature !== signature) {
+      let saved
+      try { saved = JSON.parse(sessionStorage.getItem(savedRequestKey) || 'null') } catch { /* Memory still protects this page. */ }
+      const key = (saved?.signature === signature && saved.key) || globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+      requestState = { signature, key, promise: null }
+      collectionCreateRequestRef.current = requestState
+      try { sessionStorage.setItem(savedRequestKey, JSON.stringify({ signature, key })) } catch { /* Storage may be unavailable. */ }
+    }
+    if (requestState.promise) return requestState.promise
+    setCollectionCreating(true)
+    const request = apiRequest('/api/collections', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': requestState.key },
+      body: JSON.stringify(payload),
+    }).then((data) => {
         const collection = { ...data.collection, manageToken: data.manageToken }
         setCollectionResult(collection)
         setCollectionManageData(null)
         saveRecord(createCollectionRecord(collection, 'my_collections'))
         if (authUser?.id) refreshAuthUser().catch(() => {})
         setToast('收集任务已创建')
+        if (collectionCreateRequestRef.current === requestState) {
+          collectionCreateRequestRef.current = { signature: '', key: '', promise: null }
+          try { sessionStorage.removeItem(savedRequestKey) } catch { /* Ignore unavailable storage. */ }
+        }
+        return data
       })
-      .catch((error) => setToast(error.message))
+      .catch((error) => { setToast(error.message); return null })
+      .finally(() => { setCollectionCreating(false); if (collectionCreateRequestRef.current === requestState) requestState.promise = null })
+    requestState.promise = request
+    return request
   }
 
   const openCollectionManager = async (manageUrl) => {
@@ -671,7 +720,7 @@ export function WorkspaceApp() {
         setToast('管理链接无效')
         return
       }
-      window.location.href = `/collect/manage/${encodeURIComponent(token)}`
+      navigateApp(`/collect/manage/${encodeURIComponent(token)}`)
     } catch (error) {
       setToast(error.message)
     } finally {
@@ -899,8 +948,9 @@ export function WorkspaceApp() {
 
   const deleteRecord = (recordIds) => {
     const targets = new Set(Array.isArray(recordIds) ? recordIds : [recordIds])
-    replaceRecords((current) => current.filter((record) => !targets.has(normalizeRecord(record).id)), { mode: 'delete', ids: Array.from(targets) })
+    const pending = replaceRecords((current) => current.filter((record) => !targets.has(normalizeRecord(record).id)), { mode: 'delete', ids: Array.from(targets) })
     setToast(targets.size > 1 ? `已删除 ${targets.size} 条记录` : '记录已删除')
+    return pending
   }
 
   const recordScopeLabel = (scopeKey) => {
@@ -908,7 +958,16 @@ export function WorkspaceApp() {
     return tab ? tab.label : '全部'
   }
 
-  const clearRecords = (scopeKey) => {
+  const clearRecords = async (scopeKey) => {
+    if (authUser?.id) {
+      try {
+        await clearCloudRecords(scopeKey || 'all')
+        const next = writeRecords(readRecords().filter(record => scopeKey && scopeKey !== 'all' && record.scope !== scopeKey))
+        setRecords(next); setRecordRevision(value => value + 1)
+        setToast('账号记录已清空')
+      } catch (error) { setToast(error.message || '清空失败') }
+      return
+    }
     if (scopeKey && scopeKey !== 'all') {
       const ids = records.map(normalizeRecord).filter((record) => record.scope === scopeKey).map((record) => record.id)
       if (!ids.length) return
@@ -924,19 +983,18 @@ export function WorkspaceApp() {
     const scope = typeof scopeKey === 'string' ? scopeKey : 'all'
     if (scope !== 'all') {
       const count = records.map(normalizeRecord).filter((record) => record.scope === scope).length
-      if (!count) return
+      if (!count && !authUser?.id) return
       const label = recordScopeLabel(scope)
       const scopeConfirmed = await requestConfirm({
         title: `清空「${label}」记录`,
         detail: authUser?.id
-          ? `将清空当前账号「${label}」分类下的 ${count} 条收发记录，其他分类不受影响；其中已关闭/过期的分享与收集任务及其文件会一并删除，仍在有效期的资源不受影响。确定继续吗？`
-          : `将清空当前设备「${label}」分类下的 ${count} 条收发记录，其他分类不受影响；其中已关闭/过期的分享与收集任务及其文件会一并删除，仍在有效期的资源不受影响。确定继续吗？`,
+          ? `将清空当前账号「${label}」分类下的全部收发记录，其他分类不受影响；其中已关闭/过期的分享与收集任务及其文件会一并删除，仍在有效期的资源不受影响。确定继续吗？`
+          : `将清空当前设备「${label}」分类下的全部收发记录，其他分类不受影响；其中已关闭/过期的分享与收集任务及其文件会一并删除，仍在有效期的资源不受影响。确定继续吗？`,
         confirmText: `清空「${label}」`,
         tone: 'danger',
       })
       if (!scopeConfirmed) return
-      clearRecords(scope)
-      return
+      return clearRecords(scope)
     }
     const confirmed = await requestConfirm({
       title: '清空全部记录',
@@ -947,7 +1005,7 @@ export function WorkspaceApp() {
       tone: 'danger',
     })
     if (!confirmed) return
-    clearRecords()
+    return clearRecords()
   }
 
   const renameRecord = async (recordOrId, nextName) => {
@@ -976,34 +1034,39 @@ export function WorkspaceApp() {
         return
       }
     }
-    replaceRecords((current) => current.map((record) => {
+    await replaceRecords((current) => current.map((record) => {
       const normalized = normalizeRecord(record)
       return normalized.id === (targetRecord?.id || recordOrId) ? { ...normalized, alias, updatedAt: new Date().toISOString() } : normalized
     }))
     setToast('显示名称已更新')
   }
 
-  const refreshRecords = async ({ silent = false } = {}) => {
+  const refreshRecords = async ({ silent = false, signal, force = true, ...query } = {}) => {
+    const version = ++recordLoadVersion.current
     const owner = authUser?.id || ''
-    setRecordsSyncing(Boolean(authUser?.id))
+    setRecordsSyncing(true)
     try {
-      let baseRecords = readRecords(owner)
-      if (authUser?.id) {
-        const cloudRecords = await fetchCloudRecords()
-        if (getRecordOwner() !== owner) return
-        baseRecords = writeRecords(upsertRecords(baseRecords, cloudRecords), owner)
+      if (owner) {
+        const data = await fetchCloudRecordPage({ page: 1, limit: 8, ...query }, signal, { force })
+        if (signal?.aborted || version !== recordLoadVersion.current || getRecordOwner() !== owner) return
+        setRecords(normalizeRecords(data.records || []))
+        writeRecords(data.records || [], owner)
+        // Capacity is needed by the file center, not by the record list. Fetch
+        // it after the requested rows, without holding up page navigation.
+        if (query.category) refreshAuthUser({ force: false, authView: 'full' })
+        return data
       }
-      const refreshed = await syncRecords(baseRecords)
-      if (getRecordOwner() !== owner) return
-      const nextRecords = writeRecords(refreshed, owner)
+      const synced = await syncRecords(readRecords(owner))
+      // Authentication may finish while guest record probes are in flight.
+      // Never save those results under the newly signed-in account's key.
+      if (signal?.aborted || version !== recordLoadVersion.current || getRecordOwner() !== owner) return
+      const nextRecords = writeRecords(synced, owner)
       setRecords(nextRecords)
-      if (authUser?.id) await replaceCloudRecords(nextRecords)
-      if (!silent) setToast(authUser?.id ? '收发记录已刷新并同步' : '收发记录已刷新')
+      if (!silent) setToast('收发记录已刷新')
     } catch (error) {
-      if (!silent) setToast(error.message || '刷新失败')
-    } finally {
-      setRecordsSyncing(false)
-    }
+      if (error.name !== 'AbortError') setToast(error.message || '刷新失败')
+      throw error
+    } finally { if (version === recordLoadVersion.current) setRecordsSyncing(false) }
   }
 
   const openRecordLink = (record) => {
@@ -1013,7 +1076,9 @@ export function WorkspaceApp() {
       setToast('这条记录没有可打开的链接')
       return
     }
-    window.open(url, '_blank', 'noopener,noreferrer')
+    const target = new URL(url, window.location.origin)
+    if (isAppRoute(target)) navigateApp(target.href)
+    else window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -1024,11 +1089,11 @@ export function WorkspaceApp() {
           <NavItem icon={Send} label="发文件" active={!isSettingsRoute && activeView === 'send'} onClick={() => navigateMainView('send')} />
           <NavItem icon={Inbox} label="收集文件" active={!isSettingsRoute && activeView === 'collect'} onClick={() => navigateMainView('collect')} />
           <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
-          <NavItem icon={Building2} label="会员与团队" active={false} onClick={() => { window.location.href = '/workspace' }} />
+          <NavItem icon={Building2} label="会员与团队" active={false} onClick={() => navigateApp('/workspace')} />
         </nav>
         <div className="topbar-actions">
-          <button type="button" className={`message-trigger topbar-trash-trigger${isTrashRoute ? ' active' : ''}`} aria-label="回收站" title="回收站" aria-current={isTrashRoute ? 'page' : undefined} onClick={() => { setAuthMenuOpen(false); changeMessagePanel(false); navigateTrash() }}><Trash2 size={18} /></button>
-          <MessageCenter user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); changeMessagePanel(!messageOpen) }} onClose={() => changeMessagePanel(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} onHandoverAction={respondToOwnershipHandover} handoverDecisionId={handoverDecisionId} onNotify={setToast} />
+          <ActionButton type="button" className={`message-trigger topbar-trash-trigger${isTrashRoute ? ' active' : ''}`} aria-label="回收站" title="回收站" aria-current={isTrashRoute ? 'page' : undefined} onClick={() => { setAuthMenuOpen(false); changeMessagePanel(false); navigateTrash() }}><Trash2 size={18} /></ActionButton>
+          <MessageCenter unreadCount={messageUnread} loading={messageLoading} hasMore={Boolean(messageCursor)} onLoadMore={() => refreshMessages(authUser, { more: true, silent: false })} user={authUser} messages={messages} open={messageOpen} onToggle={(event) => { event.stopPropagation(); setAuthMenuOpen(false); changeMessagePanel(!messageOpen) }} onClose={() => changeMessagePanel(false)} onMarkRead={markMessageRead} onMarkAllRead={markAllMessagesRead} onDelete={deleteMessage} onClearAll={clearAllMessages} onLogin={startLogin} onInvitationAction={respondToWorkspaceInvitation} onHandoverAction={respondToOwnershipHandover} handoverDecisionId={handoverDecisionId} onNotify={setToast} />
           {/* 后台入口不再按账号身份显示（白名单通道已移除，后台只认账号口令）。
               需要直接进后台时访问 /admin，未登录会弹出管理员账号密码弹窗。 */}
           <AuthButton user={authUser} loading={authLoading} menuOpen={authMenuOpen} onLogin={startLogin} onToggleMenu={(event) => { event.stopPropagation(); changeMessagePanel(false); setAuthMenuOpen((current) => !current) }} onSettings={openSettings} onOrders={() => navigateSettingsSection('/settings/orders')} onLogout={logout} />
@@ -1036,10 +1101,9 @@ export function WorkspaceApp() {
       </header>
 
       <main className={`page-content${!isSettingsRoute && !isTrashRoute && activeView === 'send' ? ' send-content' : !isSettingsRoute && !isTrashRoute && activeView === 'collect' ? ' collect-content' : !isSettingsRoute && (isTrashRoute || activeView === 'records') ? ' records-content' : ''}`}>
-        {isSettingsRoute && <SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} onOpenWorkspace={() => { window.location.href = '/workspace' }} />}
+        {isSettingsRoute && <React.Suspense fallback={<PageLoading />}><SettingsPage user={authUser} loading={authLoading} section={settingsSectionForPath(routePath)} onLogin={startLogin} onLogout={logout} onBack={() => navigateMainView('send')} onSaveProfile={saveProfile} onUpdateUser={updateAccountUser} onNavigateSection={navigateSettingsSection} onOpenWorkspace={() => navigateApp('/workspace')} /></React.Suspense>}
         {!isSettingsRoute && !isTrashRoute && activeView === 'send' && (
           <SendView
-            maxSupportedFileSizeBytes={maxSupportedFileSizeBytes}
             batchLimit={batchLimit}
             user={authUser}
             files={files}
@@ -1071,8 +1135,12 @@ export function WorkspaceApp() {
         )}
         {!isSettingsRoute && !isTrashRoute && activeView === 'collect' && (
           <CollectView
+            userId={authUser?.id || ''}
+            authLoading={authLoading}
+            revision={recordRevision}
             entitlement={runtimeConfig?.upload}
             result={collectionResult}
+            creating={collectionCreating}
             manageData={collectionManageData}
             manageLoading={collectionManageLoading}
             records={records}
@@ -1091,14 +1159,14 @@ export function WorkspaceApp() {
             onRefreshRecords={refreshRecords}
           />
         )}
-        {!isSettingsRoute && !isTrashRoute && activeView === 'deliver' && <DistributionView user={authUser} onLogin={startLogin} onNotify={setToast} />}
-        {!isSettingsRoute && !isTrashRoute && activeView === 'records' && <RecordsView records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onUpload={() => navigateMainView('send')} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} onSaveShareExpiry={saveShareExpiry} onNotify={setToast} />}
-        {!isSettingsRoute && isTrashRoute && <TrashView user={authUser} authLoading={authLoading} onLogin={startLogin} onBack={() => navigateMainView('records')} onRefresh={refreshRecords} onNotify={setToast} requestConfirm={requestConfirm} />}
+        {!isSettingsRoute && !isTrashRoute && activeView === 'deliver' && <React.Suspense fallback={<PageLoading />}><DistributionView user={authUser} onLogin={startLogin} onNotify={setToast} /></React.Suspense>}
+        {!isSettingsRoute && !isTrashRoute && activeView === 'records' && <React.Suspense fallback={<PageLoading />}><RecordsView revision={recordRevision} records={records} user={authUser} syncing={recordsSyncing} onCopy={copyValue} onCopyQrImage={copyQrImage} onDelete={deleteRecord} onRename={renameRecord} onClear={clearRecordsWithConfirm} onRefresh={refreshRecords} onOpen={openRecordLink} onOpenCollectionManager={openCollectionManager} onUpload={() => navigateMainView('send')} onManage={openRecordManagement} onCloseManaged={closeManagedRecord} onReopenManaged={reopenManagedRecord} onSaveShareExpiry={saveShareExpiry} onNotify={setToast} /></React.Suspense>}
+        {!isSettingsRoute && isTrashRoute && <React.Suspense fallback={<PageLoading />}><TrashView user={authUser} authLoading={authLoading} onLogin={startLogin} onBack={() => navigateMainView('records')} onRefresh={refreshRecords} onNotify={setToast} requestConfirm={requestConfirm} /></React.Suspense>}
       </main>
 
       <footer className="page-footer">
         <span>鲲穹文件传输 · 临时传输，轻装上阵</span>
-        <div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a><button onClick={() => setFooterContentKey('help')}><HelpCircle size={13} /> 帮助中心</button><button onClick={() => setFooterContentKey('terms')}><ShieldCheck size={13} /> 服务协议</button><button onClick={() => setFooterContentKey('privacy')}><LockKeyhole size={13} /> 隐私政策</button><a className="footer-manual-link" href="https://www.kunqiongai.com/feedback/" target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> 问题反馈</a></div>
+        <div><a className="footer-manual-link" href="/user-manual.html" target="_blank" rel="noopener noreferrer">使用手册</a><ActionButton onClick={() => setFooterContentKey('help')}><HelpCircle size={13} /> 帮助中心</ActionButton><ActionButton onClick={() => setFooterContentKey('terms')}><ShieldCheck size={13} /> 服务协议</ActionButton><ActionButton onClick={() => setFooterContentKey('privacy')}><LockKeyhole size={13} /> 隐私政策</ActionButton><a className="footer-manual-link" href="https://www.kunqiongai.com/feedback/" target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> 问题反馈</a></div>
       </footer>
 
       {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} user={authUser} onClose={() => setSettingsOpen(false)} onSave={() => { setSettingsOpen(false); setToast('分享设置已保存') }} />}
@@ -1147,15 +1215,15 @@ export function GuestQuotaModal({ quota, onClose, onLogin }) {
           免费注册后即可获得 <strong>20 GB</strong> 个人空间，上传与分享不再受此限制。
         </p>
         <div className="modal-footer confirm-modal-footer">
-          <button className="secondary-button" onClick={onClose}>知道了</button>
-          <button className="primary-button" onClick={onLogin}><UserPlus size={15} /> 免费注册 / 登录</button>
+          <ActionButton className="secondary-button" onClick={onClose}>知道了</ActionButton>
+          <ActionButton className="primary-button" onClick={onLogin}><UserPlus size={15} /> 免费注册 / 登录</ActionButton>
         </div>
       </div>
     </div>
   )
 }
 
-export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, onOpenDistribution, guestQuota, onLogin }) {
+export function SendView({ batchLimit = MAX_FILES, user, files, inputRef, folderInputRef, isDragging, setIsDragging, addFiles, removeFile, uploadFiles, isUploading, uploadProgress, uploadState, shareResult, settings, onUpdateSettings, onSettings, onPause, onResume, onRetry, onReset, onCopy, onCopyQrImage, onRetrieve, onOpenDistribution, guestQuota, onLogin }) {
   const [retrieveCode, setRetrieveCode] = useState('')
   const showUploadStatus = ['uploading', 'paused', 'failed', 'finalizing'].includes(uploadState.status)
   const recipientError = recipientInputError(settings.recipients, user)
@@ -1180,7 +1248,7 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
                 <p>支持多种文件格式，安全快速，随时随地分享</p>
                 <div className="send-prototype-hero-actions">
                   <div className="send-prototype-stats">
-                    <div><b>{maxSupportedFileSizeBytes ? formatBytes(maxSupportedFileSizeBytes) : '—'}</b><span>单文件最高支持</span></div>
+                    <div><b>20 GB</b><span>单文件最高支持</span></div>
                     <div><b>{batchLimit} 个</b><span>单次文件数</span></div>
                     <div><b>{settings.expiry || '3 天'}</b><span>默认有效期</span></div>
                   </div>
@@ -1193,23 +1261,23 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
               <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
               <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
               <div className="send-prototype-upload-toolbar">
-                {guestQuota?.enabled ? <div className="send-prototype-guest-strip"><span><Gauge size={15} />游客模式 · 本次剩余 <b>{formatBytes(guestQuota.remainingBytes)}</b></span><button type="button" onClick={onLogin}>登录后同步记录与额度 <ChevronRight size={14} /></button></div> : null}
-                <button type="button" className="send-distribution-entry send-distribution-upload-entry" onClick={onOpenDistribution}><Send size={15} />批量定向发布<ArrowRight size={14} /></button>
+                {guestQuota?.enabled ? <div className="send-prototype-guest-strip"><span><Gauge size={15} />游客模式 · 本次剩余 <b>{formatBytes(guestQuota.remainingBytes)}</b></span><ActionButton type="button" onClick={onLogin}>登录后同步记录与额度 <ChevronRight size={14} /></ActionButton></div> : null}
+                <ActionButton type="button" className="send-distribution-entry send-distribution-upload-entry" onClick={onOpenDistribution}><Send size={15} />批量定向发布<ArrowRight size={14} /></ActionButton>
               </div>
               <div className={`send-prototype-dropzone ${isDragging ? 'dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
                 <PrototypeAsset className="send-prototype-cloud" name="ico-cloud.png" width={64} height={54} />
                 <h2>{isDragging ? '松开即可添加文件' : '拖拽文件或文件夹到这里'}</h2>
                 <p className="send-prototype-drop-copy">支持 PDF / Office / 图片 / 视频 / 压缩包，自动分片上传，中断可续传</p>
                 <div className="send-prototype-actions">
-                  <button className="primary-button" type="button" onClick={() => inputRef.current?.click()}><FolderOpen size={17} />选择文件</button>
-                  <button className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} />选择文件夹</button>
+                  <ActionButton className="primary-button" type="button" onClick={() => inputRef.current?.click()}><FolderOpen size={17} />选择文件</ActionButton>
+                  <ActionButton className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} />选择文件夹</ActionButton>
                 </div>
                 <div className="send-prototype-retrieve">
                   <span><KeyRound size={14} />或通过取件码获取文件</span>
-                  <form onSubmit={(event) => { event.preventDefault(); onRetrieve(retrieveCode.trim()) }}>
+                  <ActionForm onSubmit={(event) => { event.preventDefault(); return onRetrieve(retrieveCode.trim()) }}>
                     <input aria-label="取件码" inputMode="text" autoComplete="off" maxLength={6} value={retrieveCode} onChange={(event) => setRetrieveCode(event.target.value.replace(/[^a-z\d]/gi, '').toUpperCase())} placeholder="请输入 4–6 位取件码" />
-                    <button className="primary-button" type="submit" disabled={retrieveCode.trim().length < 4}>查询</button>
-                  </form>
+                    <ActionButton className="primary-button" type="submit" disabled={retrieveCode.trim().length < 4}>查询</ActionButton>
+                  </ActionForm>
                   <small>取件码可在分享链接或发送记录中找到</small>
                 </div>
                 <span className="upload-note">上传后自动生成链接、二维码和取件码</span>
@@ -1232,10 +1300,10 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
                 <p>{uploadState.status === 'paused' ? '上传已暂停，已传分片会保留，可随时继续。' : uploadState.status === 'failed' ? '上传已中断，可重试本次上传或取消后重新选择文件。' : uploadState.status === 'finalizing' ? '文件已传输完成，正在执行安全检查并生成取件信息。' : '上传过程请保持页面打开，中断后可以继续。'}</p>
               </div>
               <div className="send-page-head-actions">
-                {uploadState.status === 'uploading' && <button className="secondary-button" type="button" onClick={onPause} disabled={!isUploading}><Pause size={15} />暂停</button>}
-                {uploadState.status === 'paused' && <button className="primary-button" type="button" onClick={onResume}><Play size={15} />继续上传</button>}
-                {uploadState.status === 'failed' && uploadState.failurePhase !== 'threat' && <button className="primary-button" type="button" onClick={onRetry}><RotateCcw size={15} />{uploadState.failurePhase === 'scan' ? '重试安全检查' : uploadState.failurePhase === 'query' ? '查询处理结果' : '重试上传'}</button>}
-                <button className="secondary-button send-cancel-button" type="button" onClick={onReset} disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'}><X size={15} />取消上传</button>
+                {uploadState.status === 'uploading' && <ActionButton className="secondary-button" type="button" onClick={onPause} disabled={!isUploading}><Pause size={15} />暂停</ActionButton>}
+                {uploadState.status === 'paused' && <ActionButton className="primary-button" type="button" onClick={onResume}><Play size={15} />继续上传</ActionButton>}
+                {uploadState.status === 'failed' && uploadState.failurePhase !== 'threat' && <ActionButton className="primary-button" type="button" onClick={onRetry}><RotateCcw size={15} />{uploadState.failurePhase === 'scan' ? '重试安全检查' : uploadState.failurePhase === 'query' ? '查询处理结果' : '重试上传'}</ActionButton>}
+                <ActionButton className="secondary-button send-cancel-button" type="button" onClick={onReset} disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'}><X size={15} />取消上传</ActionButton>
               </div>
             </div>
 
@@ -1248,7 +1316,7 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
               <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
               <div className="upload-queue-head">
                 <div><h2>队列</h2><span>{files.length} 个文件 · {queueStatusText}</span></div>
-                <button type="button" className="ghost-icon" aria-label="清空文件" title="取消并清空本次上传" disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'} onClick={onReset}><X size={17} /></button>
+                <ActionButton type="button" className="ghost-icon" aria-label="清空文件" title="取消并清空本次上传" disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'} onClick={onReset}><X size={17} /></ActionButton>
               </div>
               <div className="upload-queue-list">
                 {files.map((file, index) => {
@@ -1262,13 +1330,13 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
                     </div>
                     {active && <div className="queue-file-progress" aria-hidden="true"><span style={{ width: `${uploadProgress}%` }} /></div>}
                     {done && <span className="queue-file-done" title="已上传"><Check size={15} /></span>}
-                    {canRemoveDuringUpload && <button type="button" className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={() => removeFile(file.id)}><X size={16} /></button>}
+                    {canRemoveDuringUpload && <ActionButton type="button" className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={() => removeFile(file.id)}><X size={16} /></ActionButton>}
                   </div>
                 })}
               </div>
               <div className="upload-settings-line">
                 <span><Mail size={14} />{settings.recipients ? `定向发送：${settings.recipients}` : '公开链接：未填写收件人'}</span>
-                <button type="button" className="secondary-button" onClick={onSettings} disabled={uploadState.status === 'finalizing'} title={uploadState.status === 'finalizing' ? '安全检查阶段不可修改分享设置' : '查看本次上传的分享设置'}><Settings2 size={15} />分享设置</button>
+                <ActionButton type="button" className="secondary-button" onClick={onSettings} disabled={uploadState.status === 'finalizing'} title={uploadState.status === 'finalizing' ? '安全检查阶段不可修改分享设置' : '查看本次上传的分享设置'}><Settings2 size={15} />分享设置</ActionButton>
               </div>
             </section>
           </>
@@ -1279,17 +1347,17 @@ export function SendView({ maxSupportedFileSizeBytes, batchLimit = MAX_FILES, us
                 <h1>{shareResult ? '发送完成' : '已选文件'}</h1>
                 <p>{shareResult ? '分享链接、取件码和二维码已准备好。' : '确认要发送的内容，可继续添加文件或文件夹。'}</p>
               </div>
-              {!shareResult && <div className="send-page-head-actions"><button className="secondary-button" type="button" onClick={() => inputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件</button><button className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件夹</button></div>}
+              {!shareResult && <div className="send-page-head-actions"><ActionButton className="secondary-button" type="button" onClick={() => inputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件</ActionButton><ActionButton className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件夹</ActionButton></div>}
             </div>
             <section className={`upload-panel send-prototype-drop-card send-prototype-queue-card ${isDragging ? 'dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
               <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
               <input ref={folderInputRef} type="file" multiple webkitdirectory="" directory="" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
               {files.length > 0 && !shareResult && <div className="file-queue">
-                <div className="queue-heading"><div><span className="eyebrow">待发送文件</span><h2>{files.length} 个文件，准备就绪</h2></div><button className="ghost-icon" aria-label="清空文件" disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'} onClick={onReset}><X size={17} /></button></div>
+                <div className="queue-heading"><div><span className="eyebrow">待发送文件</span><h2>{files.length} 个文件，准备就绪</h2></div><ActionButton className="ghost-icon" aria-label="清空文件" disabled={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query'} onClick={onReset}><X size={17} /></ActionButton></div>
                 <label className="delivery-field"><span><Mail size={14} />定向发送</span><input maxLength={RECIPIENT_TEXT_MAX} value={settings.recipients} disabled={isUploading} onChange={(event) => onUpdateSettings({ recipients: limitInputText(event.target.value, RECIPIENT_TEXT_MAX) })} aria-invalid={Boolean(recipientError)} aria-describedby="delivery-recipient-hint" placeholder="输入手机号或邮箱，多个用逗号分隔（可选）" /><small id="delivery-recipient-hint" className={`contact-input-hint ${recipientError ? 'invalid' : ''}`} aria-live="polite">{recipientError || '可留空；最多 50 个收件人，不能填写自己的手机号或邮箱。'}</small></label>
                 <div className="file-list">{files.map((file) => <FileRow key={file.id} file={file} onRemove={uploadState.status === 'finalizing' || uploadState.failurePhase === 'query' ? undefined : () => removeFile(file.id)} />)}</div>
-                {guestQuota?.enabled && <div className="guest-quota-hint"><Gauge size={15} /><span>未登录累计可传 <strong>{formatBytes(guestQuota.limitBytes)}</strong>，本设备已用 {formatBytes(guestQuota.usedBytes)}{guestQuota.reservedBytes ? <>，未完成上传占用 <strong>{formatBytes(guestQuota.reservedBytes)}</strong><button type="button" className="guest-quota-release" onClick={releaseGuestUploads} aria-label="释放未完成上传占用的额度">释放</button></> : null}，剩余 <strong>{formatBytes(guestQuota.remainingBytes)}</strong></span><button type="button" onClick={onLogin}><UserPlus size={13} />免费注册</button></div>}
-                <div className="queue-actions"><button className="secondary-button" onClick={onSettings}><Settings2 size={16} />分享设置</button><button className="primary-button" disabled={Boolean(recipientError)} onClick={() => uploadFiles()}><Send size={16} />开始上传<ArrowRight size={15} /></button></div>
+                {guestQuota?.enabled && <div className="guest-quota-hint"><Gauge size={15} /><span>未登录累计可传 <strong>{formatBytes(guestQuota.limitBytes)}</strong>，本设备已用 {formatBytes(guestQuota.usedBytes)}{guestQuota.reservedBytes ? <>，未完成上传占用 <strong>{formatBytes(guestQuota.reservedBytes)}</strong><ActionButton type="button" className="guest-quota-release" onClick={releaseGuestUploads} aria-label="释放未完成上传占用的额度">释放</ActionButton></> : null}，剩余 <strong>{formatBytes(guestQuota.remainingBytes)}</strong></span><ActionButton type="button" onClick={onLogin}><UserPlus size={13} />免费注册</ActionButton></div>}
+                <div className="queue-actions"><ActionButton className="secondary-button" onClick={onSettings}><Settings2 size={16} />分享设置</ActionButton><ActionButton className="primary-button" disabled={Boolean(recipientError)} onClick={() => uploadFiles()}><Send size={16} />开始上传<ArrowRight size={15} /></ActionButton></div>
               </div>}
               {shareResult && <ShareResult result={shareResult} settings={settings} onCopy={onCopy} onCopyQrImage={onCopyQrImage} onReset={onReset} />}
             </section>
@@ -1385,13 +1453,13 @@ export function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }
           <div className="result-code">
             <span>{result.code.length} 位取件码</span>
             <strong>{result.code}</strong>
-            <button className="copy-button" onClick={() => onCopy(result.code)}><Copy size={14} /> 复制</button>
+            <ActionButton className="copy-button" onClick={() => onCopy(result.code)}><Copy size={14} /> 复制</ActionButton>
           </div>
           {result.qrDataUrl && (
-            <button className="qr-trigger" onClick={() => setQrOpen(true)} aria-label="打开分享二维码">
+            <ActionButton className="qr-trigger" onClick={() => setQrOpen(true)} aria-label="打开分享二维码">
               <img className="qr-image" src={result.qrDataUrl} alt="分享二维码" />
               <span>点击放大</span>
-            </button>
+            </ActionButton>
           )}
         </div>
         <div className="share-link-list">
@@ -1400,7 +1468,7 @@ export function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }
             <div className="share-link-label"><Link2 size={13} /><span>公开分享链接</span><small>任何人打开都能取件</small></div>
             <div className="share-link">
               <span>{result.shareUrl}</span>
-              <button onClick={() => onCopy(result.shareUrl)} aria-label="复制公开分享链接" title="复制公开分享链接"><Copy size={15} /></button>
+              <ActionButton onClick={() => onCopy(result.shareUrl)} aria-label="复制公开分享链接" title="复制公开分享链接"><Copy size={15} /></ActionButton>
             </div>
           </div>
           {result.enterpriseUrl && (
@@ -1408,15 +1476,15 @@ export function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }
               <div className="share-link-label"><Building2 size={13} /><span>团队链接</span><small>带团队标识，打开后可申请加入团队</small></div>
               <div className="share-link enterprise-link">
                 <span>{result.enterpriseUrl}</span>
-                <button onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制团队链接" title="复制团队链接"><Copy size={15} /></button>
+                <ActionButton onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制团队链接" title="复制团队链接"><Copy size={15} /></ActionButton>
               </div>
             </div>
           )}
         </div>
         {result.deliveryRecipients?.length > 0 && <ShareNotificationStatus result={result} />}
         <div className="result-actions">
-          <button className="secondary-button" onClick={onReset}><RotateCcw size={15} /> 继续发送</button>
-          <button className="primary-button" onClick={() => onCopy(`${result.shareUrl} · 取件码 ${result.code}`)}><Link2 size={15} /> 分享信息</button>
+          <ActionButton className="secondary-button" onClick={onReset}><RotateCcw size={15} /> 继续发送</ActionButton>
+          <ActionButton className="primary-button" onClick={() => onCopy(`${result.shareUrl} · 取件码 ${result.code}`)}><Link2 size={15} /> 分享信息</ActionButton>
         </div>
         {settings.passwordEnabled && <p className="result-security"><LockKeyhole size={14} /> 已开启提取密码保护</p>}
       </div>
@@ -1463,7 +1531,7 @@ export function ShareNotificationStatus({ result }) {
   )
 }
 
-export function CollectView({ entitlement, result, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
+export function CollectView({ userId = '', authLoading = false, revision = 0, entitlement, result, creating = false, manageData, manageLoading, records, onCreate, onResetResult, onCopy, onCopyQrImage, onOpenManager, onManageSettings, onCloseTask, onReopenTask, onDeleteSubmission, onCloseManager, onRefreshManager, onRefreshRecords }) {
   const collectionMaxMb = Math.floor((entitlement?.singleFileLimitBytes || 1.2 * 1024 ** 3) / 1024 ** 2)
   const restoredDraftRef = useRef(undefined)
   if (restoredDraftRef.current === undefined) restoredDraftRef.current = loadCollectionDraft(createDefaultCollectionForm()) || null
@@ -1473,7 +1541,11 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
   const [structureMessage, setStructureMessage] = useState('')
   // 材料清单与自定义字段整块默认收起；摘要会保留当前已配置的数量。
   const [structureCollapsed, setStructureCollapsed] = useState(true)
-  const collectionRecords = records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
+  const [accountHistory, setAccountHistory] = useState({ owner: '', records: [], error: '' })
+  const [historyRetry, setHistoryRetry] = useState(0)
+  const collectionRecords = authLoading ? [] : userId
+    ? accountHistory.owner === userId ? accountHistory.records : []
+    : records.map(normalizeRecord).filter((record) => record.scope === 'my_collections')
   const validation = validateCollectionStructure(form.materials, form.customFields)
   const titleMissing = submitAttempted && !form.title.trim()
   const structureSummary = (form.materials.length || form.customFields.length)
@@ -1489,8 +1561,21 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
     .map((record) => ({ id: record.id, name: record.name || '未命名任务' }))
 
   useEffect(() => {
-    onRefreshRecords?.({ silent: true }).catch(() => {})
-  }, [])
+    if (authLoading) return undefined
+    if (!userId) {
+      setAccountHistory({ owner: '', records: [], error: '' })
+      onRefreshRecords?.({ silent: true }).catch(() => {})
+      return undefined
+    }
+    const controller = new AbortController()
+    fetchOwnedCollectionPage(controller.signal, { force: historyRetry > 0 }).then(data => {
+      if (!controller.signal.aborted) setAccountHistory({ owner: userId,
+        records: (data.collections || []).map(collection => createCollectionRecord(collection)), error: '' })
+    }).catch(error => {
+      if (!controller.signal.aborted) setAccountHistory({ owner: userId, records: [], error: error.message || '任务列表加载失败' })
+    })
+    return () => controller.abort()
+  }, [userId, authLoading, revision, result?.token, historyRetry])
 
   useEffect(() => {
     if (result) return undefined
@@ -1543,7 +1628,7 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
       return
     }
     setStructureMessage('')
-    onCreate({
+    return onCreate({
       ...form,
       maxFileSizeMb: Math.min(form.maxFileSizeMb, collectionMaxMb),
       materials: form.materials.map(({ autoFocus, ...material }) => material),
@@ -1586,9 +1671,9 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
                   <label>截止时间<DatePicker value={form.deadline} onChange={(value) => update('deadline', value)} min={formatDateInput(new Date())} ariaLabel="截止时间" /></label>
                   <label>单文件大小限制<select value={Math.min(form.maxFileSizeMb, collectionMaxMb)} onChange={(event) => update('maxFileSizeMb', Number(event.target.value))}>{collectionSizeOptions(collectionMaxMb, form.maxFileSizeMb).map(size => <option key={size} value={size}>{formatBytes(size * 1024 ** 2)}</option>)}</select></label>
                 </div>
-                <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</button>)}</div></label>
+                <label>文件类型<div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <ActionButton key={type} className={form.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => update('allowedTypes', toggleCollectionType(form.allowedTypes, type))}>{type}</ActionButton>)}</div></label>
                 <div className={`collection-structure-block${structureCollapsed ? ' is-collapsed' : ''}`}>
-                  <button
+                  <ActionButton
                     type="button"
                     className="collection-structure-summary"
                     aria-expanded={!structureCollapsed}
@@ -1604,7 +1689,7 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
                       <span>{structureCollapsed ? '更多' : '收起'}</span>
                       {structureCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
                     </span>
-                  </button>
+                  </ActionButton>
                   {!structureCollapsed && <div id="collection-structure-body" className="collection-structure-body">
                     <CollectionStructureAssistant form={form} onApplyStructure={applyStructure} copySources={copySources} onCopyStructure={copyStructureFromRecord} />
                     <div className="collection-builder-groups">
@@ -1627,7 +1712,7 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
                 </div>}
                 <div className="collection-draft-status" aria-live="polite">{draftStatus && <><Save size={13} /><span>{draftStatus}</span></>}</div>
                 <p className="admin-plan-help">每个任务最多 {(entitlement?.collectionParticipantLimit ?? 10) || '不限'} 人提交 · 同时进行 {(entitlement?.activeCollectionLimit ?? 1) || '不限'} 个任务</p>
-                <button className="primary-button wide" onClick={submitCreate}><Inbox size={16} /> 创建收集任务 <ArrowRight size={15} /></button>
+                <ActionButton className="primary-button wide" disabled={creating} aria-busy={creating} onClick={submitCreate}><Inbox size={16} /> {creating ? '正在创建...' : '创建收集任务'} {!creating && <ArrowRight size={15} />}</ActionButton>
               </div>
             </>
           ) : (
@@ -1635,10 +1720,13 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
           )}
         </div>
       )}
+      {!manageData && accountHistory.owner === userId && accountHistory.error && (
+        <div className="empty-manage" role="alert"><span>{accountHistory.error}</span><ActionButton className="secondary-button" onClick={() => setHistoryRetry(value => value + 1)}><RefreshCw size={15} /> 重新加载任务</ActionButton></div>
+      )}
       {!manageData && collectionRecords.length > 0 && (
           <div className="collection-history" id="collection-history">
           <div className="collection-history-heading">
-            <div><p className="eyebrow">本机保存的任务</p><h2>我的收集任务</h2></div>
+            <div><p className="eyebrow">{userId ? '当前账号的任务' : '本机保存的任务'}</p><h2>我的收集任务</h2></div>
             <span>{collectionRecords.length} 个任务</span>
           </div>
           <div className="collection-history-list">
@@ -1655,7 +1743,7 @@ export function CollectView({ entitlement, result, manageData, manageLoading, re
                   <div className="collection-history-actions">
                     {managePath
                       ? <a className="secondary-button" href={managePath}><FolderOpen size={15} /> 查看已收文件</a>
-                      : <button className="secondary-button" disabled={!recordManageUrl(record)} onClick={() => onOpenManager(recordManageUrl(record))}><FolderOpen size={15} /> 查看已收文件</button>}
+                      : <ActionButton className="secondary-button" disabled={!recordManageUrl(record)} onClick={() => onOpenManager(recordManageUrl(record))}><FolderOpen size={15} /> 查看已收文件</ActionButton>}
                   </div>
                 </div>
               )
@@ -1684,26 +1772,26 @@ export function CollectionSuccess({ result, onCopy, onCopyQrImage, onOpenManager
           <div className="collection-link-item">
             <strong className="collection-link-label">普通收集链接</strong>
             <span className="collection-link-description">发给参与者，用于提交文件</span>
-            <div className="collection-share"><Link2 size={16} /><strong title={result.publicUrl}>{result.publicUrl}</strong><button onClick={() => onCopy(result.publicUrl)} aria-label="复制普通收集链接" title="复制普通收集链接"><Copy size={15} /></button></div>
+            <div className="collection-share"><Link2 size={16} /><strong title={result.publicUrl}>{result.publicUrl}</strong><ActionButton onClick={() => onCopy(result.publicUrl)} aria-label="复制普通收集链接" title="复制普通收集链接"><Copy size={15} /></ActionButton></div>
           </div>
           {result.enterpriseUrl && <div className="collection-link-item">
             <strong className="collection-link-label">团队专属收集链接</strong>
             <span className="collection-link-description">提交到同一任务，页面另有申请加入团队入口</span>
-            <div className="collection-share enterprise-link"><Building2 size={16} /><strong title={result.enterpriseUrl}>{result.enterpriseUrl}</strong><button onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制团队专属收集链接" title="复制团队专属收集链接"><Copy size={15} /></button></div>
+            <div className="collection-share enterprise-link"><Building2 size={16} /><strong title={result.enterpriseUrl}>{result.enterpriseUrl}</strong><ActionButton onClick={() => onCopy(result.enterpriseUrl)} aria-label="复制团队专属收集链接" title="复制团队专属收集链接"><Copy size={15} /></ActionButton></div>
           </div>}
         </div>
         {result.qrDataUrl && (
-          <button className="qr-trigger" onClick={() => setQrOpen(true)} aria-label="打开收集二维码">
+          <ActionButton className="qr-trigger" onClick={() => setQrOpen(true)} aria-label="打开收集二维码">
             <img className="collection-qr" src={result.qrDataUrl} alt="收集二维码" />
             <span>普通收集链接二维码 · 点击放大</span>
-          </button>
+          </ActionButton>
         )}
         <div className="result-actions">
-          <button className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回创建</button>
+          <ActionButton className="secondary-button" onClick={onBack}><ArrowLeft size={15} /> 返回创建</ActionButton>
           {managePath
             ? <a className="secondary-button" href={managePath}><FolderOpen size={15} /> 查看已收文件</a>
-            : <button className="secondary-button" onClick={() => onOpenManager(result.manageUrl)}><FolderOpen size={15} /> 查看已收文件</button>}
-          <button className="primary-button" onClick={() => onCopy(result.manageUrl)}><KeyRound size={15} /> 复制管理链接</button>
+            : <ActionButton className="secondary-button" onClick={() => onOpenManager(result.manageUrl)}><FolderOpen size={15} /> 查看已收文件</ActionButton>}
+          <ActionButton className="primary-button" onClick={() => onCopy(result.manageUrl)}><KeyRound size={15} /> 复制管理链接</ActionButton>
         </div>
         <div className="collection-management-note">管理链接供创建者查看、下载和管理已收文件</div>
       </div>
@@ -1741,17 +1829,17 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
           <CollectionLimitInfo allowedTypes={data.allowedTypes} maxFileSizeMb={data.maxFileSizeMb} />
         </div>
         <div className="collection-files-actions">
-          <button className="secondary-button" onClick={onClose}><ArrowLeft size={15} /> 返回任务</button>
-          <button className="secondary-button" disabled={!data.publicUrl} onClick={() => onCopy?.(data.publicUrl)}><Link2 size={15} /> 复制提交链接</button>
-          <button className="secondary-button" disabled={!data.qrDataUrl} onClick={() => setQrOpen(true)}><QrCode size={15} /> 查看二维码</button>
-          <button className="secondary-button" onClick={() => onManageSettings(data)}><Settings2 size={15} /> 编辑任务</button>
-          <button className="secondary-button collection-refresh-button" onClick={onRefresh}><RefreshCw size={15} /> 刷新</button>
+          <ActionButton className="secondary-button" onClick={onClose}><ArrowLeft size={15} /> 返回任务</ActionButton>
+          <ActionButton className="secondary-button" disabled={!data.publicUrl} onClick={() => onCopy?.(data.publicUrl)}><Link2 size={15} /> 复制提交链接</ActionButton>
+          <ActionButton className="secondary-button" disabled={!data.qrDataUrl} onClick={() => setQrOpen(true)}><QrCode size={15} /> 查看二维码</ActionButton>
+          <ActionButton className="secondary-button" onClick={() => onManageSettings(data)}><Settings2 size={15} /> 编辑任务</ActionButton>
+          <ActionButton className="secondary-button collection-refresh-button" onClick={onRefresh}><RefreshCw size={15} /> 刷新</ActionButton>
           {isActive ? (
-            <button className="secondary-button danger-lite" onClick={() => onCloseTask(data)}><X size={15} /> 关闭收集</button>
+            <ActionButton className="secondary-button danger-lite" onClick={() => onCloseTask(data)}><X size={15} /> 关闭收集</ActionButton>
           ) : canReopenCollection(data) ? (
-            <button className="secondary-button" onClick={() => onReopenTask(data)}><RefreshCw size={15} /> 重新开启</button>
+            <ActionButton className="secondary-button" onClick={() => onReopenTask(data)}><RefreshCw size={15} /> 重新开启</ActionButton>
           ) : (
-            <button className="secondary-button" onClick={() => onManageSettings(data)}><CalendarDays size={15} /> 延长后开启</button>
+            <ActionButton className="secondary-button" onClick={() => onManageSettings(data)}><CalendarDays size={15} /> 延长后开启</ActionButton>
           )}
         </div>
       </div>
@@ -1759,7 +1847,7 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
         {data.materials?.length > 0 && <div><strong>材料清单</strong><span>{data.materials.map((material) => `${material.name}${material.required ? '（必交）' : '（选交）'}${material.namingPattern ? ` · 命名：${material.namingPattern}` : ''}`).join('、')}</span></div>}
         {data.customFields?.length > 0 && <div><strong>自定义字段</strong><span>{data.customFields.map((field) => `${field.label}${field.required ? '（必填）' : ''}`).join('、')}</span></div>}
       </div>}
-      {data.submissions.length > 0 && <button className="primary-button wide collection-download-all" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</button>}
+      {data.submissions.length > 0 && <ActionButton className="primary-button wide collection-download-all" onClick={downloadAll} disabled={downloadBusy}><Download size={16} /> 打包下载全部提交</ActionButton>}
       <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
       <CollectionMaterialMatrix materials={data.materials || []} submissions={data.submissions || []} />
       {data.submissions.length ? (
@@ -1778,11 +1866,11 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
                 </div>
                 <div className="submission-heading-actions">
                   <span className="submission-badge">已提交</span>
-                  <button className="submission-download-button" onClick={() => downloadSubmissionItem(submission)} disabled={downloadBusy}><Download size={14} /> 下载此提交</button>
-                  <button className="submission-delete-button" onClick={() => onDeleteSubmission(data, submission.id)}><Trash2 size={14} /> 删除提交</button>
+                  <ActionButton className="submission-download-button" onClick={() => downloadSubmissionItem(submission)} disabled={downloadBusy}><Download size={14} /> 下载此提交</ActionButton>
+                  <ActionButton className="submission-delete-button" onClick={() => onDeleteSubmission(data, submission.id)}><Trash2 size={14} /> 删除提交</ActionButton>
                 </div>
               </div>
-              <div className="submission-files" role="region" aria-label={`${submission.participantName}的文件列表`} tabIndex={0}>{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><PrototypeFileIcon name={file.name} size={20} fallback={FileText} /><span title={file.name}>{file.name}{file.originalName && file.originalName !== file.name && <small className="submission-original-name">原文件名：{file.originalName}</small>}</span><small>{formatBytes(file.size)}</small>{canPreviewFile(file) && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></button>}<button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><Download size={15} /></button></div>)}</div>
+              <div className="submission-files" role="region" aria-label={`${submission.participantName}的文件列表`} tabIndex={0}>{submission.files.map((file, fileIndex) => <div className="submission-file" key={`${submission.id}-${file.relativePath}`}><PrototypeFileIcon name={file.name} size={20} fallback={FileText} /><span title={file.name}>{file.name}{file.originalName && file.originalName !== file.name && <small className="submission-original-name">原文件名：{file.originalName}</small>}</span><small>{formatBytes(file.size)}</small>{canPreviewFile(file) && <ActionButton className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={() => previewFile(submission, fileIndex)}><Eye size={15} /></ActionButton>}<ActionButton className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={() => downloadFile(submission, fileIndex)} disabled={downloadBusy}><Download size={15} /></ActionButton></div>)}</div>
               {(data.materials?.length > 0 || data.customFields?.length > 0) && <div className="submission-form-values">
                 {data.materials?.length > 0 && <div className="submission-value-group"><strong>本次材料</strong><span>{(submission.materialIds || []).map((id) => data.materials.find((material) => material.id === id)?.name || id).join('、') || '未标记'}</span>{submission.missingMaterialIds?.length > 0 && <em>缺少必交：{submission.missingMaterialIds.map((id) => data.materials.find((material) => material.id === id)?.name || id).join('、')}</em>}</div>}
                 {data.customFields?.map((field) => <div className="submission-value-group" key={field.id}><strong>{field.label}</strong><span>{submission.fieldValues?.[field.id] || '未填写'}</span></div>)}
@@ -1810,6 +1898,8 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
 }
 
 export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
+  const findButtonRef = useRef(null)
+  const verifyButtonRef = useRef(null)
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [requiresLogin, setRequiresLogin] = useState(false)
@@ -1844,35 +1934,35 @@ export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
       <div className={`modal retrieve-modal ${result ? 'retrieve-modal-result' : ''}`} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">取件</p><h2>{result ? '文件已找到' : '输入取件码'}</h2></div>
-          <button className="ghost-icon modal-close" aria-label="关闭取件窗口" onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon modal-close" aria-label="关闭取件窗口" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body">
           {!result ? (
             <>
               <p className="modal-intro">输入分享者发给你的 4-6 位取件码，开始下载文件。</p>
-              <input className="code-input" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === 'Enter') findShare() }} placeholder="例如 QK7P" autoFocus />
+              <input className="code-input" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); findButtonRef.current?.click() } }} placeholder="例如 QK7P" autoFocus />
               <div className="retrieve-hint"><ShieldCheck size={15} /> 定向分享需使用收件账号登录</div>
               {error && <p className="public-message">{error}</p>}
-              {requiresLogin && <button className="secondary-button" onClick={loginAsRecipient}><UserRound size={15} /> 使用收件账号登录</button>}
+              {requiresLogin && <ActionButton className="secondary-button" onClick={loginAsRecipient}><UserRound size={15} /> 使用收件账号登录</ActionButton>}
             </>
           ) : (
             <>
               <p className="modal-intro">{result.requiresPassword ? '这个分享已开启提取密码，验证后即可查看文件。' : `${share.files.length} 个文件 · ${formatExpiry(share.expiresAt)}`}</p>
-              {result.requiresPassword && <input maxLength={128} className="modal-inline-input" type="password" value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} onKeyDown={(event) => { if (event.key === 'Enter') verify() }} placeholder="请输入提取密码，最多 128 个字符" />}
-              {result.requiresPassword && <button className="secondary-button verify-button" onClick={verify}>验证密码</button>}
+              {result.requiresPassword && <input maxLength={128} className="modal-inline-input" type="password" value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); verifyButtonRef.current?.click() } }} placeholder="请输入提取密码，最多 128 个字符" />}
+              {result.requiresPassword && <ActionButton ref={verifyButtonRef} className="secondary-button verify-button" onClick={verify}>验证密码</ActionButton>}
               {share.files.length > 0 && (
                 <div className="public-files compact">
                   {share.files.map((file, fileIndex) => <FileRow key={file.relativePath} file={file} onPreview={canPreviewFile(file) && !result.requiresPassword ? () => previewFile(file, fileIndex) : null} onDownload={() => downloadFile(file, fileIndex)} downloadDisabled={downloadBusy || result.requiresPassword} />)}
                 </div>
               )}
-              {!result.requiresPassword && <button className="primary-button wide" onClick={downloadAll} disabled={downloadBusy || !(share?.files || []).length}><Download size={16} /> {(share?.files || []).length > 1 ? '下载全部文件' : '下载文件'}</button>}
+              {!result.requiresPassword && <ActionButton className="primary-button wide" onClick={downloadAll} disabled={downloadBusy || !(share?.files || []).length}><Download size={16} /> {(share?.files || []).length > 1 ? '下载全部文件' : '下载文件'}</ActionButton>}
               <DownloadProgressPanel task={downloadTask} onRetry={retryDownload} />
               {error && <p className="public-message">{error}</p>}
               {previewItem && <FilePreviewModal preview={previewItem} onClose={() => setPreviewItem(null)} onDownload={(config) => startDownload(config || previewItem.downloadConfig)} downloadDisabled={downloadBusy} />}
             </>
           )}
         </div>
-        {!result && <div className="modal-footer retrieve-footer"><button className="primary-button" onClick={findShare}><KeyRound size={16} /> 查找文件</button></div>}
+        {!result && <div className="modal-footer retrieve-footer"><ActionButton ref={findButtonRef} className="primary-button" onClick={findShare}><KeyRound size={16} /> 查找文件</ActionButton></div>}
       </div>
     </div>
   )
@@ -1894,28 +1984,28 @@ export function SettingsModal({ settings, setSettings, user, onClose, onSave }) 
       <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">分享设置</p><h2>让文件按你的规则消失</h2></div>
-          <button className="ghost-icon" onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body">
           <div className="setting-block">
             <span>分享有效期</span>
-            <div className="option-grid">{[['1 天', '1'], ['3 天', '3'], ['7 天', '7'], ['永久', '0']].map(([label, value]) => <button key={value} disabled={value === '0' && !canUsePermanent} className={settings.expiryDays === value ? 'selected' : ''} onClick={() => updateExpiry(label, value)} title={value === '0' && !canUsePermanent ? '当前账号不支持永久保存' : ''}>{label}{settings.expiryDays === value && <Check size={14} />}</button>)}</div>
+            <div className="option-grid">{[['1 天', '1'], ['3 天', '3'], ['7 天', '7'], ['永久', '0']].map(([label, value]) => <ActionButton key={value} disabled={value === '0' && !canUsePermanent} className={settings.expiryDays === value ? 'selected' : ''} onClick={() => updateExpiry(label, value)} title={value === '0' && !canUsePermanent ? '当前账号不支持永久保存' : ''}>{label}{settings.expiryDays === value && <Check size={14} />}</ActionButton>)}</div>
             {!canUsePermanent && <small className="setting-hint">当前账号不支持永久保存，会按所选有效期创建分享。</small>}
           </div>
           <div className="setting-block">
             <span>下载次数</span>
-            <div className="option-grid">{[['不限次数', 'unlimited'], ['10 次', '10'], ['1 次', '1'], ['自定义', 'custom']].map(([label, value]) => <button key={value} className={settings.downloadLimit === value ? 'selected' : ''} onClick={() => setSettings({ ...settings, downloads: label, downloadLimit: value })}>{label}{settings.downloadLimit === value && <Check size={14} />}</button>)}</div>
+            <div className="option-grid">{[['不限次数', 'unlimited'], ['10 次', '10'], ['1 次', '1'], ['自定义', 'custom']].map(([label, value]) => <ActionButton key={value} className={settings.downloadLimit === value ? 'selected' : ''} onClick={() => setSettings({ ...settings, downloads: label, downloadLimit: value })}>{label}{settings.downloadLimit === value && <Check size={14} />}</ActionButton>)}</div>
             {settings.downloadLimit === 'custom' && <label className="inline-setting-input"><span>最多下载次数</span><input type="number" min="1" max="9999" value={settings.customDownloadLimit} onChange={(event) => setSettings({ ...settings, customDownloadLimit: event.target.value })} placeholder="例如：5" /></label>}
           </div>
           <div className="setting-block">
             <span>取件码长度</span>
-            <div className="option-grid compact-grid">{[['4 位', '4'], ['5 位', '5'], ['6 位', '6']].map(([label, value]) => <button key={value} className={settings.codeLength === value ? 'selected' : ''} onClick={() => setSettings({ ...settings, codeLength: value })}>{label}{settings.codeLength === value && <Check size={14} />}</button>)}</div>
+            <div className="option-grid compact-grid">{[['4 位', '4'], ['5 位', '5'], ['6 位', '6']].map(([label, value]) => <ActionButton key={value} className={settings.codeLength === value ? 'selected' : ''} onClick={() => setSettings({ ...settings, codeLength: value })}>{label}{settings.codeLength === value && <Check size={14} />}</ActionButton>)}</div>
           </div>
-          <div className="switch-row"><div><strong>提取密码</strong><span>取件时需要额外输入密码</span></div><button className={`switch ${settings.passwordEnabled ? 'on' : ''}`} aria-label={settings.passwordEnabled ? '关闭提取密码' : '开启提取密码'} onClick={() => setSettings({ ...settings, passwordEnabled: !settings.passwordEnabled })}><span /></button></div>
+          <div className="switch-row"><div><strong>提取密码</strong><span>取件时需要额外输入密码</span></div><ActionButton className={`switch ${settings.passwordEnabled ? 'on' : ''}`} aria-label={settings.passwordEnabled ? '关闭提取密码' : '开启提取密码'} onClick={() => setSettings({ ...settings, passwordEnabled: !settings.passwordEnabled })}><span /></ActionButton></div>
           {settings.passwordEnabled && <label className="password-field"><span>密码内容</span><input maxLength={128} className="modal-inline-input" type="password" value={settings.password} onChange={(event) => setSettings({ ...settings, password: limitInputText(event.target.value, 128) })} placeholder="请输入密码，最多 128 个字符" /><small>{settings.password.length}/128</small></label>}
           {settingError && <p className="public-message" role="alert">{settingError}</p>}
         </div>
-        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={Boolean(settingError)} onClick={onSave}><Save size={15} /> 保存设置</button></div>
+        <div className="modal-footer"><ActionButton className="secondary-button" onClick={onClose}>取消</ActionButton><ActionButton className="primary-button" disabled={Boolean(settingError)} onClick={onSave}><Save size={15} /> 保存设置</ActionButton></div>
       </div>
     </div>
   )
@@ -1926,12 +2016,12 @@ export function settingsSectionForPath(pathname = '') {
   return SETTINGS_NAV_ITEMS.some((item) => item.key === section) ? section : 'profile'
 }
 
-export function NavItem({ icon: Icon, label, active, onClick }) { return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></button> }
+export function NavItem({ icon: Icon, label, active, onClick }) { return <ActionButton data-prefetch-route={label === '会员与团队' ? '/workspace' : label === '收发记录' ? '/?view=records' : '/'} className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></ActionButton> }
 
-export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin, onInvitationAction, onHandoverAction, handoverDecisionId, onNotify }) {
+export function MessageCenter({ user, messages, unreadCount: totalUnread, loading = false, hasMore = false, onLoadMore, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin, onInvitationAction, onHandoverAction, handoverDecisionId, onNotify }) {
   const { toast, notify: localNotify } = useToast()
   const notify = onNotify || localNotify
-  const unreadCount = messages.filter((message) => message.unread).length
+  const unreadCount = totalUnread ?? messages.filter((message) => message.unread).length
   // 长消息默认两行截断，点击展开/收起完整正文（展开的同时保留标已读行为）
   const [expandedIds, setExpandedIds] = useState(() => new Set())
   // 取件码复制反馈：{ code, ok }，1.8s 后自动清除
@@ -1969,7 +2059,7 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
     try {
       const target = new URL(message.actionUrl, window.location.origin)
       if (target.origin !== window.location.origin || !/^https?:$/.test(target.protocol) || !/^\/(?:share|collect|e|settings|workspace|team)(?:\/|$)/.test(target.pathname)) return
-      window.location.href = `${target.pathname}${target.search}${target.hash}`
+      navigateApp(`${target.pathname}${target.search}${target.hash}`)
     } catch { /* Invalid historical message links are not navigable. */ }
   }
 
@@ -1987,48 +2077,49 @@ export function MessageCenter({ user, messages, open, onToggle, onClose, onMarkR
   return (
     <div className="message-center-wrap">
       {toast && <Toast {...toast} />}
-      <button className={`message-trigger ${open ? 'active' : ''}`} aria-label={unreadCount ? `消息中心，有 ${unreadCount} 条未读消息` : '消息中心'} aria-haspopup="dialog" aria-expanded={open} onClick={onToggle}>
+      <ActionButton className={`message-trigger ${open ? 'active' : ''}`} aria-label={unreadCount ? `消息中心，有 ${unreadCount} 条未读消息` : '消息中心'} aria-haspopup="dialog" aria-expanded={open} onClick={onToggle}>
         <Bell size={18} />
         {unreadCount > 0 && <span className="message-unread-dot" />}
-      </button>
+      </ActionButton>
       {open && (
         <div className="message-center" role="dialog" aria-label="消息中心" onClick={(event) => event.stopPropagation()}>
           <div className="message-center-header">
             <div><strong>消息中心</strong><span>{unreadCount ? `${unreadCount} 条未读消息` : '没有未读消息'}</span></div>
-            {user ? <div className="message-header-actions"><button className="message-mark-all" onClick={onMarkAllRead} disabled={!unreadCount}><MailCheck size={14} /> 全部已读</button><button className="message-mark-all danger" onClick={onClearAll} disabled={!messages.length}><Eraser size={14} /> 清除全部</button></div> : null}
+            {user ? <div className="message-header-actions"><ActionButton className="message-mark-all" onClick={onMarkAllRead} disabled={!unreadCount}><MailCheck size={14} /> 全部已读</ActionButton><ActionButton className="message-mark-all danger" onClick={onClearAll} disabled={!messages.length}><Eraser size={14} /> 清除全部</ActionButton></div> : null}
           </div>
           {!user ? (
-            <div className="message-empty"><MessageCircle size={22} /><strong>登录后查看消息</strong><span>登录后可以接收系统、官方和他人发送的消息。</span><button className="secondary-button" onClick={onLogin}><UserRound size={15} /> 前往登录</button></div>
-          ) : messages.length ? (
+            <div className="message-empty"><MessageCircle size={22} /><strong>登录后查看消息</strong><span>登录后可以接收系统、官方和他人发送的消息。</span><ActionButton className="secondary-button" onClick={onLogin}><UserRound size={15} /> 前往登录</ActionButton></div>
+          ) : loading && !messages.length ? <div className="message-empty" role="status">正在加载消息</div> : messages.length ? (
             <div className="message-list">
               {messages.map((message) => {
                 const shareCode = shareCodeOf(message)
                 return (
                 <div key={message.id} className={`message-item ${message.unread ? 'unread' : ''}`}>
-                  <button className="message-item-main" onClick={() => { onMarkRead(message); toggleExpanded(message) }} aria-expanded={expandedIds.has(message.id)}>
+                  <ActionButton className="message-item-main" onClick={() => { const request = onMarkRead(message); toggleExpanded(message); return request }} aria-expanded={expandedIds.has(message.id)}>
                   <span className={`message-item-icon ${message.category}`}><MessageIcon category={message.category} /></span>
                   <span className="message-item-content"><strong>{message.title}</strong><span className={expandedIds.has(message.id) ? 'expanded' : ''}>{message.body}</span><small>{formatMessageTime(message.createdAt)}{message.body.length > 60 ? ` · ${expandedIds.has(message.id) ? '点击收起' : '点击展开'}` : ''}</small></span>
                   {message.unread && <i className="message-item-dot" />}
-                  </button>
+                  </ActionButton>
                   {shareCode && (
                     <div className="message-code-actions">
-                      <button type="button" className="message-code-chip" onClick={(event) => { event.stopPropagation(); copyMessageCode(message, shareCode) }}>
+                      <ActionButton type="button" className="message-code-chip" onClick={(event) => { event.stopPropagation(); return copyMessageCode(message, shareCode) }}>
                         <Copy size={12} /> {codeFeedback?.code === shareCode ? (codeFeedback.ok ? '已复制，去提取页粘贴即可' : '复制失败，请手动选取') : `复制取件码 ${shareCode}`}
-                      </button>
+                      </ActionButton>
                       {message.actionUrl && (
-                        <button type="button" className="message-code-open" onClick={(event) => { event.stopPropagation(); openMessageAction(message) }}>
+                        <ActionButton type="button" className="message-code-open" onClick={(event) => { event.stopPropagation(); return openMessageAction(message) }}>
                           <ArrowRight size={12} /> 去提取
-                        </button>
+                        </ActionButton>
                       )}
                     </div>
                   )}
-                  {message.actionType === 'workspace_invite' && <div className="message-invite-actions"><button type="button" className="secondary-button" onClick={() => onInvitationAction?.(message, 'decline')}><UserX size={15} /> 拒绝</button><button type="button" className="primary-button" onClick={() => onInvitationAction?.(message, 'accept')}><UserCheck size={15} /> 接受加入</button></div>}
-                  {message.actionType === 'workspace_ownership_handover' && <div className="message-invite-actions message-handover-actions" aria-busy={Boolean(handoverDecisionId)}><button type="button" className="secondary-button" disabled={Boolean(handoverDecisionId)} onClick={() => onHandoverAction?.(message, 'decline')}><UserX size={15} /> 拒绝交接</button><button type="button" className="primary-button" disabled={Boolean(handoverDecisionId)} onClick={() => onHandoverAction?.(message, 'accept')}><UserCheck size={15} /> {handoverDecisionId === message.actionId ? '处理中…' : '接受交接'}</button></div>}
-                  {(message.actionType || '').startsWith('workspace_ownership_handover') && message.actionUrl && <div className="message-invite-actions message-handover-actions"><button type="button" className="secondary-button" onClick={() => openMessageAction(message)}><ArrowRight size={14} /> 查看交接</button></div>}
-                  <button className="message-item-delete" aria-label={`删除消息：${message.title}`} title="删除消息" onClick={(event) => { event.stopPropagation(); onDelete(message) }}><Trash2 size={14} /></button>
+                  {message.actionType === 'workspace_invite' && <div className="message-invite-actions"><ActionButton type="button" className="secondary-button" onClick={() => onInvitationAction?.(message, 'decline')}><UserX size={15} /> 拒绝</ActionButton><ActionButton type="button" className="primary-button" onClick={() => onInvitationAction?.(message, 'accept')}><UserCheck size={15} /> 接受加入</ActionButton></div>}
+                  {message.actionType === 'workspace_ownership_handover' && <div className="message-invite-actions message-handover-actions" aria-busy={Boolean(handoverDecisionId)}><ActionButton type="button" className="secondary-button" disabled={Boolean(handoverDecisionId)} onClick={() => onHandoverAction?.(message, 'decline')}><UserX size={15} /> 拒绝交接</ActionButton><ActionButton type="button" className="primary-button" disabled={Boolean(handoverDecisionId)} onClick={() => onHandoverAction?.(message, 'accept')}><UserCheck size={15} /> {handoverDecisionId === message.actionId ? '处理中…' : '接受交接'}</ActionButton></div>}
+                  {(message.actionType || '').startsWith('workspace_ownership_handover') && message.actionUrl && <div className="message-invite-actions message-handover-actions"><ActionButton type="button" className="secondary-button" onClick={() => openMessageAction(message)}><ArrowRight size={14} /> 查看交接</ActionButton></div>}
+                  <ActionButton className="message-item-delete" aria-label={`删除消息：${message.title}`} title="删除消息" onClick={(event) => { event.stopPropagation(); return onDelete(message) }}><Trash2 size={14} /></ActionButton>
                 </div>
                 )
               })}
+              {hasMore && <ActionButton type="button" className="secondary-button" disabled={loading} onClick={onLoadMore}>{loading ? '加载中' : '加载更多'}</ActionButton>}
             </div>
           ) : (
             <div className="message-empty"><Bell size={22} /><strong>暂无消息</strong><span>新的动态会显示在这里。</span></div>

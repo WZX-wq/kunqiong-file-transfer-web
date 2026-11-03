@@ -201,6 +201,8 @@ export function normalizeSystemConfig(value = {}) {
   const anonymousTotalSizeMb = Number(source.anonymousTotalSizeMb)
   const maxBatchFiles = Number(source.maxBatchFiles)
   const auditLogRetentionDays = Number(source.auditLogRetentionDays)
+  const auditAccessLogRetentionDays = Number(source.auditAccessLogRetentionDays)
+  const auditCleanupIntervalMinutes = Number(source.auditCleanupIntervalMinutes)
   const orphanGraceHours = Number(source.orphanGraceHours)
   return {
     entitlementsVersion: 1,
@@ -211,6 +213,8 @@ export function normalizeSystemConfig(value = {}) {
     anonymousTotalSizeMb: Number.isFinite(anonymousTotalSizeMb) ? Math.min(102400, Math.max(0, Math.floor(anonymousTotalSizeMb))) : DEFAULT_SYSTEM_CONFIG.anonymousTotalSizeMb,
     maxBatchFiles: Number.isFinite(maxBatchFiles) ? Math.min(MAX_FILES, Math.max(1, Math.floor(maxBatchFiles))) : DEFAULT_SYSTEM_CONFIG.maxBatchFiles,
     auditLogRetentionDays: Number.isFinite(auditLogRetentionDays) ? Math.min(3650, Math.max(1, Math.floor(auditLogRetentionDays))) : DEFAULT_SYSTEM_CONFIG.auditLogRetentionDays,
+    auditAccessLogRetentionDays: Number.isFinite(auditAccessLogRetentionDays) ? Math.min(3650, Math.max(1, Math.floor(auditAccessLogRetentionDays))) : DEFAULT_SYSTEM_CONFIG.auditAccessLogRetentionDays,
+    auditCleanupIntervalMinutes: Number.isFinite(auditCleanupIntervalMinutes) ? Math.min(1440, Math.max(1, Math.floor(auditCleanupIntervalMinutes))) : DEFAULT_SYSTEM_CONFIG.auditCleanupIntervalMinutes,
     orphanGraceHours: Number.isFinite(orphanGraceHours) ? Math.min(720, Math.max(1, Math.floor(orphanGraceHours))) : DEFAULT_SYSTEM_CONFIG.orphanGraceHours,
     anonymousCollectionParticipantLimit: Math.min(10000, Math.max(0, Math.floor(Number(source.anonymousCollectionParticipantLimit ?? DEFAULT_SYSTEM_CONFIG.anonymousCollectionParticipantLimit) || 0))),
     anonymousActiveCollectionLimit: Math.min(1000, Math.max(0, Math.floor(Number(source.anonymousActiveCollectionLimit ?? DEFAULT_SYSTEM_CONFIG.anonymousActiveCollectionLimit) || 0))),
@@ -370,7 +374,7 @@ export function publicUser(user = {}) {
   return {
     id: trimRecordString(user.id || user.userId || user.user_id || user.openid || user.open_id || user.unionid || user.sub || email || phone, 120),
     username,
-    nickname: trimRecordString(user.nickname || user.displayName || user.display_name || username || '鲲穹用户', 80),
+    nickname: trimRecordString(user.nickname || user.displayName || user.display_name || username || '用户', 80),
     email,
     phone,
     avatar: user.avatar || null,
@@ -398,11 +402,14 @@ export function normalizeAccountUserStore(value = {}, sessions = []) {
       if (normalized?.id) store[normalized.id] = mergeAccountUser(store[normalized.id], user, { touchUpdatedAt: false })
     }
   }
+  const storedAccountIds = new Set(Object.keys(store))
   for (const session of sessions) {
     const normalized = normalizeAccountUser(session.user)
     if (!normalized?.id) continue
-    // 传原始快照（而非归一化结果），保留 mergeAccountUser 需要的意图标记。
-    store[normalized.id] = mergeAccountUser(store[normalized.id], session.user, { touchUpdatedAt: false })
+    // A compact or historical session is an identity reference. Existing account
+    // rows are current; a session must not overwrite their username or profile.
+    // Legacy session-only imports can still merge their profile snapshots.
+    if (!storedAccountIds.has(normalized.id)) store[normalized.id] = mergeAccountUser(store[normalized.id], session.user, { touchUpdatedAt: false })
     session.user = publicUser(store[normalized.id])
   }
   return store
@@ -476,7 +483,8 @@ export function mergeAccountUser(existing = null, incoming = {}, { touchUpdatedA
   const merged = {
     ...base,
     ...normalized,
-    nickname: normalized.nickname || base.nickname,
+    username: normalized.username || base.username,
+    nickname: trimRecordString(incoming.nickname || incoming.displayName || incoming.display_name, 80) || base.nickname || normalized.nickname,
     // 本地验证绑定后，只能通过绑定流程更换；OAuth 和旧会话快照不可覆盖。
     email: base.loginMethods?.includes('email_bound') && incoming.contactBindingType !== 'email' ? base.email : normalized.email || base.email,
     phone: base.loginMethods?.includes('phone_bound') && incoming.contactBindingType !== 'phone' ? base.phone : normalized.phone || base.phone,

@@ -10,11 +10,13 @@ const supported = new Set(['kq_user', 'kq_organization', 'kq_upgrade_order', 'kq
 const orderColumns = 'id, legacy_id, order_no, user_id, plan_id, status, amount, pay_type, remote_order_no, paid_at, remote_expire_at, gmt_create, gmt_modified, write_version, entity_payload_json'
 const stamp = row => `${row.write_version}:${row.gmt_modified instanceof Date ? row.gmt_modified.toISOString() : row.gmt_modified}`
 
-export async function readVersionedRows(pool, table, where, params, suffix = '') {
+export async function readVersionedRows(pool, table, where, params, suffix = '', verifiedVersions = null) {
   if (!supported.has(table)) throw new TypeError('Unsupported versioned read table')
   let cache = pools.get(pool)
   if (!cache) { cache = { rows: new Map(), bytes: 0 }; pools.set(pool, cache) }
-  const [versions] = await pool.query(`SELECT id, write_version, gmt_modified, COALESCE(OCTET_LENGTH(entity_payload_json), 0) + 1024 AS read_bytes FROM \`${table}\` WHERE ${where}${suffix}`, params)
+  // A live session join can supply the same authoritative version projection.
+  // Reuse it instead of issuing a second version probe for the joined user.
+  const versions = verifiedVersions ?? (await pool.query(`SELECT id, write_version, gmt_modified, COALESCE(OCTET_LENGTH(entity_payload_json), 0) + 1024 AS read_bytes FROM \`${table}\` WHERE ${where}${suffix}`, params))[0]
   const fetched = new Map()
   const batches = []
   let batch = [], bytes = 0

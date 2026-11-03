@@ -19,6 +19,7 @@ const dom = new JSDOM('<div id="root"></div>', { url: 'http://fixture.local/?vie
 const { window } = dom
 const requests = []
 let createdCollection = null
+let releaseCreation = null
 const owner = { id: 'collection-owner', username: 'owner', nickname: '收集管理员', status: 'active', planId: 'free' }
 window.fetch = async (url, options = {}) => {
   let status = 200, payload = {}
@@ -27,10 +28,15 @@ window.fetch = async (url, options = {}) => {
   else if (url === '/api/guest/quota') payload = { enabled: false }
   else if (url === '/api/collections' && options.method === 'POST') {
     const body = JSON.parse(options.body)
-    requests.push({ url, body })
-    createdCollection = body
-    payload = { manageToken: 'fixture-manager', collection: { ...body, id: 'fixture-task', token: 'fixture-task', status: 'active', publicUrl: 'http://fixture.local/collect/fixture-task', manageUrl: 'http://fixture.local/collect/manage/fixture-manager' } }
-    status = 201
+    requests.push({ url, body, key: new Headers(options.headers).get('Idempotency-Key') })
+    const failed = await new Promise(resolve => { releaseCreation = resolve })
+    releaseCreation = null
+    if (failed) { status = 503; payload = { message: 'fixture 暂时失败，请重试' } }
+    else {
+      createdCollection = body
+      payload = { manageToken: 'fixture-manager', collection: { ...body, id: 'fixture-task', token: 'fixture-task', status: 'active', publicUrl: 'http://fixture.local/collect/fixture-task', manageUrl: 'http://fixture.local/collect/manage/fixture-manager' } }
+      status = 201
+    }
   } else {
     status = 404
     payload = { message: `Unexpected request: ${url}` }
@@ -130,7 +136,19 @@ setValue(doc.querySelector('[aria-label="字段类型 1"]'), 'select')
 setValue(doc.querySelector('[aria-label="供应商类型下拉选项"]'), '生产商, 经销商')
 doc.querySelector('.collection-field-editor-main .collection-rule-required input')?.click()
 await delay(20)
+const createButton = [...doc.querySelectorAll('button')].find(item => item.textContent.trim() === '创建收集任务')
+createButton.click(); createButton.click()
+await waitFor(() => releaseCreation, 'Create request waits for the server')
+assert.equal(requests.filter(item => item.url === '/api/collections').length, 1, 'Double-click creates one request')
+assert.ok([...doc.querySelectorAll('button')].find(item => item.textContent.includes('正在创建'))?.disabled, 'Creation stays disabled during a slow request')
+assert.ok(requests[0].key?.length >= 8, 'Create sends an idempotency key')
+const originalKey = requests[0].key
+releaseCreation(true)
+await waitFor(() => [...doc.querySelectorAll('button')].find(item => item.textContent.trim() === '创建收集任务')?.disabled === false, 'Failed creation unlocks')
 click('创建收集任务')
+await waitFor(() => releaseCreation, 'Retry request waits for server')
+assert.equal(requests.at(-1).key, originalKey, 'Retry preserves creation identity after an ambiguous failure')
+releaseCreation(false)
 await waitFor(() => createdCollection !== null, 'Collection task is created')
 await waitFor(() => doc.querySelector('.collection-success') !== null, 'Collection success view renders')
 assert.equal(createdCollection.materials[0].name, '营业执照')

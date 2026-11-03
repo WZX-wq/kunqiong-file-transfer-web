@@ -1,3 +1,4 @@
+import { ActionButton } from '../components/action-button.jsx'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, FileArchive, LockKeyhole, RefreshCw, Send, UploadCloud, UserRound, Wand2, XCircle } from 'lucide-react'
 import { formatBytes } from '../lib/format.js'
@@ -158,7 +159,7 @@ export function DistributionView({ user, onLogin, onNotify }) {
         <h1>批量分发给指定收件人</h1>
         <p>上传文件后，在每个文件后面填上收件人。发布后映射固定，收件人只能领取自己的文件。</p>
       </div>
-      {!user && <button className="primary-button" type="button" onClick={onLogin}><UserRound size={16} />登录后使用</button>}
+      {!user && <ActionButton className="primary-button" type="button" onClick={onLogin}><UserRound size={16} />登录后使用</ActionButton>}
     </div>
 
     <section className="distribution-card">
@@ -167,20 +168,20 @@ export function DistributionView({ user, onLogin, onNotify }) {
         <div><strong>文件与收件人</strong><small>文件名保持原样即可，不需要加编号或改名</small></div>
         <div className="distribution-tools">
           {items.length > 0 && <span className="distribution-count">{filled} / {items.length}</span>}
-          {items.length > 0 && <button type="button" className="distribution-link-button" onClick={() => setBulkOpen(open => !open)}><Wand2 size={13} />批量填入</button>}
+          {items.length > 0 && <ActionButton type="button" className="distribution-link-button" onClick={() => setBulkOpen(open => !open)}><Wand2 size={13} />批量填入</ActionButton>}
         </div>
       </div>
 
       {bulkOpen && <div className="distribution-bulk">
         <textarea value={bulkText} onChange={event => setBulkText(event.target.value)} rows={4} placeholder={'每行一个收件人，按顺序填入下面的文件：\n\nalice\nbob@example.com\n13800138000'} />
         <div className="distribution-bulk-actions">
-          <button className="secondary-button" type="button" onClick={() => { setBulkOpen(false); setBulkText('') }}>取消</button>
-          <button className="primary-button" type="button" disabled={!parseRecipientLines(bulkText).length} onClick={applyBulk}>按顺序填入</button>
+          <ActionButton className="secondary-button" type="button" onClick={() => { setBulkOpen(false); setBulkText('') }}>取消</ActionButton>
+          <ActionButton className="primary-button" type="button" disabled={!parseRecipientLines(bulkText).length} onClick={applyBulk}>按顺序填入</ActionButton>
         </div>
       </div>}
 
       <input ref={inputRef} hidden type="file" multiple onChange={event => { addFiles(event.target.files); event.target.value = '' }} />
-      {items.length === 0 && <button
+      {items.length === 0 && <ActionButton
         className={`distribution-drop ${dragging ? 'is-dragging' : ''}`}
         type="button"
         onClick={() => inputRef.current?.click()}
@@ -191,7 +192,7 @@ export function DistributionView({ user, onLogin, onNotify }) {
         <FileArchive size={22} />
         <span>把文件拖到这里，或点击选择</span>
         <small>支持一次选择多个文件，重复选择会自动去重</small>
-      </button>}
+      </ActionButton>}
 
       {items.length > 0 && <div className="distribution-list">
         {items.map((item, index) => {
@@ -212,12 +213,12 @@ export function DistributionView({ user, onLogin, onNotify }) {
               {state.tone === 'idle' && checking && <RefreshCw size={13} className="distribution-spin" />}
               {state.label}
             </span>
-            <button type="button" className="distribution-entry-remove" title={`移除 ${item.display}`} aria-label={`移除 ${item.display}`} onClick={() => removeFile(item.id)}><XCircle size={15} /></button>
+            <ActionButton type="button" className="distribution-entry-remove" title={`移除 ${item.display}`} aria-label={`移除 ${item.display}`} onClick={() => removeFile(item.id)}><XCircle size={15} /></ActionButton>
           </div>
         })}
       </div>}
 
-      {items.length > 0 && <button
+      {items.length > 0 && <ActionButton
         className={`distribution-drop is-compact ${dragging ? 'is-dragging' : ''}`}
         type="button"
         onClick={() => inputRef.current?.click()}
@@ -227,7 +228,7 @@ export function DistributionView({ user, onLogin, onNotify }) {
       >
         <FileArchive size={16} />
         <span>添加更多文件</span>
-      </button>}
+      </ActionButton>}
 
       {error && <div className="distribution-alert error"><XCircle size={17} />{error}</div>}
       {preview && !preview.ok && <div className="distribution-issues">
@@ -236,15 +237,15 @@ export function DistributionView({ user, onLogin, onNotify }) {
 
       <div className="distribution-actions">
         {user
-          ? <button className="primary-button" type="button" disabled={!canPublish} onClick={publish}><LockKeyhole size={15} />{publishing ? '发布中…' : '确认发布'}</button>
-          : <button className="primary-button" type="button" onClick={onLogin}><UserRound size={15} />登录后发布</button>}
+          ? <ActionButton className="primary-button" type="button" disabled={!canPublish} onClick={publish}><LockKeyhole size={15} />{publishing ? '发布中…' : '确认发布'}</ActionButton>
+          : <ActionButton className="primary-button" type="button" onClick={onLogin}><UserRound size={15} />登录后发布</ActionButton>}
       </div>
     </section>
 
     {result?.distribution && <section className="distribution-success">
       <CheckCircle2 size={20} />
       <div><strong>发布成功</strong><span>已冻结 {result.distribution.rowCount} 条文件与收件人映射，把链接发给收件人即可领取。</span></div>
-      <button className="secondary-button" type="button" onClick={() => { navigator.clipboard?.writeText(result.distribution.shareUrl); onNotify?.('分享链接已复制') }}>复制分享链接</button>
+      <ActionButton className="secondary-button" type="button" onClick={() => { navigator.clipboard?.writeText(result.distribution.shareUrl); onNotify?.('分享链接已复制') }}>复制分享链接</ActionButton>
     </section>}
   </div>
 }

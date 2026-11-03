@@ -1,3 +1,4 @@
+import { ActionButton, ActionForm } from './action-button.jsx'
 import { collectionSizeOptions } from '../lib/plan-limits.js'
 export { UserAvatar, userAvatarSource, displayUserInitial, displayUserSubtitle } from './account.jsx'
 import React from 'react'
@@ -26,7 +27,7 @@ export function DownloadProgressPanel({ task, onRetry, compact = false }) {
       {task.error && <p className="download-stop-error" role="alert">{task.error}</p>}
       {task.needsPassword ? <DownloadPasswordForm onUnlock={onRetry} /> : (
         <div className="download-stop-actions">
-          <button type="button" className="primary-button" onClick={() => onRetry()}><RotateCcw size={15} />{task.status === 'cancelled' ? '重新下载' : '重试下载'}</button>
+          <ActionButton type="button" className="primary-button" onClick={() => onRetry()}><RotateCcw size={15} />{task.status === 'cancelled' ? '重新下载' : '重试下载'}</ActionButton>
         </div>
       )}
     </div>
@@ -54,7 +55,7 @@ export function DownloadProgressPanel({ task, onRetry, compact = false }) {
       {task.status === 'failed' && task.needsPassword && <DownloadPasswordForm onUnlock={onRetry} />}
       {['failed', 'cancelled'].includes(task.status) && !task.needsPassword && (
         <div className="upload-control-row">
-          <button className="primary-button" onClick={() => onRetry()}><RotateCcw size={15} /> 重试下载</button>
+          <ActionButton className="primary-button" onClick={() => onRetry()}><RotateCcw size={15} /> 重试下载</ActionButton>
         </div>
       )}
     </div>
@@ -63,10 +64,10 @@ export function DownloadProgressPanel({ task, onRetry, compact = false }) {
 
 function DownloadPasswordForm({ onUnlock }) {
   const [password, setPassword] = useState('')
-  return <form className="public-password" onSubmit={(event) => { event.preventDefault(); if (password) onUnlock(password) }}>
+  return <ActionForm className="public-password" onSubmit={(event) => { event.preventDefault(); if (password) return onUnlock(password) }}>
     <input type="password" aria-label="提取密码" value={password} maxLength={128} autoFocus autoComplete="off" onChange={(event) => setPassword(limitInputText(event.target.value, 128))} placeholder="请输入提取密码，最多 128 个字符" />
-    <button type="submit" className="primary-button" disabled={!password}>验证并下载</button>
-  </form>
+    <ActionButton type="submit" className="primary-button" disabled={!password}>验证并下载</ActionButton>
+  </ActionForm>
 }
 
 export function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, onCopyImage, onCopyLink }) {
@@ -81,7 +82,7 @@ export function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, o
   return createPortal(
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal qr-modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
-        <button type="button" className="ghost-icon modal-close" aria-label="关闭二维码预览" title="关闭二维码预览" onClick={onClose}><X size={18} /></button>
+        <ActionButton type="button" className="ghost-icon modal-close" aria-label="关闭二维码预览" title="关闭二维码预览" onClick={onClose}><X size={18} /></ActionButton>
         <div className="qr-modal-body">
           <p className="eyebrow qr-modal-eyebrow"><PrototypeAsset name="ico-scan.png" size={18} />二维码预览</p>
           <h2>{title}</h2>
@@ -90,8 +91,8 @@ export function QrPreviewModal({ title, detail, qrDataUrl, targetUrl, onClose, o
           <div className="qr-preview-link"><Link2 size={14} /><span>{targetUrl}</span></div>
         </div>
         <div className="modal-footer qr-modal-footer">
-          <button className="secondary-button" onClick={onCopyLink}><Copy size={15} /> 复制链接</button>
-          <button className="primary-button" onClick={onCopyImage}><Copy size={15} /> 复制图片</button>
+          <ActionButton className="secondary-button" onClick={onCopyLink}><Copy size={15} /> 复制链接</ActionButton>
+          <ActionButton className="primary-button" onClick={onCopyImage}><Copy size={15} /> 复制图片</ActionButton>
         </div>
       </div>
     </div>, document.body
@@ -114,7 +115,7 @@ export function ContentModal({ content, onClose }) {
       <div className="modal content-modal" role="dialog" aria-modal="true" aria-labelledby="content-modal-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header content-modal-header">
           <div><p className="eyebrow">{content.eyebrow}</p><h2 id="content-modal-title">{content.title}</h2></div>
-          <button className="ghost-icon modal-close" aria-label={`关闭${content.title}`} onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon modal-close" aria-label={`关闭${content.title}`} onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body content-modal-body">
           {content.sections.map((section) => (
@@ -125,7 +126,7 @@ export function ContentModal({ content, onClose }) {
           ))}
         </div>
         <div className="modal-footer">
-          <button className="primary-button" onClick={onClose}><Check size={15} /> 我知道了</button>
+          <ActionButton className="primary-button" onClick={onClose}><Check size={15} /> 我知道了</ActionButton>
         </div>
       </div>
     </div>,
@@ -226,23 +227,23 @@ export function FilePreviewModal({ preview, onClose, onDownload, downloadDisable
             <h2>{file.name || '文件预览'}</h2>
             <span className="preview-meta">{file.relativePath || file.name} · {formatBytes(file.size)}</span>
           </div>
-          <button className="ghost-icon modal-close" aria-label="关闭预览" onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon modal-close" aria-label="关闭预览" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="preview-modal-body">
           {previewError ? <div className="preview-error"><FileText size={28} /><strong>预览加载失败</strong><span>{previewError}</span></div>
             : access.url === preview.url && access.status === 'password' ? (
-              <form className="preview-error" onSubmit={unlockPreview}>
+              <ActionForm className="preview-error" onSubmit={unlockPreview}>
                 <FileText size={28} /><strong>此文件需要提取密码</strong><span>{access.error}</span>
-                <div className="public-password"><input type="password" aria-label="提取密码" placeholder="请输入提取密码，最多 128 个字符" autoComplete="off" maxLength={128} value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} /><button type="submit" className="primary-button" disabled={unlocking || !password}>{unlocking ? '验证中' : '验证并预览'}</button></div>
+                <div className="public-password"><input type="password" aria-label="提取密码" placeholder="请输入提取密码，最多 128 个字符" autoComplete="off" maxLength={128} value={password} onChange={(event) => setPassword(limitInputText(event.target.value, 128))} /><ActionButton type="submit" className="primary-button" disabled={unlocking || !password}>{unlocking ? '验证中' : '验证并预览'}</ActionButton></div>
                 <small>{password.length}/128 个字符</small>
-              </form>
+              </ActionForm>
             ) : ready ? renderPreviewContent(authorizedPreview, () => setError('浏览器无法打开这个文件，可下载后查看。'))
               : <div className="office-preview-loading"><span className="loading-dot" /><strong>正在加载预览</strong></div>}
         </div>
         <div className="modal-footer preview-modal-footer">
           <span>{previewSupportLabel(preview.kind)}</span>
           {downloadError && <FeedbackMessage message={downloadError} tone="error" />}
-          <button className="secondary-button" onClick={handleDownload} disabled={downloadDisabled || !ready}><Download size={15} /> 下载文件</button>
+          <ActionButton className="secondary-button" onClick={handleDownload} disabled={downloadDisabled || !ready}><Download size={15} /> 下载文件</ActionButton>
         </div>
       </div>
     </div>,
@@ -259,15 +260,15 @@ export function RecordPreviewChooser({ previews, onClose, onSelect }) {
             <p className="eyebrow">文件预览</p>
             <h2>选择要预览的文件</h2>
           </div>
-          <button className="ghost-icon modal-close" aria-label="关闭文件选择" onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon modal-close" aria-label="关闭文件选择" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="record-preview-options">
           {previews.map((preview) => (
-            <button type="button" className="record-preview-option" key={preview.key} onClick={() => onSelect(preview)}>
+            <ActionButton type="button" className="record-preview-option" key={preview.key} onClick={() => onSelect(preview)}>
               <span className="record-preview-option-icon"><FileText size={17} /></span>
               <span><strong>{preview.file.name}</strong><small>{previewTypeLabel(preview.kind)} · {formatBytes(preview.file.size)}</small></span>
               <ChevronRight size={16} />
-            </button>
+            </ActionButton>
           ))}
         </div>
       </div>
@@ -428,7 +429,7 @@ export function OfficePreview({ preview }) {
     return (
       <div className="spreadsheet-preview">
         <div className="spreadsheet-tabs" role="tablist" aria-label="工作表">{state.sheets.map((sheet, index) => <span role="tab" tabIndex={state.changingPage ? -1 : 0} aria-selected={index === state.activeSheet} aria-disabled={state.changingPage} className={index === state.activeSheet ? 'active' : ''} key={sheet.name} onClick={() => showSheetPage(index, 0)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showSheetPage(index, 0) } }}>{sheet.name}</span>)}</div>
-        {state.pages > 1 && <div className="upload-control-row"><button type="button" className="secondary-button" disabled={state.changingPage || state.page === 0} onClick={() => showSheetPage(state.activeSheet, state.page - 1)}><ChevronLeft size={14} /> 上一页</button><span>第 {state.page + 1}/{state.pages} 页 · 每页最多 {OFFICE_PREVIEW_LIMITS.rowsPerPage} 行</span><button type="button" className="secondary-button" disabled={state.changingPage || state.page + 1 >= state.pages} onClick={() => showSheetPage(state.activeSheet, state.page + 1)}>下一页 <ChevronRight size={14} /></button></div>}
+        {state.pages > 1 && <div className="upload-control-row"><ActionButton type="button" className="secondary-button" disabled={state.changingPage || state.page === 0} onClick={() => showSheetPage(state.activeSheet, state.page - 1)}><ChevronLeft size={14} /> 上一页</ActionButton><span>第 {state.page + 1}/{state.pages} 页 · 每页最多 {OFFICE_PREVIEW_LIMITS.rowsPerPage} 行</span><ActionButton type="button" className="secondary-button" disabled={state.changingPage || state.page + 1 >= state.pages} onClick={() => showSheetPage(state.activeSheet, state.page + 1)}>下一页 <ChevronRight size={14} /></ActionButton></div>}
         <div className="spreadsheet-sheet" style={{ display: 'block' }} aria-busy={state.changingPage} dangerouslySetInnerHTML={{ __html: state.html }} />
       </div>
     )
@@ -495,17 +496,17 @@ export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择�
 
   return (
     <div className={`date-picker ${className}`} ref={pickerRef}>
-      <button type="button" className={`date-picker-trigger ${open ? 'open' : ''}`} aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+      <ActionButton type="button" className={`date-picker-trigger ${open ? 'open' : ''}`} aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
         <CalendarDays size={15} />
         <span className={value ? '' : 'placeholder'}>{value ? formatDateInputDisplay(value) : placeholder}</span>
         <ChevronDown size={15} />
-      </button>
+      </ActionButton>
       {open && (
         <div className="date-picker-popover" role="dialog" aria-label={`${ariaLabel}日期选择`}>
           <div className="date-picker-header">
-            <button type="button" className="date-picker-nav" aria-label="上个月" title="上个月" onClick={() => setViewDate((current) => addMonths(current, -1))}><ChevronLeft size={16} /></button>
+            <ActionButton type="button" className="date-picker-nav" aria-label="上个月" title="上个月" onClick={() => setViewDate((current) => addMonths(current, -1))}><ChevronLeft size={16} /></ActionButton>
             <strong>{monthLabel}</strong>
-            <button type="button" className="date-picker-nav" aria-label="下个月" title="下个月" onClick={() => setViewDate((current) => addMonths(current, 1))}><ChevronRight size={16} /></button>
+            <ActionButton type="button" className="date-picker-nav" aria-label="下个月" title="下个月" onClick={() => setViewDate((current) => addMonths(current, 1))}><ChevronRight size={16} /></ActionButton>
           </div>
           <div className="date-picker-weekdays">{['一', '二', '三', '四', '五', '六', '日'].map((day) => <span key={day}>{day}</span>)}</div>
           <div className="date-picker-grid">
@@ -516,15 +517,15 @@ export function DatePicker({ value, onChange, ariaLabel, placeholder = '选择�
               const isToday = dateValue === todayValue
               const isDisabled = Boolean(min && dateValue < min)
               return (
-                <button type="button" key={dateValue} className={`date-picker-day ${isCurrentMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''}`} disabled={isDisabled} onClick={() => chooseDate(date)}>
+                <ActionButton type="button" key={dateValue} className={`date-picker-day ${isCurrentMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''}`} disabled={isDisabled} onClick={() => chooseDate(date)}>
                   {date.getDate()}
-                </button>
+                </ActionButton>
               )
             })}
           </div>
           <div className="date-picker-footer">
-            <button type="button" onClick={clearDate} disabled={!value}>清除</button>
-            <button type="button" onClick={setToday} disabled={Boolean(min && todayValue < min)}>今天</button>
+            <ActionButton type="button" onClick={clearDate} disabled={!value}>清除</ActionButton>
+            <ActionButton type="button" onClick={setToday} disabled={Boolean(min && todayValue < min)}>今天</ActionButton>
           </div>
         </div>
       )}
@@ -602,9 +603,9 @@ export function TeamJoinRequestCard({ enterpriseSlug }) {
         {feedback && <span className="team-join-feedback"><Check size={13} /> {feedback}</span>}
       </div>
       {(showButton || state.reason === 'anonymous') && !feedback && (
-        <button className="secondary-button team-join-action" onClick={state.reason === 'anonymous' ? login : submit} disabled={submitting}>
+        <ActionButton className="secondary-button team-join-action" onClick={state.reason === 'anonymous' ? login : submit} disabled={submitting}>
           {state.reason === 'anonymous' ? <UserRound size={15} /> : <UserPlus size={15} />} {submitting ? '提交中' : buttonLabel}
-        </button>
+        </ActionButton>
       )}
     </div>
   )
@@ -747,14 +748,14 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
       <div className={`modal manage-modal ${isShare ? '' : 'manage-modal-wide'}`.trim()} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">{isShare ? '分享管理' : '收集任务管理'}</p><h2>{isShare ? '管理分享设置' : '管理收集设置'}</h2></div>
-          <button className="ghost-icon modal-close" aria-label="关闭管理窗口" onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon modal-close" aria-label="关闭管理窗口" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body manage-form">
           {isShare ? (
             <>
               <div className="setting-block manage-setting-block">
                 <span>下载次数</span>
-                <div className="option-grid">{[['不限次数', 'unlimited'], ['10 次', '10'], ['1 次', '1'], ['自定义', 'custom']].map(([label, value]) => <button key={value} className={shareForm.downloadLimit === value ? 'selected' : ''} onClick={() => updateShare({ downloadLimit: value })}>{label}{shareForm.downloadLimit === value && <Check size={14} />}</button>)}</div>
+                <div className="option-grid">{[['不限次数', 'unlimited'], ['10 次', '10'], ['1 次', '1'], ['自定义', 'custom']].map(([label, value]) => <ActionButton key={value} className={shareForm.downloadLimit === value ? 'selected' : ''} onClick={() => updateShare({ downloadLimit: value })}>{label}{shareForm.downloadLimit === value && <Check size={14} />}</ActionButton>)}</div>
                 {shareForm.downloadLimit === 'custom' && <label className="inline-setting-input"><span>最多下载次数</span><input type="number" min="1" max="9999" value={shareForm.customDownloadLimit} onChange={(event) => updateShare({ customDownloadLimit: event.target.value })} placeholder="例如：5" /></label>}
               </div>
               <label className="manage-field manage-password-field">
@@ -782,7 +783,7 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
               </label>
               <label className="manage-field">
                 <span>文件类型</span>
-                <div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <button key={type} className={collectionForm.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => toggleAllowedType(type)}>{type}</button>)}</div>
+                <div className="chip-group">{COLLECTION_TYPE_OPTIONS.map((type) => <ActionButton key={type} className={collectionForm.allowedTypes.includes(type) ? 'selected' : ''} onClick={() => toggleAllowedType(type)}>{type}</ActionButton>)}</div>
               </label>
               <label className="manage-field">
                 <span>单文件大小限制</span>
@@ -810,12 +811,12 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
         </div>
         <div className="modal-footer manage-modal-footer">
           {(isShare && !isClosedOrExpiredStatus(data.status)) || (!isShare && data.status === 'active') ? (
-            <button className="secondary-button danger-lite" disabled={isClosedStatus(data.status) || closing} onClick={closeTask}><X size={15} /> {closing ? '关闭中' : isShare ? '关闭分享' : '关闭收集任务'}</button>
+            <ActionButton className="secondary-button danger-lite" disabled={isClosedStatus(data.status) || closing} onClick={closeTask}><X size={15} /> {closing ? '关闭中' : isShare ? '关闭分享' : '关闭收集任务'}</ActionButton>
           ) : (
-            <button className="secondary-button reopen-button" disabled={reopening} onClick={reopenTask}><RefreshCw className={reopening ? 'spinning' : ''} size={15} /> {reopening ? '开启中' : isShare ? '重新开启分享' : '重新开启收集任务'}</button>
+            <ActionButton className="secondary-button reopen-button" disabled={reopening} onClick={reopenTask}><RefreshCw className={reopening ? 'spinning' : ''} size={15} /> {reopening ? '开启中' : isShare ? '重新开启分享' : '重新开启收集任务'}</ActionButton>
           )}
-          <button className="secondary-button" onClick={onClose}>取消</button>
-          <button className="primary-button" disabled={saving} onClick={submit}>{saving ? '保存中' : '保存设置'}</button>
+          <ActionButton className="secondary-button" onClick={onClose}>取消</ActionButton>
+          <ActionButton className="primary-button" disabled={saving} onClick={submit}>{saving ? '保存中' : '保存设置'}</ActionButton>
         </div>
       </div>
     </div>,
@@ -825,6 +826,7 @@ export function ManageItemModal({ target, onClose, onSave, onCloseTask, onReopen
 
 export function RenameRecordModal({ record, onClose, onSave }) {
   const inputRef = useRef(null)
+  const saveButtonRef = useRef(null)
   const [name, setName] = useState(() => recordDisplayName(record))
   const [error, setError] = useState('')
   const syncsCollectionTitle = record.kind === 'collection' && record.scope === 'my_collections' && Boolean(record.manageToken || getManageToken(record.manageUrl))
@@ -850,7 +852,7 @@ export function RenameRecordModal({ record, onClose, onSave }) {
       setError(syncsCollectionTitle ? `任务名称不能超过 ${COLLECTION_TITLE_MAX} 个字` : `显示名称不能超过 ${nameLimit} 个字`)
       return
     }
-    onSave(nextName)
+    return onSave(nextName)
   }
 
   return createPortal(
@@ -858,7 +860,7 @@ export function RenameRecordModal({ record, onClose, onSave }) {
       <div className="modal rename-modal" role="dialog" aria-modal="true" aria-labelledby="rename-record-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header rename-modal-header">
           <div><p className="eyebrow">文件管理</p><h2 id="rename-record-title">{syncsCollectionTitle ? '重命名收集任务' : '重命名显示名称'}</h2></div>
-          <button className="ghost-icon modal-close" aria-label="关闭重命名窗口" onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon modal-close" aria-label="关闭重命名窗口" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body rename-modal-body">
           <div className="rename-summary">
@@ -867,14 +869,14 @@ export function RenameRecordModal({ record, onClose, onSave }) {
           </div>
           <label className="manage-field">
             <span className="manage-field-label"><span>{syncsCollectionTitle ? '新的任务名称' : '新的显示名称'}</span><small className={name.length >= nameLimit ? 'field-count at-limit' : 'field-count'}>{name.length}/{nameLimit}</small></span>
-            <input ref={inputRef} className="modal-inline-input" value={name} maxLength={nameLimit} onChange={(event) => { setName(event.target.value); setError('') }} onKeyDown={(event) => { if (event.key === 'Enter') submit() }} placeholder={syncsCollectionTitle ? '请输入新的任务名称' : '请输入新的显示名称'} />
+            <input ref={inputRef} className="modal-inline-input" value={name} maxLength={nameLimit} onChange={(event) => { setName(event.target.value); setError('') }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); saveButtonRef.current?.click() } }} placeholder={syncsCollectionTitle ? '请输入新的任务名称' : '请输入新的显示名称'} />
           </label>
           <p className="rename-helper">{syncsCollectionTitle ? '会同步修改收集任务名称，管理页和提交入口都会显示新名称。' : '仅修改文件管理中心和收发记录中的显示名称，不改动已上传文件本身。'}</p>
           {error && <p className="manage-form-error">{error}</p>}
         </div>
         <div className="modal-footer rename-modal-footer">
-          <button className="secondary-button" onClick={onClose}>取消</button>
-          <button className="primary-button" onClick={submit}><Check size={15} /> 保存名称</button>
+          <ActionButton className="secondary-button" onClick={onClose}>取消</ActionButton>
+          <ActionButton ref={saveButtonRef} className="primary-button" onClick={submit}><Check size={15} /> 保存名称</ActionButton>
         </div>
       </div>
     </div>,
@@ -905,9 +907,9 @@ export function FileRow({ file, onRemove, onPreview, onDownload, downloadDisable
     <div className="file-row">
       <span className="file-type"><PrototypeFileIcon name={file.name} fallback={Icon} size={24} /></span>
       <div className="file-info"><strong title={file.name}>{file.name}</strong>{showPath && file.relativePath && file.relativePath !== file.name && <small className="file-relative-path" title={file.relativePath}>{file.relativePath}</small>}<span><FileFormatBadge file={file} /> {formatBytes(file.size)}</span></div>
-      {onPreview && <button className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={onPreview}><Eye size={16} /></button>}
-      {onDownload && <button className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={onDownload} disabled={downloadDisabled}><Download size={16} /></button>}
-      {onRemove && <button className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={onRemove}><X size={16} /></button>}
+      {onPreview && <ActionButton className="ghost-icon" aria-label={`预览 ${file.name}`} onClick={onPreview}><Eye size={16} /></ActionButton>}
+      {onDownload && <ActionButton className="ghost-icon" aria-label={`下载 ${file.name}`} onClick={onDownload} disabled={downloadDisabled}><Download size={16} /></ActionButton>}
+      {onRemove && <ActionButton className="ghost-icon" aria-label={`移除 ${file.name}`} onClick={onRemove}><X size={16} /></ActionButton>}
     </div>
   )
 }

@@ -20,7 +20,7 @@ async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,d
  let holdProfile=false,releaseProfile=null
  let codeResponse={status:201,data:{message:'验证码已发送'}}
  const expiresAt=ttl?Date.now()+ttl:0
- const records=id=>Array.from({length:11},(_,i)=>({id:`${i===9?'sent_to_me':'my_sent'}:share:${id}-${i}`,kind:'share',scope:i===9?'sent_to_me':'my_sent',name:`${id}文件${i}`,shareId:`${id}-${i}`,shareUrl:`http://fixture.local/share/${id}-${i}`,status:'有效',createdAt:new Date().toISOString(),files:[{name:`${id}-${i}.txt`,size:4}]}))
+ const records=id=>Array.from({length:11},(_,i)=>({id:`${i===9?'sent_to_me':'my_sent'}:share:${id}-${i}`,kind:'share',scope:i===9?'sent_to_me':'my_sent',name:`${id}文件${i}`,shareId:`${id}-${i}`,shareUrl:`http://fixture.local/share/${id}-${i}`,status:i===0?'已关闭':'有效',createdAt:new Date().toISOString(),files:[{name:`${id}-${i}.txt`,size:4}]}))
  window.fetch=async(url,options={})=>{
   const method=options.method||'GET';calls.push({url,method,body:options.body});let status=200,data={}
   if(expiresAt&&Date.now()>=expiresAt)currentUser=''
@@ -34,13 +34,18 @@ async function mount(route='/settings/profile',userId='alice',storage={},ttl=0,d
   }
   else if(url==='/api/auth/logout'){currentUser='';data={ok:true}}
   else if(url.startsWith('/api/account/')&&!currentUser){status=401;data={message:'请先登录'}}
-  else if(url==='/api/account/records')data={records:method==='GET'?records(currentUser):JSON.parse(options.body||'{}').records||[]}
-  else if(url==='/api/account/messages')data={messages:[],settings:{}}
+  else if(new URL(url,'http://fixture.local').pathname==='/api/account/records') {
+   const params=new URL(url,'http://fixture.local').searchParams
+   const all=records(currentUser), filtered=params.get('scope')&&params.get('scope')!=='all'?all.filter(r=>r.scope===params.get('scope')):all
+   const limit=Number(params.get('limit')||50), page=Math.min(Number(params.get('page')||1),Math.max(1,Math.ceil(filtered.length/limit)))
+   data=method==='GET'?{records:filtered.slice((page-1)*limit,page*limit),pagination:{page,limit,total:filtered.length,scopeCounts:{all:all.length,my_sent:10,sent_to_me:1},categoryCounts:{all:all.length}}}:{records:JSON.parse(options.body||'{}').records||[]}
+  }
+  else if(new URL(url,'http://fixture.local').pathname==='/api/account/messages')data={messages:[],settings:{},unreadCount:0,total:0}
   else if(url==='/api/account/file-cleanup-settings')data={settings:{enabled:false,days:3}}
   else if(url==='/api/account/file-cleanup-overview')data={usedBytes:4,totalBytes:1024**3,fileCount:1,shareCount:1,collectionCount:0,activeBytes:4,expiringBytes:0,expiredBytes:0,expiredShareCount:0,expiredCollectionCount:0,expiredFileCount:0,settings:{enabled:false,days:3}}
   else if(url==='/api/account/notification-settings')data={settings:{}}
   else if(url==='/api/account/upgrade-pricing')data={source:'local',pricing:{}}
-  else if(url==='/api/account/team/overview')data={organization:{name:'机密团队',members:[]},members:[],memberUsage:[],resources:[],canManage:true}
+  else if(new URL(url,'http://fixture.local').pathname==='/api/account/team/overview')data={organization:{name:'机密团队',members:[]},members:[],memberUsage:[],resources:[],canManage:true}
   else if(url==='/api/account/workspace')data={plan:{id:'free',label:'基础版',totalBytes:1024**3},plans:[],capacity:{},orders:[]}
   else if(url.startsWith('/api/shares/token/')){const id=url.split('/').pop();data={share:{id,code:'CODE',files:[{name:id+'.txt',size:4}],expiresAt:id.endsWith('-0')?new Date(Date.now()-1000).toISOString():new Date(Date.now()+86400000).toISOString(),status:id.endsWith('-0')?'closed':'active',downloadCount:0}};if(!currentUser&&id==='private'){status=401;data={message:'请先登录',code:'directed_login_required'}}}
   else if(url==='/api/guest/quota')data={enabled:false}
@@ -142,15 +147,15 @@ await scenario('AUTH-008',async()=>{
 await scenario('AUTH-011',async()=>{
  const f=await mount('/?view=records');let storage
  try {
-  await waitFor(()=>f.calls.some(c=>c.url==='/api/account/records'&&c.method==='PUT'),'records synchronized')
+  await waitFor(()=>f.document.querySelectorAll('.record-row').length===8,'first record page loaded')
   await delay(50)
   check('pagination shows eight records',f.document.querySelectorAll('.record-row').length===8)
   check('server expiry appears in records',/已失效|已关闭|已过期/.test(f.document.body.textContent))
-  await f.click('下一页');check('second page shows remaining three',f.document.querySelectorAll('.record-row').length===3)
-  const receive=[...f.document.querySelectorAll('button')].find(b=>b.textContent.includes('发给我的'));assert.ok(receive);receive.click();await delay(30);check('receive filter displays one record',f.document.querySelectorAll('.record-row').length===1)
+  await f.click('下一页');await waitFor(()=>f.document.querySelectorAll('.record-row').length===3,'second record page loaded');check('second page shows remaining three',f.document.querySelectorAll('.record-row').length===3)
+  const receive=[...f.document.querySelectorAll('button')].find(b=>b.textContent.includes('发给我的'));assert.ok(receive);receive.click();await waitFor(()=>f.document.querySelectorAll('.record-row').length===1,'filtered page loaded');check('receive filter displays one record',f.document.querySelectorAll('.record-row').length===1)
   storage=f.storage()
  }finally{f.dom.window.close()}
- const other=await mount('/?view=records','bob',storage);try{await waitFor(()=>other.calls.some(c=>c.url==='/api/account/records'&&c.method==='PUT'),'records synchronized');check('another account never uploads previous account records',other.calls.filter(c=>c.url==='/api/account/records'&&c.method==='PUT').every(c=>!c.body.includes('alice')));check('another account does not display previous account data',!other.document.body.textContent.includes('alice-'))}finally{other.dom.window.close()}
+ const other=await mount('/?view=records','bob',storage);try{await waitFor(()=>other.document.querySelectorAll('.record-row').length===8,'other account page loaded');check('browsing records never sends a full PUT',!other.calls.some(c=>c.url==='/api/account/records'&&c.method==='PUT'));check('another account does not display previous account data',!other.document.body.textContent.includes('alice-'))}finally{other.dom.window.close()}
 })
 await scenario('AUTH-012-settings',async()=>{
  const f=await mount();try{check('signed-in profile shown',f.document.querySelector('input[placeholder="请输入昵称"]')?.value==='alice');f.expire();f.window.dispatchEvent(new f.window.Event('focus'));await waitFor(()=>f.document.body.textContent.includes('登录后管理账户设置'),'expired profile clears on focus');check('private data removed',!f.document.querySelector('.settings-nav')&&!f.document.body.textContent.includes('alice'))}finally{f.dom.window.close()}

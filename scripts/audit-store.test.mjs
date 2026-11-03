@@ -192,6 +192,16 @@ test('fixture audit verification uses the runtime priority retention rule', () =
   assert.equal(timeOnly.filter(item => item.type === 'security').length, 0)
 })
 
+test('class retention keeps security evidence longer than access events across restart', () => {
+  const { store, create } = fixture()
+  store.initialize([])
+  const now = Date.parse('2026-11-02T00:00:00Z')
+  for (const type of ['access','security']) for (const days of [1,10,40]) store.append({ id: `${type}-${days}`, type, action: 'fixture', createdAt: new Date(now-days*86400000).toISOString() })
+  const result = store.purgeBefore({ accessCutoff: now-7*86400000, criticalCutoff: now-30*86400000 })
+  assert.equal(result.removed,3)
+  assert.deepEqual(new Set(create().initialize([]).map(log=>log.id)),new Set(['access-1','security-1','security-10']))
+})
+
 test('purged history stays purged if rotation is interrupted before journal reset', () => {
   const { directory, store, create } = fixture()
   store.initialize([])

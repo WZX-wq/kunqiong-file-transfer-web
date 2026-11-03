@@ -17,30 +17,48 @@ import {
 // ── 数据库连接池 ─────────────────────────────────────────────
 // 全进程唯一。databaseEnabled 为 false 时是 null，调用方需自行判空。
 // 注意 mysql2 的 createPool 不会立即建连，首个查询才真正连接。
-export const databasePool = databaseEnabled ? boundedPool(mysql.createPool({
-  host: databaseHost,
-  port: databasePort,
-  database: databaseName,
-  user: databaseUser,
-  password: databasePassword,
-  waitForConnections: true,
-  connectionLimit: positiveSetting(process.env.KUNQIONG_DB_CONNECTION_LIMIT, 5, 100),
-  queueLimit: positiveSetting(process.env.KUNQIONG_DB_QUEUE_LIMIT, 50, 10000),
-  connectTimeout: positiveSetting(process.env.KUNQIONG_DB_CONNECT_TIMEOUT_MS, 10000),
-  enableKeepAlive: true,
-  timezone: 'Z',
-  ...(process.env.KUNQIONG_DB_TLS === 'true' ? { ssl: { rejectUnauthorized: true } } : {}),
-  charset: 'utf8mb4',
-}), {
-  acquireTimeoutMs: positiveSetting(process.env.KUNQIONG_DB_ACQUIRE_TIMEOUT_MS, 30000),
-  queryTimeoutMs: positiveSetting(process.env.KUNQIONG_DB_QUERY_TIMEOUT_MS, 60000),
-}) : null
-
-databasePool?.on('connection', connection => {
-  connection.query(`SET time_zone = '+00:00', max_execution_time = ${positiveSetting(process.env.KUNQIONG_DB_QUERY_TIMEOUT_MS, 60000)}`, error => {
-    if (error) connection.destroy()
+function createDatabasePool(connectionLimit, lockWaitSeconds = null,
+  queryTimeoutMs = positiveSetting(process.env.KUNQIONG_DB_QUERY_TIMEOUT_MS, 60000)) {
+  if (!databaseEnabled) return null
+  const pool = boundedPool(mysql.createPool({
+    host: databaseHost,
+    port: databasePort,
+    database: databaseName,
+    user: databaseUser,
+    password: databasePassword,
+    waitForConnections: true,
+    connectionLimit,
+    // mysql2 only schedules idle eviction when maxIdle is below the pool cap.
+    // Retire unused proxy connections before their silent network expiry.
+    maxIdle: Math.max(0, connectionLimit - 1),
+    idleTimeout: 15000,
+    queueLimit: positiveSetting(process.env.KUNQIONG_DB_QUEUE_LIMIT, 50, 10000),
+    connectTimeout: positiveSetting(process.env.KUNQIONG_DB_CONNECT_TIMEOUT_MS, 10000),
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000,
+    timezone: 'Z',
+    ...(process.env.KUNQIONG_DB_TLS === 'true' ? { ssl: { rejectUnauthorized: true } } : {}),
+    charset: 'utf8mb4',
+  }), {
+    acquireTimeoutMs: positiveSetting(process.env.KUNQIONG_DB_ACQUIRE_TIMEOUT_MS, 30000),
+    queryTimeoutMs,
   })
-})
+  pool.on('connection', connection => {
+    connection.query(`SET time_zone = '+00:00', max_execution_time = ${positiveSetting(process.env.KUNQIONG_DB_QUERY_TIMEOUT_MS, 60000)}${lockWaitSeconds ? `, innodb_lock_wait_timeout = ${lockWaitSeconds}` : ''}`, error => {
+      if (error) connection.destroy()
+    })
+  })
+  return pool
+}
+
+export const databasePool = createDatabasePool(positiveSetting(process.env.KUNQIONG_DB_CONNECTION_LIMIT, 5, 100))
+// Maintenance and resource queries must not exhaust authentication connections.
+// A stalled authentication statement must not hold its transaction for a minute.
+// Pre-COMMIT failures can retry the whole transaction; COMMIT is never replayed.
+export const databaseAuthPool = createDatabasePool(2, 4, 10000)
+// Audit/cleanup/payment work has a separate, small budget and cannot occupy
+// all foreground slots while a remote connection is unavailable.
+export const databaseMaintenancePool = createDatabasePool(2, 4, 10000)
 
 // ── 元数据运行期标记 ─────────────────────────────────────────
 // 为什么要包成对象：ESM 的导入绑定是只读的 —— `import { x }` 之后不能 `x = 1`，

@@ -11,7 +11,9 @@
     "manual:verify": "node scripts/verify-user-manual.mjs",
     "manual:demo": "node scripts/manual-demo-server.mjs",
     "manual:capture-team-expired": "node scripts/capture-team-expired-manual-shot.mjs",
-    "test:remediation": "node scripts/verify-office-html.mjs && node scripts/verify-remediation.mjs && node scripts/verify-payment-ui.mjs",
+    "test:performance": "node --test scripts/demand-performance.test.mjs && node scripts/verify-navigation-performance.mjs && node scripts/verify-demand-loading-ui.mjs",
+    "test:actions": "node --test scripts/duplicate-actions.test.mjs && node scripts/verify-action-controls-ui.mjs && node scripts/verify-collection-form-ui.mjs",
+    "test:remediation": "node scripts/verify-office-html.mjs && node scripts/verify-remediation.mjs && node --test scripts/alipay-checkout.test.mjs && node scripts/verify-payment-ui.mjs",
     "test:upload": "node scripts/verify-upload-chunks.mjs && node scripts/verify-send-cancellation-ui.mjs",
     "test:scan-performance": "node scripts/verify-scan-performance.mjs",
     "test:boundaries": "node scripts/verify-boundary-suite.mjs && node scripts/verify-avatar-boundaries.mjs && node scripts/verify-office-boundaries.mjs && node scripts/verify-boundary-ui.mjs",
@@ -53,6 +55,7 @@
   "dependencies": {
     "archiver": "^7.0.1",
     "chart.js": "^4.5.1",
+    "compression": "^1.8.2",
     "dompurify": "^3.4.16",
     "express": "^4.21.2",
     "lucide-react": "^0.468.0",
@@ -70,9 +73,9 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
     "jsdom": "^29.1.1",
-    "vite": "^6.0.5",
-    "concurrently": "^9.1.2"
+    "vite": "^6.0.5"
   },
   "engines": {
     "node": ">=22.12.0"

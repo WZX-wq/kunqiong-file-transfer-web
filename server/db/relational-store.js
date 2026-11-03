@@ -331,7 +331,8 @@ async function syncRow(connection, sync, table, columns, values, options = {}) {
       const written = sync.normalized && columns.includes('gmt_modified') && !changed.includes('gmt_modified')
         ? [...changed, 'gmt_modified'] : changed
       await connection.execute(
-        `UPDATE \`${table}\` SET ${written.map(column => `\`${column}\` = ?`).join(', ')} WHERE id = ?`,
+        `UPDATE \`${table}\` SET ${written.map(column => table === 'kq_auth_session' && column === 'revoked_at'
+          ? '`revoked_at` = COALESCE(`revoked_at`, ?)' : `\`${column}\` = ?`).join(', ')} WHERE id = ?`,
         [...written.map(column => values[columns.indexOf(column)]), rowId],
       )
       for (const column of changed) metric.changedColumns[column] = (metric.changedColumns[column] || 0) + 1

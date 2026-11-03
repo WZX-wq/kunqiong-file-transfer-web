@@ -1,3 +1,4 @@
+import { ActionButton, ActionForm } from '../components/action-button.jsx'
 import { useSerializedPreference } from '../lib/serialized-preference.js'
 import React from 'react'
 import { useEffect, useRef, useState } from 'react'
@@ -9,13 +10,13 @@ import { PrototypeAsset } from '../components/prototype-asset.jsx'
 import { displayUserName, formatBytes, formatDateInput, maskPhone } from '../lib/format.js'
 import { contactInputError, EMAIL_MAX_LENGTH, normalizePhoneContact, PHONE_LENGTH } from '../../server/lib/contact-input.js'
 import { OrdersPanel } from './orders.jsx'
-import { apiRequest } from '../lib/api.js'
+import { apiRequest, getCachedAccountData } from '../lib/api.js'
 
 // 清理页顶部「存储与清理」卡（对齐原型 settings-cleanup 的存储卡）：
 // 三段容量全部来自 /api/account/file-cleanup-overview 的真实统计，
 // 「立即清理」走 /api/account/file-cleanup/run，按当前账号自己的清理规则执行。
 function CleanupStorageCard({ user }) {
-  const [overview, setOverview] = useState(null)
+  const [overview, setOverview] = useState(() => getCachedAccountData('/api/account/file-cleanup-overview'))
   const [running, setRunning] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const load = () => apiRequest('/api/account/file-cleanup-overview').then((data) => setOverview(data)).catch(() => {})
@@ -69,9 +70,9 @@ function CleanupStorageCard({ user }) {
         <div className={`cleanup-storage-action ${expired > 0 ? 'has-expired' : ''}`}>
           <AlertTriangle size={16} />
           <span>{expired > 0 ? `已过期文件仍占用容量，清理后才会释放${expiredDetail}。` : '当前没有已过期占用容量的文件。'}</span>
-          <button type="button" className="primary-button" onClick={runNow} disabled={running || !overview.settings.enabled} title={overview.settings.enabled ? '' : '请先开启自动清理开关'}>
+          <ActionButton type="button" className="primary-button" onClick={runNow} disabled={running || !overview.settings.enabled} title={overview.settings.enabled ? '' : '请先开启自动清理开关'}>
             <Trash2 size={14} /> {running ? '清理中…' : '立即清理'}
-          </button>
+          </ActionButton>
         </div>
         {feedback && <p className={`cleanup-storage-feedback is-${feedback.tone}`}>{feedback.text}</p>}
       </div>
@@ -180,7 +181,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
         <div className="settings-state-icon"><UserRound size={23} /></div>
         <strong>登录后管理账户设置</strong>
         <p>个人资料、账号安全和消息通知会与当前账户关联。</p>
-        <button className="primary-button" onClick={onLogin}><UserRound size={16} /> 前往登录</button>
+        <ActionButton className="primary-button" onClick={onLogin}><UserRound size={16} /> 前往登录</ActionButton>
       </section>
     )
   }
@@ -208,7 +209,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
           <h1>{heading.title}</h1>
           <p>{heading.detail}</p>
         </div>
-        {section === 'profile' && <div className="settings-page-actions"><button className="secondary-button" onClick={onOpenWorkspace}><Crown size={15} /> 会员权益</button></div>}
+        {section === 'profile' && <div className="settings-page-actions"><ActionButton className="secondary-button" onClick={onOpenWorkspace}><Crown size={15} /> 会员权益</ActionButton></div>}
       </header>
       <div className="settings-layout">
         <aside className="settings-sidebar">
@@ -221,15 +222,15 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
           </div>
           <nav className="settings-nav" aria-label="账户设置">
             {SETTINGS_NAV_ITEMS.map(({ key, label, icon: Icon, path }) => (
-              <button key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => { if (section !== key) onNavigateSection?.(path) }}>
+              <ActionButton key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => { if (section !== key) onNavigateSection?.(path) }}>
                 <Icon size={16} />
                 <span>{label}</span>
-              </button>
+              </ActionButton>
             ))}
           </nav>
           <div className="settings-sidebar-foot">
-            <button onClick={onOpenWorkspace}><Crown size={16} /> 会员与团队空间</button>
-            <button onClick={onBack}><ArrowLeft size={16} /> 返回发文件</button>
+            <ActionButton onClick={onOpenWorkspace}><Crown size={16} /> 会员与团队空间</ActionButton>
+            <ActionButton onClick={onBack}><ArrowLeft size={16} /> 返回发文件</ActionButton>
           </div>
         </aside>
 
@@ -245,8 +246,8 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
                     <span>账号 ID：{user.id || user.username}</span>
                   </div>
                   <div className="settings-profile-actions">
-                    <button className="secondary-button" onClick={() => avatarInputRef.current?.click()} disabled={savingAvatar}><ImageIcon size={14} /> {savingAvatar ? '保存中' : '更换头像'}</button>
-                    <button className="secondary-button" onClick={restoreProviderAvatar} disabled={savingAvatar || user.avatarSource !== 'custom'}><RotateCcw size={14} /> 恢复默认</button>
+                    <ActionButton className="secondary-button" onClick={() => avatarInputRef.current?.click()} disabled={savingAvatar}><ImageIcon size={14} /> {savingAvatar ? '保存中' : '更换头像'}</ActionButton>
+                    <ActionButton className="secondary-button" onClick={restoreProviderAvatar} disabled={savingAvatar || user.avatarSource !== 'custom'}><RotateCcw size={14} /> 恢复默认</ActionButton>
                   </div>
                   <div className="settings-plan-chip">
                     <Crown size={14} />
@@ -256,7 +257,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
                 </div>
                 <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={saveAvatarFile} />
 
-                <form className="settings-profile-form" onSubmit={saveNickname}>
+                <ActionForm className="settings-profile-form" onSubmit={saveNickname}>
                   <div className="settings-form-row">
                     <label htmlFor="settings-nickname">昵称</label>
                     <div className="settings-form-body">
@@ -269,7 +270,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
                     <div className="settings-form-body settings-email-body">
                       <div className="settings-email-control">
                         <div className="settings-field"><input id="settings-email" value={user.email || ''} readOnly placeholder="未绑定邮箱" /></div>
-                        <button type="button" className="secondary-button" onClick={() => setBindingType('email')}>{user.email ? '更换绑定' : '去绑定'}<ChevronRight size={14} /></button>
+                        <ActionButton type="button" className="secondary-button" onClick={() => setBindingType('email')}>{user.email ? '更换绑定' : '去绑定'}<ChevronRight size={14} /></ActionButton>
                       </div>
                       <p className="settings-form-hint">用于接收取件通知与安全提醒</p>
                     </div>
@@ -279,23 +280,23 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
                     <div className="settings-form-body is-inline">
                       <div className="settings-field"><input id="settings-phone" value={user.phone ? maskPhone(user.phone) : ''} readOnly placeholder="未绑定手机号" /></div>
                       <span className={`settings-bind-badge ${user.phone ? 'is-bound' : ''}`}><i />{user.phone ? '已绑定' : '未绑定'}</span>
-                      <button type="button" className="secondary-button" onClick={() => setBindingType('phone')}>{user.phone ? '更换' : '绑定'}</button>
+                      <ActionButton type="button" className="secondary-button" onClick={() => setBindingType('phone')}>{user.phone ? '更换' : '绑定'}</ActionButton>
                       <p className="settings-form-hint">用于登录与安全验证</p>
                     </div>
                   </div>
                   {(profileError || avatarError) && <p className="settings-form-error">{profileError || avatarError}</p>}
                   <div className="settings-form-foot">
-                    <button type="button" className="secondary-button" onClick={resetProfileForm}>取消</button>
-                    <button type="submit" className="primary-button" disabled={savingProfile || !nickname.trim()}>{savingProfile ? '保存中' : '保存资料'}</button>
+                    <ActionButton type="button" className="secondary-button" onClick={resetProfileForm}>取消</ActionButton>
+                    <ActionButton type="submit" className="primary-button" disabled={savingProfile || !nickname.trim()}>{savingProfile ? '保存中' : '保存资料'}</ActionButton>
                   </div>
-                </form>
+                </ActionForm>
               </div>
 
               <div className="settings-stat-strip">
                 <div><span>已用容量</span><b>{formatBytes(usedBytes)}</b><small>/ {totalBytes ? formatBytes(totalBytes) : '不限'}</small></div>
                 <div><span>分享任务</span><b>{capacity.shareCount || 0} 个</b><small>共 {formatBytes(capacity.shareBytes || 0)}</small></div>
                 <div><span>收集任务</span><b>{capacity.collectionCount || 0} 个</b><small>{capacity.fileCount || 0} 个文件</small></div>
-                <button type="button" className="settings-stat-link" onClick={() => onNavigateSection?.('/settings/cleanup')}>容量明细 <ChevronRight size={13} /></button>
+                <ActionButton type="button" className="settings-stat-link" onClick={() => onNavigateSection?.('/settings/cleanup')}>容量明细 <ChevronRight size={13} /></ActionButton>
               </div>
             </>
           )}
@@ -345,7 +346,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
                 <div className={`file-cleanup-options ${fileCleanupSettings.enabled ? '' : 'disabled'}`}>
                   <div className="settings-row-label"><strong>过期后多久删除</strong><span>仅清理已过期的分享文件和收集任务文件。</span></div>
                   <div className="option-grid compact-grid">
-                    {[1, 3, 7].map((days) => <button type="button" key={days} disabled={!fileCleanupSettings.enabled} className={fileCleanupSettings.days === days ? 'selected' : ''} onClick={() => updateFileCleanup({ days })}>{days} 天{fileCleanupSettings.days === days && <Check size={14} />}</button>)}
+                    {[1, 3, 7].map((days) => <ActionButton type="button" key={days} disabled={!fileCleanupSettings.enabled} className={fileCleanupSettings.days === days ? 'selected' : ''} onClick={() => updateFileCleanup({ days })}>{days} 天{fileCleanupSettings.days === days && <Check size={14} />}</ActionButton>)}
                   </div>
                 </div>
                 {fileCleanupError && <p className="settings-form-error">{fileCleanupError}</p>}
@@ -374,7 +375,7 @@ export function SettingsActionRow({ label, value, detail, action, onAction, disa
   return (
     <div className="settings-action-row">
       <div><strong>{label}</strong><span>{value}</span>{detail && <small>{detail}</small>}</div>
-      {action && <button className={disabled || !onAction ? 'settings-row-action disabled' : 'settings-row-action'} onClick={onAction} disabled={disabled || !onAction}>{action}{!disabled && onAction && <ChevronRight size={15} />}</button>}
+      {action && <ActionButton className={disabled || !onAction ? 'settings-row-action disabled' : 'settings-row-action'} onClick={onAction} disabled={disabled || !onAction}>{action}{!disabled && onAction && <ChevronRight size={15} />}</ActionButton>}
     </div>
   )
 }
@@ -464,10 +465,10 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
 
   return (
     <div className="modal-backdrop account-bind-backdrop">
-      <form className="modal account-bind-modal" noValidate onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+      <ActionForm className="modal account-bind-modal" noValidate onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">账号绑定</p><h2>绑定{label}</h2></div>
-          <button className="ghost-icon modal-close" type="button" aria-label="关闭绑定窗口" onClick={onClose}><X size={18} /></button>
+          <ActionButton className="ghost-icon modal-close" type="button" aria-label="关闭绑定窗口" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body account-bind-body">
           <p className="modal-intro">登录仍使用鲲穹官方账号；绑定{label}后，可用于站内消息匹配和后续邮件/短信通知。</p>
@@ -483,17 +484,17 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
               <span>验证码</span>
               <input value={code} inputMode="numeric" autoComplete="one-time-code" maxLength={6} onChange={(event) => { setCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setError('') }} disabled={binding} placeholder="6 位验证码" />
             </label>
-            <button className="secondary-button" type="button" onClick={sendCode} disabled={sending || binding || resendSeconds > 0 || Boolean(targetError)}>{sending ? '发送中' : resendSeconds > 0 ? `${resendSeconds}秒后重发` : debugCode ? '重新发送' : '获取验证码'}<Send size={15} /></button>
+            <ActionButton className="secondary-button" type="button" onClick={sendCode} disabled={sending || binding || resendSeconds > 0 || Boolean(targetError)}>{sending ? '发送中' : resendSeconds > 0 ? `${resendSeconds}秒后重发` : debugCode ? '重新发送' : '获取验证码'}<Send size={15} /></ActionButton>
           </div>
           {debugCode && <div className="account-bind-debug"><KeyRound size={14} /> 演示验证码：<strong>{debugCode}</strong></div>}
           {message && <p className="account-bind-message">{message}</p>}
           {error && <p className="settings-form-error account-bind-error" role="alert">{error}</p>}
         </div>
         <div className="modal-footer">
-          <button className="secondary-button" type="button" onClick={onClose}>取消</button>
-          <button className="primary-button" type="submit" disabled={binding || sending || Boolean(targetError) || !validCode}><BadgeCheck size={15} /> {binding ? '绑定中' : '确认绑定'}</button>
+          <ActionButton className="secondary-button" type="button" onClick={onClose}>取消</ActionButton>
+          <ActionButton className="primary-button" type="submit" disabled={binding || sending || Boolean(targetError) || !validCode}><BadgeCheck size={15} /> {binding ? '绑定中' : '确认绑定'}</ActionButton>
         </div>
-      </form>
+      </ActionForm>
     </div>
   )
 }
@@ -502,7 +503,7 @@ export function NoticeToggle({ label, detail, checked, onChange }) {
   return (
     <div className="settings-notice-row">
       <div><strong>{label}</strong>{detail && <span>{detail}</span>}</div>
-      <button className={`switch ${checked ? 'on' : ''}`} aria-label={`${checked ? '关闭' : '开启'}${label}`} aria-pressed={checked} onClick={onChange}><span /></button>
+      <ActionButton className={`switch ${checked ? 'on' : ''}`} aria-label={`${checked ? '关闭' : '开启'}${label}`} aria-pressed={checked} onClick={onChange}><span /></ActionButton>
     </div>
   )
 }

@@ -357,9 +357,11 @@ export function purgeStaleResources() {
 
 // 按系统配置的保留天数清除过期审计日志；只有真删了才落盘，避免空转写
 export function purgeExpiredAuditLogs() {
-  const retentionMs = normalizeSystemConfig(metadata.systemConfig).auditLogRetentionDays * 86400000
-  const cutoff = Date.now() - retentionMs
-  return purgeAuditLogsBefore(cutoff)
+  const config = normalizeSystemConfig(metadata.systemConfig), now = Date.now()
+  return purgeAuditLogsBefore({
+    accessCutoff: now - Math.min(config.auditAccessLogRetentionDays, config.auditLogRetentionDays) * 86400000,
+    criticalCutoff: now - config.auditLogRetentionDays * 86400000,
+  })
 }
 
 export function runMaintenanceCleanup() {
@@ -380,6 +382,7 @@ export function runMaintenanceCleanup() {
 export async function exchangeOAuthToken(code, redirectUri) {
   const response = await fetch(oauthTokenUrl, {
     method: 'POST',
+    signal: AbortSignal.timeout(20000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       grant_type: 'authorization_code',
@@ -398,22 +401,26 @@ export async function exchangeOAuthToken(code, redirectUri) {
   return data
 }
 
-export function createAuthSession(tokenData) {
+export function authSessionDescriptor(tokenData, user) {
   const expiresIn = integerInput(tokenData.expires_in === undefined ? 3600 : tokenData.expires_in,'登录会话有效期',1,30*86400,{string:false})
-  cleanupExpiredAuthSessions()
   const now = new Date()
-  const user = upsertAccountUser({
-    ...(tokenData.user || {}),
-    loginMethods: mergeLoginMethods(tokenData.user?.loginMethods, ['oauth']),
-  })
-  const session = {
+  return {
     id: createToken(40),
     expiresAt: new Date(now.getTime() + expiresIn * 1000).toISOString(),
     createdAt: now.toISOString(),
     apiWebToken: trimRecordString(tokenData.api_web_token || tokenData.apiWebToken || tokenData.access_token, 300),
-    user: publicUser(user),
+    user,
   }
-  const replacedAt = now.toISOString()
+}
+
+export function createAuthSession(tokenData) {
+  cleanupExpiredAuthSessions()
+  const user = upsertAccountUser({
+    ...(tokenData.user || {}),
+    loginMethods: mergeLoginMethods(tokenData.user?.loginMethods, ['oauth']),
+  })
+  const session = authSessionDescriptor(tokenData, publicUser(user))
+  const replacedAt = session.createdAt
   for (const existing of metadata.sessions) {
     if (String(existing.user?.id || existing.userId || '') !== String(user.id) || existing.revokedAt) continue
     retainUserPaymentQueryCredentials(existing)
@@ -425,9 +432,11 @@ export function createAuthSession(tokenData) {
   retainUserPaymentQueryCredentials(session, true)
   // 每次登录顺带把团队 roster 上的旧昵称/联系方式刷新一遍，
   // 这样即使改名的请求没走到 PATCH /api/auth/profile（例如离线改的），下次登录也能自愈。
-  syncOrganizationMemberProfile(user)
+  const context = currentDataContext()
+  if (!context?.deferLoginFollowup) syncOrganizationMemberProfile(user)
   persistMetadata()
-  reconcileUserUpgradeOrders(session, true).catch(() => {})
+  if (context?.deferLoginFollowup) context.deferLoginFollowup(session)
+  else reconcileUserUpgradeOrders(session, true).catch(() => {})
   return session
 }
 

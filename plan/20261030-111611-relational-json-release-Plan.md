@@ -9,7 +9,7 @@ repo_root: D:/demo/鲲穹文件传输/kunqiong-file-transfer-web-main/kunqiong-f
 branch: deploy/user-file-isolation-20261029 # git branch the work happens on
 base_sha: 70a7670 # git short SHA the plan started from
 created: 2026-10-30 11:16 # YYYY-MM-DD HH:mm
-updated: 2026-10-30 17:55 # YYYY-MM-DD HH:mm  (bump on every edit)
+updated: 2026-10-30 18:00 # YYYY-MM-DD HH:mm  (bump on every edit)
 supersedes: ""           # plan_id this replaces, if any
 ---
 
@@ -176,6 +176,7 @@ rest deferred - list which), or `not-run` (nothing run - say why + residual risk
 | 2026-10-30 17:40 | Latest local checks on `4e24a39` | Passed: 10 audit unit tests, 11 audit persistence checks, upload-session test, 10 deploy-release gates, and verifier syntax check | `gitea/main` points to `4e24a39`; the Actions API route returned 404 and the web page returned Sign In, so the remote run result cannot be read in this session. |
 | 2026-10-30 17:55 | `npm run test:audit`; `npm run test:db-schema`; `npm run test:db-upload-sessions`; `node scripts/verify-deploy-release.mjs`; `node scripts/db/verify-relational-sync.mjs` | Passed: 11 audit unit tests, 11 audit persistence checks, 14 schema/store tests, 1 upload-session test, 10 deploy gates, and 5,000-user sync | The audit test reproduces 4,820 existing rows plus 180 journal rows, verifies 5,000 after import, and verifies restart does not replay stale journal data. |
 | 2026-10-30 17:55 | Gitea Actions run 134 for `4e24a39` | Failed: 4,820 of 5,000 valid audit IDs found in `kunqiong_audit_log` | The 180 missing IDs are 12-character `access` records from the independent journal. The app had persisted `auditStorage=mysql-v1` during an earlier partial startup, and that marker suppressed journal import on retry. |
+| 2026-10-30 18:00 | `git push gitea HEAD:main` | Passed: `main` advanced from `4e24a39` to `a12472c` | Gitea `deploy-test.yml` is configured for pushes to `main`; the new remote Actions result is pending and cannot be read from this session. |
 | 2026-10-30 | Read-only Gitea API permission check | Blocked | Repository push access works, but the current account cannot manage Actions Secrets (HTTP 403; owner required). No deployment was triggered. |
 | 2026-10-30 | Repository Actions Secrets page | Passed | `KUNQIONG_DB_HOST`, `KUNQIONG_DB_PORT`, `KUNQIONG_DB_NAME`, `KUNQIONG_DB_USER`, and `KUNQIONG_DB_PASSWORD` are present and masked. |
 | 2026-10-30 | Database, persistence, release-gate and packaging suite | Passed | 20 tests, 10 release-gate checks, 5,000-user transactional sync, upload-session test, shell syntax and Docker COPY startup check; no synthetic rows retained. |
@@ -199,11 +200,11 @@ here after fixing, so the same error logic is not repeated next time._
 _Leave empty until the acceptance pass is done. Then fill in: what was built, key
 decisions, what was verified (and how), verification_status rationale, anything deferred._
 
-Migration work resumed on 2026-10-30 after the user supplied the test database connection details. Gitea run 134 for `4e24a39` failed because the app skipped 180 valid access logs in its independent journal after an earlier partial startup persisted the MySQL mode marker. A one-time journal-import receipt now makes the backfill idempotent; focused local tests pass. Test-server migration remains unverified until a new Actions run passes; no SSH connection was made.
+Migration work resumed on 2026-10-30 after the user supplied the test database connection details. Gitea run 134 for `4e24a39` failed because the app skipped 180 valid access logs in its independent journal after an earlier partial startup persisted the MySQL mode marker. Commit `a12472c` adds an idempotent journal backfill receipt and is pushed to Gitea `main`; focused local tests pass. Test-server migration remains unverified until the new Actions run passes; no SSH connection was made.
 
 ## Next Steps
 
 _Always keep ONE explicit next action here so any agent resuming knows exactly where to
 start. Update it every time you stop._
 
-- Push the journal-recovery fix to Gitea `main`, then confirm the new Actions run verifies all 5,000 backed-up audit IDs in both MySQL audit tables, the saved journal-import receipt, and the live release SHA.
+- Inspect the Gitea Actions run for `a12472c`; confirm all 5,000 backed-up audit IDs exist in both MySQL audit tables, the journal-import receipt is saved, and the live release SHA matches. Continue from the first failure if any check fails.

@@ -49,8 +49,10 @@ import {
 } from '../services/account.js'
 
 import { normalizeUploadFileName } from '../lib/file-name.js'
-import { createStoredFileName, resolveStoredFilePath, storedFileExists, userStorageDirectory } from '../lib/file-storage.js'
+import { createStoredFileName, removeStoredFiles, resolveStoredFilePath, storedFileExists, userStorageDirectory } from '../lib/file-storage.js'
 import { applyCollectionNaming } from '../lib/collection-naming.js'
+import { collectionFilePathKey, isSameCollectionSubmitter, conflictsForNamedCollectionFiles, collectionFileConflictError } from '../lib/collection-conflicts.js'
+import { acquireOperationLock } from '../lib/operation-lock.js'
 import { createScanCoordinator, scanFileBatch } from '../lib/scan-coordinator.js'
 
 import {
@@ -153,6 +155,7 @@ function uploadSessionManifest(session) {
     fieldValues: session.fieldValues || {},
     materialIds: session.materialIds || [],
     fileMaterialIds: session.fileMaterialIds || [],
+    overwriteExisting: Boolean(session.overwriteExisting),
     guestKey: session.guestKey || '',
     ownerUserId: session.ownerUserId || '',
     ownerGuestId: session.ownerGuestId || '',
@@ -1538,7 +1541,18 @@ export async function publishUploadedFiles(tempFiles, directory, { attach, detac
   }
 }
 
-export async function publishCollectionSubmission(task, tempFiles, submitter, req, { uploadSessionId = '', guestKey = '', fieldValues = submitter.fieldValues || {}, materialIds = submitter.materialIds || [] } = {}) {
+export function findCollectionFileConflicts(task, files, submitter, fileMaterialIds = []) {
+  const namedFiles = applyCollectionNaming(task, files, submitter.participantName, fileMaterialIds)
+  return conflictsForNamedCollectionFiles(task, namedFiles, submitter)
+}
+
+export async function publishCollectionSubmission(task, tempFiles, submitter, req, options = {}) {
+  const release = await acquireOperationLock(`collection-publish:${task.id}`)
+  try { return await publishCollectionSubmissionLocked(task, tempFiles, submitter, req, options) }
+  finally { release() }
+}
+
+async function publishCollectionSubmissionLocked(task, tempFiles, submitter, req, { uploadSessionId = '', guestKey = '', fieldValues = submitter.fieldValues || {}, materialIds = submitter.materialIds || [], overwriteExisting = false } = {}) {
   // 上传会话完成接口可能被重试：同一会话已发布过就直接返回既有提交，保证幂等。
   if (uploadSessionId) {
     const published = (task.submissions || []).find(item => item.uploadSessionId === uploadSessionId)
@@ -1551,6 +1565,11 @@ export async function publishCollectionSubmission(task, tempFiles, submitter, re
       ? `collection-participant:${submitter.participantKey}`
       : `collection-submission:${task.id}:${id}`
   const namedFiles = applyCollectionNaming(task, tempFiles, submitter.participantName, submitter.fileMaterialIds || [])
+  const conflicts = conflictsForNamedCollectionFiles(task, namedFiles, submitter)
+  if (conflicts.length && !overwriteExisting) throw collectionFileConflictError(conflicts)
+  const previousSubmissions = task.submissions
+  const previousUpdatedAt = task.updatedAt
+  const replacedSubmissions = []
   const persisted = snapshot => snapshot.collections?.find(item => item.id === task.id)?.submissions?.some(item => item.id === id)
   const submission = await publishUploadedFiles(namedFiles, path.join(collectionsRoot, task.id, id), { storageOwnerId,
     attach(files) {
@@ -1558,13 +1577,31 @@ export async function publishCollectionSubmission(task, tempFiles, submitter, re
       if (!access.ok) throw httpError(access.status, access.message)
       assertCollectionFiles(task, files)
       assertCollectionParticipant(task, submitter)
+      const latestConflicts = conflictsForNamedCollectionFiles(task, namedFiles, submitter)
+      if (latestConflicts.length && !overwriteExisting) throw collectionFileConflictError(latestConflicts)
+      if (overwriteExisting && latestConflicts.length) {
+        const replacedPaths = new Set(namedFiles.map(collectionFilePathKey))
+        task.submissions = task.submissions.flatMap(existing => {
+          if (!isSameCollectionSubmitter(existing, submitter)) return [existing]
+          const removedFiles = (existing.files || []).filter(file => replacedPaths.has(collectionFilePathKey(file)))
+          if (!removedFiles.length) return [existing]
+          const retainedFiles = (existing.files || []).filter(file => !replacedPaths.has(collectionFilePathKey(file)))
+          replacedSubmissions.push({ submission: existing, files: removedFiles })
+          return retainedFiles.length ? [{ ...existing, files: retainedFiles }] : []
+        })
+      }
       const item = { id, participantKey: submitter.participantKey || '', ...(uploadSessionId ? { uploadSessionId } : {}), participantName: submitter.participantName, submitterUserId: submitter.submitterUserId || '', submitterName: submitter.submitterName || submitter.participantName, fieldValues, materialIds, submittedAt: new Date().toISOString(), files }
-      task.submissions.push(item)
+      task.submissions = [...task.submissions, item]
+      task.updatedAt = item.submittedAt
       return item
     },
-    detach() { task.submissions = task.submissions.filter(item => item.id !== id) },
+    detach() { task.submissions = previousSubmissions; task.updatedAt = previousUpdatedAt },
     persisted,
   })
+  for (const replaced of replacedSubmissions) {
+    try { removeStoredFiles(replaced.files, path.join(collectionsRoot, task.id, replaced.submission.id), userFilesRoot) }
+    catch (error) { console.error(JSON.stringify({ event: 'collection_replaced_file_cleanup_failed', code: error.code || 'FILE_CLEANUP_FAILED' })) }
+  }
   addCollectionSubmissionMessage(task, submission, req)
   addGuestUsage(guestKey, submission.files)
   try {

@@ -222,7 +222,7 @@ export function saveLocalRecord(record, currentRecords) {
 
 export async function savePublicRecord(record) {
   try {
-    const { user } = await apiRequest('/api/auth/me')
+    const { user } = await apiRequest('/api/auth/me', { authView: 'identity' })
     saveLocalRecord(record)
     if (user?.id) await upsertCloudRecords([record])
   } catch (error) {
@@ -239,6 +239,14 @@ export function saveAuthoritativeLocalRecord(record, currentRecords) {
 export async function fetchCloudRecords() {
   const data = await fetchPagedAccountList('/api/account/records', 'records')
   return normalizeRecords(data.records || [])
+}
+
+export async function fetchCloudRecordPage(options = {}, signal, { force = false } = {}) {
+  return apiRequest(`/api/account/records?${new URLSearchParams(options)}`, { signal, force })
+}
+
+export async function fetchOwnedCollectionPage(signal, { force = false } = {}) {
+  return apiRequest('/api/account/collections?limit=6', { signal, force })
 }
 
 export async function replaceCloudRecords(records) {
@@ -262,12 +270,12 @@ export async function deleteCloudRecords(ids) {
   })
 }
 
-export async function clearCloudRecords() {
-  return apiRequest('/api/account/records', { method: 'DELETE', body: JSON.stringify({ all: true }) })
+export async function clearCloudRecords(scope = 'all') {
+  return apiRequest('/api/account/records', { method: 'DELETE', body: JSON.stringify({ all: true, scope }) })
 }
 
-export async function fetchCloudMessages() {
-  return fetchPagedAccountList('/api/account/messages', 'messages')
+export async function fetchCloudMessages(cursor = '') {
+  return apiRequest(`/api/account/messages?limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
 }
 
 export async function fetchPagedAccountList(url, field) {
@@ -287,19 +295,17 @@ export async function fetchPagedAccountList(url, field) {
 
 export async function markCloudMessageRead(id) {
   const result = await apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'PATCH' })
-  return { ...result, ...await fetchCloudMessages() }
+  return result
 }
 
 export async function markAllCloudMessagesRead() {
-  await apiRequest('/api/account/messages', { method: 'PATCH' })
-  return fetchCloudMessages()
+  return apiRequest('/api/account/messages', { method: 'PATCH' })
 }
 
 export async function deleteCloudMessage(id) {
   // keepalive：用户点删除后立即刷新/关闭页面时，浏览器默认会取消飞行中的请求，
   // 服务端收不到 DELETE，刷新后消息「复活」。keepalive 保证请求送达（msg 体很小，无 64KB 限制风险）。
-  await apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true })
-  return fetchCloudMessages()
+  return apiRequest(`/api/account/messages/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true })
 }
 
 export async function deleteAllCloudMessages() {
@@ -585,8 +591,8 @@ export function createCollectionRecord(collection, scope = 'my_collections', ext
     allowedTypes: normalizeCollectionTypes(collection?.allowedTypes),
     maxFileSizeMb: collection?.maxFileSizeMb,
     submissionCount,
-    fileCount: files.length,
-    totalSize,
+    fileCount: Number(collection?.fileCount ?? files.length),
+    totalSize: Number(collection?.usedBytes ?? totalSize),
     files,
     submissions,
     participantName,

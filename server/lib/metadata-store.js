@@ -15,7 +15,7 @@ import { contextualObject, currentDataContext } from './data-context.js'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import path from 'node:path'
-import { DatabaseAuditStore, LocalAuditStore, LOCAL_AUDIT_JOURNAL_MIGRATION } from './audit-store.js'
+import { DatabaseAuditStore, LocalAuditStore, LOCAL_AUDIT_JOURNAL_MIGRATION, retainedAuditLog } from './audit-store.js'
 import {
   metadataPath, MAX_METADATA_WRITE_ATTEMPTS, DEFAULT_SYSTEM_CONFIG, MAX_AUDIT_LOGS,
   databaseHost, databaseName, databaseUser, relationalSchemaEnabled,
@@ -121,7 +121,7 @@ export function purgeAuditLogsBefore(cutoff) {
     return result.removed
   }
   const before = metadata.auditLogs.length
-  metadata.auditLogs = metadata.auditLogs.filter(log => new Date(log.createdAt).getTime() >= cutoff)
+  metadata.auditLogs = metadata.auditLogs.filter(log => retainedAuditLog(log, cutoff))
   const removed = before - metadata.auditLogs.length
   if (removed) persistMetadata()
   return removed

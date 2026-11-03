@@ -2,7 +2,7 @@ import { ACCOUNT_PLANS } from '../config.js'
 import { dateInput } from './input-validation.js'
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value)
-const bounds = { defaultShareDays: [1,365], maxShareDays: [1,365], anonymousMaxFileSizeMb: [1,20480], anonymousCollectionParticipantLimit: [0,10000], anonymousActiveCollectionLimit: [0,1000], anonymousTotalSizeMb: [0,102400], maxBatchFiles: [1,100], auditLogRetentionDays: [1,3650], orphanGraceHours: [1,720] }
+const bounds = { defaultShareDays: [1,365], maxShareDays: [1,365], anonymousMaxFileSizeMb: [1,20480], anonymousCollectionParticipantLimit: [0,10000], anonymousActiveCollectionLimit: [0,1000], anonymousTotalSizeMb: [0,102400], maxBatchFiles: [1,100], auditLogRetentionDays: [1,3650], auditAccessLogRetentionDays: [1,3650], auditCleanupIntervalMinutes: [1,1440], orphanGraceHours: [1,720] }
 function numeric(value,min,max,integer=true) {
   if (!['number','string'].includes(typeof value) || String(value).trim()==='') return false
   const n=Number(value)

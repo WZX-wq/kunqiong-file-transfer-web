@@ -1,8 +1,9 @@
 import { createRelationalContext } from './relational-request.js'
 import { runWithDataContext, trackDataOperation } from './data-context.js'
-import { cleanupExpired, reconcileActiveUpgradeOrders } from '../services/account.js'
+import { cleanupExpired, reconcileActiveUpgradeOrders, retainUserPaymentQueryCredentials } from '../services/account.js'
+import { persistMetadata } from './metadata-store.js'
 import { purgeExpiredTrash } from '../services/trash.js'
-import { purgeExpiredAuditLogs } from '../services/admin.js'
+import { normalizeSystemConfig } from './metadata-normalizers.js'
 import { sweepStaleUploadSessions } from '../services/shares.js'
 import { drainCleanup } from '../db/cleanup-outbox.js'
 import { relationalAuditWriter } from '../db/request-audit-store.js'
@@ -11,6 +12,7 @@ import { storageRoot, MAX_AUDIT_LOGS } from '../config.js'
 
 export function scheduleRelationalMaintenance(pool) {
   let resourceCursor = 0, orderCursor = 0, sessionCursor = 0
+  let auditPurgedAt = 0
   const schedule = (milliseconds, task) => {
     let busy = false
     const timer = setInterval(async () => {
@@ -59,11 +61,30 @@ export function scheduleRelationalMaintenance(pool) {
       JOIN kq_user u ON u.id = o.user_id WHERE o.id > ? AND o.status NOT IN ('paid', 'cancelled', 'expired')
       AND o.remote_order_no IS NOT NULL ORDER BY o.id LIMIT 20`, [orderCursor])
     orderCursor = orders.length === 20 ? orders.at(-1).id : 0
-    for (const id of new Set(orders.map(row => row.user_id))) await store.account(id, { orders: true, sessions: true, organizations: true, messages: true, settings: true })
+    for (const id of new Set(orders.map(row => row.user_id))) {
+      await store.account(id, { orders: true, sessions: true, organizations: true, messages: true, settings: true })
+      // Logout retains a revoked credential row instead of blocking the UI on
+      // reading and rewriting every pending order. Recover that credential only
+      // inside payment maintenance; it never grants account access.
+      const owner = [...store.rows.get('kq_user').values()].find(row => row.legacy_id === id)
+      await store.select('kq_auth_session', 'user_id = ? AND revoked_at IS NOT NULL AND expires_at > UTC_TIMESTAMP(3)', [owner.id], pool, store.rows, { limit: 1 })
+      store.hydrate()
+      for (const session of store.data.sessions.filter(session => session.user?.id === id)) retainUserPaymentQueryCredentials(session)
+      persistMetadata()
+    }
     await store.organizationGraph()
     await reconcileActiveUpgradeOrders()
   })
-  const audit = schedule(86400000, async () => purgeExpiredAuditLogs())
+  const audit = schedule(60000, async ({ store }) => {
+    const config = normalizeSystemConfig(store.data.systemConfig)
+    if (Date.now() - auditPurgedAt < config.auditCleanupIntervalMinutes * 60000) return
+    const writer = relationalAuditWriter(pool, normalizeAuditLog, MAX_AUDIT_LOGS)
+    await writer.purgeExpired({
+      accessCutoff: Date.now() - Math.min(config.auditAccessLogRetentionDays, config.auditLogRetentionDays) * 86400000,
+      criticalCutoff: Date.now() - config.auditLogRetentionDays * 86400000,
+    })
+    auditPurgedAt = writer.retentionHasMore ? 0 : Date.now()
+  })
   // Independent high-frequency task: the daily purge only removes aged events,
   // so a busy instance can still exceed MAX_AUDIT_LOGS between two runs. Use the
   // same per-pool audit singleton as request contexts; a failure here is caught

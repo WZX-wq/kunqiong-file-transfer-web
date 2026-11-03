@@ -3,6 +3,7 @@
 // （容量类 COLL-007 完整覆盖在 verify-remediation.mjs；本套件做一条主路径冒烟）
 // 用法：node scripts/verify-collection-suite.mjs
 import fs from 'node:fs'
+import assert from 'node:assert/strict'
 import os from 'node:os'
 import path from 'node:path'
 import net from 'node:net'
@@ -617,6 +618,62 @@ try {
   const denied = await api(fastUrl, { user: 'stranger', raw: true })
   check('快速打包仍拒绝非所有者下载', denied.status === 403)
   console.log(JSON.stringify({ event: 'collection_download_performance', bytes: fastZip.buffer.length, files: fastEntries.length, elapsedMs }))
+
+  console.log('\n=== 连点、重试与覆盖隔离 ===')
+  const creationOptions = { user: 'owner', method: 'POST', headers: { 'Idempotency-Key': 'collection-concurrent-retry-key' }, body: { title: '并发重试任务' } }
+  const concurrent = await Promise.all(Array.from({ length: 8 }, () => api('/api/collections', creationOptions)))
+  const repeated = concurrent[0].data.collection
+  check('八个并发创建只产生一个任务且均返回同一管理凭据', concurrent.every(item => [200,201].includes(item.status) && item.data.collection?.token === repeated?.token && item.data.manageToken === concurrent[0].data.manageToken) && diskCollections().filter(item => item.token === repeated?.token).length === 1)
+  const changed = await api('/api/collections', { ...creationOptions, body: { title: '更换内容' } })
+  check('相同幂等键不能静默复用于不同内容', changed.status === 409 && changed.data.code === 'idempotency_key_reused')
+  const otherOwner = await api('/api/collections', { ...creationOptions, user: 'stranger' })
+  check('不同账号的同一创建键互相隔离', otherOwner.status === 201 && otherOwner.data.collection?.token !== repeated?.token)
+  await stop(); await start()
+  const replay = await api('/api/collections', creationOptions)
+  check('进程重启后丢失响应的创建重试仍返回原任务', replay.status === 200 && replay.data.collection?.token === repeated?.token && replay.data.manageToken === concurrent[0].data.manageToken)
+
+  const overwriteTask = (await api('/api/collections', { user: 'owner', method: 'POST', body: { title: '覆盖隔离任务' } })).data.collection
+  const overwriteUrl = `/api/collections/${overwriteTask.token}/submissions`
+  const initial = await api(overwriteUrl, { user: 'recipient', method: 'POST', body: form([{ name: 'same.txt', content: 'old' }, { name: 'keep.txt', content: 'keep' }]) })
+  const stranger = await api(overwriteUrl, { user: 'stranger', method: 'POST', body: form([{ name: 'same.txt', content: 'stranger' }]) })
+  const beforeOverwrite = diskCollections().find(item => item.token === overwriteTask.token)
+  const oldFile = beforeOverwrite.submissions.find(item => item.id === initial.data.submission.id).files[0]
+  const oldPath = path.join(fixture, 'storage/users', storageOwnerDirectoryName(oldFile.storageOwnerId), oldFile.storedName)
+  const conflict = await api(overwriteUrl, { user: 'recipient', method: 'POST', body: form([{ name: 'same.txt', content: 'new' }]) })
+  check('未确认时重复文件返回结构化冲突且原字节未改变', conflict.status === 409 && conflict.data.code === 'collection_file_exists' && conflict.data.existingFiles?.[0]?.relativePath === 'same.txt' && fs.readFileSync(oldPath,'utf8') === 'old')
+  const sessionBody = { mode: 'collection', collectionToken: overwriteTask.token, files: [{ name: 'same.txt', size: 3 }] }
+  const rejectedSession = await api('/api/upload-sessions', { user: 'recipient', method: 'POST', body: sessionBody })
+  check('上传会话在上传字节前检查已有文件', rejectedSession.status === 409 && rejectedSession.data.code === 'collection_file_exists' && !rejectedSession.data.sessionId)
+  const replacement = await api(overwriteUrl, { user: 'recipient', method: 'POST', body: form([{ name: 'same.txt', content: 'new' }], { overwriteExisting: 'true' }) })
+  const afterOverwrite = diskCollections().find(item => item.token === overwriteTask.token)
+  const ownFiles = afterOverwrite.submissions.filter(item => item.submitterUserId === 'recipient').flatMap(item => item.files)
+  check('确认覆盖后同一路径只留一个文件并清理原物理文件', replacement.status === 201 && ownFiles.filter(file => file.relativePath === 'same.txt').length === 1 && !fs.existsSync(oldPath))
+  check('覆盖保留同提交者的其他文件和其他提交者的同名文件', ownFiles.some(file => file.relativePath === 'keep.txt') && afterOverwrite.submissions.find(item => item.id === stranger.data.submission?.id)?.files.length === 1)
+  const ownDirectory = await api(overwriteUrl, { user: 'recipient', method: 'POST', body: form([{ name: 'same.txt', content: 'directory' }], { relativePaths: JSON.stringify(['another/same.txt']) }) })
+  check('不同目录下的同名文件允许独立提交', ownDirectory.status === 201)
+
+  const confirmedSession = await api('/api/upload-sessions', { user: 'recipient', method: 'POST', body: { ...sessionBody, overwriteExisting: true } })
+  assert.equal(confirmedSession.status,201,JSON.stringify(confirmedSession.data))
+  const confirmedId = confirmedSession.data.sessionId
+  await stop(); await start()
+  const putOne = async (id, content, user = 'recipient') => {
+    const body = new FormData()
+    body.append('chunk',new Blob([content]),'part')
+    for (const [key,value] of Object.entries({fileIndex:'0',chunkIndex:'0',totalChunks:'1'})) body.append(key,value)
+    const result = await api(`/api/upload-sessions/${id}/chunks`,{user,method:'POST',body})
+    assert.equal(result.status,200,JSON.stringify(result.data))
+  }
+  await putOne(confirmedId,'end')
+  const confirmedComplete = await api(`/api/upload-sessions/${confirmedId}/complete`,{user:'recipient',method:'POST',body:{}})
+  check('覆盖确认在上传进程重启后仍生效且新字节完整', confirmedComplete.status === 201 && diskCollections().find(item => item.token === overwriteTask.token).submissions.filter(item=>item.submitterUserId==='recipient').flatMap(item=>item.files).filter(file=>file.relativePath==='same.txt').length === 1)
+  const createdSessions = await Promise.all([0,1].map(()=>api('/api/upload-sessions',{user:'recipient',method:'POST',body:{...sessionBody,files:[{name:'race.txt',size:3}]}})))
+  assert.ok(createdSessions.every(item=>item.status===201))
+  await Promise.all(createdSessions.map(item=>putOne(item.data.sessionId,'one')))
+  const completions = await Promise.all(createdSessions.map(item=>api(`/api/upload-sessions/${item.data.sessionId}/complete`,{user:'recipient',method:'POST',body:{}})))
+  check('两份上传同时发布同一路径只成功一次并提示另一份确认', completions.filter(item=>item.status===201).length===1 && completions.some(item=>item.status===409&&item.data.code==='collection_file_exists') && diskCollections().find(item=>item.token===overwriteTask.token).submissions.flatMap(item=>item.files).filter(file=>file.relativePath==='race.txt').length===1)
+  const conflictedSessionId = createdSessions[completions.findIndex(item => item.status === 409)].data.sessionId
+  const confirmedRace = await api(`/api/upload-sessions/${conflictedSessionId}/complete`, {user:'recipient',method:'POST',body:{overwriteExisting:true}})
+  check('发布时发现冲突后可确认覆盖且复用已上传字节', confirmedRace.status === 201 && diskCollections().find(item=>item.token===overwriteTask.token).submissions.flatMap(item=>item.files).filter(file=>file.relativePath==='race.txt').length===1)
 } catch (error) {
   console.error('\n套件异常:', error.message)
   failures.push('套件异常: ' + error.message)

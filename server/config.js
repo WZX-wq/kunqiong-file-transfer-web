@@ -90,7 +90,9 @@ export const DEFAULT_SYSTEM_CONFIG = {
   // 游客累计可传输大小（MB），0 表示不限制。防止匿名通道被无限白嫖。
   anonymousTotalSizeMb: 2048,
   maxBatchFiles: MAX_FILES,
-  auditLogRetentionDays: 90,
+  auditLogRetentionDays: 30,
+  auditAccessLogRetentionDays: 7,
+  auditCleanupIntervalMinutes: 60,
   orphanGraceHours: 24,
   planOverrides: {},
 }

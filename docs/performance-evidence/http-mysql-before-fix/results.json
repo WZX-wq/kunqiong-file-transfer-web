@@ -1,0 +1,2960 @@
+{
+  "executedAt": "2026-11-02T08:06:02.235Z",
+  "startedAt": "2026-11-02T08:03:52.127Z",
+  "finishedAt": "2026-11-02T08:06:02.235Z",
+  "measurementWindowSeconds": 130.11,
+  "mode": "mysql-relational-on-demand",
+  "evidenceDirectory": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\docs\\performance-evidence\\http-mysql",
+  "reportPath": "D:\\demo\\鲲穹文件传输\\kunqiong-file-transfer-web-main\\kunqiong-file-transfer-web-main\\docs\\PERFORMANCE-MySQL应用压测报告.md",
+  "fixture": "C:\\Users\\admin\\AppData\\Local\\Temp\\kunqiong-performance-mysql-v2D2rG",
+  "environment": {
+    "os": "Windows_NT 10.0.26200",
+    "node": "v24.12.0",
+    "cpu": "Intel(R) Core(TM) i5-14400",
+    "logicalCpus": 16,
+    "availableParallelism": 16,
+    "totalMemoryGiB": 31.62,
+    "freeMemoryGiB": 11.21,
+    "database": {
+      "product": "MySQL",
+      "version": "8.4.5",
+      "maxConnections": 151,
+      "innodbBufferPoolMiB": 128,
+      "isolation": "REPEATABLE-READ",
+      "host": "127.0.0.1",
+      "port": 3309,
+      "name": "kq_perf_http_20261102080352_9e2ac2e3",
+      "connectionLimit": 5,
+      "queueLimit": 50,
+      "acquireTimeoutMs": 5000,
+      "queryTimeoutMs": 15000
+    },
+    "fixtureCounts": {
+      "users": 20,
+      "teamMembers": 20,
+      "seededShares": 201,
+      "records": 400,
+      "auditLogs": 5000,
+      "collections": 1,
+      "sessions": 20
+    },
+    "seededRows": {
+      "users": 20,
+      "organizations": 1,
+      "members": 20,
+      "resources": 202,
+      "resourceFiles": 201,
+      "records": 400,
+      "sessions": 20,
+      "relationalAudit": 5000,
+      "legacyAudit": 0,
+      "resourceUsage": 202,
+      "systemSettings": 3
+    }
+  },
+  "setup": {
+    "timings": {
+      "applySchemaMs": 643.73,
+      "storeSchemaMs": 437.56,
+      "seedMetadataMs": 2194.95,
+      "migrateOnDemandMs": 25514.02,
+      "uploadSessionTableMs": 26.84,
+      "auditSeedMs": 1031.37,
+      "totalMs": 29894.24
+    },
+    "migration": {
+      "usage": false,
+      "normalized": false,
+      "resourcesBackfilled": 202
+    },
+    "seededRows": {
+      "users": 20,
+      "organizations": 1,
+      "members": 20,
+      "resources": 202,
+      "resourceFiles": 201,
+      "records": 400,
+      "sessions": 20,
+      "relationalAudit": 5000,
+      "legacyAudit": 0,
+      "resourceUsage": 202,
+      "systemSettings": 3
+    }
+  },
+  "stages": [
+    {
+      "name": "健康检查基线",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 50,
+      "elapsedSeconds": 5,
+      "requests": 36419,
+      "successful": 36419,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 7281.65,
+      "latency": {
+        "count": 36419,
+        "p50Ms": 5.27,
+        "p95Ms": 15.71,
+        "p99Ms": 24.77,
+        "maxMs": 56.06
+      },
+      "endpoints": {
+        "健康检查基线": {
+          "count": 36419,
+          "p50Ms": 5.27,
+          "p95Ms": 15.71,
+          "p99Ms": 24.77,
+          "maxMs": 56.06
+        }
+      },
+      "statusCounts": {
+        "200": 36419
+      },
+      "responseBytes": 9869549,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 1.88,
+      "server": {
+        "cpuSingleCorePercent": 64.68,
+        "baselineRssMiB": 128.97,
+        "peakRssMiB": 131.87,
+        "endRssMiB": 131.93,
+        "heapUsedMiB": 37.55,
+        "eventLoop": {
+          "p95Ms": 10.379263,
+          "p99Ms": 11.599871,
+          "maxMs": 12.943359
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 2,
+        "free": 2,
+        "queued": 0,
+        "peak": {
+          "all": 2,
+          "free": 2,
+          "queued": 0,
+          "limit": 5,
+          "samples": 250
+        }
+      },
+      "clientEluPercent": 99.94,
+      "db": {
+        "stage": "健康检查基线",
+        "questions": 0,
+        "comSelect": 0,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "comStmtExecute": 0,
+        "comStmtPrepare": 0,
+        "rowsRead": 0,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 5,
+        "threadsRunning": 2,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 15,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2228,
+        "tmpDiskTables": 0,
+        "selectScan": 2,
+        "slowQueries": 0,
+        "bytesSent": 15820,
+        "bytesReceived": 25,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 0,
+          "comSelect": 0,
+          "rowsRead": 0,
+          "writeStatements": 0
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5010,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 0,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5010,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "前端页面基线",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 50,
+      "elapsedSeconds": 5.01,
+      "requests": 20067,
+      "successful": 20067,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 4004.88,
+      "latency": {
+        "count": 20067,
+        "p50Ms": 12.16,
+        "p95Ms": 16.04,
+        "p99Ms": 20.92,
+        "maxMs": 29.27
+      },
+      "endpoints": {
+        "前端页面基线": {
+          "count": 20067,
+          "p50Ms": 12.16,
+          "p95Ms": 16.04,
+          "p99Ms": 20.92,
+          "maxMs": 29.27
+        }
+      },
+      "statusCounts": {
+        "200": 20067
+      },
+      "responseBytes": 53057148,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 10.1,
+      "server": {
+        "cpuSingleCorePercent": 112.26,
+        "baselineRssMiB": 131.93,
+        "peakRssMiB": 254.55,
+        "endRssMiB": 254.11,
+        "heapUsedMiB": 112.29,
+        "eventLoop": {
+          "p95Ms": 15.359999,
+          "p99Ms": 17.383423,
+          "maxMs": 26.820607
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 2,
+        "free": 2,
+        "queued": 0,
+        "peak": {
+          "all": 2,
+          "free": 2,
+          "queued": 0,
+          "limit": 5,
+          "samples": 207
+        }
+      },
+      "clientEluPercent": 63.24,
+      "db": {
+        "stage": "前端页面基线",
+        "questions": 0,
+        "comSelect": 0,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "comStmtExecute": 0,
+        "comStmtPrepare": 0,
+        "rowsRead": 0,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 5,
+        "threadsRunning": 2,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 332,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2228,
+        "tmpDiskTables": 0,
+        "selectScan": 2,
+        "slowQueries": 0,
+        "bytesSent": 15808,
+        "bytesReceived": 25,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 0,
+          "comSelect": 0,
+          "rowsRead": 0,
+          "writeStatements": 0
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5010,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 0,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5010,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "业务混合读取 C1",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 1,
+      "elapsedSeconds": 8.06,
+      "requests": 192,
+      "successful": 192,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 23.82,
+      "latency": {
+        "count": 192,
+        "p50Ms": 33.87,
+        "p95Ms": 94.22,
+        "p99Ms": 131.23,
+        "maxMs": 155.17
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 39,
+          "p50Ms": 20.14,
+          "p95Ms": 34.33,
+          "p99Ms": 46.64,
+          "maxMs": 46.64
+        },
+        "团队概览": {
+          "count": 39,
+          "p50Ms": 66.93,
+          "p95Ms": 131.23,
+          "p99Ms": 155.17,
+          "maxMs": 155.17
+        },
+        "收发记录": {
+          "count": 38,
+          "p50Ms": 38.46,
+          "p95Ms": 79.86,
+          "p99Ms": 129.1,
+          "maxMs": 129.1
+        },
+        "分享详情": {
+          "count": 38,
+          "p50Ms": 27.41,
+          "p95Ms": 49.65,
+          "p99Ms": 52.66,
+          "maxMs": 52.66
+        },
+        "收集详情": {
+          "count": 38,
+          "p50Ms": 27.76,
+          "p95Ms": 51.13,
+          "p99Ms": 66.03,
+          "maxMs": 66.03
+        }
+      },
+      "statusCounts": {
+        "200": 192
+      },
+      "responseBytes": 2515984,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 0.3,
+      "server": {
+        "cpuSingleCorePercent": 57.57,
+        "baselineRssMiB": 254.11,
+        "peakRssMiB": 300.13,
+        "endRssMiB": 301.82,
+        "heapUsedMiB": 156.74,
+        "eventLoop": {
+          "p95Ms": 19.070975,
+          "p99Ms": 25.542655,
+          "maxMs": 39.419903
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 2,
+        "free": 1,
+        "queued": 0,
+        "peak": {
+          "all": 2,
+          "free": 1,
+          "queued": 0,
+          "limit": 5,
+          "samples": 363
+        }
+      },
+      "clientEluPercent": 2.56,
+      "db": {
+        "stage": "业务混合读取 C1",
+        "questions": 4808,
+        "comSelect": 4616,
+        "comInsert": 192,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "comStmtExecute": 192,
+        "comStmtPrepare": 0,
+        "rowsRead": 138291,
+        "rowsInserted": 192,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 5,
+        "threadsRunning": 2,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 162272,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2216,
+        "tmpDiskTables": 0,
+        "selectScan": 1119,
+        "slowQueries": 0,
+        "bytesSent": 18677731,
+        "bytesReceived": 894156,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 25.04,
+          "comSelect": 24.04,
+          "rowsRead": 720.27,
+          "writeStatements": 1
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5202,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 192,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5010,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "业务混合读取 C10",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 10,
+      "elapsedSeconds": 8.28,
+      "requests": 233,
+      "successful": 233,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 28.13,
+      "latency": {
+        "count": 233,
+        "p50Ms": 299.33,
+        "p95Ms": 630.82,
+        "p99Ms": 672.41,
+        "maxMs": 683.47
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 47,
+          "p50Ms": 199.51,
+          "p95Ms": 244.37,
+          "p99Ms": 288.52,
+          "maxMs": 288.52
+        },
+        "分享详情": {
+          "count": 46,
+          "p50Ms": 265.34,
+          "p95Ms": 291.74,
+          "p99Ms": 309.74,
+          "maxMs": 309.74
+        },
+        "收集详情": {
+          "count": 46,
+          "p50Ms": 298.88,
+          "p95Ms": 339.68,
+          "p99Ms": 351.53,
+          "maxMs": 351.53
+        },
+        "收发记录": {
+          "count": 47,
+          "p50Ms": 371.18,
+          "p95Ms": 427.78,
+          "p99Ms": 428.85,
+          "maxMs": 428.85
+        },
+        "团队概览": {
+          "count": 47,
+          "p50Ms": 609.13,
+          "p95Ms": 672.41,
+          "p99Ms": 683.47,
+          "maxMs": 683.47
+        }
+      },
+      "statusCounts": {
+        "200": 233
+      },
+      "responseBytes": 2840567,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 0.33,
+      "server": {
+        "cpuSingleCorePercent": 92.06,
+        "baselineRssMiB": 301.82,
+        "peakRssMiB": 316.9,
+        "endRssMiB": 313.64,
+        "heapUsedMiB": 120.18,
+        "eventLoop": {
+          "p95Ms": 25.886719,
+          "p99Ms": 33.210367,
+          "maxMs": 45.875199
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 4,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 4,
+          "queued": 6,
+          "limit": 5,
+          "samples": 331
+        }
+      },
+      "clientEluPercent": 3.21,
+      "db": {
+        "stage": "业务混合读取 C10",
+        "questions": 5832,
+        "comSelect": 5601,
+        "comInsert": 228,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "comStmtExecute": 228,
+        "comStmtPrepare": 6,
+        "rowsRead": 166765,
+        "rowsInserted": 233,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 3,
+        "maxUsedConnections": 8,
+        "connections": 3,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 193728,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2205,
+        "tmpDiskTables": 0,
+        "selectScan": 1359,
+        "slowQueries": 0,
+        "bytesSent": 22539073,
+        "bytesReceived": 1091907,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 25.03,
+          "comSelect": 24.04,
+          "rowsRead": 715.73,
+          "writeStatements": 0.98
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5435,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 233,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5202,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "业务混合读取 C30",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 30,
+      "elapsedSeconds": 8.79,
+      "requests": 241,
+      "successful": 241,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 27.41,
+      "latency": {
+        "count": 241,
+        "p50Ms": 924.13,
+        "p95Ms": 1997.12,
+        "p99Ms": 2095.17,
+        "maxMs": 2146.18
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 49,
+          "p50Ms": 579.9,
+          "p95Ms": 729.43,
+          "p99Ms": 808.2,
+          "maxMs": 808.2
+        },
+        "分享详情": {
+          "count": 48,
+          "p50Ms": 849.56,
+          "p95Ms": 1016.77,
+          "p99Ms": 1027.02,
+          "maxMs": 1027.02
+        },
+        "收集详情": {
+          "count": 48,
+          "p50Ms": 904.84,
+          "p95Ms": 1051.6,
+          "p99Ms": 1094.01,
+          "maxMs": 1094.01
+        },
+        "收发记录": {
+          "count": 48,
+          "p50Ms": 1147.67,
+          "p95Ms": 1317.45,
+          "p99Ms": 1322.56,
+          "maxMs": 1322.56
+        },
+        "团队概览": {
+          "count": 48,
+          "p50Ms": 1939.21,
+          "p95Ms": 2095.17,
+          "p99Ms": 2146.18,
+          "maxMs": 2146.18
+        }
+      },
+      "statusCounts": {
+        "200": 241
+      },
+      "responseBytes": 2906219,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 0.32,
+      "server": {
+        "cpuSingleCorePercent": 90.27,
+        "baselineRssMiB": 313.64,
+        "peakRssMiB": 329.54,
+        "endRssMiB": 328.39,
+        "heapUsedMiB": 130.87,
+        "eventLoop": {
+          "p95Ms": 28.344319,
+          "p99Ms": 37.027839,
+          "maxMs": 57.212927
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 4,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 3,
+          "queued": 27,
+          "limit": 5,
+          "samples": 345
+        }
+      },
+      "clientEluPercent": 2.49,
+      "db": {
+        "stage": "业务混合读取 C30",
+        "questions": 5933,
+        "comSelect": 5775,
+        "comInsert": 158,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "comStmtExecute": 158,
+        "comStmtPrepare": 10,
+        "rowsRead": 171701,
+        "rowsInserted": 241,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 3,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 199206,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2191,
+        "tmpDiskTables": 0,
+        "selectScan": 1397,
+        "slowQueries": 0,
+        "bytesSent": 23208522,
+        "bytesReceived": 1124299,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 24.62,
+          "comSelect": 23.96,
+          "rowsRead": 712.45,
+          "writeStatements": 0.66
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5676,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 241,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5435,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "业务混合读取 C50",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 50,
+      "elapsedSeconds": 9.36,
+      "requests": 272,
+      "successful": 272,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 29.06,
+      "latency": {
+        "count": 272,
+        "p50Ms": 1442.66,
+        "p95Ms": 3091.33,
+        "p99Ms": 3178.35,
+        "maxMs": 3314.42
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 55,
+          "p50Ms": 943.45,
+          "p95Ms": 1151.89,
+          "p99Ms": 1368.61,
+          "maxMs": 1368.61
+        },
+        "分享详情": {
+          "count": 54,
+          "p50Ms": 1355.42,
+          "p95Ms": 1470.66,
+          "p99Ms": 1491.59,
+          "maxMs": 1491.59
+        },
+        "收集详情": {
+          "count": 54,
+          "p50Ms": 1425.63,
+          "p95Ms": 1544.22,
+          "p99Ms": 1576.78,
+          "maxMs": 1576.78
+        },
+        "收发记录": {
+          "count": 54,
+          "p50Ms": 1803.86,
+          "p95Ms": 1955.39,
+          "p99Ms": 2073.76,
+          "maxMs": 2073.76
+        },
+        "团队概览": {
+          "count": 55,
+          "p50Ms": 3038.88,
+          "p95Ms": 3178.35,
+          "p99Ms": 3314.42,
+          "maxMs": 3314.42
+        }
+      },
+      "statusCounts": {
+        "200": 272
+      },
+      "responseBytes": 3297016,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 0.34,
+      "server": {
+        "cpuSingleCorePercent": 89.65,
+        "baselineRssMiB": 328.39,
+        "peakRssMiB": 394.43,
+        "endRssMiB": 394.82,
+        "heapUsedMiB": 100.01,
+        "eventLoop": {
+          "p95Ms": 27.000831,
+          "p99Ms": 34.766847,
+          "maxMs": 42.303487
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 4,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 4,
+          "queued": 46,
+          "limit": 5,
+          "samples": 373
+        }
+      },
+      "clientEluPercent": 2.21,
+      "db": {
+        "stage": "业务混合读取 C50",
+        "questions": 6654,
+        "comSelect": 6536,
+        "comInsert": 118,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "comStmtExecute": 118,
+        "comStmtPrepare": 8,
+        "rowsRead": 194689,
+        "rowsInserted": 272,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 3,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 225956,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2179,
+        "tmpDiskTables": 0,
+        "selectScan": 1583,
+        "slowQueries": 0,
+        "bytesSent": 26278728,
+        "bytesReceived": 1269762,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 24.46,
+          "comSelect": 24.03,
+          "rowsRead": 715.77,
+          "writeStatements": 0.43
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5947,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 271,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5676,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "业务读取持续稳定性 C30",
+      "kind": "read",
+      "diagnostic": false,
+      "concurrency": 30,
+      "elapsedSeconds": 30.94,
+      "requests": 814,
+      "successful": 814,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 26.31,
+      "latency": {
+        "count": 814,
+        "p50Ms": 976.16,
+        "p95Ms": 2154.4,
+        "p99Ms": 2297.83,
+        "maxMs": 2368.6
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 163,
+          "p50Ms": 606.75,
+          "p95Ms": 718.05,
+          "p99Ms": 790.1,
+          "maxMs": 825.08
+        },
+        "分享详情": {
+          "count": 163,
+          "p50Ms": 890.2,
+          "p95Ms": 1033.23,
+          "p99Ms": 1132.33,
+          "maxMs": 1150.56
+        },
+        "收集详情": {
+          "count": 162,
+          "p50Ms": 942.26,
+          "p95Ms": 1089.11,
+          "p99Ms": 1188.32,
+          "maxMs": 1205.62
+        },
+        "收发记录": {
+          "count": 163,
+          "p50Ms": 1191.88,
+          "p95Ms": 1379.57,
+          "p99Ms": 1436.11,
+          "maxMs": 1451.56
+        },
+        "团队概览": {
+          "count": 163,
+          "p50Ms": 1996.56,
+          "p95Ms": 2297.83,
+          "p99Ms": 2352.66,
+          "maxMs": 2368.6
+        }
+      },
+      "statusCounts": {
+        "200": 814
+      },
+      "responseBytes": 9842391,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 0.3,
+      "server": {
+        "cpuSingleCorePercent": 91.2,
+        "baselineRssMiB": 394.82,
+        "peakRssMiB": 428.99,
+        "endRssMiB": 426.47,
+        "heapUsedMiB": 63.45,
+        "eventLoop": {
+          "p95Ms": 27.213823,
+          "p99Ms": 37.879807,
+          "maxMs": 67.371007
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 4,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 5,
+          "queued": 28,
+          "limit": 5,
+          "samples": 1213
+        }
+      },
+      "clientEluPercent": 2.1,
+      "db": {
+        "stage": "业务读取持续稳定性 C30",
+        "questions": 21246,
+        "comSelect": 20029,
+        "comInsert": 951,
+        "comUpdate": 210,
+        "comDelete": 50,
+        "comCommit": 2,
+        "comRollback": 0,
+        "comStmtExecute": 1443,
+        "comStmtPrepare": 13,
+        "rowsRead": 588044,
+        "rowsInserted": 1034,
+        "rowsUpdated": 210,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 3,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 702691,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2130,
+        "tmpDiskTables": 0,
+        "selectScan": 4741,
+        "slowQueries": 0,
+        "bytesSent": 81751266,
+        "bytesReceived": 3960583,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 26.1,
+          "comSelect": 24.61,
+          "rowsRead": 722.41,
+          "writeStatements": 1.49
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 6762,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 814,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 5948,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "16MiB分片上传 C1",
+      "kind": "upload",
+      "diagnostic": false,
+      "concurrency": 1,
+      "elapsedSeconds": 0.93,
+      "requests": 1,
+      "successful": 1,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 1.08,
+      "latency": {
+        "count": 1,
+        "p50Ms": 926.27,
+        "p95Ms": 926.27,
+        "p99Ms": 926.27,
+        "maxMs": 926.27
+      },
+      "endpoints": {
+        "16MiB分片上传 C1": {
+          "count": 1,
+          "p50Ms": 926.27,
+          "p95Ms": 926.27,
+          "p99Ms": 926.27,
+          "maxMs": 926.27
+        }
+      },
+      "statusCounts": {
+        "201": 1
+      },
+      "responseBytes": 16777216,
+      "requestBytes": 16777216,
+      "throughputMiBPerSecond": 17.27,
+      "server": {
+        "cpuSingleCorePercent": 49.01,
+        "baselineRssMiB": 426.47,
+        "peakRssMiB": 462.61,
+        "endRssMiB": 462.63,
+        "heapUsedMiB": 70.03,
+        "eventLoop": {
+          "p95Ms": 16.629759,
+          "p99Ms": 19.939327,
+          "maxMs": 33.488895
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 5,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 5,
+          "queued": 0,
+          "limit": 5,
+          "samples": 41
+        }
+      },
+      "clientEluPercent": 25.12,
+      "db": {
+        "stage": "16MiB分片上传 C1",
+        "questions": 273,
+        "comSelect": 246,
+        "comInsert": 21,
+        "comUpdate": 1,
+        "comDelete": 2,
+        "comCommit": 1,
+        "comRollback": 0,
+        "comStmtExecute": 28,
+        "comStmtPrepare": 7,
+        "rowsRead": 4054,
+        "rowsInserted": 14,
+        "rowsUpdated": 6,
+        "rowsDeleted": 1,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 2,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 6019,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2129,
+        "tmpDiskTables": 0,
+        "selectScan": 35,
+        "slowQueries": 0,
+        "bytesSent": 982423,
+        "bytesReceived": 46562,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 273,
+          "comSelect": 246,
+          "rowsRead": 4054,
+          "writeStatements": 24
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 203,
+          "resourceFiles": 202,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 6768,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 1,
+          "resourceFiles": 1,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 6,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 202,
+          "resourceFiles": 201,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 6762,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "16MiB分片上传 C4",
+      "kind": "upload",
+      "diagnostic": false,
+      "concurrency": 4,
+      "elapsedSeconds": 1.96,
+      "requests": 4,
+      "successful": 1,
+      "errorCount": 3,
+      "errorRate": 75,
+      "requestsPerSecond": 2.04,
+      "latency": {
+        "count": 4,
+        "p50Ms": 1888.34,
+        "p95Ms": 1963.1,
+        "p99Ms": 1963.1,
+        "maxMs": 1963.1
+      },
+      "endpoints": {
+        "16MiB分片上传 C4": {
+          "count": 4,
+          "p50Ms": 1888.34,
+          "p95Ms": 1963.1,
+          "p99Ms": 1963.1,
+          "maxMs": 1963.1
+        }
+      },
+      "statusCounts": {
+        "201": 1,
+        "409": 1,
+        "503": 2
+      },
+      "responseBytes": 16777216,
+      "requestBytes": 16777216,
+      "throughputMiBPerSecond": 8.15,
+      "server": {
+        "cpuSingleCorePercent": 101.04,
+        "baselineRssMiB": 462.63,
+        "peakRssMiB": 475.67,
+        "endRssMiB": 427.45,
+        "heapUsedMiB": 56.14,
+        "eventLoop": {
+          "p95Ms": 23.592959,
+          "p99Ms": 28.655615,
+          "maxMs": 35.323903
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 4,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 5,
+          "queued": 0,
+          "limit": 5,
+          "samples": 87
+        }
+      },
+      "clientEluPercent": 21,
+      "db": {
+        "stage": "16MiB分片上传 C4",
+        "questions": 1031,
+        "comSelect": 955,
+        "comInsert": 61,
+        "comUpdate": 1,
+        "comDelete": 2,
+        "comCommit": 1,
+        "comRollback": 3,
+        "comStmtExecute": 78,
+        "comStmtPrepare": 9,
+        "rowsRead": 15262,
+        "rowsInserted": 39,
+        "rowsUpdated": 18,
+        "rowsDeleted": 1,
+        "rowLockWaits": 7,
+        "rowLockTimeMs": 61,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 3,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 21556,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2127,
+        "tmpDiskTables": 0,
+        "selectScan": 127,
+        "slowQueries": 0,
+        "bytesSent": 3808349,
+        "bytesReceived": 157706,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 257.75,
+          "comSelect": 238.75,
+          "rowsRead": 3815.5,
+          "writeStatements": 16
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 204,
+          "resourceFiles": 203,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 3,
+          "submissions": 0,
+          "relationalAudit": 6792,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 1,
+          "resourceFiles": 1,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 3,
+          "submissions": 0,
+          "relationalAudit": 24,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 203,
+          "resourceFiles": 202,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 6768,
+          "legacyAudit": 0
+        }
+      },
+      "errors": [
+        {
+          "sequence": 0,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 3,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 1,
+          "status": 409,
+          "endpoint": "16MiB分片上传 C4",
+          "message": "空间用量已更新，请重试本次操作"
+        }
+      ]
+    },
+    {
+      "name": "16MiB分片上传 C8",
+      "kind": "upload",
+      "diagnostic": false,
+      "concurrency": 8,
+      "elapsedSeconds": 3.18,
+      "requests": 8,
+      "successful": 1,
+      "errorCount": 7,
+      "errorRate": 87.5,
+      "requestsPerSecond": 2.52,
+      "latency": {
+        "count": 8,
+        "p50Ms": 3140.69,
+        "p95Ms": 3177.52,
+        "p99Ms": 3177.52,
+        "maxMs": 3177.52
+      },
+      "endpoints": {
+        "16MiB分片上传 C8": {
+          "count": 8,
+          "p50Ms": 3140.69,
+          "p95Ms": 3177.52,
+          "p99Ms": 3177.52,
+          "maxMs": 3177.52
+        }
+      },
+      "statusCounts": {
+        "201": 1,
+        "409": 3,
+        "503": 4
+      },
+      "responseBytes": 16777216,
+      "requestBytes": 16777216,
+      "throughputMiBPerSecond": 5.03,
+      "server": {
+        "cpuSingleCorePercent": 113.03,
+        "baselineRssMiB": 427.45,
+        "peakRssMiB": 518.29,
+        "endRssMiB": 444.1,
+        "heapUsedMiB": 60.52,
+        "eventLoop": {
+          "p95Ms": 21.708799,
+          "p99Ms": 34.439167,
+          "maxMs": 58.949631
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 4,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 5,
+          "queued": 4,
+          "limit": 5,
+          "samples": 134
+        }
+      },
+      "clientEluPercent": 18.31,
+      "db": {
+        "stage": "16MiB分片上传 C8",
+        "questions": 2046,
+        "comSelect": 1907,
+        "comInsert": 112,
+        "comUpdate": 1,
+        "comDelete": 2,
+        "comCommit": 1,
+        "comRollback": 7,
+        "comStmtExecute": 143,
+        "comStmtPrepare": 11,
+        "rowsRead": 30580,
+        "rowsInserted": 73,
+        "rowsUpdated": 34,
+        "rowsDeleted": 1,
+        "rowLockWaits": 16,
+        "rowLockTimeMs": 166,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 3,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 42383,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2125,
+        "tmpDiskTables": 0,
+        "selectScan": 251,
+        "slowQueries": 0,
+        "bytesSent": 7598169,
+        "bytesReceived": 308390,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 255.75,
+          "comSelect": 238.38,
+          "rowsRead": 3822.5,
+          "writeStatements": 14.38
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 205,
+          "resourceFiles": 204,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 0,
+          "relationalAudit": 6840,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 1,
+          "resourceFiles": 1,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 7,
+          "submissions": 0,
+          "relationalAudit": 48,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 204,
+          "resourceFiles": 203,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 3,
+          "submissions": 0,
+          "relationalAudit": 6792,
+          "legacyAudit": 0
+        }
+      },
+      "errors": [
+        {
+          "sequence": 7,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 2,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 0,
+          "status": 409,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "空间用量已更新，请重试本次操作"
+        },
+        {
+          "sequence": 6,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 1,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 3,
+          "status": 409,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "空间用量已更新，请重试本次操作"
+        },
+        {
+          "sequence": 4,
+          "status": 409,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "空间用量已更新，请重试本次操作"
+        }
+      ]
+    },
+    {
+      "name": "16MiB完整下载 C1",
+      "kind": "download",
+      "diagnostic": false,
+      "concurrency": 1,
+      "elapsedSeconds": 0.19,
+      "requests": 2,
+      "successful": 2,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 10.51,
+      "latency": {
+        "count": 2,
+        "p50Ms": 93.37,
+        "p95Ms": 96.87,
+        "p99Ms": 96.87,
+        "maxMs": 96.87
+      },
+      "endpoints": {
+        "16MiB完整下载 C1": {
+          "count": 2,
+          "p50Ms": 93.37,
+          "p95Ms": 96.87,
+          "p99Ms": 96.87,
+          "maxMs": 96.87
+        }
+      },
+      "statusCounts": {
+        "200": 2
+      },
+      "responseBytes": 33554432,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 168.17,
+      "server": {
+        "cpuSingleCorePercent": 65.69,
+        "baselineRssMiB": 444.1,
+        "peakRssMiB": 461.34,
+        "endRssMiB": 474.58,
+        "heapUsedMiB": 81.03,
+        "eventLoop": {
+          "p95Ms": 13.778943,
+          "p99Ms": 14.237695,
+          "maxMs": 14.237695
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 3,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 5,
+          "queued": 0,
+          "limit": 5,
+          "samples": 10
+        }
+      },
+      "clientEluPercent": 34.72,
+      "db": {
+        "stage": "16MiB完整下载 C1",
+        "questions": 123,
+        "comSelect": 104,
+        "comInsert": 9,
+        "comUpdate": 4,
+        "comDelete": 1,
+        "comCommit": 1,
+        "comRollback": 0,
+        "comStmtExecute": 19,
+        "comStmtPrepare": 7,
+        "rowsRead": 1685,
+        "rowsInserted": 4,
+        "rowsUpdated": 4,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 3,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 2063,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2125,
+        "tmpDiskTables": 0,
+        "selectScan": 15,
+        "slowQueries": 0,
+        "bytesSent": 382972,
+        "bytesReceived": 15452,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 61.5,
+          "comSelect": 52,
+          "rowsRead": 842.5,
+          "writeStatements": 7
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 205,
+          "resourceFiles": 204,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 0,
+          "relationalAudit": 6841,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 1,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 205,
+          "resourceFiles": 204,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 0,
+          "relationalAudit": 6840,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "16MiB完整下载 C4",
+      "kind": "download",
+      "diagnostic": false,
+      "concurrency": 4,
+      "elapsedSeconds": 0.5,
+      "requests": 8,
+      "successful": 8,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 16.16,
+      "latency": {
+        "count": 8,
+        "p50Ms": 237.68,
+        "p95Ms": 278.94,
+        "p99Ms": 278.94,
+        "maxMs": 278.94
+      },
+      "endpoints": {
+        "16MiB完整下载 C4": {
+          "count": 8,
+          "p50Ms": 237.68,
+          "p95Ms": 278.94,
+          "p99Ms": 278.94,
+          "maxMs": 278.94
+        }
+      },
+      "statusCounts": {
+        "200": 8
+      },
+      "responseBytes": 134217728,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 258.55,
+      "server": {
+        "cpuSingleCorePercent": 94.53,
+        "baselineRssMiB": 474.58,
+        "peakRssMiB": 497.14,
+        "endRssMiB": 485.23,
+        "heapUsedMiB": 60.16,
+        "eventLoop": {
+          "p95Ms": 14.901247,
+          "p99Ms": 17.022975,
+          "maxMs": 17.022975
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 0,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 5,
+          "queued": 3,
+          "limit": 5,
+          "samples": 23
+        }
+      },
+      "clientEluPercent": 54.67,
+      "db": {
+        "stage": "16MiB完整下载 C4",
+        "questions": 450,
+        "comSelect": 394,
+        "comInsert": 30,
+        "comUpdate": 4,
+        "comDelete": 1,
+        "comCommit": 1,
+        "comRollback": 4,
+        "comStmtExecute": 53,
+        "comStmtPrepare": 7,
+        "rowsRead": 5857,
+        "rowsInserted": 12,
+        "rowsUpdated": 4,
+        "rowsDeleted": 0,
+        "rowLockWaits": 8,
+        "rowLockTimeMs": 157,
+        "rowLockCurrentWaits": 2,
+        "threadsConnected": 8,
+        "threadsRunning": 5,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 7652,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2124,
+        "tmpDiskTables": 0,
+        "selectScan": 50,
+        "slowQueries": 0,
+        "bytesSent": 1464358,
+        "bytesReceived": 51474,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 56.25,
+          "comSelect": 49.25,
+          "rowsRead": 732.13,
+          "writeStatements": 4.38
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 205,
+          "resourceFiles": 204,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 0,
+          "relationalAudit": 6849,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 7,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 205,
+          "resourceFiles": 204,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 0,
+          "relationalAudit": 6842,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "16MiB完整下载 C8",
+      "kind": "download",
+      "diagnostic": false,
+      "concurrency": 8,
+      "elapsedSeconds": 0.92,
+      "requests": 16,
+      "successful": 16,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 17.41,
+      "latency": {
+        "count": 16,
+        "p50Ms": 386.69,
+        "p95Ms": 525.49,
+        "p99Ms": 525.49,
+        "maxMs": 525.49
+      },
+      "endpoints": {
+        "16MiB完整下载 C8": {
+          "count": 16,
+          "p50Ms": 386.69,
+          "p95Ms": 525.49,
+          "p99Ms": 525.49,
+          "maxMs": 525.49
+        }
+      },
+      "statusCounts": {
+        "200": 16
+      },
+      "responseBytes": 268435456,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 278.6,
+      "server": {
+        "cpuSingleCorePercent": 130.92,
+        "baselineRssMiB": 485.23,
+        "peakRssMiB": 485.61,
+        "endRssMiB": 472.36,
+        "heapUsedMiB": 64.03,
+        "eventLoop": {
+          "p95Ms": 15.851519,
+          "p99Ms": 19.464191,
+          "maxMs": 19.562495
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 2,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 5,
+          "queued": 8,
+          "limit": 5,
+          "samples": 44
+        }
+      },
+      "clientEluPercent": 56.9,
+      "db": {
+        "stage": "16MiB完整下载 C8",
+        "questions": 935,
+        "comSelect": 798,
+        "comInsert": 75,
+        "comUpdate": 10,
+        "comDelete": 2,
+        "comCommit": 3,
+        "comRollback": 15,
+        "comStmtExecute": 145,
+        "comStmtPrepare": 7,
+        "rowsRead": 10923,
+        "rowsInserted": 28,
+        "rowsUpdated": 10,
+        "rowsDeleted": 0,
+        "rowLockWaits": 24,
+        "rowLockTimeMs": 395,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 3,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 15058,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2123,
+        "tmpDiskTables": 0,
+        "selectScan": 95,
+        "slowQueries": 0,
+        "bytesSent": 2941979,
+        "bytesReceived": 102323,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 58.44,
+          "comSelect": 49.88,
+          "rowsRead": 682.69,
+          "writeStatements": 5.44
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 205,
+          "resourceFiles": 204,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 0,
+          "relationalAudit": 6866,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 16,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 205,
+          "resourceFiles": 204,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 0,
+          "relationalAudit": 6850,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "收集任务多人提交 C4",
+      "kind": "collection-submit",
+      "diagnostic": false,
+      "concurrency": 4,
+      "elapsedSeconds": 2.53,
+      "requests": 40,
+      "successful": 1,
+      "errorCount": 39,
+      "errorRate": 97.5,
+      "requestsPerSecond": 15.78,
+      "latency": {
+        "count": 40,
+        "p50Ms": 272.63,
+        "p95Ms": 446.22,
+        "p99Ms": 478.47,
+        "maxMs": 478.47
+      },
+      "endpoints": {
+        "收集任务多人提交 C4": {
+          "count": 40,
+          "p50Ms": 272.63,
+          "p95Ms": 446.22,
+          "p99Ms": 478.47,
+          "maxMs": 478.47
+        }
+      },
+      "statusCounts": {
+        "201": 1,
+        "409": 15,
+        "503": 24
+      },
+      "responseBytes": 3630,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 0,
+      "server": {
+        "cpuSingleCorePercent": 78.28,
+        "baselineRssMiB": 473.04,
+        "peakRssMiB": 473.17,
+        "endRssMiB": 446.85,
+        "heapUsedMiB": 104.53,
+        "eventLoop": {
+          "p95Ms": 13.844479,
+          "p99Ms": 14.688255,
+          "maxMs": 15.876095
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 4,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 5,
+          "queued": 0,
+          "limit": 5,
+          "samples": 123
+        }
+      },
+      "clientEluPercent": 2.4,
+      "db": {
+        "stage": "收集任务多人提交 C4",
+        "questions": 3718,
+        "comSelect": 2762,
+        "comInsert": 624,
+        "comUpdate": 47,
+        "comDelete": 24,
+        "comCommit": 32,
+        "comRollback": 55,
+        "comStmtExecute": 1174,
+        "comStmtPrepare": 24,
+        "rowsRead": 30935,
+        "rowsInserted": 171,
+        "rowsUpdated": 71,
+        "rowsDeleted": 0,
+        "rowLockWaits": 174,
+        "rowLockTimeMs": 3020,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 3,
+        "maxUsedConnections": 8,
+        "connections": 0,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 54134,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2117,
+        "tmpDiskTables": 0,
+        "selectScan": 426,
+        "slowQueries": 0,
+        "bytesSent": 10589919,
+        "bytesReceived": 415167,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 92.95,
+          "comSelect": 69.05,
+          "rowsRead": 773.38,
+          "writeStatements": 17.38
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 206,
+          "resourceFiles": 228,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 24,
+          "relationalAudit": 6907,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 24,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 24,
+          "relationalAudit": 41,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 206,
+          "resourceFiles": 204,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 0,
+          "relationalAudit": 6866,
+          "legacyAudit": 0
+        }
+      },
+      "errors": [
+        {
+          "sequence": 3,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 0,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 5,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 1,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 2,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 4,
+          "status": 409,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据已被其他请求更新，请刷新后重试"
+        },
+        {
+          "sequence": 8,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 6,
+          "status": 409,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据已被其他请求更新，请刷新后重试"
+        },
+        {
+          "sequence": 11,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 7,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        }
+      ]
+    },
+    {
+      "name": "诊断对照：临时关闭访问审计 C30",
+      "kind": "read",
+      "diagnostic": true,
+      "concurrency": 30,
+      "elapsedSeconds": 8.43,
+      "requests": 441,
+      "successful": 441,
+      "errorCount": 0,
+      "errorRate": 0,
+      "requestsPerSecond": 52.31,
+      "latency": {
+        "count": 441,
+        "p50Ms": 468.94,
+        "p95Ms": 1039.35,
+        "p99Ms": 1116.38,
+        "maxMs": 1137.78
+      },
+      "endpoints": {
+        "登录会话": {
+          "count": 89,
+          "p50Ms": 294.55,
+          "p95Ms": 365.73,
+          "p99Ms": 472.82,
+          "maxMs": 472.82
+        },
+        "分享详情": {
+          "count": 88,
+          "p50Ms": 435.28,
+          "p95Ms": 505.82,
+          "p99Ms": 533.81,
+          "maxMs": 533.81
+        },
+        "收集详情": {
+          "count": 88,
+          "p50Ms": 460.69,
+          "p95Ms": 536.2,
+          "p99Ms": 557.59,
+          "maxMs": 557.59
+        },
+        "收发记录": {
+          "count": 88,
+          "p50Ms": 587.3,
+          "p95Ms": 693.35,
+          "p99Ms": 742.93,
+          "maxMs": 742.93
+        },
+        "团队概览": {
+          "count": 88,
+          "p50Ms": 998.8,
+          "p95Ms": 1116.38,
+          "p99Ms": 1137.78,
+          "maxMs": 1137.78
+        }
+      },
+      "statusCounts": {
+        "200": 441
+      },
+      "responseBytes": 5320824,
+      "requestBytes": 0,
+      "throughputMiBPerSecond": 0.6,
+      "server": {
+        "cpuSingleCorePercent": 107.68,
+        "baselineRssMiB": 102.8,
+        "peakRssMiB": 292.58,
+        "endRssMiB": 290.52,
+        "heapUsedMiB": 104.12,
+        "eventLoop": {
+          "p95Ms": 17.825791,
+          "p99Ms": 20.676607,
+          "maxMs": 23.183359
+        }
+      },
+      "pool": {
+        "limit": 5,
+        "all": 5,
+        "free": 5,
+        "queued": 0,
+        "peak": {
+          "all": 5,
+          "free": 3,
+          "queued": 25,
+          "limit": 5,
+          "samples": 374
+        }
+      },
+      "clientEluPercent": 3.66,
+      "db": {
+        "stage": "诊断对照：临时关闭访问审计 C30",
+        "questions": 10578,
+        "comSelect": 10573,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "comStmtExecute": 0,
+        "comStmtPrepare": 0,
+        "rowsRead": 337077,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "rowLockCurrentWaits": 0,
+        "threadsConnected": 8,
+        "threadsRunning": 2,
+        "maxUsedConnections": 8,
+        "connections": 5,
+        "bufferPoolReads": 0,
+        "bufferPoolReadRequests": 398051,
+        "bufferPoolHitPercent": 100,
+        "bufferPoolPagesFree": 2115,
+        "tmpDiskTables": 0,
+        "selectScan": 2557,
+        "slowQueries": 0,
+        "bytesSent": 48760958,
+        "bytesReceived": 1749656,
+        "abortedClients": 0,
+        "innodbLogWaits": 0,
+        "perRequest": {
+          "questions": 23.99,
+          "comSelect": 23.98,
+          "rowsRead": 764.35,
+          "writeStatements": 0
+        },
+        "tableCounts": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 206,
+          "resourceFiles": 228,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 24,
+          "relationalAudit": 6972,
+          "legacyAudit": 0
+        },
+        "tableDelta": {
+          "users": 0,
+          "organizations": 0,
+          "resources": 0,
+          "resourceFiles": 0,
+          "records": 0,
+          "sessions": 0,
+          "uploadSessions": 0,
+          "submissions": 0,
+          "relationalAudit": 0,
+          "legacyAudit": 0
+        },
+        "tableCountsBefore": {
+          "users": 20,
+          "organizations": 1,
+          "resources": 206,
+          "resourceFiles": 228,
+          "records": 400,
+          "sessions": 20,
+          "uploadSessions": 10,
+          "submissions": 24,
+          "relationalAudit": 6972,
+          "legacyAudit": 0
+        }
+      },
+      "errors": []
+    }
+  ],
+  "collectionStage": {
+    "targetParticipants": 40,
+    "concurrency": 4,
+    "accepted": 1,
+    "errorCount": 39,
+    "persistedSubmissions": 24,
+    "p50Ms": 272.63,
+    "p95Ms": 446.22,
+    "p99Ms": 478.47,
+    "requestsPerSecond": 15.78,
+    "peakRssMiB": 473.17
+  },
+  "rateLimit": {
+    "attempts": 65,
+    "collectionsAlreadyCreated": 1,
+    "validationRejected": 59,
+    "rateLimited": 6,
+    "unexpected": 0,
+    "expectedValidationRejected": 59,
+    "passed": true
+  },
+  "auditVerification": {
+    "primaryTable": "kq_audit_log",
+    "checkedRequestIds": 50,
+    "matchedRequestIds": 50,
+    "relationalCheckedRequestIds": 50,
+    "relationalMatchedRequestIds": 50,
+    "legacyCheckedRequestIds": 50,
+    "legacyMatchedRequestIds": 0,
+    "legacyRowsBefore": 0,
+    "legacyRowsAfter": 0,
+    "relationalRowsBefore": 5000,
+    "relationalRowsAfter": 6971,
+    "relationalNewRows": 1971,
+    "retentionCapConfigured": 5000,
+    "retentionCapExceeded": true,
+    "verdict": "访问审计已持久化到关系表 `kq_audit_log`：新增 1971 行，抽查 50 个真实请求号全部命中。DB 模式下 RelationalAuditStore 覆写 insert() 只写关系镜像表，legacy 表 `kunqiong_audit_log` 保持 0 行不参与写入；保留上限 5000 未在写入路径裁剪（当前 6971 行）。"
+  },
+  "writeConflicts": {
+    "deadlocks": 55,
+    "lockWaitTimeouts": 0,
+    "metadataWriteFailed": 30,
+    "capacityChanged": 8,
+    "requestFailed": 108,
+    "uploadFailures": {
+      "16MiB分片上传 C1": 0,
+      "16MiB分片上传 C4": 3,
+      "16MiB分片上传 C8": 7
+    },
+    "collectionNon2xx": 39
+  },
+  "scanner": {
+    "files": 35,
+    "bytes": 67140608
+  },
+  "serverLogEvents": {
+    "audit_write_failed": 0,
+    "relational_request_write_failed": 86,
+    "request_failed": 108,
+    "database_timeout": 0,
+    "er_lock_deadlock": 55,
+    "er_lock_wait_timeout": 0,
+    "metadata_write_failed": 30,
+    "capacity_changed": 8,
+    "er_dup_entry": 0,
+    "audit_lock": 0,
+    "startup_failed": 0,
+    "persistence_error": 0
+  },
+  "shutdown": {
+    "elapsedMs": 97.15,
+    "exitCode": 0,
+    "signal": null,
+    "graceful": true
+  },
+  "stopError": null,
+  "cleanup": {
+    "databaseDropped": true,
+    "fixtureRemoved": true,
+    "childExited": true
+  },
+  "failures": [
+    {
+      "stage": "16MiB分片上传 C4",
+      "errors": 3,
+      "samples": [
+        {
+          "sequence": 0,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 3,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 1,
+          "status": 409,
+          "endpoint": "16MiB分片上传 C4",
+          "message": "空间用量已更新，请重试本次操作"
+        }
+      ]
+    },
+    {
+      "stage": "16MiB分片上传 C8",
+      "errors": 7,
+      "samples": [
+        {
+          "sequence": 7,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 2,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 0,
+          "status": 409,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "空间用量已更新，请重试本次操作"
+        },
+        {
+          "sequence": 6,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 1,
+          "status": 503,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 3,
+          "status": 409,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "空间用量已更新，请重试本次操作"
+        },
+        {
+          "sequence": 4,
+          "status": 409,
+          "endpoint": "16MiB分片上传 C8",
+          "message": "空间用量已更新，请重试本次操作"
+        }
+      ]
+    },
+    {
+      "stage": "收集任务多人提交 C4",
+      "errors": 39,
+      "samples": [
+        {
+          "sequence": 3,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 0,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 5,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 1,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 2,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 4,
+          "status": 409,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据已被其他请求更新，请刷新后重试"
+        },
+        {
+          "sequence": 8,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 6,
+          "status": 409,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据已被其他请求更新，请刷新后重试"
+        },
+        {
+          "sequence": 11,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        },
+        {
+          "sequence": 7,
+          "status": 503,
+          "endpoint": "收集任务多人提交 C4",
+          "message": "数据保存失败，请稍后重试"
+        }
+      ]
+    },
+    {
+      "stage": "收集任务多人提交 C4",
+      "message": "期望 40 人提交并落库，实际 accepted=1 persisted=24"
+    }
+  ],
+  "diagnosticComparison": {
+    "baselineRps": 26.31,
+    "noAccessAuditRps": 52.31,
+    "throughputMultiplier": 1.99,
+    "baselineP95Ms": 2154.4,
+    "noAccessAuditP95Ms": 1039.35,
+    "baselineQuestions": 21246,
+    "noAccessAuditQuestions": 10578,
+    "note": "仅临时副本关闭访问审计用于归因；生产必须保留访问审计。"
+  },
+  "bottlenecks": {
+    "maxPoolQueuedPeak": 46,
+    "maxConnectionsUsed": 5,
+    "database503": 30,
+    "lines": [
+      "**1) DB 连接池 5 连接是首要约束。** C30 持续负载下连接池峰值已建连接 5/5，排队峰值 46（queueLimit=50）；全测试 503 响应共 30 次，集中在写入场景（见第 6 条）。并发从 C1 升到 C10 后吞吐即进入平台（C30/C50 不再提升、P95 随并发线性上升），属于典型的连接池排队：单个业务混合请求包含会话、账号、组织、资源分页、用量、通知等多段串行 SQL，请求会反复申请/释放连接，因此连接池先于 CPU 饱和。",
+      "",
+      "**2) 按需 SQL 次数直接决定吞吐上限。** C30 混合读取平均 **26.1 条语句/请求**（其中 SELECT 24.61 条、Innodb 行读 722.41 行/请求），写入语句 1.49 条/请求。用 C1 阶段 P50 33.87 ms 除以每请求语句数得到单条语句约 1.3 ms，按 5 条连接估算纯 SQL 串行上限约 147.36 req/s，实测 C10≈28.13 req/s；剩余差距来自服务端单核 CPU（读取阶段单进程 CPU 已接近 100–110% 单核口径）、审计 flush 等待与同机客户端竞争。放大项是分页与组织图加载：这些查询结果集都很小，瓶颈在往返次数与连接争用，而不是单条 SQL 执行时间。",
+      "",
+      "**3) 访问审计是固定但非主导的成本。** 关闭访问审计的 C30 对照：吞吐 26.31 → 52.31 req/s（1.99 倍），P95 2154.4 → 1039.35 ms，Questions/请求 26.1 → 23.99。该差异与阶段间波动同量级（诊断阶段在持续阶段之后运行、缓存更热），不能单独归因；可以确定的是审计写入走同一连接池、每次 API 请求追加 1 条 INSERT（压测期间关系表 `kq_audit_log` 新增 1971 行，抽查 50 个请求号全部命中），是每请求固定的额外往返。",
+      "",
+      "**4) 加密/实体解码成本显著。** 正常进程 CPU profile 中与关系载荷解密、实体 hydrate/打包相关的帧（decodeProtected、createCipherBase、crypto/cipher update/final、request-store.hydrate、hydrateRows、normalized-codec、structuredClone）合计活跃采样约 **48.31%**。关系表把实体载荷整体加密（entity_payload_json）后按请求解密，并要为每次请求把行数据 hydrate/pack 成业务对象，这是 MySQL 模式相对 JSON 模式的额外 CPU 成本，也是读取吞吐上不去的原因之一。",
+      "",
+      "**5) 分页取齐与团队视图。** 团队概览、收发记录、回收站等路由在 DB 模式按游标分页取数（默认 50 行），而 JSON 模式一次性从内存快照取全量；分页显著降低单次响应字节，但让“列表 + 计数 + 成员用量”页面变成多段串行 SQL，C50 时更容易在连接池排队。",
+      "",
+      "**6) 写入路径并发不健壮（本次最重要的可靠性发现）。** 服务端日志出现 `ER_LOCK_DEADLOCK` 55 次、`CAPACITY_CHANGED` 8 次、`METADATA_WRITE_FAILED` 30 次。受影响场景：上传完成（16MiB分片上传 C1=0、16MiB分片上传 C4=3、16MiB分片上传 C8=7）、收集任务多人提交（39/40 次非 2xx）。写事务虽然通过 `kq_write_lock` 行锁做作用域串行，但并发团队写入仍会撞 InnoDB 死锁；服务端对死锁/容量冲突没有有界重试，直接把 503/409 返回客户端。收集阶段实际落库 24 条，而返回 201 的只有 1 条——说明部分事务已经提交、响应却是错误码，客户端无法据此判断是否需要重试，存在“假失败”语义。",
+      "",
+      "**交叉验证（数据库层压测）：** 数据库层压测在同一隔离 MySQL 实例上独立复现了本条根因 —— 写路径的 `INSERT IGNORE INTO kq_write_lock` 与 `SELECT ... FOR UPDATE` 组合会产生共享锁→排他锁（S→X）升级，20 并发同 key 时约 75% 的事务死锁，与本报告服务端日志中的 `ER_LOCK_DEADLOCK` 以及 503 `METADATA_WRITE_FAILED` 现象吻合。详见 `docs/PERFORMANCE-数据库压测报告.md`（该报告给出可复现的代码级根因；本次按要求未修改 server 源码）。",
+      "",
+      "**7) 传输链路未成为瓶颈。** 上传/下载阶段的限制来自 16 MiB 字节复制、SHA-256 校验与扫描协议传输，DB 只承担会话与资源元数据写入（上传完成时一次事务），C8 阶段吞吐仍受同机字节拷贝与磁盘约束。"
+    ]
+  },
+  "profiles": {
+    "normal": [
+      {
+        "frame": "createCipherBase|node:internal/crypto/cipher:115",
+        "samples": 3218,
+        "activeSamplePercent": 6.93
+      },
+      {
+        "frame": "structuredClone|node:internal/worker/js_transferable:112",
+        "samples": 2784,
+        "activeSamplePercent": 5.99
+      },
+      {
+        "frame": "decodeProtected|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/relational-store.js:56",
+        "samples": 2680,
+        "activeSamplePercent": 5.77
+      },
+      {
+        "frame": "update|node:internal/crypto/cipher:151",
+        "samples": 2399,
+        "activeSamplePercent": 5.16
+      },
+      {
+        "frame": "hydrate|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/request-store.js:170",
+        "samples": 2037,
+        "activeSamplePercent": 4.38
+      },
+      {
+        "frame": "writeBuffer|:0",
+        "samples": 1740,
+        "activeSamplePercent": 3.75
+      },
+      {
+        "frame": "final|node:internal/crypto/cipher:169",
+        "samples": 1515,
+        "activeSamplePercent": 3.26
+      },
+      {
+        "frame": "normalizeRecordDate|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/lib/audit-normalizer.js:9",
+        "samples": 1486,
+        "activeSamplePercent": 3.2
+      },
+      {
+        "frame": "iso|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/normalized-codec.js:5",
+        "samples": 1415,
+        "activeSamplePercent": 3.05
+      },
+      {
+        "frame": "payload|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/normalized-codec.js:101",
+        "samples": 1254,
+        "activeSamplePercent": 2.7
+      },
+      {
+        "frame": "writev|:0",
+        "samples": 991,
+        "activeSamplePercent": 2.13
+      },
+      {
+        "frame": "hydrateRows|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/normalized-codec.js:88",
+        "samples": 962,
+        "activeSamplePercent": 2.07
+      },
+      {
+        "frame": "(program)|:0",
+        "samples": 877,
+        "activeSamplePercent": 1.89
+      },
+      {
+        "frame": "(anonymous)|:0",
+        "samples": 800,
+        "activeSamplePercent": 1.72
+      },
+      {
+        "frame": "(garbage collector)|:0",
+        "samples": 719,
+        "activeSamplePercent": 1.55
+      }
+    ],
+    "diagnostic": [
+      {
+        "frame": "hydrate|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/request-store.js:170",
+        "samples": 705,
+        "activeSamplePercent": 12.08
+      },
+      {
+        "frame": "createCipherBase|node:internal/crypto/cipher:115",
+        "samples": 435,
+        "activeSamplePercent": 7.45
+      },
+      {
+        "frame": "decodeProtected|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/relational-store.js:56",
+        "samples": 378,
+        "activeSamplePercent": 6.48
+      },
+      {
+        "frame": "update|node:internal/crypto/cipher:151",
+        "samples": 281,
+        "activeSamplePercent": 4.81
+      },
+      {
+        "frame": "iso|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/normalized-codec.js:5",
+        "samples": 231,
+        "activeSamplePercent": 3.96
+      },
+      {
+        "frame": "writeBuffer|:0",
+        "samples": 202,
+        "activeSamplePercent": 3.46
+      },
+      {
+        "frame": "payload|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/normalized-codec.js:101",
+        "samples": 193,
+        "activeSamplePercent": 3.31
+      },
+      {
+        "frame": "hydrateRows|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/db/normalized-codec.js:88",
+        "samples": 165,
+        "activeSamplePercent": 2.83
+      },
+      {
+        "frame": "final|node:internal/crypto/cipher:169",
+        "samples": 165,
+        "activeSamplePercent": 2.83
+      },
+      {
+        "frame": "query|file:///D:/demo/%E9%B2%B2%E7%A9%B9%E6%96%87%E4%BB%B6%E4%BC%A0%E8%BE%93/kunqiong-file-transfer-web-main/kunqiong-file-transfer-web-main/node_modules/mysql2/lib/promise/connection.js:31",
+        "samples": 139,
+        "activeSamplePercent": 2.38
+      },
+      {
+        "frame": "(garbage collector)|:0",
+        "samples": 102,
+        "activeSamplePercent": 1.75
+      },
+      {
+        "frame": "objectComparisonStart|node:internal/util/comparisons:266",
+        "samples": 97,
+        "activeSamplePercent": 1.66
+      },
+      {
+        "frame": "(anonymous)|:0",
+        "samples": 95,
+        "activeSamplePercent": 1.63
+      },
+      {
+        "frame": "(program)|:0",
+        "samples": 87,
+        "activeSamplePercent": 1.49
+      },
+      {
+        "frame": "revealCredential|file:///C:/Users/admin/AppData/Local/Temp/kunqiong-performance-mysql-v2D2rG/server/lib/private-key.js:55",
+        "samples": 82,
+        "activeSamplePercent": 1.41
+      }
+    ]
+  },
+  "recommendations": [
+    "**优先修复写入并发（可靠性）**：本次实测 `ER_LOCK_DEADLOCK` 55 次、`CAPACITY_CHANGED` 8 次，上传完成与收集提交被 503/409 拒绝；且有 24 条提交实际落库却返回错误码。建议：对死锁/锁等待超时做有界重试（指数退避，重试前重新读取 revision 与用量），缩小 `kq_write_lock` 与事务覆盖范围（避免在同一事务里串行加多个作用域锁），并把“已提交但响应失败”的路径改成幂等可重试语义（返回明确错误码或按幂等键返回成功）。",
+    "连接池容量与排队：当前 connectionLimit=5 在 C30 已出现排队峰值 46、503 30 次。建议按目标并发做压测标定（例如 C50 目标下将 connectionLimit 提升到并发读请求数的一个分数，并同步调大 queueLimit / acquireTimeout），或按请求合并按需查询（一次请求内的会话 + 账号 + 组织 + 用量允许复用一个连接）。",
+    "减少按需 SQL 往返：把同一请求内的多次 `store.config()/session()/account()/organizationGraph()/loadUsage()` 合并到单连接上的批量语句（multi-statement 或一次 JOIN），并缓存只读系统配置与套餐快照，避免每次请求重复读取。",
+    "审计写入与保留：DB 模式访问审计已写入关系表 `kq_audit_log`（抽查全部命中），但保留上限 5000 未在写入路径裁剪（本次已到 6971 行）。建议补充基于时间的清理任务（服务启动路径明确调度审计 purge）并监控表增长，避免审计表随请求量无界膨胀。",
+    "审计写入成本归因：关闭访问审计后 C30 吞吐从 26.31 提升到 52.31 req/s，差异与阶段间噪声同量级，说明访问审计不是主导成本（主要成本是连接池排队与按需 SQL）。仍建议把每请求 1 次独立 INSERT 改为有界队列批量提交（明确容量、背压、失败重试与退出落盘），以减少往返并把审计写入从响应路径移出。",
+    "资源与文件元数据分页：继续沿用当前分页读取，避免一次请求解密大量 `entity_payload_json`；列表接口只返回必要字段，成员用量等聚合查询走 `kq_resource_usage` 预聚合表（当前已由迁移回填）。",
+    "加密载荷成本：`entity_payload_json` 整体加密带来按请求 AES-GCM 开销，建议对非敏感的大字段（展示名、标题、时间等）保持明文列，仅对凭据/参与者信息加密，减少解密字节量。",
+    "上线容量确认：本次只覆盖 16 MiB 文件、20 用户/201 资源的本机回环场景；真实部署还需跨机网络、长时间运行、500 MiB/5 GiB 大文件、真实 ClamAV 及多实例共享同一 MySQL 的场景复测后再定容量。"
+  ],
+  "limitations": [
+    "健康检查与前端页面基线各 5 秒，业务读取普通阶段 8 秒、持续阶段 30 秒；上传仅 13 个文件、下载仅 26 个文件，分位数样本有限，不能外推为长稳结论。",
+    "压测客户端与被测服务、MySQL 容器、扫描模拟器同机运行，客户端事件循环与 CPU 会和被测服务竞争；表中“服务 CPU”是单进程 cpuUsage 增量按阶段时长折算的单核百分比口径。",
+    "扫描链路使用本机 INSTREAM 协议模拟器（required 模式），只验证协议往返与字节计数，不代表真实 ClamAV 病毒库扫描耗时。",
+    "MySQL 全局状态增量包含服务端关系维护定时器（清理/对账/审计清扫）在窗口内的少量查询、以及每次快照自身 1 条 SHOW GLOBAL STATUS（已在 Questions 中扣除 1），阶段内业务查询占绝大多数；连接池排队为 20 ms 采样峰值，可能低估极短尖峰。",
+    "数据量小（约 200 资源 / 5000 条种子审计 / 数百 KB 载荷），InnoDB Buffer Pool 命中率全程 100%，本次没有测到磁盘 I/O 压力；真实数据量下缓冲池未命中与磁盘延迟会成为新的瓶颈。",
+    "连接池固定 5 连接（KUNQIONG_DB_CONNECTION_LIMIT=5），未做多档容量扫描；C50 的结果不能代表提高连接池后的表现。",
+    "收集提交阶段每位提交者上传 1 KiB 文本，主持人（企业权益）参与人数上限为不限，故未触发人数上限；限流校验按 5 分钟窗口 / 60 次与进程内已用额度动态计算期望值。",
+    "审计持久化结论：DB 模式访问审计写入关系表 kq_audit_log（RelationalAuditStore 覆写 insert），legacy 表 kunqiong_audit_log 不参与；本次以请求号抽查方式验证，未逐条核对全部请求。",
+    "收集提交与上传完成阶段的失败同时包含 503（服务端写事务失败/死锁）与 409（乐观并发冲突）；压测客户端不做自动重试，因此这些失败反映“一次尝试”的结果，不代表业务最终成功率，也说明客户端缺乏可判定的重试语义。",
+    "CPU profile 在压测期间持续采样（约 1 ms 周期），会带来少量固定开销；profile 帧占比是整个进程的活跃采样比例，不是单阶段耗时比例。"
+  ],
+  "environmentFacts": {
+    "forbiddenPortsTouched": false,
+    "realDatabaseQueriedForWrite": false,
+    "runningService8045Touched": false
+  },
+  "repeatRuns": [
+    {
+      "label": "run-20261102T074908",
+      "database": "kq_perf_http_20261102074908_2b9c0b18",
+      "startedAt": "2026-11-02T07:49:08.000Z",
+      "finishedAt": "2026-11-02T07:51:13.000Z",
+      "healthRps": 8471.99,
+      "pageRps": 4037.49,
+      "mixedC1Rps": 24.6,
+      "mixedC10Rps": 46.81,
+      "mixedC30Rps": 46.7,
+      "mixedC50Rps": 44.85,
+      "sustainedC30Rps": 40.63,
+      "sustainedC30P95Ms": 1412.28,
+      "diagnosticC30Rps": 44.42,
+      "collectionAccepted": 4,
+      "collectionPersisted": 17,
+      "deadlocks": null,
+      "failures": 3,
+      "note": "来自同时段临时控制台日志；该轮 DB 侧快照尚未修正（仅 HTTP 指标可用于对比），results.json 已被后续轮次覆盖。"
+    },
+    {
+      "label": "run-20261102T075233",
+      "database": "kq_perf_http_20261102075233_a4655c24",
+      "startedAt": "2026-11-02T07:52:33.046Z",
+      "finishedAt": "2026-11-02T07:54:39.270Z",
+      "healthRps": 8541.72,
+      "pageRps": 3923.74,
+      "mixedC1Rps": 25.82,
+      "mixedC10Rps": 40.95,
+      "mixedC30Rps": 41.05,
+      "mixedC50Rps": 41.08,
+      "sustainedC30Rps": 36.83,
+      "sustainedC30P95Ms": 1512.51,
+      "diagnosticC30Rps": 43.41,
+      "collectionAccepted": 3,
+      "collectionPersisted": 24,
+      "deadlocks": 52,
+      "failures": 3,
+      "note": "来自同时段临时控制台日志；该轮 results.json 已被后续轮次覆盖。"
+    },
+    {
+      "label": "run-20261102T080038",
+      "database": "kq_perf_http_20261102080038_a7e687f1",
+      "startedAt": "2026-11-02T08:00:38.000Z",
+      "finishedAt": "2026-11-02T08:02:54.000Z",
+      "healthRps": 2804.47,
+      "pageRps": 1549.83,
+      "mixedC1Rps": 18.68,
+      "mixedC10Rps": 27.29,
+      "mixedC30Rps": 27.37,
+      "mixedC50Rps": 27.22,
+      "sustainedC30Rps": 26.5,
+      "sustainedC30P95Ms": 2098.88,
+      "diagnosticC30Rps": 32.3,
+      "collectionAccepted": 0,
+      "collectionPersisted": 24,
+      "deadlocks": null,
+      "failures": 3,
+      "note": "来自同时段临时控制台日志；该轮处于宿主机高负载窗口。"
+    },
+    {
+      "label": "run-20261102T080352",
+      "database": "kq_perf_http_20261102080352_9e2ac2e3",
+      "startedAt": "2026-11-02T08:03:52.127Z",
+      "finishedAt": "2026-11-02T08:06:02.235Z",
+      "healthRps": 7281.65,
+      "pageRps": 4004.88,
+      "mixedC1Rps": 23.82,
+      "mixedC10Rps": 28.13,
+      "mixedC30Rps": 27.41,
+      "mixedC50Rps": 29.06,
+      "sustainedC30Rps": 26.31,
+      "sustainedC30P95Ms": 2154.4,
+      "diagnosticC30Rps": 52.31,
+      "collectionAccepted": 1,
+      "collectionPersisted": 24,
+      "deadlocks": 55,
+      "failures": 4,
+      "note": "本报告的最后一轮=主数据；该轮 results.json / server.log / db-metrics.jsonl 完整保留在证据目录。"
+    }
+  ]
+}

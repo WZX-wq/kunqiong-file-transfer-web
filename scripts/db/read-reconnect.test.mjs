@@ -55,7 +55,7 @@ for (const method of ['query', 'execute']) {
   })
 }
 
-test('two stalled reads share one configured query deadline', async () => {
+test('several stalled reads share one configured query deadline', async () => {
   const timeouts = []
   const destroyed = new Set()
   let acquired = 0
@@ -65,9 +65,23 @@ test('two stalled reads share one configured query deadline', async () => {
       destroy() { destroyed.add(id) }, release() {} }
   } }, { queryTimeoutMs: 90 })
   await assert.rejects(pool.query('SELECT * FROM kq_user WHERE id = ?', [1]), { code: 'DATABASE_QUERY_TIMEOUT' })
-  assert.equal(timeouts.length, 2)
-  assert.ok(timeouts[0] + timeouts[1] <= 90)
-  assert.equal(destroyed.size, 2)
+  assert.ok(timeouts.length >= 2 && timeouts.length <= 4)
+  assert.ok(timeouts.reduce((sum, timeout) => sum + timeout, 0) <= 90)
+  assert.equal(destroyed.size, timeouts.length)
+})
+
+test('read recovery discards multiple dead proxy connections before a healthy one', async () => {
+  let attempts = 0, destroyed = 0
+  const pool = boundedPool({ async getConnection() {
+    const attempt = ++attempts
+    return { async query() {
+      if (attempt < 4) throw Object.assign(Error('dead proxy connection'), { code: 'ECONNRESET' })
+      return [[{ id: 7 }]]
+    }, destroy() { destroyed++ }, release() {} }
+  } })
+  assert.deepEqual(await pool.query('SELECT id FROM kq_resource WHERE id = ?', [7]), [[{ id: 7 }]])
+  assert.equal(attempts, 4)
+  assert.equal(destroyed, 3)
 })
 
 test('writes, locking reads and leased transaction reads are never replayed', async () => {

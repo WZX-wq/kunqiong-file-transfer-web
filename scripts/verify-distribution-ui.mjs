@@ -20,7 +20,7 @@ virtualConsole.on('jsdomError', error => errors.push(error))
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://fixture.local/', pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole })
 const { window } = dom, document = window.document
 const styles = document.createElement('style')
-styles.textContent = ['base.css', 'components.css', 'app-main.css'].map(file => fs.readFileSync(path.join(root, 'src/styles', file), 'utf8')).join('\n')
+styles.textContent = ['base.css', 'components.css', 'app-main.css', 'responsive.css'].map(file => fs.readFileSync(path.join(root, 'src/styles', file), 'utf8')).join('\n')
 document.head.append(styles)
 const response = (data = {}, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } })
 window.fetch = async (url, options = {}) => {
@@ -98,7 +98,8 @@ try {
   await waitFor(() => document.querySelector('.upload-panel.send-prototype-drop-card'), 'upload panel mounts')
   const entry = document.querySelector('.send-distribution-entry')
   check('DIST-001 入口位于上传框右上角而不在顶部栏或横幅', entry?.closest('.upload-panel.send-prototype-drop-card') !== null && !document.querySelector('.topbar .send-distribution-entry') && !document.querySelector('.send-prototype-hero .send-distribution-entry'))
-  check('DIST-001 上传框入口使用右上角定位样式', entry && window.getComputedStyle(entry).position === 'absolute' && window.getComputedStyle(entry).top !== 'auto' && window.getComputedStyle(entry).right !== 'auto')
+  const toolbar = entry?.closest('.send-prototype-upload-toolbar')
+  check('DIST-001 上传框入口在工具栏右列参与布局以防遮挡', toolbar && window.getComputedStyle(toolbar).display === 'grid' && window.getComputedStyle(entry).position === 'static' && window.getComputedStyle(entry).gridColumn === '2' && window.getComputedStyle(entry).justifySelf === 'end')
   await click('批量定向发布')
   await waitFor(() => document.querySelector('.distribution-page h1')?.textContent.includes('批量分发'), 'distribution view opens from upload card')
   check('DIST-001 点击上传框入口打开定向发布页', Boolean(document.querySelector('.distribution-page')))

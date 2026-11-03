@@ -25,11 +25,14 @@ import {
 } from './server/lib/http.js'
 
 import {
-  databasePool, runtime
+  databasePool, databaseAuthPool, databaseMaintenancePool, runtime
 } from './server/state.js'
 import { initializeRelationalSchemaOnStartup } from './server/db/startup.js'
 import { createStartupLifecycle } from './server/lib/startup-lifecycle.js'
 import { relationalDataMiddleware } from './server/lib/relational-request.js'
+import { responseCompression } from './server/lib/response-compression.js'
+import { requestMetrics } from './server/lib/request-metrics.js'
+import { runWithDataContext } from './server/lib/data-context.js'
 import { requireSharedDataKey } from './server/lib/private-key.js'
 import { scheduleRelationalMaintenance } from './server/lib/relational-maintenance.js'
 import { flushDataOperations } from './server/lib/data-context.js'
@@ -183,9 +186,26 @@ app.get('/api/health', (_req, res) => {
     },
   })
 })
+app.use(requestMetrics({ onFinish(req, res, metrics) {
+  if (req.path.startsWith('/api/health') || (!req.path.startsWith('/api/') && !req.path.startsWith('/auth/'))) return
+  const record = () => {
+    try { recordAuditLog({
+      type: 'access', action: `${req.method} ${sanitizeAuditPath(req.path)}`, status: res.statusCode,
+      durationMs: metrics.durationMs,
+      details: { release: releaseSha, requestId: res.locals.requestId, ...metrics,
+        ...(res.statusCode >= 400 ? { errorCode: res.locals.errorCode || `http_${res.statusCode}` } : {}) },
+      userId: authSessionFromRequest(req)?.user?.id || '', ip: requestIp(req),
+    }) } catch (error) {
+      console.error(JSON.stringify({ event: 'audit_write_failed', release: releaseSha, requestId: res.locals.requestId, code: error.code || 'AUDIT_STORE_FAILED' }))
+    }
+  }
+  if (req.dataContext) runWithDataContext(req.dataContext, record)
+  else record()
+} }))
+app.use(responseCompression())
 app.use(startup.middleware)
 app.use(express.json({ limit: '1mb' }))
-if (databasePool) app.use(relationalDataMiddleware(databasePool))
+if (databasePool) app.use(relationalDataMiddleware(databasePool, databaseAuthPool, databaseMaintenancePool))
 // 4xx/5xx 的 JSON 错误响应统一附带 x-error-message 头：下载预检走 HEAD（无响应体），
 // 前端从该头读取人类可读的错误文案，避免界面出现「下载失败（410）」这类裸状态码。
 // 头值只允许 latin1，中文先 encodeURIComponent，前端拿到后 decodeURIComponent。
@@ -193,10 +213,10 @@ app.use((_req, res, next) => {
   const originalJson = res.json.bind(res)
   res.json = (payload) => {
     if (databasePool) {
-      Promise.all([runtime.metadataWriteQueue, flushAuditPersistence()]).then(() => {
+      Promise.resolve(runtime.metadataWriteQueue).then(() => {
         if (res.destroyed) return
         if (runtime.persistenceError) return originalJsonAfterError()
-        originalJson(payload)
+        sendJson(payload)
       }).catch(originalJsonAfterError)
       return res
     }
@@ -210,7 +230,7 @@ app.use((_req, res, next) => {
   const originalRedirect = res.redirect.bind(res)
   res.redirect = (...args) => {
     if (!databasePool || res.headersSent) return originalRedirect(...args)
-    Promise.all([runtime.metadataWriteQueue, flushAuditPersistence()]).then(() => {
+    Promise.resolve(runtime.metadataWriteQueue).then(() => {
       if (res.headersSent) return
       if (runtime.persistenceError) return originalJsonAfterError()
       originalRedirect(...args)
@@ -242,26 +262,6 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
   res.setHeader('X-Frame-Options', 'DENY')
-  const requestId = createToken(16)
-  res.setHeader('X-Request-Id', requestId)
-  res.locals.requestId = requestId
-  const startedAt = Date.now()
-  res.on('finish', () => {
-    if (req.path === '/api/health' || (!req.path.startsWith('/api/') && !req.path.startsWith('/auth/'))) return
-    try { recordAuditLog({
-      type: 'access',
-      action: `${req.method} ${sanitizeAuditPath(req.path)}`,
-      status: res.statusCode,
-      durationMs: Date.now() - startedAt,
-      details: { release: releaseSha, requestId, ...(res.statusCode >= 400 ? { errorCode: res.locals.errorCode || `http_${res.statusCode}` } : {}) },
-      userId: authSessionFromRequest(req)?.user?.id || '',
-      ip: requestIp(req),
-    }) } catch (error) {
-      // finish runs after response delivery; report storage failures without an uncaught
-      // exception taking down the service. Operational logs retain sanitized context.
-      console.error(JSON.stringify({ event: 'audit_write_failed', release: releaseSha, requestId, method: req.method, path: sanitizeAuditPath(req.path), status: res.statusCode, code: error.code || 'AUDIT_STORE_FAILED' }))
-    }
-  })
   next()
 })
 
@@ -398,6 +398,7 @@ app.use((error, req, res, _next) => {
     if (error.scanFile) payload.scanFile = error.scanFile
     if (error.scanFinding) payload.scanFinding = error.scanFinding
     if (error.guestQuota) payload.guestQuota = error.guestQuota
+    if (Array.isArray(error.existingFiles)) payload.existingFiles = error.existingFiles
     return res.status(error.status).json(payload)
   }
   if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: '文件超过 5 GB 限制' })
@@ -419,7 +420,7 @@ const server = app.listen(serverPort, serverHost, () => {
 let cleanupTimer, paymentTimer, initialPaymentCheck, auditLogTimer
 function startMaintenance() {
   if (databasePool) {
-    const timers = scheduleRelationalMaintenance(databasePool)
+    const timers = scheduleRelationalMaintenance(databaseMaintenancePool)
     cleanupTimer = timers.cleanup
     paymentTimer = timers.payment
     auditLogTimer = timers.audit
@@ -435,14 +436,18 @@ function startMaintenance() {
   paymentTimer.unref()
   initialPaymentCheck = setTimeout(() => { reconcileActiveUpgradeOrders().catch(() => {}) }, 1000)
   initialPaymentCheck.unref()
-  // 审计日志按保留期每日自动清除（只动 auditLogs，不碰资源清理——purgeStaleResources 绝不进定时链路）
+  // 与数据库模式使用相同的可配置保留策略，不进入业务资源清理链路。
+  let auditPurgedAt = 0
   auditLogTimer = setInterval(() => {
     try {
+      const config = normalizeSystemConfig(metadata.systemConfig)
+      if (Date.now() - auditPurgedAt < config.auditCleanupIntervalMinutes * 60000) return
       purgeExpiredAuditLogs()
+      auditPurgedAt = Date.now()
     } catch (error) {
       console.warn('[audit-log-cleanup] failed:', error?.message || error)
     }
-  }, 24 * 60 * 60 * 1000)
+  }, 60000)
   auditLogTimer.unref()
   cleanupExpired()
   purgeExpiredTrash()
@@ -470,6 +475,8 @@ async function shutdown(signal) {
     await flushAuditPersistence()
     await flushDataOperations()
     if (databasePool) await databasePool.end()
+    if (databaseAuthPool) await databaseAuthPool.end()
+    if (databaseMaintenancePool) await databaseMaintenancePool.end()
     if (runtime.persistenceError) throw runtime.persistenceError
     clearTimeout(deadline)
     process.exit(0)

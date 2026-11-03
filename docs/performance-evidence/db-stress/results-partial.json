@@ -1,0 +1,665 @@
+{
+  "stages": [
+    {
+      "name": "用户主键/唯一键点查 C20",
+      "kind": "read",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.002,
+      "operations": 70356,
+      "succeeded": 70356,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 703.4,
+      "latency": {
+        "count": 70356,
+        "p50Ms": 2.69,
+        "p95Ms": 3.71,
+        "p99Ms": 5.79,
+        "maxMs": 12.15
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.001,
+      "mysqlDelta": {
+        "queries": 70397,
+        "comSelect": 70356,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "innodbRowsRead": 70356,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 5,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.99,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "会话鉴权查询 C20",
+      "kind": "read",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.003,
+      "operations": 68048,
+      "succeeded": 68048,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 680.3,
+      "latency": {
+        "count": 68048,
+        "p50Ms": 2.77,
+        "p95Ms": 3.94,
+        "p99Ms": 5.46,
+        "maxMs": 17.54
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.001,
+      "mysqlDelta": {
+        "queries": 68089,
+        "comSelect": 68048,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "innodbRowsRead": 136096,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 6,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.99,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "资源列表分页 C20",
+      "kind": "read",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.004,
+      "operations": 54746,
+      "succeeded": 54746,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 547.2,
+      "latency": {
+        "count": 54746,
+        "p50Ms": 3.33,
+        "p95Ms": 5.37,
+        "p99Ms": 8.53,
+        "maxMs": 17.38
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.001,
+      "mysqlDelta": {
+        "queries": 54787,
+        "comSelect": 54746,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "innodbRowsRead": 164238,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 5,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.99,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "收发记录游标分页 C20",
+      "kind": "read",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.006,
+      "operations": 20925,
+      "succeeded": 20925,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 209.1,
+      "latency": {
+        "count": 20925,
+        "p50Ms": 9.08,
+        "p95Ms": 13.77,
+        "p99Ms": 18.32,
+        "maxMs": 47.34
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 2.002,
+      "mysqlDelta": {
+        "queries": 41890,
+        "comSelect": 41850,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "innodbRowsRead": 1114595,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 6,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "站内消息游标分页 C20",
+      "kind": "read",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.003,
+      "operations": 56031,
+      "succeeded": 56031,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 560.1,
+      "latency": {
+        "count": 56031,
+        "p50Ms": 3.21,
+        "p95Ms": 5.43,
+        "p99Ms": 7.66,
+        "maxMs": 25.33
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.001,
+      "mysqlDelta": {
+        "queries": 56072,
+        "comSelect": 56031,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "innodbRowsRead": 1120620,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 5,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.96,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "分享码联查 C20",
+      "kind": "read",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.003,
+      "operations": 61910,
+      "succeeded": 61910,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 618.9,
+      "latency": {
+        "count": 61910,
+        "p50Ms": 3,
+        "p95Ms": 4.64,
+        "p99Ms": 6.21,
+        "maxMs": 14.05
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.001,
+      "mysqlDelta": {
+        "queries": 61951,
+        "comSelect": 61910,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "innodbRowsRead": 123820,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 5,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.96,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "空间用量聚合 C10",
+      "kind": "read",
+      "note": "",
+      "concurrency": 10,
+      "elapsedSeconds": 10.002,
+      "operations": 60601,
+      "succeeded": 60601,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 605.9,
+      "latency": {
+        "count": 60601,
+        "p50Ms": 1.57,
+        "p95Ms": 2.25,
+        "p99Ms": 2.85,
+        "maxMs": 14.7
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.001,
+      "mysqlDelta": {
+        "queries": 60642,
+        "comSelect": 60601,
+        "comInsert": 0,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "innodbRowsRead": 484808,
+        "rowsInserted": 0,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 5,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.99,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "审计写入 C20",
+      "kind": "write",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.013,
+      "operations": 13246,
+      "succeeded": 13246,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 132.3,
+      "latency": {
+        "count": 13246,
+        "p50Ms": 14.73,
+        "p95Ms": 18.92,
+        "p99Ms": 22.52,
+        "maxMs": 55.8
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.003,
+      "mysqlDelta": {
+        "queries": 13287,
+        "comSelect": 0,
+        "comInsert": 13246,
+        "comUpdate": 0,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "innodbRowsRead": 0,
+        "rowsInserted": 13246,
+        "rowsUpdated": 0,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 7,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.7,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "写事务：记录+审计+版本号 C20",
+      "kind": "write",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.025,
+      "operations": 7092,
+      "succeeded": 7092,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 70.7,
+      "latency": {
+        "count": 7092,
+        "p50Ms": 27.1,
+        "p95Ms": 36.7,
+        "p99Ms": 44.38,
+        "maxMs": 75.24
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 5.006,
+      "mysqlDelta": {
+        "queries": 35501,
+        "comSelect": 0,
+        "comInsert": 14184,
+        "comUpdate": 7092,
+        "comDelete": 0,
+        "comCommit": 7092,
+        "comRollback": 0,
+        "innodbRowsRead": 7092,
+        "rowsInserted": 14184,
+        "rowsUpdated": 7091,
+        "rowsDeleted": 0,
+        "rowLockWaits": 3,
+        "rowLockTimeMs": 4,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 6,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.66,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "同实体并发更新（行锁竞争）C20",
+      "kind": "write",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.034,
+      "operations": 5702,
+      "succeeded": 5702,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 56.8,
+      "latency": {
+        "count": 5702,
+        "p50Ms": 34.29,
+        "p95Ms": 40.6,
+        "p99Ms": 52.17,
+        "maxMs": 72.74
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.007,
+      "mysqlDelta": {
+        "queries": 5743,
+        "comSelect": 0,
+        "comInsert": 0,
+        "comUpdate": 5702,
+        "comDelete": 0,
+        "comCommit": 0,
+        "comRollback": 0,
+        "innodbRowsRead": 5702,
+        "rowsInserted": 0,
+        "rowsUpdated": 5702,
+        "rowsDeleted": 0,
+        "rowLockWaits": 5701,
+        "rowLockTimeMs": 35549,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 7,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 100,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "写锁获取事务（同 key 串行化）C20",
+      "kind": "write",
+      "note": "模拟 lockWriteScope：INSERT IGNORE + SELECT ... FOR UPDATE",
+      "concurrency": 20,
+      "elapsedSeconds": 10.022,
+      "operations": 8464,
+      "succeeded": 2117,
+      "failures": 6347,
+      "errorRatePercent": 75,
+      "opsPerSecond": 84.5,
+      "latency": {
+        "count": 8464,
+        "p50Ms": 23.36,
+        "p95Ms": 27.98,
+        "p99Ms": 32.56,
+        "maxMs": 58.98
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 4.255,
+      "mysqlDelta": {
+        "queries": 36014,
+        "comSelect": 8464,
+        "comInsert": 8464,
+        "comUpdate": 2117,
+        "comDelete": 0,
+        "comCommit": 2117,
+        "comRollback": 6347,
+        "innodbRowsRead": 4234,
+        "rowsInserted": 1,
+        "rowsUpdated": 2117,
+        "rowsDeleted": 0,
+        "rowLockWaits": 16916,
+        "rowLockTimeMs": 17777,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 7,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.98,
+      "errors": {
+        "ER_LOCK_DEADLOCK": 6347
+      },
+      "errorSamples": [
+        {
+          "code": "ER_LOCK_DEADLOCK",
+          "message": "Deadlock found when trying to get lock; try restarting transaction"
+        },
+        {
+          "code": "ER_LOCK_DEADLOCK",
+          "message": "Deadlock found when trying to get lock; try restarting transaction"
+        },
+        {
+          "code": "ER_LOCK_DEADLOCK",
+          "message": "Deadlock found when trying to get lock; try restarting transaction"
+        },
+        {
+          "code": "ER_LOCK_DEADLOCK",
+          "message": "Deadlock found when trying to get lock; try restarting transaction"
+        },
+        {
+          "code": "ER_LOCK_DEADLOCK",
+          "message": "Deadlock found when trying to get lock; try restarting transaction"
+        },
+        {
+          "code": "ER_LOCK_DEADLOCK",
+          "message": "Deadlock found when trying to get lock; try restarting transaction"
+        },
+        {
+          "code": "ER_LOCK_DEADLOCK",
+          "message": "Deadlock found when trying to get lock; try restarting transaction"
+        },
+        {
+          "code": "ER_LOCK_DEADLOCK",
+          "message": "Deadlock found when trying to get lock; try restarting transaction"
+        }
+      ]
+    },
+    {
+      "name": "混合 OLTP C5",
+      "kind": "mixed",
+      "note": "",
+      "concurrency": 5,
+      "elapsedSeconds": 10.003,
+      "operations": 21598,
+      "succeeded": 21598,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 215.9,
+      "latency": {
+        "count": 21598,
+        "p50Ms": 1,
+        "p95Ms": 6.42,
+        "p99Ms": 8.17,
+        "maxMs": 53.38
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.502,
+      "mysqlDelta": {
+        "queries": 32436,
+        "comSelect": 14400,
+        "comInsert": 7198,
+        "comUpdate": 3599,
+        "comDelete": 0,
+        "comCommit": 3599,
+        "comRollback": 0,
+        "innodbRowsRead": 197181,
+        "rowsInserted": 7198,
+        "rowsUpdated": 3599,
+        "rowsDeleted": 0,
+        "rowLockWaits": 2,
+        "rowLockTimeMs": 4,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 6,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.91,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "混合 OLTP C20",
+      "kind": "mixed",
+      "note": "",
+      "concurrency": 20,
+      "elapsedSeconds": 10.016,
+      "operations": 22298,
+      "succeeded": 22298,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 222.6,
+      "latency": {
+        "count": 22298,
+        "p50Ms": 7.92,
+        "p95Ms": 13.56,
+        "p99Ms": 18.01,
+        "maxMs": 30.18
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.502,
+      "mysqlDelta": {
+        "queries": 33487,
+        "comSelect": 14866,
+        "comInsert": 7432,
+        "comUpdate": 3716,
+        "comDelete": 0,
+        "comCommit": 3716,
+        "comRollback": 0,
+        "innodbRowsRead": 206191,
+        "rowsInserted": 7432,
+        "rowsUpdated": 3716,
+        "rowsDeleted": 0,
+        "rowLockWaits": 0,
+        "rowLockTimeMs": 0,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 6,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.97,
+      "errors": {},
+      "errorSamples": []
+    },
+    {
+      "name": "混合 OLTP C50",
+      "kind": "mixed",
+      "note": "",
+      "concurrency": 50,
+      "elapsedSeconds": 10.022,
+      "operations": 22637,
+      "succeeded": 22637,
+      "failures": 0,
+      "errorRatePercent": 0,
+      "opsPerSecond": 225.9,
+      "latency": {
+        "count": 22637,
+        "p50Ms": 20.94,
+        "p95Ms": 30.06,
+        "p99Ms": 39.59,
+        "maxMs": 63.57
+      },
+      "acquireLatency": null,
+      "sqlPerOperation": 1.502,
+      "mysqlDelta": {
+        "queries": 33994,
+        "comSelect": 15092,
+        "comInsert": 7545,
+        "comUpdate": 3772,
+        "comDelete": 0,
+        "comCommit": 3772,
+        "comRollback": 0,
+        "innodbRowsRead": 212355,
+        "rowsInserted": 7545,
+        "rowsUpdated": 3772,
+        "rowsDeleted": 0,
+        "rowLockWaits": 1,
+        "rowLockTimeMs": 2,
+        "deadlocks": 0
+      },
+      "peakThreads": {
+        "threadsRunning": 7,
+        "threadsConnected": 6
+      },
+      "bufferPoolHitPercent": 99.96,
+      "errors": {},
+      "errorSamples": []
+    }
+  ],
+  "dataScale": {
+    "users": 5000,
+    "sessions": 5000,
+    "resources": 20000,
+    "shareConfigs": 15000,
+    "files": 40000,
+    "records": 200000,
+    "messages": 100000,
+    "audits": 200000
+  }
+}

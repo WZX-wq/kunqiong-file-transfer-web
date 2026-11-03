@@ -1,3 +1,6 @@
+import { ActionButton, ActionForm } from '../components/action-button.jsx'
+import { AdminPagination } from '../components/pagination.jsx'
+export { AdminPagination } from '../components/pagination.jsx'
 // 后台管理页面（由 main.jsx 抽取）
 // AdminPage 子树：管理登录 + 概览 + 资源/用户/配置/日志。
 // 只被 App 引用，构成完整独立功能域。
@@ -33,7 +36,7 @@ export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome
   const submit = (event) => {
     event.preventDefault()
     if (busy || !username.trim() || !password) return
-    onSubmit({ username: username.trim(), password })
+    return onSubmit({ username: username.trim(), password })
   }
 
   return (
@@ -44,7 +47,7 @@ export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome
         <p className="admin-login-story-foot">文件传输 · 运营管理</p>
       </aside>
       <div className="admin-login-form-side">
-      <form className="modal confirm-modal admin-login-modal" role="dialog" aria-modal="true" aria-labelledby="admin-login-title" onSubmit={submit}>
+      <ActionForm className="modal confirm-modal admin-login-modal" role="dialog" aria-modal="true" aria-labelledby="admin-login-title" onSubmit={submit}>
         <div className="admin-login-icon"><ShieldCheck size={22} /></div>
         <p className="eyebrow">运营后台</p>
         <h2 id="admin-login-title">管理员登录</h2>
@@ -74,20 +77,20 @@ export function AdminLoginModal({ onSubmit, busy = false, error = '', onBackHome
                 autoComplete="current-password"
                 disabled={busy}
               />
-              <button type="button" className="ghost-icon" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? '隐藏密码' : '显示密码'} title={showPassword ? '隐藏密码' : '显示密码'}>
+              <ActionButton type="button" className="ghost-icon" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? '隐藏密码' : '显示密码'} title={showPassword ? '隐藏密码' : '显示密码'}>
                 <Eye size={15} />
-              </button>
+              </ActionButton>
             </div>
           </label>
         </div>
         {error && <p className="admin-login-error" role="alert"><XCircle size={14} /> {error}</p>}
         <div className="modal-footer confirm-modal-footer admin-login-footer">
-          <button type="button" className="secondary-button" onClick={onBackHome}><ChevronLeft size={15} /> 返回首页</button>
-          <button type="submit" className="primary-button" disabled={busy || !username.trim() || !password}>
+          <ActionButton type="button" className="secondary-button" onClick={onBackHome}><ChevronLeft size={15} /> 返回首页</ActionButton>
+          <ActionButton type="submit" className="primary-button" disabled={busy || !username.trim() || !password}>
             {busy ? <><span className="button-spinner" /> 正在验证…</> : <><KeyRound size={15} /> 登录后台</>}
-          </button>
+          </ActionButton>
         </div>
-      </form>
+      </ActionForm>
       </div>
     </main>
   )
@@ -273,6 +276,8 @@ export function AdminPage() {
         anonymousActiveCollectionLimit: form.get('anonymousActiveCollectionLimit'),
         maxBatchFiles: form.get('maxBatchFiles'),
         auditLogRetentionDays: form.get('auditLogRetentionDays'),
+        auditAccessLogRetentionDays: form.get('auditAccessLogRetentionDays'),
+        auditCleanupIntervalMinutes: form.get('auditCleanupIntervalMinutes'),
         orphanGraceHours: form.get('orphanGraceHours'),
         maintenanceMode: form.get('maintenanceMode') === 'on',
         planOverrides,
@@ -311,7 +316,7 @@ export function AdminPage() {
   // 后台一律先过口令登录。此前这里会因鲲穹白名单账号已登录而直接放行，
   // 表现为「部分账号能直接进后台」—— 白名单通道已移除，访问 /admin 恒定弹登录框。
   if (!authenticated) return <AdminLoginModal onSubmit={submitLogin} busy={loginBusy} error={loginError || error} onBackHome={() => { window.location.href = '/' }} />
-  if (error && !data) return <div className="admin-shell"><AdminTopbar username={adminInfo?.username} /><main className="admin-page"><div className="admin-inner"><div className="admin-state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p><button className="primary-button" onClick={load}><RefreshCw size={16} /> 重新加载</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button><a className="secondary-button" href="/">返回首页</a></div></div></main></div>
+  if (error && !data) return <div className="admin-shell"><AdminTopbar username={adminInfo?.username} /><main className="admin-page"><div className="admin-inner"><div className="admin-state-block"><div className="settings-state-icon"><ShieldCheck size={24} /></div><h1>无法打开后台</h1><p>{error}</p><ActionButton className="primary-button" onClick={load}><RefreshCw size={16} /> 重新加载</ActionButton><ActionButton className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</ActionButton><a className="secondary-button" href="/">返回首页</a></div></div></main></div>
   if (!data) return null
   const stats = data.stats || {}
   const dashboardCards = [
@@ -325,10 +330,10 @@ export function AdminPage() {
   return (
     <div className="admin-shell">
       <AdminTopbar username={adminInfo?.username} />
-      <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['resources', '资源管理', Database], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <button type="button" className={tab === key ? 'active' : ''} aria-current={tab === key ? 'page' : undefined} key={key} onClick={() => changeTab(key)}><Icon size={16} /> {label}</button>)}</nav>
+      <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['resources', '资源管理', Database], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <ActionButton type="button" className={tab === key ? 'active' : ''} aria-current={tab === key ? 'page' : undefined} key={key} onClick={() => changeTab(key)}><Icon size={16} /> {label}</ActionButton>)}</nav>
       <main className="admin-page">
         <div className="admin-inner">
-        <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、安全日志、运行配置和系统概览。</p></div><div className="admin-heading-actions">{adminInfo?.username && <span className="admin-identity" title={`当前登录管理员：${adminInfo.username}`}><ShieldCheck size={14} /> {adminInfo.username}</span>}<button className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</button><button className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</button><button className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</button></div></div>
+        <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、安全日志、运行配置和系统概览。</p></div><div className="admin-heading-actions">{adminInfo?.username && <span className="admin-identity" title={`当前登录管理员：${adminInfo.username}`}><ShieldCheck size={14} /> {adminInfo.username}</span>}<ActionButton className="secondary-button" onClick={runCleanup}><RefreshCw size={15} /> 执行清理</ActionButton><ActionButton className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</ActionButton><ActionButton className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</ActionButton></div></div>
         {error && <p className="public-message">{error}</p>}
         <div className="admin-content">
           {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-chart" role="img" aria-label="近 7 天活跃用户、上传和下载趋势"><div className="admin-chart-axis">{[trendMax, Math.round(trendMax * .67), Math.round(trendMax * .33), 0].map((value, index) => <span key={`${value}-${index}`}>{value}</span>)}</div><div className="admin-chart-plot">{trend.map((item) => <div className="admin-chart-day" key={item.date} title={`${item.label} · 活跃用户 ${item.activeUsers} · 上传 ${item.uploads} · 下载 ${item.downloads}`}><div className="admin-chart-bars"><i className="active" style={{ height: `${(item.activeUsers / trendMax) * 100}%` }} /><i className="upload" style={{ height: `${(item.uploads / trendMax) * 100}%` }} /><i className="download" style={{ height: `${(item.downloads / trendMax) * 100}%` }} /></div><span>{item.label}</span></div>)}</div></div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
@@ -336,7 +341,7 @@ export function AdminPage() {
           {tab === 'users' && <AdminUsers plans={data.plans} users={data.users} total={data.totals?.users ?? data.users.length} onUpdate={updateUser} />}
           {tab === 'security' && <AdminLogs logs={data.auditLogs} total={data.totals?.auditLogs ?? data.auditLogs.length} />}
           {tab === 'config' && <AdminConfig plans={data.plans} planDefaults={data.planDefaults} config={data.config} saving={savingConfig} onSubmit={saveConfig} />}
-          {tab === 'dashboard' && <div className="public-card admin-panel admin-quick-panel"><div className="admin-panel-heading"><div><p className="eyebrow">快捷操作</p><h2>常用入口</h2></div><span>待清理资源 <strong>{stats.pendingCleanup || 0}</strong></span></div><div className="admin-quick-grid">{[['resources', '资源管理', '查看分享与收集资源', Database], ['users', '用户管理', '查看账号与套餐权益', Users], ['security', '安全日志', '审计操作与安全事件', ShieldCheck], ['config', '系统配置', '配置上传限制与套餐', SlidersHorizontal]].map(([key, label, detail, Icon]) => <button type="button" className="admin-quick-link" key={key} onClick={() => changeTab(key)}><span><Icon size={16} /></span><strong>{label}</strong><small>{detail}</small></button>)}</div></div>}
+          {tab === 'dashboard' && <div className="public-card admin-panel admin-quick-panel"><div className="admin-panel-heading"><div><p className="eyebrow">快捷操作</p><h2>常用入口</h2></div><span>待清理资源 <strong>{stats.pendingCleanup || 0}</strong></span></div><div className="admin-quick-grid">{[['resources', '资源管理', '查看分享与收集资源', Database], ['users', '用户管理', '查看账号与套餐权益', Users], ['security', '安全日志', '审计操作与安全事件', ShieldCheck], ['config', '系统配置', '配置上传限制与套餐', SlidersHorizontal]].map(([key, label, detail, Icon]) => <ActionButton type="button" className="admin-quick-link" key={key} onClick={() => changeTab(key)}><span><Icon size={16} /></span><strong>{label}</strong><small>{detail}</small></ActionButton>)}</div></div>}
         </div>
         </div>
       </main>
@@ -344,13 +349,6 @@ export function AdminPage() {
       {notice && <Toast {...notice} />}
     </div>
   )
-}
-
-export function AdminPagination({ page, pageCount, total, pageSize, onPageChange }) {
-  if (total <= pageSize) return null
-  const start = (page - 1) * pageSize + 1
-  const end = Math.min(total, page * pageSize)
-  return <div className="admin-pagination"><span>显示 {start}-{end} / {total}</span><div><button className="secondary-button" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}><ChevronLeft size={14} /> 上一页</button><button className="secondary-button" onClick={() => onPageChange(Math.min(pageCount, page + 1))} disabled={page >= pageCount}>下一页 <ChevronRight size={14} /></button></div></div>
 }
 
 export function AdminResources({ resources = [], total = 0, requestConfirm, onChanged }) {
@@ -394,7 +392,7 @@ export function AdminResources({ resources = [], total = 0, requestConfirm, onCh
       setBusyId('')
     }
   }
-  return <div className="public-card admin-panel">{toast && <Toast {...toast} />}<div className="admin-panel-heading"><div><p className="eyebrow">分享与收集</p><h2>资源管理</h2></div><span>共 {total} 个资源{total > resources.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索资源名称、ID、提取码或归属用户" /></label><div className="admin-table">{filteredResources.length ? visibleResources.map((item) => <div className="admin-table-row" key={`${item.kind}-${item.id}`}><div className="admin-user-identity"><strong>{kindLabel(item)} · {item.name}</strong><span>{statusLabel(item.status)} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)} · 归属 {item.ownerUserId || '匿名'} · 建于 {formatDate(item.createdAt)}</span><span className="admin-resource-id-row"><button type="button" className="admin-resource-id" title={`资源 ID（${item.kind === 'share' ? '即分享链接 /share/ 末段' : '即收集链接 /collect/ 末段'}），点击复制`} onClick={() => copyResourceId(item)}>{copiedId === item.id ? <Check size={11} /> : <Copy size={11} />}<i>{item.id}</i>{copiedId === item.id ? '已复制' : ''}</button>{item.code ? <em className="admin-resource-code" title="提取码">提取码 {item.code}</em> : null}</span></div><div className="admin-user-actions"><small className="admin-user-usage">{item.expiresAt ? `截止 ${formatDate(item.expiresAt)}` : '永久有效'}</small><button className="secondary-button danger-lite" disabled={busyId === item.id} onClick={() => removeResource(item)}><Trash2 size={14} /> {busyId === item.id ? '删除中' : '删除'}</button></div></div>) : <div className="empty-manage"><Database size={25} /><span>没有匹配的资源</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredResources.length} pageSize={pageSize} onPageChange={setPage} /></div>
+  return <div className="public-card admin-panel">{toast && <Toast {...toast} />}<div className="admin-panel-heading"><div><p className="eyebrow">分享与收集</p><h2>资源管理</h2></div><span>共 {total} 个资源{total > resources.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索资源名称、ID、提取码或归属用户" /></label><div className="admin-table">{filteredResources.length ? visibleResources.map((item) => <div className="admin-table-row" key={`${item.kind}-${item.id}`}><div className="admin-user-identity"><strong>{kindLabel(item)} · {item.name}</strong><span>{statusLabel(item.status)} · {item.fileCount || 0} 个文件 · {formatBytes(item.totalSize || 0)} · 归属 {item.ownerUserId || '匿名'} · 建于 {formatDate(item.createdAt)}</span><span className="admin-resource-id-row"><ActionButton type="button" className="admin-resource-id" title={`资源 ID（${item.kind === 'share' ? '即分享链接 /share/ 末段' : '即收集链接 /collect/ 末段'}），点击复制`} onClick={() => copyResourceId(item)}>{copiedId === item.id ? <Check size={11} /> : <Copy size={11} />}<i>{item.id}</i>{copiedId === item.id ? '已复制' : ''}</ActionButton>{item.code ? <em className="admin-resource-code" title="提取码">提取码 {item.code}</em> : null}</span></div><div className="admin-user-actions"><small className="admin-user-usage">{item.expiresAt ? `截止 ${formatDate(item.expiresAt)}` : '永久有效'}</small><ActionButton className="secondary-button danger-lite" disabled={busyId === item.id} onClick={() => removeResource(item)}><Trash2 size={14} /> {busyId === item.id ? '删除中' : '删除'}</ActionButton></div></div>) : <div className="empty-manage"><Database size={25} /><span>没有匹配的资源</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredResources.length} pageSize={pageSize} onPageChange={setPage} /></div>
 }
 
 export function AdminUsers({ plans = [], users = [], total = 0, onUpdate }) {
@@ -409,12 +407,12 @@ export function AdminUsers({ plans = [], users = [], total = 0, onUpdate }) {
   const safePage = Math.min(page, pageCount)
   const visibleUsers = filteredUsers.slice((safePage - 1) * pageSize, safePage * pageSize)
   useEffect(() => { setPage(1) }, [users.length, normalizedQuery])
-  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">账号与权益</p><h2>用户管理</h2></div><span>共 {total || users.length} 个用户{total > users.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索账号、手机号、邮箱或用户 ID" /></label><div className="admin-table">{filteredUsers.length ? visibleUsers.map((user) => <div className="admin-table-row" key={user.id}><div className="admin-user-identity"><strong>{user.nickname || user.username || user.id}</strong><span>{user.email || user.phone || user.id}</span></div><div className="admin-user-actions"><select className="admin-user-plan" value={user.planId} onChange={(event) => onUpdate(user, { planId: event.target.value })} aria-label={`${user.nickname || user.username || user.id}的套餐`}>{!plans.some(plan => plan.id === user.planId && !plan.retired) && <option value={user.planId} disabled>{user.planLabel || "历史已购权益"}</option>}{plans.filter(plan => !plan.retired).map(plan => <option key={plan.id} value={plan.id}>{plan.label}</option>)}</select><button className={user.status === 'disabled' ? 'secondary-button' : 'secondary-button danger-lite'} onClick={() => onUpdate(user, { status: user.status === 'disabled' ? 'active' : 'disabled' })}>{user.status === 'disabled' ? '启用' : '禁用'}</button><small className="admin-user-usage">{user.planLabel} · {formatBytes(user.usageBytes || 0)}</small></div></div>) : <div className="empty-manage"><Search size={25} /><span>没有匹配的用户</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredUsers.length} pageSize={pageSize} onPageChange={setPage} /></div>
+  return <div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">账号与权益</p><h2>用户管理</h2></div><span>共 {total || users.length} 个用户{total > users.length ? ' · 仅显示前 200 条' : ''}</span></div><label className="admin-search"><Search size={15} /><input maxLength={160} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索账号、手机号、邮箱或用户 ID" /></label><div className="admin-table">{filteredUsers.length ? visibleUsers.map((user) => <div className="admin-table-row" key={user.id}><div className="admin-user-identity"><strong>{user.nickname || user.username || user.id}</strong><span>{user.email || user.phone || user.id}</span></div><div className="admin-user-actions"><select className="admin-user-plan" value={user.planId} onChange={(event) => onUpdate(user, { planId: event.target.value })} aria-label={`${user.nickname || user.username || user.id}的套餐`}>{!plans.some(plan => plan.id === user.planId && !plan.retired) && <option value={user.planId} disabled>{user.planLabel || "历史已购权益"}</option>}{plans.filter(plan => !plan.retired).map(plan => <option key={plan.id} value={plan.id}>{plan.label}</option>)}</select><ActionButton className={user.status === 'disabled' ? 'secondary-button' : 'secondary-button danger-lite'} onClick={() => onUpdate(user, { status: user.status === 'disabled' ? 'active' : 'disabled' })}>{user.status === 'disabled' ? '启用' : '禁用'}</ActionButton><small className="admin-user-usage">{user.planLabel} · {formatBytes(user.usageBytes || 0)}</small></div></div>) : <div className="empty-manage"><Search size={25} /><span>没有匹配的用户</span></div>}</div><AdminPagination page={safePage} pageCount={pageCount} total={filteredUsers.length} pageSize={pageSize} onPageChange={setPage} /></div>
 }
 
 export function AdminConfig({ plans = [], planDefaults = [], config = {}, saving = false, onSubmit }) {
   const overrides = config.planOverrides || {}
-  return <form className="public-card admin-panel admin-config-form" onSubmit={onSubmit}>
+  return <ActionForm className="public-card admin-panel admin-config-form" onSubmit={onSubmit}>
     <div className="admin-panel-heading"><div><p className="eyebrow">运行参数</p><h2>系统配置</h2></div></div>
     <div className="admin-config-grid">
       <label className="manage-field"><span>默认保存时效（天）</span><input name="defaultShareDays" type="number" min="1" max="365" defaultValue={config.defaultShareDays} /></label>
@@ -424,9 +422,12 @@ export function AdminConfig({ plans = [], planDefaults = [], config = {}, saving
       <label className="manage-field"><span>游客每个任务最多提交人数（0 不限）</span><input name="anonymousCollectionParticipantLimit" type="number" min="0" max="10000" defaultValue={config.anonymousCollectionParticipantLimit} /></label>
       <label className="manage-field"><span>游客进行中任务数（0 不限）</span><input name="anonymousActiveCollectionLimit" type="number" min="0" max="1000" defaultValue={config.anonymousActiveCollectionLimit} /></label>
       <label className="manage-field"><span>单次最多文件数</span><input name="maxBatchFiles" type="number" min="1" max="100" defaultValue={config.maxBatchFiles} /></label>
-      <label className="manage-field"><span>审计日志保留（天）</span><input name="auditLogRetentionDays" type="number" min="1" max="3650" defaultValue={config.auditLogRetentionDays} /></label>
+      <label className="manage-field"><span>账号及安全日志保留（天）</span><input name="auditLogRetentionDays" type="number" min="1" max="3650" defaultValue={config.auditLogRetentionDays} /></label>
+      <label className="manage-field"><span>访问日志保留（天）</span><input name="auditAccessLogRetentionDays" type="number" min="1" max="3650" defaultValue={config.auditAccessLogRetentionDays} /></label>
+      <label className="manage-field"><span>日志清理间隔（分钟）</span><input name="auditCleanupIntervalMinutes" type="number" min="1" max="1440" defaultValue={config.auditCleanupIntervalMinutes} /></label>
       <label className="manage-field"><span>孤立目录宽限（小时）</span><input name="orphanGraceHours" type="number" min="1" max="720" defaultValue={config.orphanGraceHours} /></label>
     </div>
+    <p className="admin-plan-help">访问日志保留期不超过账号及安全日志保留期。日志总量上限为 5000 条，达到上限时优先清理最旧访问日志。</p>
     <div className="admin-plan-config">
       <div className="admin-plan-config-heading"><strong>套餐权益配置</strong><span>留空恢复默认，价格由会员主站管理</span></div>
       <p className="admin-plan-help">容量按整数 GB 设置，每次增减 1GB。容量、上传和收集限额保存后立即生效。人数和任务数填 0 表示不限。游客按设备统计人数，登录用户按账号统计。</p>
@@ -448,8 +449,8 @@ export function AdminConfig({ plans = [], planDefaults = [], config = {}, saving
       <p className="admin-plan-help">单文件业务上限为 20GB。当前 ClamAV 对约 2GB 以上文件可能无法完成完整扫描；超过扫描能力的文件仍会被拦截，请勿通过关闭安全检查放行。</p>
     </div>
     <label className="switch-row"><div><strong>维护模式</strong><span>开启后会阻止非管理员创建分享、收集任务或提交文件。</span></div><input name="maintenanceMode" type="checkbox" defaultChecked={config.maintenanceMode} /></label>
-    <button className="primary-button" disabled={saving}><SlidersHorizontal size={15} /> {saving ? '保存中' : '保存配置'}</button>
-  </form>
+    <ActionButton className="primary-button" disabled={saving}><SlidersHorizontal size={15} /> {saving ? '保存中' : '保存配置'}</ActionButton>
+  </ActionForm>
 }
 
 export function AdminLogs({ logs = [], total = 0 }) {

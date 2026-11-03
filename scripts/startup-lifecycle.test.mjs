@@ -55,10 +55,12 @@ test('database startup makes no queries and a failed on-demand request leaves pa
   const root = path.resolve(import.meta.dirname, '..')
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'kunqiong-http-startup-'))
   const sockets = new Set()
+  let rejectHandshake = false
   const database = net.createServer(socket => {
     sockets.add(socket)
     socket.on('close', () => sockets.delete(socket))
     // Accept TCP but deliberately never send a MySQL handshake.
+    if (rejectHandshake) socket.destroy()
   })
   await new Promise(resolve => database.listen(0, '127.0.0.1', resolve))
   let child
@@ -118,6 +120,9 @@ test('database startup makes no queries and a failed on-demand request leaves pa
   for (let attempt = 0; attempt < 40 && sockets.size === 0; attempt++) await delay(10)
   assert.equal(sockets.size, 1, 'The database connection should open only after a business request')
   assert.equal(fs.existsSync(path.join(fixture, 'storage/metadata.json')), false)
+  // The connection layer may retry a failed handshake once; fail that fresh
+  // socket too, while keeping the HTTP response bounded by the original test deadline.
+  rejectHandshake = true
   for (const socket of sockets) socket.destroy()
   assert.equal((await pending).status, 503)
   assert.equal((await (await request('/api/health')).json()).status, 'ready')

@@ -1,8 +1,9 @@
+import { ActionButton, ActionForm } from '../components/action-button.jsx'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft, ArrowRight, Copy, CreditCard, FileSearch, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { UpgradeModal } from './workspace-page.jsx'
-import { apiRequest } from '../lib/api.js'
+import { apiRequest, getCachedAccountData } from '../lib/api.js'
 import { copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { useToast } from '../hooks.js'
 import { Toast } from '../components/common.jsx'
@@ -17,6 +18,11 @@ const ORDER_STATUSES = [
 ]
 const ORDER_STATUS_LABELS = Object.fromEntries(ORDER_STATUSES)
 const PAGE_SIZE = 5
+function orderListUrl(query) {
+  const params = new URLSearchParams({ page: String(query.page), limit: String(PAGE_SIZE), status: query.status })
+  if (query.q) params.set('q', query.q)
+  return `/api/account/upgrade-orders?${params}`
+}
 
 function readQuery() {
   const query = new URLSearchParams(window.location.search)
@@ -82,16 +88,16 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, confi
       <section className="orders-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="order-detail-title">
         <header className="orders-dialog-header">
           <div><p className="eyebrow">订单详情</p><h2 id="order-detail-title">{order.planLabel || '会员套餐'}</h2></div>
-          <button type="button" className="ghost-icon" aria-label="关闭订单详情" onClick={onClose}><X size={18} /></button>
+          <ActionButton type="button" className="ghost-icon" aria-label="关闭订单详情" onClick={onClose}><X size={18} /></ActionButton>
         </header>
         <div className="orders-dialog-body">
           {loading && <p className="orders-inline-note" role="status">正在读取订单详情…</p>}
           <div className="orders-detail-summary"><OrderStatus status={order.status} /><strong>{amountLabel(order.amount)}</strong></div>
           <dl className="orders-detail-list">
-            <div><dt>本站订单号</dt><dd><code>{order.orderNo || '—'}</code>{order.orderNo && <button type="button" className="orders-copy" aria-label="复制本站订单号" onClick={() => onCopy(order.orderNo)}><Copy size={14} /></button>}</dd></div>
+            <div><dt>本站订单号</dt><dd><code>{order.orderNo || '—'}</code>{order.orderNo && <ActionButton type="button" className="orders-copy" aria-label="复制本站订单号" onClick={() => onCopy(order.orderNo)}><Copy size={14} /></ActionButton>}</dd></div>
             <div><dt>套餐</dt><dd>{order.planLabel || '会员套餐'}</dd></div>
             <div><dt>支付方式</dt><dd>{order.payType === 2 ? '支付宝' : order.payType === 1 ? '微信支付' : '—'}</dd></div>
-            <div><dt>支付平台订单号</dt><dd>{order.remoteOrderNo ? <><code>{order.remoteOrderNo}</code><button type="button" className="orders-copy" aria-label="复制支付平台订单号" onClick={() => onCopy(order.remoteOrderNo)}><Copy size={14} /></button></> : '尚未创建支付单'}</dd></div>
+            <div><dt>支付平台订单号</dt><dd>{order.remoteOrderNo ? <><code>{order.remoteOrderNo}</code><ActionButton type="button" className="orders-copy" aria-label="复制支付平台订单号" onClick={() => onCopy(order.remoteOrderNo)}><Copy size={14} /></ActionButton></> : '尚未创建支付单'}</dd></div>
             <div><dt>创建时间</dt><dd>{dateLabel(order.createdAt)}</dd></div>
             {order.paymentExpiresAt && <div><dt>支付截止时间</dt><dd>{dateLabel(order.paymentExpiresAt)}</dd></div>}
             <div><dt>支付确认时间</dt><dd>{order.paidAt ? dateLabel(order.paidAt) : '—'}</dd></div>
@@ -100,26 +106,26 @@ function OrderDetail({ order, busy, loading, notice, error, confirmCancel, confi
           {hasProviderOrder && ['canceled', 'expired'].includes(order.status) && <p className="orders-inline-note">该订单已生成支付平台订单号，为便于后续核对，不能删除。</p>}
           {order.status === 'paid' && <p className="orders-validity-note">本单有效期为历史支付记录，<a href="/workspace">查看当前会员权益</a>。</p>}
           {order.retired ? <p className="orders-inline-note">该套餐已下架，不能继续支付或重新下单。已购权益保留；如已付款，可核对原单支付状态。</p> : order.canPurchase === false && ['pending_payment', 'expired'].includes(order.status) ? <p className="orders-inline-note">{order.purchaseBlockedReason}。如已付款，可核对原单支付状态。</p> : order.status === 'expired' && <p className="orders-inline-note">支付已超时，请重新创建订单支付。如已付款，可核对原单支付状态。</p>}
-          {order.paymentRequiresLogin && <div className="orders-inline-note" role="status">此支付单需要重新登录后核对。<button type="button" className="orders-text-action" onClick={onLogin}>重新登录</button></div>}
+          {order.paymentRequiresLogin && <div className="orders-inline-note" role="status">此支付单需要重新登录后核对。<ActionButton type="button" className="orders-text-action" onClick={onLogin}>重新登录</ActionButton></div>}
           {notice && <p className="orders-inline-note success" role="status">{notice}</p>}
-          {error && <div className="orders-inline-note error" role="alert">{error}{onRetry && <button className="orders-text-action" onClick={onRetry}>重试详情</button>}</div>}
+          {error && <div className="orders-inline-note error" role="alert">{error}{onRetry && <ActionButton className="orders-text-action" onClick={onRetry}>重试详情</ActionButton>}</div>}
           {confirmCancel ? (
             <div className="orders-cancel-confirm" role="alertdialog" aria-label="确认取消订单">
               <strong>确认取消订单？</strong><span>取消后此订单将无法继续支付。</span>
-              <div><button type="button" className="secondary-button" onClick={onDismissCancel} disabled={busy}>暂不取消</button><button type="button" className="danger-button" onClick={onCancel} disabled={busy}>{busy ? '处理中…' : '确认取消'}</button></div>
+              <div><ActionButton type="button" className="secondary-button" onClick={onDismissCancel} disabled={busy}>暂不取消</ActionButton><ActionButton type="button" className="danger-button" onClick={onCancel} disabled={busy}>{busy ? '处理中…' : '确认取消'}</ActionButton></div>
             </div>
           ) : confirmDelete ? (
             <div className="orders-cancel-confirm orders-delete-confirm" role="alertdialog" aria-label="确认删除订单">
               <strong>确认删除订单？</strong><span>删除后订单记录将从订单中心移除，且无法恢复。</span>
-              <div><button type="button" className="secondary-button" onClick={onDismissDelete} disabled={busy}>暂不删除</button><button type="button" className="danger-button" onClick={onDelete} disabled={busy}>{busy ? '处理中…' : '确认删除'}</button></div>
+              <div><ActionButton type="button" className="secondary-button" onClick={onDismissDelete} disabled={busy}>暂不删除</ActionButton><ActionButton type="button" className="danger-button" onClick={onDelete} disabled={busy}>{busy ? '处理中…' : '确认删除'}</ActionButton></div>
             </div>
           ) : (
             <div className="orders-dialog-actions">
-              {!order.retired && order.canPurchase !== false && order.status === 'pending_payment' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 继续支付</button>}
-              {!order.retired && order.canPurchase !== false && order.status === 'expired' && <button type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 重新下单</button>}
-              {canCheck && <button type="button" className="secondary-button" onClick={onCheck} disabled={actionsDisabled}><RefreshCw size={15} className={busy ? 'is-spinning' : ''} /> {busy ? '正在核对…' : '核对支付状态'}</button>}
-              {order.status === 'pending_payment' && <button type="button" className="orders-text-action" onClick={onAskCancel} disabled={actionsDisabled}>取消订单</button>}
-              {canDelete && <button type="button" className="orders-text-action orders-delete-action" aria-label="删除订单" onClick={onAskDelete} disabled={actionsDisabled}><Trash2 size={14} /> 删除订单</button>}
+              {!order.retired && order.canPurchase !== false && order.status === 'pending_payment' && <ActionButton type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 继续支付</ActionButton>}
+              {!order.retired && order.canPurchase !== false && order.status === 'expired' && <ActionButton type="button" className="primary-button" onClick={onContinue} disabled={actionsDisabled}><CreditCard size={15} /> 重新下单</ActionButton>}
+              {canCheck && <ActionButton type="button" className="secondary-button" onClick={onCheck} disabled={actionsDisabled}><RefreshCw size={15} className={busy ? 'is-spinning' : ''} /> {busy ? '正在核对…' : '核对支付状态'}</ActionButton>}
+              {order.status === 'pending_payment' && <ActionButton type="button" className="orders-text-action" onClick={onAskCancel} disabled={actionsDisabled}>取消订单</ActionButton>}
+              {canDelete && <ActionButton type="button" className="orders-text-action orders-delete-action" aria-label="删除订单" onClick={onAskDelete} disabled={actionsDisabled}><Trash2 size={14} /> 删除订单</ActionButton>}
             </div>
           )}
         </div>
@@ -132,7 +138,7 @@ export function OrdersPanel({ user, onLogin }) {
   const [sessionLost, setSessionLost] = useState(false)
   const [query, setQuery] = useState(readQuery)
   const [searchInput, setSearchInput] = useState(query.q)
-  const [result, setResult] = useState({ orders: [], counts: {}, pagination: { page: 1, limit: PAGE_SIZE, total: 0, totalPages: 1 } })
+  const [result, setResult] = useState(() => getCachedAccountData(orderListUrl(query)) || { orders: [], counts: {}, pagination: { page: 1, limit: PAGE_SIZE, total: 0, totalPages: 1 } })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [detail, setDetail] = useState(null)
@@ -157,15 +163,15 @@ export function OrdersPanel({ user, onLogin }) {
     setResult({ orders: [], counts: {}, pagination: { page: 1, limit: PAGE_SIZE, total: 0, totalPages: 1 } })
   }
 
-  const fetchOrders = useCallback(async (next = latestQuery.current, { quiet = false } = {}) => {
+  const fetchOrders = useCallback(async (next = latestQuery.current, { quiet = false, force = true } = {}) => {
     if (!user || sessionLost) return
     const id = ++requestId.current
     if (!quiet) setLoading(true)
     setError('')
     try {
-      const params = new URLSearchParams({ page: String(next.page), limit: String(PAGE_SIZE), status: next.status })
-      if (next.q) params.set('q', next.q)
-      const data = await apiRequest(`/api/account/upgrade-orders?${params}`)
+      const cached = getCachedAccountData(orderListUrl(next))
+      if (cached) setResult(cached)
+      const data = await apiRequest(orderListUrl(next), { force })
       if (requestId.current !== id) return
       setResult(data)
       if (data.pagination?.page && data.pagination.page !== next.page) {
@@ -188,7 +194,7 @@ export function OrdersPanel({ user, onLogin }) {
   }, [])
 
   useEffect(() => {
-    if (user && !sessionLost) fetchOrders(query)
+    if (user && !sessionLost) fetchOrders(query, { force: false })
   }, [user?.id, sessionLost, query.page, query.status, query.q])
 
   useEffect(() => {
@@ -294,29 +300,29 @@ export function OrdersPanel({ user, onLogin }) {
   return (
     <section className="orders-page orders-embedded" aria-label="我的订单">
       {!user || sessionLost ? (
-        <section className="orders-state"><span className="orders-state-icon"><FileSearch size={23} /></span><h2>登录后查看订单</h2><p>订单记录与当前鲲穹账号关联，只有你本人可以查询。</p><button type="button" className="primary-button" onClick={startLogin}>登录鲲穹账号</button></section>
+        <section className="orders-state"><span className="orders-state-icon"><FileSearch size={23} /></span><h2>登录后查看订单</h2><p>订单记录与当前鲲穹账号关联，只有你本人可以查询。</p><ActionButton type="button" className="primary-button" onClick={startLogin}>登录鲲穹账号</ActionButton></section>
       ) : (
         <>
           <div className="orders-account-line"><span>共 {counts.all ?? pagination.total ?? 0} 笔订单</span><a href="/workspace">查看当前会员权益<ArrowRight size={13} /></a></div>
           <section className="orders-toolbar" aria-label="订单查询">
             <div className="orders-filters" role="group" aria-label="按状态筛选订单">
-              {ORDER_STATUSES.map(([value, label]) => <button key={value} type="button" aria-label={label} className={query.status === value ? 'active' : ''} aria-pressed={query.status === value} onClick={() => changeQuery({ ...query, status: value, page: 1 })}>{label}<span>{counts[value] ?? 0}</span></button>)}
+              {ORDER_STATUSES.map(([value, label]) => <ActionButton key={value} type="button" aria-label={label} className={query.status === value ? 'active' : ''} aria-pressed={query.status === value} onClick={() => changeQuery({ ...query, status: value, page: 1 })}>{label}<span>{counts[value] ?? 0}</span></ActionButton>)}
             </div>
-            <form className="orders-search" onSubmit={submitSearch}><Search size={16} /><input aria-label="搜索订单号" value={searchInput} maxLength={80} onChange={event => setSearchInput(event.target.value)} placeholder="搜索本站或支付平台订单号" /><button type="submit" aria-label="搜索订单"><Search size={15} /></button></form>
+            <ActionForm className="orders-search" onSubmit={submitSearch}><Search size={16} /><input aria-label="搜索订单号" value={searchInput} maxLength={80} onChange={event => setSearchInput(event.target.value)} placeholder="搜索本站或支付平台订单号" /><ActionButton type="submit" aria-label="搜索订单"><Search size={15} /></ActionButton></ActionForm>
           </section>
-          <div className="orders-list-heading"><strong>订单记录</strong><button type="button" className="orders-refresh" aria-label="刷新订单" onClick={() => fetchOrders(query)} disabled={loading}><RefreshCw size={14} className={loading ? 'is-spinning' : ''} />刷新</button></div>
-          {error ? <section className="orders-state orders-error"><p role="alert">{error}</p><button type="button" className="secondary-button" onClick={() => fetchOrders(query)}><RefreshCw size={15} /> 重试</button></section> : loading && !visibleOrders.length ? <div className="orders-state"><span className="loading-dot" /><p>正在加载订单…</p></div> : visibleOrders.length ? (
+          <div className="orders-list-heading"><strong>订单记录</strong><ActionButton type="button" className="orders-refresh" aria-label="刷新订单" onClick={() => fetchOrders(query)} disabled={loading}><RefreshCw size={14} className={loading ? 'is-spinning' : ''} />刷新</ActionButton></div>
+          {error ? <section className="orders-state orders-error"><p role="alert">{error}</p><ActionButton type="button" className="secondary-button" onClick={() => fetchOrders(query)}><RefreshCw size={15} /> 重试</ActionButton></section> : loading && !visibleOrders.length ? <div className="orders-state"><span className="loading-dot" /><p>正在加载订单…</p></div> : visibleOrders.length ? (
             <>
               <div className="orders-table" role="list" aria-label="订单列表" aria-busy={loading}>
                 {visibleOrders.map(order => <article className="orders-row" role="listitem" data-order-id={order.id} key={order.id}>
                   <div className="orders-row-main"><strong>{order.planLabel || '会员套餐'}</strong><code>{order.orderNo}</code><span className="orders-created">创建于 {dateLabel(order.createdAt)}</span></div>
                   <div className="orders-row-amount">{amountLabel(order.amount)}</div><OrderStatus status={order.status} />
-                  <button type="button" className="orders-detail-button" aria-label={`查看订单 ${order.orderNo}`} onClick={() => openDetail(order)} disabled={loading}>查看详情<ArrowRight size={14} /></button>
+                  <ActionButton type="button" className="orders-detail-button" aria-label={`查看订单 ${order.orderNo}`} onClick={() => openDetail(order)} disabled={loading}>查看详情<ArrowRight size={14} /></ActionButton>
                 </article>)}
               </div>
-              <nav className="orders-pagination" aria-label="订单分页"><span>第 {pagination.page || query.page} 页，共 {pagination.totalPages || 1} 页 · {pagination.total || 0} 笔</span><div><button type="button" aria-label="上一页" onClick={() => changeQuery({ ...query, page: Math.max(1, query.page - 1) })} disabled={query.page <= 1 || loading}><ArrowLeft size={14} />上一页</button><button type="button" aria-label="下一页" onClick={() => changeQuery({ ...query, page: Math.min(pagination.totalPages || 1, query.page + 1) })} disabled={query.page >= (pagination.totalPages || 1) || loading}>下一页<ArrowRight size={14} /></button></div></nav>
+              <nav className="orders-pagination" aria-label="订单分页"><span>第 {pagination.page || query.page} 页，共 {pagination.totalPages || 1} 页 · {pagination.total || 0} 笔</span><div><ActionButton type="button" aria-label="上一页" onClick={() => changeQuery({ ...query, page: Math.max(1, query.page - 1) })} disabled={query.page <= 1 || loading}><ArrowLeft size={14} />上一页</ActionButton><ActionButton type="button" aria-label="下一页" onClick={() => changeQuery({ ...query, page: Math.min(pagination.totalPages || 1, query.page + 1) })} disabled={query.page >= (pagination.totalPages || 1) || loading}>下一页<ArrowRight size={14} /></ActionButton></div></nav>
             </>
-          ) : <section className="orders-state orders-empty"><span className="orders-state-icon"><FileSearch size={23} /></span><h2>{query.q ? '没有找到匹配订单' : '暂无订单'}</h2><p>{query.q ? '请检查订单号，或清空搜索条件。' : '创建会员套餐订单后，会显示在这里。'}</p>{query.q && <button type="button" className="secondary-button" aria-label="清空搜索" onClick={() => changeQuery({ ...query, q: '', page: 1 })}>清空搜索</button>}</section>}
+          ) : <section className="orders-state orders-empty"><span className="orders-state-icon"><FileSearch size={23} /></span><h2>{query.q ? '没有找到匹配订单' : '暂无订单'}</h2><p>{query.q ? '请检查订单号，或清空搜索条件。' : '创建会员套餐订单后，会显示在这里。'}</p>{query.q && <ActionButton type="button" className="secondary-button" aria-label="清空搜索" onClick={() => changeQuery({ ...query, q: '', page: 1 })}>清空搜索</ActionButton>}</section>}
         </>
       )}
       {toast && <Toast {...toast} />}

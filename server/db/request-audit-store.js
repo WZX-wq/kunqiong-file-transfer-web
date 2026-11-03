@@ -1,4 +1,4 @@
-import { DatabaseAuditStore, mergeAuditEntries } from '../lib/audit-store.js'
+import { DatabaseAuditStore, mergeAuditEntries, auditRetentionCutoffs, retainedAuditLog } from '../lib/audit-store.js'
 import { revealCredential } from '../lib/private-key.js'
 import { trackDataOperation } from '../lib/data-context.js'
 
@@ -48,8 +48,36 @@ export class RelationalAuditStore extends DatabaseAuditStore {
 
   purgeBefore(cutoff) {
     const before = this.logs.length
-    this.logs = this.logs.filter(log => new Date(log.createdAt).getTime() >= cutoff)
-    this.enqueue(() => this.pool.execute('DELETE FROM kq_audit_log WHERE gmt_create < ?', [new Date(cutoff).toISOString().slice(0, 23).replace('T', ' ')]))
+    this.logs = this.logs.filter(log => retainedAuditLog(log, cutoff))
+    this.enqueue(() => this.deleteExpired(auditRetentionCutoffs(cutoff)))
     return { logs: this.logs, removed: before - this.logs.length }
+  }
+
+  async deleteExpired({ accessCutoff, criticalCutoff, batchSize = 500, maxBatches = 10 }) {
+    const size = Math.min(1000, Math.max(1, Math.floor(batchSize)))
+    const batches = Math.min(20, Math.max(1, Math.floor(maxBatches)))
+    let removed = 0
+    this.retentionHasMore = false
+    for (const [predicate, cutoff] of [["event_type = 'access'", accessCutoff], ["event_type <> 'access'", criticalCutoff]]) {
+      if (!Number.isFinite(cutoff)) continue
+      // Give each class a bounded budget so access traffic cannot starve security retention.
+      for (let batch = 0; batch < batches; batch++) {
+        const [result] = await this.pool.execute(`DELETE FROM kq_audit_log WHERE ${predicate} AND gmt_create < ? ORDER BY gmt_create, id LIMIT ${size}`,
+          [new Date(cutoff).toISOString().slice(0, 23).replace('T', ' ')])
+        const count = Number(result.affectedRows || 0)
+        removed += count
+        if (count < size) break
+        if (batch === batches - 1) this.retentionHasMore = true
+        // Yield between bounded transactions so foreground work gets a pool slot.
+        await new Promise(resolve => setImmediate(resolve))
+      }
+    }
+    this.logs = this.logs.filter(log => new Date(log.createdAt).getTime() >= (log.type === 'access' ? accessCutoff : criticalCutoff))
+    return removed
+  }
+
+  purgeExpired(options) {
+    this.enqueue(async () => { await this.flushPendingRows(); await this.deleteExpired(options) })
+    return this.flush()
   }
 }

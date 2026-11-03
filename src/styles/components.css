@@ -1541,3 +1541,17 @@ a { text-decoration: none; }
 .public-message-link { display: grid; place-items: center; width: 34px; height: 34px; color: var(--ink); border-radius: 8px; }
 .public-message-link:hover { color: var(--ink); background: #eef2f7; }
 .public-message-link:visited { color: var(--ink); }
+
+.page-loading {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: clamp(240px, 55svh, 480px);
+  padding: 32px;
+  animation: page-loading-reveal .18s ease-out .12s both;
+}
+.page-loading-full { min-height: 100svh; background: var(--paper); }
+@keyframes page-loading-reveal { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .page-loading, .page-loading .loading-dot { animation: none; }
+}

@@ -1,4 +1,6 @@
 import { localRequest } from '../lib/request-security.js'
+import { createRelationalContext } from '../lib/relational-request.js'
+import { runWithDataContext } from '../lib/data-context.js'
 // account 域路由（原 server.mjs 内联处理器，逐行搬迁，未改逻辑）
 //
 // 依赖方向：routes → services → lib → state → config（单向）
@@ -15,18 +17,19 @@ import { keyedDigest } from '../lib/private-key.js'
 
 import {
   accountRecordOwnerKey, mergeLoginMethods, normalizeAccountRecords,
-  normalizeFileCleanupSettings
+  normalizeFileCleanupSettings, publicUser
 } from '../lib/metadata-normalizers.js'
 import { normalizeBindingTarget } from '../lib/contact-input.js'
 import { booleanSettings, objectInput, recordInputs, textInput } from '../lib/input-validation.js'
 import { normalizeAvatarData } from '../lib/avatar-validation.js'
+import { publicCollection } from '../services/collections.js'
 
 import {
   metadata, persistMetadata
 } from '../lib/metadata-store.js'
 
 import {
-  accountMessagesForUser, accountNotificationSettingsForUser, accountRecordsForUser, authSessionFailure,
+  accountMessagesForUser, accountNotificationSettingsForUser, accountRecordsForUser, authSessionFailure, currentShareStatus, currentCollectionStatus, publicFile,
   accountUserById, alignReturnUrlWithAuthHost, appendAuthResult, authRedirectUri,
   authSessionFromRequest, boundMethodForTargetType, cleanupExpiredFilesForOwner, cleanupOAuthStates, clearAuthCookie,
   createVerificationCode, discardVerificationCode, assertContactAvailable,
@@ -85,7 +88,9 @@ export function registerAccountRoutes(app) {
   app.get('/api/auth/me', (req, res) => {
     const session = authSessionFromRequest(req)
     if (!session && req.accountSessionInvalidationReason === 'replaced') return res.status(401).json(authSessionFailure(req))
-    res.json({ user: session ? publicAccountUser(session.user) : null, sessionExpiresAt: session?.expiresAt || null })
+    const view = req.get('X-Kunqiong-Auth-View')
+    res.json({ user: session ? view === 'identity' ? publicUser(session.user) : publicAccountUser(session.user, { summary: view === 'summary' }) : null,
+      sessionExpiresAt: session?.expiresAt || null, view: ['identity', 'summary'].includes(view) ? view : 'full' })
   })
 
   app.patch('/api/auth/profile', async (req, res, next) => {
@@ -269,18 +274,44 @@ export function registerAccountRoutes(app) {
     }
   })
 
-  app.post('/api/auth/logout', (req, res) => {
-    const sessionId = readCookie(req, AUTH_COOKIE_NAME)
-    if (sessionId) removeAuthSession(sessionId)
-    clearAuthCookie(res, req)
-    res.json({ ok: true })
+  app.post('/api/auth/logout', async (req, res, next) => {
+    try {
+      const sessionId = readCookie(req, AUTH_COOKIE_NAME)
+      if (req.dataContext) await req.dataContext.revokeSession(sessionId)
+      else if (sessionId) removeAuthSession(sessionId)
+      clearAuthCookie(res, req)
+      res.json({ ok: true })
+    } catch (error) { next(error) }
+  })
+
+  app.get('/api/account/collections', (req, res) => {
+    const session = requireAuthSession(req, res)
+    if (!session) return
+    if (req.dataContext) return res.json(req.dataContext.collectionPage)
+    const collections = metadata.collections.filter(task => task.ownerUserId === session.user.id && !task.deletedAt)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .map(task => ({ ...publicCollection(task, req, true), createdAt: task.createdAt, updatedAt: task.updatedAt }))
+    res.json({ collections, pagination: { nextCursor: null } })
   })
 
   app.get('/api/account/records', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
-    if (ensureRestoredResourceRecords(session.user.id)) persistMetadata()
-    res.json({ records: accountRecordsForUser(session.user.id), ...(req.dataContext?.pagination ? { pagination: req.dataContext.pagination } : {}) })
+    if (!req.dataContext && ensureRestoredResourceRecords(session.user.id)) persistMetadata()
+    const records = accountRecordsForUser(session.user.id).map(record => {
+      const resource = record.kind === 'collection'
+        ? metadata.collections.find(item => item.id === record.collectionToken || item.token === record.collectionToken || item.manageToken === record.manageToken)
+        : metadata.shares.find(item => item.id === record.shareId)
+      if (!resource) return record
+      const owner = resource.ownerUserId === session.user.id
+      return { ...record,
+        status: record.kind === 'collection' ? currentCollectionStatus(resource) : currentShareStatus(resource),
+        ...(record.kind === 'collection' ? { deadline: resource.deadline, ...(owner ? { name: resource.title, submissionCount: resource.submissions?.length || 0 } : {}) }
+          : { expiresAt: resource.expiresAt, downloadCount: resource.downloadCount, downloadLimit: resource.downloadLimit,
+            ...(owner ? { files: (resource.files || []).map(publicFile), fileCount: resource.files?.length || 0 } : {}) }),
+      }
+    })
+    res.json({ records, ...(req.dataContext?.pagination ? { pagination: req.dataContext.pagination } : {}) })
   })
 
   app.get('/api/account/trash', (req, res) => {
@@ -342,14 +373,42 @@ export function registerAccountRoutes(app) {
     res.status(201).json({ records: metadata.records[key] })
   })
 
-  app.delete('/api/account/records', (req, res) => {
+  app.delete('/api/account/records', async (req, res, next) => {
+    try {
     const session = requireAuthSession(req, res)
     if (!session) return
     const key = accountRecordOwnerKey(session.user.id)
-    const body = objectInput(req.body, ['ids','all'], { nonempty:true })
+    const body = objectInput(req.body, ['ids','all','scope'], { nonempty:true })
     const clearAll = body.all === true && !Object.hasOwn(body,'ids')
+    const scope = body.scope || 'all'
+    if (!['all','my_sent','sent_to_me','my_collections','collect_from_me'].includes(scope) || (!clearAll && Object.hasOwn(body,'scope'))) return res.status(400).json({ message: '记录分类无效' })
     if (!clearAll && (Object.hasOwn(body,'all') || !Array.isArray(body.ids) || !body.ids.length || body.ids.length > 200)) return res.status(400).json({ message: '请选择要删除的记录；全部清空需要明确确认' })
     const ids = clearAll ? [] : [...new Set(body.ids.map(id => textInput(id,'记录 ID',180)))]
+    if (clearAll && req.dataContext) {
+      // Bounded independent transactions retain resource trash behavior across every page.
+      const pool = req.dataContext.store.pool
+      const user = [...req.dataContext.store.rows.get('kq_user').values()].find(row => row.legacy_id === session.user.id)
+      const [[boundary]] = await pool.query('SELECT MAX(id) AS id FROM kq_account_record WHERE user_id = ?', [user.id])
+      let cursor = 0, removed = 0
+      while (boundary.id) {
+        const [rows] = await pool.query(`SELECT id FROM kq_account_record WHERE user_id = ? AND id > ? AND id <= ?${scope === 'all' ? '' : ' AND scope = ?'} ORDER BY id LIMIT 50`, [user.id, cursor, boundary.id, ...(scope === 'all' ? [] : [scope])])
+        if (!rows.length) break
+        const context = createRelationalContext(pool)
+        await runWithDataContext(context, async () => {
+          await context.store.session(session.id)
+          context.store.authorizedUserId = session.user.id
+          context.store.authorizedSessionHash = keyedDigest(`session-cookie:${session.id}`)
+          await context.store.by('kq_account_record', 'id', rows.map(row => row.id))
+          context.store.hydrate(); await context.store.recordResources(); context.normalize()
+          for (const record of accountRecordsForUser(session.user.id)) trashResourceForOwner(session.user.id, record.id)
+          context.store.data.records[key] = []
+          context.persist(); await context.runtime.metadataWriteQueue
+          if (context.runtime.persistenceError) throw context.runtime.persistenceError
+        })
+        removed += rows.length; cursor = rows.at(-1).id
+      }
+      return res.json({ records: [], removed })
+    }
     // 记录联动清理：删除记录时，把该用户名下「已关闭/过期」的底层分享/收集任务连同磁盘文件一并清掉，
     // 否则记录删了、后台统计和磁盘上还挂着僵尸资源（后台「分享/收集任务/待清理」不同步的根源）。
     // 仍在有效期的资源照旧保留，对方的提取链接不受影响。
@@ -362,20 +421,22 @@ export function registerAccountRoutes(app) {
       }
       metadata.records[key] = accountRecordsForUser(session.user.id).filter((record) => !targets.has(record.id))
     } else {
-      for (const record of accountRecordsForUser(session.user.id)) {
+      for (const record of accountRecordsForUser(session.user.id).filter(record => scope === 'all' || record.scope === scope)) {
         const purgedResource = trashResourceForOwner(session.user.id, record.id)
         if (purgedResource) purged.push(purgedResource)
       }
-      metadata.records[key] = []
+      metadata.records[key] = accountRecordsForUser(session.user.id).filter(record => scope !== 'all' && record.scope !== scope)
       req.dataContext?.store.bulkOperations.push({ type: 'replaceRecords', owner: key })
     }
     persistMetadata()
     res.json({ records: metadata.records[key], purged })
+    } catch (error) { next(error) }
   })
 
   app.get('/api/account/messages', (req, res) => {
     const session = requireAuthSession(req, res)
     if (!session) return
+    if (req.dataContext?.messageSummary) return res.json(req.dataContext.messageSummary)
     res.json({ messages: accountMessagesForUser(session.user.id), settings: accountNotificationSettingsForUser(session.user.id), ...(req.dataContext?.pagination ? { pagination: req.dataContext.pagination } : {}) })
   })
 

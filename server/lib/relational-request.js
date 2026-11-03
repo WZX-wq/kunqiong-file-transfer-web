@@ -1,4 +1,5 @@
 import { RelationalRequestStore } from '../db/request-store.js'
+import { revokeAuthSession } from '../db/auth-session.js'
 import { relationalAuditWriter } from '../db/request-audit-store.js'
 import { liveResourceUsage } from '../db/on-demand-schema.js'
 import { runWithDataContext, trackDataOperation } from './data-context.js'
@@ -7,11 +8,14 @@ import { cleanupTarget, drainCleanup } from '../db/cleanup-outbox.js'
 import { clientAddress } from './request-security.js'
 import { runtime } from '../state.js'
 import { normalizeAuditLog, normalizeMetadata } from './metadata-normalizers.js'
-import { readCookie, accountOrganizationForUser, isOrganizationManager, currentCollectionStatus, accountUsageForUser } from '../services/account.js'
+import { readCookie, accountOrganizationForUser, isOrganizationManager, currentCollectionStatus, accountUsageForUser, validateShareRecipient, syncOrganizationMemberProfile, retainUserPaymentQueryCredentials, reconcileUserUpgradeOrders, upsertAccountUser } from '../services/account.js'
+import { persistMetadata, flushMetadataWrites } from './metadata-store.js'
 import { assertCollectionParticipant, participantIdentity } from '../services/entitlements.js'
 import { keyedDigest } from './private-key.js'
 import { adminSessionFromRequest, restoreDatabaseUploadSession } from '../services/shares.js'
 import { parseDistributionRoster } from './distributions.js'
+import { measureRequestPreparation } from './request-metrics.js'
+import { readOwnedCollectionPage } from '../db/collection-list.js'
 
 const activeCount = (data, userId, guestKey) => data.collections.filter(task => !task.cleanedAt
   && currentCollectionStatus(task) === 'active' && (userId ? task.ownerUserId === userId : !task.ownerUserId && task.ownerGuestKey === guestKey)).length
@@ -42,12 +46,40 @@ function loadedUsage(data, id, team) {
   return totals
 }
 
-export function createRelationalContext(pool) {
+export function createRelationalContext(pool, auditPool = pool) {
   const store = new RelationalRequestStore(pool)
   const context = {
     store, data: store.data,
+    revokeSession(token) { return revokeAuthSession(pool, token) },
+    deferLoginFollowup(session, profile = null) { context.loginFollowup = { token: session.id, profile } },
+    finishResponse() {
+      if (!context.loginFollowup || context.runtime.persistenceError) return
+      const { token, profile } = context.loginFollowup
+      context.loginFollowup = null
+      const next = createRelationalContext(context.followupPool || pool)
+      trackDataOperation(runWithDataContext(next, async () => {
+        const session = await next.store.session(token)
+        let user = session && next.data.users[session.user?.id]
+        if (!session || session.revokedAt || new Date(session.expiresAt).getTime() <= Date.now() || user?.status !== 'active') return
+        next.store.authorizedUserId = user.id
+        next.store.authorizedSessionHash = keyedDigest(`session-cookie:${token}`)
+        await next.store.account(user.id, { organizations: true, orders: true })
+        if (profile) {
+          await next.store.contacts(['email', 'phone'].filter(key => profile[key] && profile[key] !== user[key]).map(key => profile[key]))
+          user = upsertAccountUser({ ...profile, loginMethods: [...(profile.loginMethods || []), 'oauth'] })
+        }
+        syncOrganizationMemberProfile(user)
+        retainUserPaymentQueryCredentials(session, true)
+        persistMetadata()
+        await flushMetadataWrites()
+        await reconcileUserUpgradeOrders(session, true)
+        await flushMetadataWrites()
+      }).catch(error => {
+        console.error(JSON.stringify({ event: 'login_followup_failed', code: error.code || 'LOGIN_FOLLOWUP_FAILED' }))
+      }))
+    },
     runtime: { ...runtime, metadataReady: store.data, metadataWriteQueue: Promise.resolve(), persistenceError: null, metadataNeedsPersist: false },
-    auditStore: relationalAuditWriter(pool, normalizeAuditLog, MAX_AUDIT_LOGS),
+    auditStore: relationalAuditWriter(auditPool, normalizeAuditLog, MAX_AUDIT_LOGS),
     totals: new Map(),
     deferCleanup(target, recursive, guard = null) {
       const task = cleanupTarget(storageRoot, target, recursive, guard)
@@ -83,7 +115,7 @@ export function createRelationalContext(pool) {
     async loadAccount(id, login = false) {
       // Login only needs identity, active sessions and the roster profile that
       // createAuthSession updates. Orders, settings and usage load on their APIs.
-      await store.account(String(id), { sessions: login, organizations: true, settings: !login })
+      await store.account(String(id), { sessions: login, organizations: !login, settings: !login })
       if (login) return
       await store.organizationGraph()
       await context.loadUsage(String(id))
@@ -178,26 +210,70 @@ export function createRelationalContext(pool) {
 async function loadRouteData(context, req) {
   const { store } = context
   const pathname = req.path.toLowerCase()
+  const readOnly = ['GET', 'HEAD'].includes(req.method)
+  const resourceRead = readOnly && /^\/api\/(?:shares|collections)(?:\/|$)/.test(pathname)
+  const smallRead = resourceRead || (readOnly && ['/api/runtime-config', '/api/guest/quota'].includes(pathname))
   // OAuth state is browser-bound and independent of the current SQL session.
   // An unavailable/old session must not prevent starting or completing login.
-  if (pathname === '/api/auth/login' || pathname === '/auth/callback') { context.normalize(); return }
-  await store.config()
-  const session = await store.session(readCookie(req, AUTH_COOKIE_NAME))
+  if (['/api/auth/login', '/auth/callback', '/auth/pending', '/auth/progress.js', '/api/auth/progress'].includes(pathname)) { context.normalize(); return }
+  // Logging out is a credential revocation, independent of orders, teams,
+  // runtime configuration and storage usage. The route awaits its SQL write.
+  if (pathname === '/api/auth/logout' && req.method === 'POST') { context.normalize(); return }
+  const authView = pathname === '/api/auth/me' && req.method === 'GET' ? req.get('X-Kunqiong-Auth-View') : ''
+  if (authView !== 'identity') await store.config()
+  const session = await store[authView === 'identity' ? 'identity' : 'session'](readCookie(req, AUTH_COOKIE_NAME))
   const userId = session && !session.revokedAt && new Date(session.expiresAt).getTime() > Date.now() ? session.user?.id : ''
-  const personalList = req.method === 'GET' && /^\/api\/account\/(records|messages)$/.test(pathname)
+  if (pathname === '/api/account/collections' && req.method === 'GET') {
+    context.collectionPage = await readOwnedCollectionPage(store.pool, userId, req.query)
+    context.normalize()
+    return
+  }
+  if (authView === 'identity' || authView === 'summary') {
+    if (userId) {
+      store.authorizedUserId = userId
+      store.authorizedSessionHash = keyedDigest(`session-cookie:${session.id}`)
+      if (authView === 'summary') await store.accountSummary(userId)
+    }
+    context.normalize()
+    return
+  }
+  const personalList = /^\/api\/account\/(records|messages|notification-settings)(?:\/|$)/.test(pathname)
   if (userId) {
     store.authorizedUserId = userId
     store.authorizedSessionHash = keyedDigest(`session-cookie:${session.id}`)
+  }
+  // Resource views need the viewer identity and the requested resource graph,
+  // not the viewer's unrelated teams, settings, sessions and storage totals.
+  // HEAD preview authorization has exactly the same read requirements as GET.
+  if (userId && !smallRead) {
     await store.account(userId, {
       organizations: !personalList, settings: !personalList || pathname.endsWith('/messages'),
-      sessions: req.method !== 'GET',
-      orders: /upgrade|workspace|logout/.test(pathname),
-      messages: req.method !== 'GET' && pathname === '/api/account/messages',
-      records: req.method !== 'GET' && /\/records(?:\/|$)/.test(pathname),
+      sessions: !personalList && !readOnly,
+      orders: pathname === '/api/account/workspace' && req.method === 'GET' ? 10 : /upgrade|workspace|logout/.test(pathname),
+      messages: false,
+      records: req.method === 'PUT' && /\/records(?:\/|$)/.test(pathname),
       resources: /\/file-cleanup(?:\/|-|$)/.test(pathname),
     })
+    if (pathname === '/api/account/messages' && req.method !== 'GET') {
+      store.loadedMailboxes.add(userId)
+      store.data.messages[userId] ??= []; store.base.messages[userId] ??= []
+    }
+    if (pathname === '/api/account/records' && ['POST','DELETE'].includes(req.method)) {
+      const ids = req.method === 'DELETE' ? req.body?.ids : (req.body?.records || [req.body?.record]).map(record => record?.id)
+      if (Array.isArray(ids) && ids.length <= 200) {
+        const owner = [...store.rows.get('kq_user').values()].find(row => row.legacy_id === userId)
+        await store.select('kq_account_record', `user_id = ? AND legacy_id IN (${ids.map(() => '?').join(',') || 'NULL'})`, [owner.id, ...ids.map(id => `${userId}:${id}`)])
+        store.hydrate()
+      }
+    }
     if (req.method === 'GET' && /^\/api\/account\/(records|messages)$/.test(pathname)) {
-      context.pagination = await store.accountPage(userId, pathname.endsWith('records') ? 'records' : 'messages', { cursor: req.query.cursor, limit: req.query.limit || 50 })
+      if (pathname.endsWith('messages') && req.query.summary === '1') {
+        const owner = [...store.rows.get('kq_user').values()].find(row => row.legacy_id === userId)
+        const [[summary]] = await store.pool.query('SELECT COUNT(*) AS total, SUM(read_at IS NULL) AS unread FROM kq_message WHERE user_id = ?', [owner.id])
+        context.messageSummary = { total: Number(summary.total), unreadCount: Number(summary.unread || 0) }
+      } else context.pagination = pathname.endsWith('records') && req.query.page
+        ? await store.recordList(userId, req.query)
+        : await store.accountPage(userId, pathname.endsWith('records') ? 'records' : 'messages', { cursor: req.query.cursor, limit: req.query.limit || 50 })
     }
     const message = req.path.match(/^\/api\/account\/messages\/([^/]+)$/)
     if (message) {
@@ -211,7 +287,9 @@ async function loadRouteData(context, req) {
     const options = { cursor: req.query.cursor, limit: req.query.limit || 50 }
     if (pathname === '/api/account/team/overview' && req.method === 'GET' && orgRow) {
       context.memberUsage = await store.teamMemberUsage(organization.id)
-      if (req.query.summary !== '1') context.pagination = await store.page('kq_resource', 'organization_id = ? AND team_resource = 1 AND deleted_at IS NULL AND resource_kind = ?', [orgRow.id, 'share'], options)
+      if (req.query.summary !== '1') context.pagination = req.query.page
+        ? await store.teamResourcePage(orgRow, userId, req.query, isOrganizationManager(organization, userId) ? null : share => validateShareRecipient(share, session.user).ok)
+        : await store.page('kq_resource', 'organization_id = ? AND team_resource = 1 AND deleted_at IS NULL AND resource_kind = ?', [orgRow.id, 'share'], options)
     }
     if (pathname === '/api/account/trash') {
       const user = [...store.rows.get('kq_user').values()].find(row => row.legacy_id === userId)
@@ -302,7 +380,7 @@ async function loadRouteData(context, req) {
   if (/\/account\/(?:workspace|team)(?:\/|$)/.test(pathname) && !pathname.endsWith('/member-search')) {
     await store.notifications(req.method === 'GET' ? [userId].filter(Boolean) : Object.keys(store.data.users))
   }
-  if (/^\/(?:api\/shares|api\/collections|api\/upload-sessions|api\/distributions)/.test(pathname) && (req.method !== 'GET' || /download/.test(pathname))) {
+  if (/^\/(?:api\/shares|api\/collections|api\/upload-sessions|api\/distributions)/.test(pathname) && (!readOnly || /download/.test(pathname))) {
     const notify = [...new Set([
       ...Object.keys(store.data.users),
       ...store.data.shares.map(item => item.ownerUserId), ...store.data.collections.map(item => item.ownerUserId),
@@ -316,12 +394,12 @@ async function loadRouteData(context, req) {
   context.normalize()
 }
 
-export function relationalDataMiddleware(pool) {
+export function relationalDataMiddleware(pool, authPool = pool, maintenancePool = pool) {
   return (req, res, next) => {
     const publicPage = req.path.match(/^\/(?:e\/[^/]+\/)?(share|collect)\/([^/]+)\/?$/i)
     if (!/^\/(?:api|auth)(?:\/|$)/i.test(req.path)) {
       if (!publicPage || publicPage[2] === 'manage') return next()
-      const context = createRelationalContext(pool)
+      const context = createRelationalContext(pool, maintenancePool)
       return runWithDataContext(context, async () => {
         try {
           await context.store.resource({ kind: publicPage[1].toLowerCase() === 'share' ? 'share' : 'collection',
@@ -333,7 +411,12 @@ export function relationalDataMiddleware(pool) {
         next()
       })
     }
-    const context = createRelationalContext(pool)
+    const authentication = /^\/auth\/(?:callback|pending)$/.test(req.path) || /^\/api\/auth\/(?:login|logout)$/.test(req.path)
+      || (req.path === '/api/auth/me' && req.get('X-Kunqiong-Auth-View') === 'identity')
+    const context = createRelationalContext(authentication ? authPool : pool, maintenancePool)
+    context.followupPool = maintenancePool
+    if (req.path === '/auth/callback') context.store.commitAttemptLimit = 3
+    res.once('finish', () => context.finishResponse())
     context.loadInput = async (request) => {
       const values = recipientValues(request.body)
       if (values.length) {
@@ -360,6 +443,6 @@ export function relationalDataMiddleware(pool) {
       }
     }
     req.dataContext = context
-    runWithDataContext(context, () => loadRouteData(context, req).then(() => next(), next))
+    runWithDataContext(context, () => measureRequestPreparation(() => loadRouteData(context, req)).then(() => next(), next))
   }
 }

@@ -5,8 +5,11 @@ import { collectionsRoot, filesRoot, userFilesRoot } from '../config.js'
 import { createRelationalContext } from './relational-request.js'
 import { runWithDataContext } from './data-context.js'
 import { normalizeSystemConfig } from './metadata-normalizers.js'
-import { purgeStaleResources, purgeExpiredAuditLogs } from '../services/admin.js'
+import { purgeStaleResources } from '../services/admin.js'
 import { planExpiredShare } from '../db/resource-status.js'
+import { relationalAuditWriter } from '../db/request-audit-store.js'
+import { normalizeAuditLog } from './audit-normalizer.js'
+import { MAX_AUDIT_LOGS } from '../config.js'
 
 async function* entries(root) {
   try { const directory = await fs.opendir(root); for await (const item of directory) yield item }
@@ -70,10 +73,16 @@ export async function runDatabaseCleanup(pool) {
   await runWithDataContext(context, async () => {
     await context.store.config()
     result.orphaned = await cleanupDatabaseOrphans(context)
-    const cutoff = new Date(Date.now() - normalizeSystemConfig(context.store.data.systemConfig).auditLogRetentionDays * 86400000)
-    const [[audit]] = await pool.query('SELECT COUNT(*) AS total FROM kq_audit_log WHERE gmt_create < ?', [cutoff.toISOString().slice(0, 23).replace('T', ' ')])
-    result.removedAuditLogs = Number(audit.total)
-    purgeExpiredAuditLogs()
+    const config = normalizeSystemConfig(context.store.data.systemConfig)
+    const writer = relationalAuditWriter(pool, normalizeAuditLog, MAX_AUDIT_LOGS)
+    writer.enqueue(async () => {
+      await writer.flushPendingRows()
+      result.removedAuditLogs = await writer.deleteExpired({
+        accessCutoff: Date.now() - Math.min(config.auditAccessLogRetentionDays, config.auditLogRetentionDays) * 86400000,
+        criticalCutoff: Date.now() - config.auditLogRetentionDays * 86400000,
+      })
+    })
+    await writer.flush()
     context.persist()
     await context.runtime.metadataWriteQueue
     if (context.runtime.persistenceError) throw context.runtime.persistenceError

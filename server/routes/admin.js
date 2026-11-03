@@ -22,7 +22,7 @@ import {
 import {
   accountUserById, appendAuthResult, configuredAccountPlans, recordAuditLog, safeReturnUrl, syncAccountUserSessions,
   syncOrganizationTeamPlanFromOwner,
-  setOAuthStateCookie
+  setOAuthStateCookie, readCookie, oauthStateCookieName
 } from '../services/account.js'
 import {
   adminLoginRateLimited, adminSessionDescriptor, adminUserSummary, buildAdminOverview,
@@ -35,10 +35,44 @@ import {
   adminSessionFromRequest
 } from '../services/shares.js'
 import { systemConfigError, userUpdateError } from '../lib/admin-validation.js'
+import { OAuthCallbackRegistry, oauthPendingPage, oauthProgressScript } from '../lib/oauth-callback.js'
+import { issueExistingAuthSession } from '../db/auth-session.js'
+import { authSessionDescriptor } from '../services/admin.js'
+import { keyedDigest } from '../lib/private-key.js'
+import { trackDataOperation } from '../lib/data-context.js'
 import path from 'node:path'
 import { runDatabaseCleanup } from '../lib/database-cleanup.js'
 
 export function registerAdminRoutes(app) {
+  const callbacks = new OAuthCallbackRegistry()
+  const callbackBrowser = (req, state) => keyedDigest(readCookie(req, oauthStateCookieName(state)))
+  const expiredCallback = (req, res) => res.redirect(appendAuthResult(safeReturnUrl('', req), 'failed', '登录状态已过期，请重新登录'))
+  const deliverCallback = (req, res, state, attempt) => {
+    const result = attempt.result
+    res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer')
+    if (!attempt.delivered) {
+      attempt.delivered = true
+      if (result.session) setAuthCookie(res, result.session.id, result.session.expiresAt, req)
+      setOAuthStateCookie(res, req, state, '')
+    }
+    return res.redirect(result.location)
+  }
+
+  app.get('/auth/pending', (req, res) => {
+    const state = firstValue(req.query.state)
+    const attempt = callbacks.get(state, callbackBrowser(req, state))
+    if (!attempt) return expiredCallback(req, res)
+    if (attempt.result) return deliverCallback(req, res, state, attempt)
+    res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer')
+      .type('html').send(oauthPendingPage(state))
+  })
+  app.get('/auth/progress.js', (req, res) => res.set('Cache-Control', 'no-store').type('js').send(oauthProgressScript))
+  app.get('/api/auth/progress', (req, res) => {
+    const state = firstValue(req.query.state)
+    const attempt = callbacks.get(state, callbackBrowser(req, state))
+    res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer')
+    return res.status(attempt ? 200 : 410).json({ ready: Boolean(attempt?.result) })
+  })
   app.post('/api/admin/login', async (req, res, next) => {
     if (!adminCredentialsConfigured) return res.status(503).json({ message: '后台登录未配置，请设置管理员账号和密码' })
     if (adminLoginRateLimited(req)) {
@@ -218,42 +252,73 @@ export function registerAdminRoutes(app) {
   app.get('/auth/callback', async (req, res) => {
     const code = firstValue(req.query.code)
     const state = firstValue(req.query.state)
-    const pendingState = consumeOAuthState(state, req)
-    const returnTo = pendingState?.returnTo || safeReturnUrl('', req)
+    const attempt = callbacks.start(state, callbackBrowser(req, state), () => consumeOAuthState(state, req),
+      pending => completeCallback(req, res, pending, code))
+    if (!attempt) return expiredCallback(req, res)
+    trackDataOperation(attempt.completion)
+    // Browsers leave the provider immediately; the bound progress endpoint only
+    // sets a login cookie after the original exchange and SQL commit succeed.
+    if (req.get('accept')?.includes('text/html')) {
+      return res.redirect(`/auth/pending?state=${encodeURIComponent(state)}`)
+    }
+    await attempt.completion
+    deliverCallback(req, res, state, attempt)
+  })
 
-    if (!pendingState) return res.redirect(appendAuthResult(returnTo, 'failed', '登录状态已过期，请重新登录'))
-    if (!code) return res.redirect(appendAuthResult(returnTo, 'failed', '授权码缺失，请重新登录'))
-
+  async function completeCallback(req, res, pendingState, code) {
+    const returnTo = pendingState.returnTo
+    const startedAt = Date.now()
+    if (!code) return { location: appendAuthResult(returnTo, 'failed', '授权码缺失，请重新登录') }
     let stage = 'token_exchange'
     try {
       const tokenData = await exchangeOAuthToken(code, pendingState.redirectUri)
+      // Established accounts already own their local profile and entitlements.
+      // Persist only the new credential here; merge provider updates separately.
+      if (req.dataContext) {
+        stage = 'session_commit'
+        const incoming = publicUser(tokenData.user)
+        if (incoming.status === 'disabled') return { location: appendAuthResult(returnTo, 'failed', '该账号已被后台禁用，暂时无法登录，请联系管理员。') }
+        const session = authSessionDescriptor(tokenData, { id: incoming.id })
+        if (await issueExistingAuthSession(req.dataContext.store.pool, incoming.id, session)) {
+          req.dataContext.deferLoginFollowup(session, tokenData.user)
+          console.log(JSON.stringify({ event: 'oauth_callback_completed', path: 'existing_account', durationMs: Date.now() - startedAt, sqlCount: req.requestMetrics?.sqlCount }))
+          return { session, location: appendAuthResult(returnTo, 'success') }
+        }
+      }
       stage = 'account_load'
       if (req.dataContext) {
-        await req.dataContext.store.contacts([tokenData.user?.email, tokenData.user?.phone].filter(Boolean))
         await req.dataContext.loadAccount(String(tokenData.user?.id || ''), true)
+        const incoming = publicUser(tokenData.user)
+        const previous = accountUserById(incoming.id)
+        // Existing, unchanged contacts cannot introduce a new collision. Only
+        // changed contacts need candidate loading; the write transaction still
+        // enforces uniqueness under its contact locks.
+        await req.dataContext.store.contacts(['email', 'phone'].filter(key => incoming[key] && incoming[key] !== previous?.[key]).map(key => incoming[key]))
         req.dataContext.normalize()
       }
       // 禁用账号不能创建短暂的登录会话，否则后续 /api/auth/me 会静默清掉会话，
       // 前端只能显示“会话未生效”，用户会误以为是地址或 Cookie 问题。
       const existingAccount = accountUserById(tokenData.user?.id)
       if (tokenData.user?.status === 'disabled' || existingAccount?.status === 'disabled') {
-        setOAuthStateCookie(res, req, state, '')
-        return res.redirect(appendAuthResult(returnTo, 'failed', '该账号已被后台禁用，暂时无法登录，请联系管理员。'))
+        return { location: appendAuthResult(returnTo, 'failed', '该账号已被后台禁用，暂时无法登录，请联系管理员。') }
       }
       stage = 'session_create'
       const session = createAuthSession(tokenData)
       stage = 'session_commit'
       await flushMetadataWrites()
-      setAuthCookie(res, session.id, session.expiresAt, req)
-      setOAuthStateCookie(res, req, state, '')
-      res.redirect(appendAuthResult(returnTo, 'success'))
+      console.log(JSON.stringify({ event: 'oauth_callback_completed', durationMs: Date.now() - startedAt, sqlCount: req.requestMetrics?.sqlCount }))
+      return { session, location: appendAuthResult(returnTo, 'success') }
     } catch (error) {
       // Never log provider errors/messages: they can contain codes or tokens.
       console.error(JSON.stringify({ event: 'oauth_callback_failed', stage,
+        durationMs: Date.now() - startedAt,
         code: /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code || '') ? error.code : 'OAUTH_CALLBACK_FAILED' }))
-      setOAuthStateCookie(res, req, state, '')
-      res.redirect(appendAuthResult(returnTo, 'failed', '登录服务暂时不可用，请重新登录'))
+      return { location: appendAuthResult(returnTo, 'failed', error.code === 'ACCOUNT_DISABLED' ? '该账号已被后台禁用，暂时无法登录，请联系管理员。' : '登录服务暂时不可用，请重新登录') }
+    } finally {
+      // The initial browser redirect can already have finished before persistence.
+      // Start the existing independent follow-up only after a successful commit.
+      if (res.writableFinished) req.dataContext?.finishResponse()
     }
-  })
+  }
 
 }
