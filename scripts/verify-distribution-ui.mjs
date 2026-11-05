@@ -19,6 +19,20 @@ const virtualConsole = new VirtualConsole()
 virtualConsole.on('jsdomError', error => errors.push(error))
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://fixture.local/', pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole })
 const { window } = dom, document = window.document
+const clipboardWrites = []
+let copyMode = 'success', finishCopy, legacyCopy = false
+Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: {
+  async writeText(text) {
+    if (copyMode === 'denied') throw new Error('permission denied')
+    if (copyMode === 'pending') await new Promise(resolve => { finishCopy = resolve })
+    clipboardWrites.push(text)
+  },
+} })
+document.execCommand = command => {
+  if (command !== 'copy' || !legacyCopy) return false
+  clipboardWrites.push(document.activeElement.value)
+  return true
+}
 const styles = document.createElement('style')
 styles.textContent = ['base.css', 'components.css', 'app-main.css', 'responsive.css'].map(file => fs.readFileSync(path.join(root, 'src/styles', file), 'utf8')).join('\n')
 document.head.append(styles)
@@ -124,6 +138,27 @@ try {
   releasePublish?.()
   await waitFor(() => document.querySelector('.distribution-success'), 'distribution publishes')
   check('DIST-001 发布成功显示固定映射反馈', document.querySelector('.distribution-success')?.textContent.includes('已冻结 2 条'))
+
+  // Clear the publish notice so a false copy-success cannot hide behind it.
+  await delay(3100)
+  copyMode = 'pending'
+  await click('复制分享链接')
+  check('复制完成前不提示成功且禁止二次点击', !document.querySelector('.toast') && button('复制分享链接').disabled)
+  finishCopy()
+  await waitFor(() => document.querySelector('.toast')?.textContent.includes('分享链接已复制'), 'copy completion reports success')
+  check('实际写入的内容为完整分享链接', clipboardWrites.at(-1) === 'http://fixture.local/share/dist-test')
+  copyMode = 'denied'
+  await click('复制分享链接')
+  await waitFor(() => document.querySelector('.toast.error'), 'copy permission failure is visible')
+  check('权限被拒绝时不误报成功', clipboardWrites.length === 1 && document.querySelector('.toast').textContent.includes('复制失败'))
+  legacyCopy = true
+  await click('复制分享链接')
+  await waitFor(() => document.querySelector('.toast.success'), 'denied clipboard falls back to selection')
+  check('剪贴板权限被拒绝后仍可通过兼容方式复制', clipboardWrites.length === 2 && clipboardWrites.at(-1) === 'http://fixture.local/share/dist-test')
+  Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: undefined })
+  await click('复制分享链接')
+  check('HTTP 环境无 Clipboard API 时使用兼容复制', clipboardWrites.length === 3 && clipboardWrites.at(-1) === 'http://fixture.local/share/dist-test')
+  check('兼容复制结束后清理临时文本框', !document.querySelector('textarea[readonly]'))
 
   await choose([makeFile('合同.txt'), makeFile('报价.txt', 124)])
   await click('批量填入')

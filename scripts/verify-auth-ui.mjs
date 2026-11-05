@@ -96,6 +96,9 @@ await scenario('AUTH-profile-email-bind-shortcut',async()=>{
  const f=await mount('/settings/profile');try{
   await f.click('去绑定')
   check('profile shortcut opens the email binding dialog',f.document.querySelector('.account-bind-modal')?.textContent.includes('绑定邮箱')&&f.document.querySelector('.account-bind-modal .settings-input-field input')?.type==='email')
+  const backdrop=f.document.querySelector('.account-bind-backdrop'),dialog=f.document.querySelector('.account-bind-modal')
+  check('account binding modal is mounted outside the settings page tree',Boolean(backdrop&&f.document.body.contains(backdrop)&&!backdrop.closest('#root')))
+  check('account binding modal exposes dialog semantics',dialog?.getAttribute('role')==='dialog'&&dialog.getAttribute('aria-modal')==='true')
   check('email shortcut remains keyboard accessible',f.document.querySelector('.settings-email-control button')?.getAttribute('type')==='button'&&f.errors.length===0)
  }finally{f.dom.window.close()}
 })

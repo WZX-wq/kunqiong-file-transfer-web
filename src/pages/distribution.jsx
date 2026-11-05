@@ -2,6 +2,7 @@ import { ActionButton } from '../components/action-button.jsx'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, FileArchive, LockKeyhole, RefreshCw, Send, UploadCloud, UserRound, Wand2, XCircle } from 'lucide-react'
 import { formatBytes } from '../lib/format.js'
+import { copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 
 // 兼容历史格式：文件名前缀“编号__”。带前缀时只用于展示名，不影响配对。
 const FILE_PREFIX = /^([A-Za-z0-9][A-Za-z0-9._-]{0,79})__(.+)$/
@@ -245,7 +246,7 @@ export function DistributionView({ user, onLogin, onNotify }) {
     {result?.distribution && <section className="distribution-success">
       <CheckCircle2 size={20} />
       <div><strong>发布成功</strong><span>已冻结 {result.distribution.rowCount} 条文件与收件人映射，把链接发给收件人即可领取。</span></div>
-      <ActionButton className="secondary-button" type="button" onClick={() => { navigator.clipboard?.writeText(result.distribution.shareUrl); onNotify?.('分享链接已复制') }}>复制分享链接</ActionButton>
+      <ActionButton className="secondary-button" type="button" onClick={() => copyTextWithFeedback(result.distribution.shareUrl, (message, tone) => onNotify?.(message, tone), '分享链接已复制')}>复制分享链接</ActionButton>
     </section>}
   </div>
 }

@@ -514,10 +514,10 @@ export function TeamPage() {
   const normalizedManageMemberQuery = manageMemberQuery.trim().toLowerCase()
   const normalizedResourceQuery = resourceQuery.trim().toLowerCase()
   const filteredMembers = normalizedMemberQuery
-    ? members.filter((member) => [member.displayName, member.email, member.phone, member.userId].some((value) => String(value || '').toLowerCase().includes(normalizedMemberQuery)))
+    ? members.filter((member) => [member.displayName, member.username, member.email, member.phone, member.userId].some((value) => String(value || '').toLowerCase().includes(normalizedMemberQuery)))
     : members
   const filteredManageMembers = normalizedManageMemberQuery
-    ? members.filter((member) => [member.displayName, member.email, member.phone, member.userId].some((value) => String(value || '').toLowerCase().includes(normalizedManageMemberQuery)))
+    ? members.filter((member) => [member.displayName, member.username, member.email, member.phone, member.userId].some((value) => String(value || '').toLowerCase().includes(normalizedManageMemberQuery)))
     : members
   const filteredResources = normalizedResourceQuery
     ? resources.filter((resource) => [resource.name, memberName(resource.ownerUserId)].some((value) => String(value || '').toLowerCase().includes(normalizedResourceQuery)))

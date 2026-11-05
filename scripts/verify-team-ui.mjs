@@ -23,7 +23,7 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  let pendingHandover=navigation.pendingHandover||null, handoverHistory=navigation.handoverHistory||[], handoverFailure=false, holdHandover=false, releaseHandover=null
  let personalTrashItems=navigation.personalTrashItems||[]
  const plan={id:'enterprise',label:'企业版',team:true,totalBytes:2048*1024**3,teamSpaceBytes:1024**4,permanent:true,features:[]}
- const members=[{id:'m-owner',userId:'owner',displayName:'所有者',role:'owner',status:'active',usedBytes:0,fileCount:0},{id:'m-member',userId:'member',displayName:'普通成员',role:'member',status:'active',usedBytes:4,fileCount:1}]
+ const members=[{id:'m-owner',userId:'owner',username:'owner-login',displayName:'所有者',email:'owner@example.test',phone:'13800001111',role:'owner',status:'active',usedBytes:0,fileCount:0},{id:'m-member',userId:'member',username:'member-login',displayName:'普通成员',email:'member@example.test',phone:'13900002222',role:'member',status:'active',usedBytes:4,fileCount:1}]
  const permittedMembers=()=>members.map(member=>({...member,canRemove:['owner','admin'].includes(currentRole)&&member.role!=='owner'&&(currentRole==='owner'||member.role==='member'),canChangeRole:currentRole==='owner'&&member.role!=='owner',canTransfer:currentRole==='owner'&&member.role!=='owner'&&!pendingHandover}));
  const organization=()=>({id:'org',slug:'team-slug',name,ownerUserId:currentRole==='owner'?'owner':'new-owner',members:permittedMembers(),ownershipHandover:pendingHandover,ownershipHandoverHistory:handoverHistory,createdAt:new Date().toISOString()})
  const overview=()=>({organization:organization(),canManage:['owner','admin'].includes(currentRole),isOwner:currentRole==='owner',plan,capacity:{usedBytes:resourcePermanentlyDeleted?0:4,totalBytes:1024**4,shareCount:resourcePermanentlyDeleted?0:1,fileCount:resourcePermanentlyDeleted?0:1},memberUsage:permittedMembers().map(m=>m.userId==='member'&&resourcePermanentlyDeleted?{...m,usedBytes:0,fileCount:0}:m),joinRequests:[],resources:resourceDeleted?[]:[{id:'teamfile',code:'TEAM01',kind:'share',name:'安全文件.txt',files:[{name:'安全文件.txt',size:4,mimeType:'text/plain'}],ownerUserId:'member',status:resourceRestored?'closed':navigation.resourceStatus||'active',fileCount:resourceFileCount,totalSize:4*resourceFileCount,canManage:['owner','admin','member'].includes(currentRole),canDelete:['owner','admin','member'].includes(currentRole),...(['owner','admin','member'].includes(currentRole)?{manageToken:'test',manageUrl:'/share/manage/test'}:{})}]})
@@ -106,6 +106,28 @@ async function mount(route='/team',role='owner',teamName='隔离验证团队',ha
  return {failNextHandover:()=>handoverFailure=true,holdNextHandover:()=>holdHandover=true,releaseHandover:()=>{holdHandover=false;releaseHandover?.()},exhaustDownloads:()=>quotaUsed=true,failNextRoleChange:()=>roleChangeFailure=true,dom,window,document,calls,errors,copiedTexts,click,find,input,file,choose,remove:()=>removed=true,failNextRename:()=>renameFailure=true,failNextResourceDelete:()=>deleteFailure=true,holdNextResourceDelete:()=>holdDelete=true,releaseResourceDelete:()=>{holdDelete=false;releaseDelete?.()},holdNextTrash:()=>holdTrash=true,releaseTrash:()=>{holdTrash=false;releaseTrash?.()}}
 }
 async function scenario(id,fn){try{await fn();cases.push({id,status:'PASS'})}catch(e){failures.push({id,message:e.message});cases.push({id,status:'FAIL'});console.log('FAIL '+id+' '+e.stack)}}
+await scenario('TEAM-MEMBER-SEARCH',async()=>{
+ const f=await mount('/team','owner')
+ try{
+  const before=f.calls.length
+  for(const [tab,selector,rowSelector] of [['成员观察','.team-search input','.team-member-usage-row'],['团队成员','.team-management-search input','.team-management-row']]){
+   const tabButton=[...f.document.querySelectorAll('[role="tab"]')].find(button=>button.textContent.trim().startsWith(tab))
+   assert.ok(tabButton,'tab '+tab)
+   tabButton.click();await delay(45)
+   for(const [query,name] of [['  OWNER@EXAMPLE.TEST  ','所有者'],['member@example.test','普通成员'],['普通成员','普通成员'],['member-login','普通成员'],['13900002222','普通成员']]){
+    await f.input(f.document.querySelector(selector),query)
+    const rows=[...f.document.querySelectorAll(rowSelector)]
+    check(tab+' 支持匹配 '+query,rows.length===1&&rows[0].querySelector('strong')?.textContent===name)
+   }
+   await f.input(f.document.querySelector(selector),'nobody@example.test')
+   check(tab+' 无匹配结果时显示空状态',!f.document.querySelector(rowSelector)&&f.document.body.textContent.includes('没有匹配'))
+   await f.input(f.document.querySelector(selector),'')
+   check(tab+' 清空查询后恢复全部成员',f.document.querySelectorAll(rowSelector).length===2)
+  }
+  check('成员筛选不重复请求团队数据',f.calls.length===before)
+  check('成员搜索无脚本错误',f.errors.length===0)
+ }finally{f.dom.window.close()}
+})
 await scenario('WORKSPACE-QUERY-RECOVERY', async () => {
  const navigation={workspaceFailure:true}
  const f=await mount('/workspace','member','隔离验证团队',true,1,navigation)

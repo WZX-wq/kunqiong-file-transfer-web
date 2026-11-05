@@ -247,7 +247,10 @@ async function loadRouteData(context, req) {
   // HEAD preview authorization has exactly the same read requirements as GET.
   if (userId && !smallRead) {
     await store.account(userId, {
-      organizations: !personalList, settings: !personalList || pathname.endsWith('/messages'),
+      organizations: !personalList,
+      // Preferences need their saved row and write version on both GET and PUT.
+      // Omitting it makes an update look like an insert and falsely conflicts.
+      settings: !personalList || pathname.endsWith('/messages') || pathname.endsWith('/notification-settings'),
       sessions: !personalList && !readOnly,
       orders: pathname === '/api/account/workspace' && req.method === 'GET' ? 10 : /upgrade|workspace|logout/.test(pathname),
       messages: false,

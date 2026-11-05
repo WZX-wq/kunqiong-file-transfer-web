@@ -51,21 +51,6 @@ function MaterialRow({
       }}
     >
       <div className="collection-rule-main">
-        <ActionButton
-          type="button"
-          className="collection-drag-handle"
-          draggable
-          aria-label={`拖动材料 ${index + 1} 排序`}
-          title="拖动排序"
-          onDragStart={(event) => {
-            setDragId(material.id)
-            event.dataTransfer.effectAllowed = 'move'
-            event.dataTransfer.setData('text/plain', String(index))
-          }}
-          onDragEnd={() => setDragId('')}
-        >
-          <GripVertical size={15} />
-        </ActionButton>
         <label className="collection-rule-name">
           <span className="collection-inline-label">
             <span>材料名称</span>
@@ -81,6 +66,21 @@ function MaterialRow({
           />
         </label>
         <div className="collection-material-controls">
+          <ActionButton
+            type="button"
+            className="collection-drag-handle"
+            draggable
+            aria-label={`拖动材料 ${index + 1} 排序`}
+            title="拖动排序"
+            onDragStart={(event) => {
+              setDragId(material.id)
+              event.dataTransfer.effectAllowed = 'move'
+              event.dataTransfer.setData('text/plain', String(index))
+            }}
+            onDragEnd={() => setDragId('')}
+          >
+            <GripVertical size={15} />
+          </ActionButton>
           <label className="collection-rule-required">
             <input type="checkbox" checked={material.required} onChange={(event) => onUpdate({ required: event.target.checked })} />
             必交

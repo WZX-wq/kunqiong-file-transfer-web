@@ -22,17 +22,25 @@ export async function readAuthSession(pool, token) {
   return user ? { ...result, u: { ...user, ...(result.u.status ? { status: result.u.status } : {}) } } : null
 }
 
-// A header/login-state check never needs encrypted provider credentials, avatar
-// blobs, orders, teams or a complete historical profile snapshot.
+// Keep ordinary header checks compact. A data image or a URL truncated to the
+// 500-character column needs the user's complete avatar, checked by row version.
 export async function readAuthIdentity(pool, token) {
   if (!token) return null
   const [rows] = await pool.query({ sql: `SELECT s.expires_at, s.revoked_at, u.legacy_id, u.username, u.nickname,
-    u.email, u.phone, u.avatar_url, u.status, u.provider, u.login_methods_json, u.plan_json, replacement.id
+    u.id, u.write_version, u.gmt_modified, u.email, u.phone, u.avatar_url, u.status, u.provider, u.login_methods_json, u.plan_json, replacement.id
     FROM kq_auth_session s JOIN kq_user u ON u.id = s.user_id
     LEFT JOIN kq_auth_session replacement ON replacement.user_id = s.user_id
       AND replacement.gmt_create = s.revoked_at AND replacement.id > s.id
     WHERE s.token_hash = ? LIMIT 1`, nestTables: true }, [keyedDigest(`session-cookie:${token}`)])
-  return rows[0] || null
+  const result = rows[0]
+  if (!result) return null
+  const avatar = result.u.avatar_url || ''
+  if (avatar && (!/^https?:\/\//i.test(avatar) || avatar.length >= 500)) {
+    const [user] = await readVersionedRows(pool, 'kq_user', 'id = ?', [result.u.id], '', [result.u])
+    if (!user) return null
+    result.u = { ...user, ...(result.u.status ? { status: result.u.status } : {}) }
+  }
+  return result
 }
 
 const sqlDate = value => new Date(value).toISOString().slice(0, 23).replace('T', ' ')

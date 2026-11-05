@@ -1,6 +1,7 @@
 import { ActionButton, ActionForm } from '../components/action-button.jsx'
 import { useSerializedPreference } from '../lib/serialized-preference.js'
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
 import { SETTINGS_NAV_ITEMS } from '../lib/constants.js'
 import { bindAccountTarget, normalizeFileCleanupSettings, normalizeNoticeSettings, requestAccountBindCode, saveCloudFileCleanupSettings, saveCloudNoticeSettings } from '../lib/records.js'
@@ -508,9 +509,9 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
     }
   }
 
-  return (
+  return createPortal(
     <div className="modal-backdrop account-bind-backdrop">
-      <ActionForm className="modal account-bind-modal" noValidate onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+      <ActionForm className="modal account-bind-modal" role="dialog" aria-modal="true" noValidate onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">账号绑定</p><h2>绑定{label}</h2></div>
           <ActionButton className="ghost-icon modal-close" type="button" aria-label="关闭绑定窗口" onClick={onClose}><X size={18} /></ActionButton>
@@ -540,7 +541,8 @@ export function AccountBindModal({ type, currentValue, onClose, onComplete }) {
           <ActionButton className="primary-button" type="submit" disabled={binding || sending || Boolean(targetError) || !validCode}><BadgeCheck size={15} /> {binding ? '绑定中' : '确认绑定'}</ActionButton>
         </div>
       </ActionForm>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

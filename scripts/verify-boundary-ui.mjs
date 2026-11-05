@@ -9,6 +9,7 @@ const entry = '\0boundary-controls.jsx'
 const source = `
 import React, {useState} from 'react'; import {createRoot} from 'react-dom/client';
 import {SettingsModal} from ${JSON.stringify(root + '/src/pages/workspace.jsx')};
+import {GuestQuotaModal,RetrieveModal} from ${JSON.stringify(root + '/src/pages/workspace.jsx')};
 import {AdminLoginModal} from ${JSON.stringify(root + '/src/pages/AdminPage.jsx')};
 import {SharePage} from ${JSON.stringify(root + '/src/pages/public.jsx')};
 import {FilePreviewModal} from ${JSON.stringify(root + '/src/components/ui.jsx')};
@@ -17,6 +18,8 @@ function Controls() {
   const [settings,setSettings] = useState({expiryDays:'7',downloadLimit:'custom',customDownloadLimit:'1',codeLength:'6',passwordEnabled:true,password:'legal',...window.boundarySettings});
   api.settings = settings;
   if(mode==='settings') return <SettingsModal settings={settings} setSettings={setSettings} user={{plan:{permanent:true}}} onClose={()=>{}} onSave={()=>api.saved++}/>;
+  if(mode==='guest') return <GuestQuotaModal quota={{limitBytes:1024**3,usedBytes:1024**3,incomingBytes:0}} onClose={()=>{}} onLogin={()=>{}}/>;
+  if(mode==='retrieve') return <RetrieveModal code='' setCode={()=>{}} result={null} onClose={()=>{}} onFind={()=>{}}/>;
   if(mode==='admin') return <AdminLoginModal onSubmit={value=>api.credentials=value} onBackHome={()=>{}}/>;
   if(mode==='public') return <SharePage token='fixture'/>;
   return <FilePreviewModal preview={{kind:'text',url:'/protected-preview',unlockUrl:'/unlock',file:{name:'safe.txt',size:4}}} onClose={()=>{}}/>;
@@ -35,17 +38,26 @@ async function mount(mode,settings={}){
   window.boundaryMode=mode;window.boundarySettings=settings
   window.fetch=async(url)=>new Response(JSON.stringify(url==='/protected-preview'?{message:'请输入提取密码'}:url.startsWith('/api/shares/token/')?{requiresPassword:true,share:{id:'fixture',code:'CODE',files:[]}}:url==='/api/account/records'?{records:[]}:{user:null}),{status:url==='/protected-preview'?401:200,headers:{'content-type':'application/json'}})
   window.eval(code)
-  await waitFor(()=>document.querySelector('input[type="password"]'))
+  await waitFor(()=>mode==='settings'?document.querySelector('input[type="password"]'):mode==='guest'?document.querySelector('.guest-quota-modal'):mode==='retrieve'?document.querySelector('.retrieve-modal'):document.querySelector('input[type="password"]'))
   const input=async(element,value)=>{assert.ok(element);Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new window.Event('input',{bubbles:true}));await delay(20)}
   return {dom,window,document,errors,input}
 }
 await test('Settings reject empty, fractional and out-of-range custom downloads immediately',async()=>{
   const f=await mount('settings');try{
+    const dialog=f.document.querySelector('.modal[role="dialog"]')
+    assert.ok(dialog&&f.document.body.contains(dialog)&&!dialog.closest('#root'),'share settings modal must be portaled outside the page root')
+    assert.equal(dialog.getAttribute('aria-modal'),'true')
     const field=f.document.querySelector('input[type="number"]'), save=()=>[...f.document.querySelectorAll('button')].find(button=>button.textContent.includes('保存设置'))
     for(const value of ['','0','10000','1.5','-1']){await f.input(field,value);assert.equal(save().disabled,true);assert.match(f.document.querySelector('[role="alert"]').textContent,/1–9999/);save().click();assert.equal(f.window.boundaryControls.saved,0)}
     for(const value of ['1','9999']){await f.input(field,value);assert.equal(save().disabled,false)}
     save().click();assert.equal(f.window.boundaryControls.saved,1)
   }finally{f.dom.window.close()}
+})
+await test('Guest quota dialog is portaled outside the send page root',async()=>{
+  const f=await mount('guest');try{const dialog=f.document.querySelector('.guest-quota-modal');assert.ok(dialog&&f.document.body.contains(dialog)&&!dialog.closest('#root'));assert.equal(dialog.getAttribute('aria-modal'),'true')}finally{f.dom.window.close()}
+})
+await test('Retrieve dialog is portaled outside the send page root',async()=>{
+  const f=await mount('retrieve');try{const dialog=f.document.querySelector('.retrieve-modal');assert.ok(dialog&&f.document.body.contains(dialog)&&!dialog.closest('#root'));assert.equal(dialog.getAttribute('aria-labelledby'),'retrieve-modal-title')}finally{f.dom.window.close()}
 })
 await test('Settings show password limits, block whitespace, and preserve full Unicode',async()=>{
   const f=await mount('settings');try{

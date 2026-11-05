@@ -2,7 +2,7 @@ import { ActionButton } from './action-button.jsx'
 import React, { useEffect, useState } from 'react'
 import { Building2, ChevronDown, FileText, LogOut, Settings2, UserRound } from 'lucide-react'
 import { displayCompactUserName, displayUserName, maskPhone } from '../lib/format.js'
-import { ACCOUNT_SESSION_EVENT, apiRequest, getCachedAccountSession, isAccountLogoutPending } from '../lib/api.js'
+import { ACCOUNT_SESSION_EVENT, apiRequest, getCachedAccountSession, getPageAccountSession, isAccountLogoutPending } from '../lib/api.js'
 import { navigateApp } from '../lib/navigation.js'
 
 export function PublicAccountActions() {
@@ -23,7 +23,7 @@ export function PublicAccountActions() {
       } else setError('')
     }
     window.addEventListener(ACCOUNT_SESSION_EVENT, sessionChanged)
-    apiRequest('/api/auth/me', { signal: controller.signal, authView: 'identity' }).then(data => {
+    getPageAccountSession({ signal: controller.signal }).then(data => {
       if (!controller.signal.aborted) setUser(data.user || null)
     }).catch(() => {}).finally(() => {
       if (!controller.signal.aborted) setLoading(false)

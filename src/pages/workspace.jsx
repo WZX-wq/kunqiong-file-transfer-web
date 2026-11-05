@@ -4,6 +4,7 @@ import { copyImageWithFeedback, copyTextWithFeedback } from '../lib/clipboard-fe
 import { AuthButton } from '../components/account.jsx'
 import { PageLoading } from '../components/page-load-boundary.jsx'
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { SecurityCheckFailure, SecurityCheckStatus } from '../components/security-check-status.jsx'
 import { defaultDeadline, formatBytes, formatDate, formatDateInput, formatDuration, formatExpiry, formatMessageTime } from '../lib/format.js'
@@ -1202,7 +1203,7 @@ export function GuestQuotaModal({ quota, onClose, onLogin }) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  return (
+  return createPortal(
     <div className="modal-backdrop confirm-backdrop" onMouseDown={onClose}>
       <div className="modal confirm-modal guest-quota-modal" role="dialog" aria-modal="true" aria-labelledby="guest-quota-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="confirm-modal-icon"><Gauge size={20} /></div>
@@ -1219,7 +1220,8 @@ export function GuestQuotaModal({ quota, onClose, onLogin }) {
           <ActionButton className="primary-button" onClick={onLogin}><UserPlus size={15} /> 免费注册 / 登录</ActionButton>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -1929,11 +1931,11 @@ export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
   const downloadAll = () => share && startDownload(createShareDownloadConfig(share, { password }))
   const downloadFile = (file, fileIndex) => share && startDownload(createShareFileDownloadConfig(share, file, fileIndex, { password }))
   const previewFile = (file, fileIndex) => share && setPreviewItem(createShareFilePreviewConfig(share, file, fileIndex, { password }))
-  return (
+  return createPortal(
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className={`modal retrieve-modal ${result ? 'retrieve-modal-result' : ''}`} onMouseDown={(event) => event.stopPropagation()}>
+      <div className={`modal retrieve-modal ${result ? 'retrieve-modal-result' : ''}`} role="dialog" aria-modal="true" aria-labelledby="retrieve-modal-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <div><p className="eyebrow">取件</p><h2>{result ? '文件已找到' : '输入取件码'}</h2></div>
+          <div><p className="eyebrow">取件</p><h2 id="retrieve-modal-title">{result ? '文件已找到' : '输入取件码'}</h2></div>
           <ActionButton className="ghost-icon modal-close" aria-label="关闭取件窗口" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body">
@@ -1964,7 +1966,8 @@ export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
         </div>
         {!result && <div className="modal-footer retrieve-footer"><ActionButton ref={findButtonRef} className="primary-button" onClick={findShare}><KeyRound size={16} /> 查找文件</ActionButton></div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -1979,11 +1982,11 @@ export function SettingsModal({ settings, setSettings, user, onClose, onSave }) 
     if (value === '0' && !canUsePermanent) return
     setSettings({ ...settings, expiry: label, expiryDays: value })
   }
-  return (
+  return createPortal(
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="share-settings-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <div><p className="eyebrow">分享设置</p><h2>让文件按你的规则消失</h2></div>
+          <div><p className="eyebrow">分享设置</p><h2 id="share-settings-title">让文件按你的规则消失</h2></div>
           <ActionButton className="ghost-icon" onClick={onClose}><X size={18} /></ActionButton>
         </div>
         <div className="modal-body">
@@ -2007,7 +2010,8 @@ export function SettingsModal({ settings, setSettings, user, onClose, onSave }) 
         </div>
         <div className="modal-footer"><ActionButton className="secondary-button" onClick={onClose}>取消</ActionButton><ActionButton className="primary-button" disabled={Boolean(settingError)} onClick={onSave}><Save size={15} /> 保存设置</ActionButton></div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

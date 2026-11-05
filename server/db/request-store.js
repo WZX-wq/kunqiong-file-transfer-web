@@ -320,9 +320,15 @@ export class RelationalRequestStore {
     const result = await readAuthIdentity(this.pool, token)
     if (!result) return null
     const user = result.u, plan = parseJson(user.plan_json) || {}
-    // Native URLs restore the provider avatar on a cold refresh without loading blobs.
+    // Native URLs use the compact projection. Inline images and long URLs are
+    // hydrated from the single version-checked user row, never a full account graph.
     const avatar = /^https?:\/\//i.test(user.avatar_url || '') ? user.avatar_url : null
-    this.data.users[user.legacy_id] = { id: user.legacy_id, username: user.username, nickname: user.nickname,
+    if (user.entity_payload_json) {
+      this.rows.get('kq_user').set(identityKey('kq_user', user), user)
+      this.lookups.add(`kq_user:id:${user.id}`)
+      this.lookups.add(`kq_user:legacy_id:${user.legacy_id}`)
+      this.hydrate()
+    } else this.data.users[user.legacy_id] = { id: user.legacy_id, username: user.username, nickname: user.nickname,
       email: user.email, phone: user.phone, avatar, status: user.status, provider: user.provider,
       loginMethods: parseJson(user.login_methods_json) || [], planId: plan.planId,
       planStartedAt: plan.startedAt, planExpiresAt: plan.expiresAt }

@@ -384,13 +384,16 @@ export function publicOrganizationMember(organization, member, viewerId) {
   const isOwner = organization.ownerUserId === viewerId
   const isManager = isOrganizationManager(organization, viewerId)
   const contactsVisible = isManager || member.userId === viewerId
-  const email = normalizeEmailValue(member.email)
-  const phone = normalizePhoneValue(member.phone)
-  const role = organization.ownerUserId === member.userId ? 'owner' : member.role === 'admin' ? 'admin' : 'member'
   const account = accountUserById(member.userId)
+  // Roster contacts are historical snapshots; bound account contacts may change.
+  // An existing account with an empty contact must not revive an old binding.
+  const email = normalizeEmailValue(account ? account.email : member.email)
+  const phone = normalizePhoneValue(account ? account.phone : member.phone)
+  const role = organization.ownerUserId === member.userId ? 'owner' : member.role === 'admin' ? 'admin' : 'member'
   const accountActive = Boolean(account && account.status !== 'disabled')
   return {
     id: member.id, userId: member.userId, displayName: member.displayName, role, status: member.status,
+    username: account?.username || '',
     email: contactsVisible ? email : email ? `${email.slice(0, 1)}***@${email.split('@')[1]}` : '',
     phone: contactsVisible ? phone : phone ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : '',
     joinedAt: member.joinedAt || null, invitedAt: member.invitedAt || null,
