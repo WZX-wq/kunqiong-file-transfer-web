@@ -229,6 +229,18 @@
 .upgrade-plan-card.selected .upgrade-plan-top > .upgrade-plan-icon { color: #fff; background: var(--accent); }
 .upgrade-plan-card.is-current .upgrade-plan-top > .upgrade-plan-icon { color: #fff; background: var(--accent-dark); }
 
+/* Supplied plan artwork carries its own background and remains stable when selected. */
+.plan-artwork { display: block; flex: none; object-fit: contain; }
+.plan-catalog-icon.plan-artwork-frame,
+.upgrade-plan-top > .upgrade-plan-icon.plan-artwork-frame {
+  width: auto;
+  height: auto;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.upgrade-plan-card:is(.selected, .is-current) .upgrade-plan-top > .plan-artwork-frame { background: transparent; }
+
 /* 权益对比条：套餐名 + 图标同一行 */
 .plan-title-line { display: inline-flex; align-items: center; gap: 6px; color: var(--accent-dark); }
 .plan-title-line > svg { flex: none; }

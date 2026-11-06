@@ -12,6 +12,7 @@ import { ArrowLeft, BadgeCheck, Building2, Check, ChevronRight, ClipboardList, C
 import { feedbackTone, formatBytes, formatDate, formatPlanPrice } from '../lib/format.js'
 import { PlanSpaceSummary } from '../components/ui.jsx'
 import { PlanCarousel } from '../components/plan-carousel.jsx'
+import { PlanArtwork } from '../components/plan-artwork.jsx'
 import { ACCOUNT_PLAN_ICON, ACCOUNT_PLAN_RANK, UPGRADE_ORDER_STATUS_LABELS } from '../lib/constants.js'
 import { TEAM_NAME_MAX, limitInputText } from '../lib/input-limits.js'
 import { paymentDeadline, paymentOrderView } from '../lib/upgrade-payment.js'
@@ -305,7 +306,7 @@ export function WorkspacePage() {
         <div className="workspace-grid">
           <div className="public-card workspace-plan-hero">
             <div className="workspace-plan-hero-copy">
-              <span className="ph-badge"><Crown size={14} /> {currentPlanLabel}</span>
+              <span className="ph-badge"><PlanArtwork planId={plan.id} size={22} /> {currentPlanLabel}</span>
               <h2>{formatBytes(currentTotalBytes)} 空间，套餐权益一处管理</h2>
               <p>{planValidity} · {formatPlanPrice(planDisplay)} · 容量、上传上限与协作权益按当前账号配置执行。</p>
               <div className="ph-actions">
@@ -326,7 +327,7 @@ export function WorkspacePage() {
           </div>
 
           <div className="public-card workspace-benefits-card">
-            <div className="workspace-section-heading"><div><p className="eyebrow">当前套餐</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div><a className="text-btn" href="/workspace?view=plans">权益对比 <ChevronRight size={13} /></a></div>
+            <div className="workspace-section-heading"><div><p className="eyebrow">当前套餐</p><h2><PlanArtwork planId={plan.id} size={28} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div><a className="text-btn" href="/workspace?view=plans">权益对比 <ChevronRight size={13} /></a></div>
             <div className="workspace-benefits-grid">{(plan.features || []).map((feature) => { const FeatureIcon = workspaceBenefitIcon(feature); return <div className="workspace-benefit-item" key={`${plan.id}-${feature}`}><span><FeatureIcon size={16} /></span><strong>{feature}</strong></div> })}</div>
             <div className="workspace-plan-attributes" aria-label="套餐与团队权益">
               <span className={plan.permanent ? 'is-on' : 'is-muted'}>{plan.permanent ? <Check size={14} /> : <Clock3 size={14} />} {plan.permanent ? '文件永久保存' : '文件临时保存'}</span>
@@ -459,15 +460,13 @@ function PlanCatalogPage({ plans, currentPlan, selectedPlanId, isSelectablePlan,
       {sortedPlans.map((item) => {
         const selectable = isSelectablePlan(item)
         const isCurrent = item.id === currentPlan.id
-        const Icon = accountPlanIcon(item.id)
         return <article className={`plan-catalog-card${item.id === 'member' ? ' featured' : ''}${selectedPlanId === item.id ? ' selected' : ''}${isCurrent ? ' current' : ''}`} key={item.id}>
           {item.id === 'member' && <span className="plan-catalog-flag">个人常用</span>}
           <div className="plan-catalog-card-heading">
-            <span className="plan-catalog-icon" aria-hidden="true"><Icon size={21} strokeWidth={1.8} /></span>
+            <span className="plan-catalog-icon plan-artwork-frame" aria-hidden="true"><PlanArtwork planId={item.id} size={42} /></span>
             <div><h2>{item.label}</h2><p>{item.tagline || '按当前套餐配置提供权益'}</p></div>
           </div>
           <div className="plan-catalog-price"><strong>{item.id === 'free' || Number(item.monthlyPrice) === 0 ? '¥0' : Number.isFinite(Number(item.monthlyPrice)) ? `¥${(Number(item.monthlyPrice) / 100).toFixed(2)}` : '价格以主站为准'}</strong><span>{item.id === 'free' ? '/ 长期' : item.permanent ? '/ 永久' : item.validityDays ? `/ ${item.validityDays} 天` : ''}</span></div>
-          <p className="plan-catalog-price-note">{formatPlanPrice(item)}</p>
           <PlanSpaceSummary plan={item} compact />
           <ul className="plan-catalog-features">
             {(item.features || []).map((feature) => <li key={feature}><Check size={14} /> <span>{feature}</span></li>)}
@@ -805,7 +804,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
                     disabled={!canCreateOrder || item.id === 'free' || isIncludedPlan(item) || !priceAvailable(item.id)}
                     aria-pressed={item.id === selectedPlanId}
                   >
-                    <span className="upgrade-plan-top">{(() => { const PlanIcon = accountPlanIcon(item.id); return <span className="upgrade-plan-icon" aria-hidden="true"><PlanIcon size={18} strokeWidth={1.8} /></span> })()}<strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team && teamEntitlement.teamPlanId && accountPlanRank(item.id) <= accountPlanRank(teamEntitlement.teamPlanId) ? <em>团队已拥有</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
+                    <span className="upgrade-plan-top"><span className="upgrade-plan-icon plan-artwork-frame" aria-hidden="true"><PlanArtwork planId={item.id} size={34} /></span><strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team && teamEntitlement.teamPlanId && accountPlanRank(item.id) <= accountPlanRank(teamEntitlement.teamPlanId) ? <em>团队已拥有</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
                     <PlanSpaceSummary plan={item} compact />
                     <span className="upgrade-plan-tags"><strong className="upgrade-plan-price">{formatPlanPrice(item)}</strong><span className="upgrade-plan-detail">{item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</span></span>
                     <ul className="upgrade-plan-features">

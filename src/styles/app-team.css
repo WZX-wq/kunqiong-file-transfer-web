@@ -138,7 +138,6 @@
 .plan-catalog-price { display: flex; align-items: baseline; gap: 5px; min-height: 38px; margin-top: 13px; }
 .plan-catalog-price strong { color: var(--ink); font-size: 22px; font-weight: 750; font-variant-numeric: tabular-nums; }
 .plan-catalog-price span { color: var(--muted); font-size: 13px; }
-.plan-catalog-price-note { margin-top: -4px; color: var(--muted); font-size: 13px; }
 .plan-catalog-card .plan-space-summary { display: flex; gap: 13px; margin-top: 14px; padding: 9px 0; border-top: 1px solid #edf2f8; border-bottom: 1px solid #edf2f8; }
 .plan-catalog-card .plan-space-summary > span { min-width: 0; }
 .plan-catalog-card .plan-space-summary b { color: var(--ink); font-size: 13px; }
