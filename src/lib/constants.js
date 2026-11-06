@@ -1,8 +1,8 @@
 // 由 main.jsx 抽取的工具函数（2026-10-09）
 // 纯函数，零 React/组件依赖。
 import {
-  Bell, Crown, FileArchive, FileCheck2, FileText, HardDrive, ShieldCheck, Sparkles, Trash2,
-  UserRound, Users
+  BadgeCheck, Bell, Building2, Code2, Crown, File, FileArchive, FileText, Gem, HardDrive, Image as ImageIcon, Music2, ShieldCheck, Sparkles, Trash2, Video,
+  UserRound, UsersRound
 } from 'lucide-react'
 
 export const MAX_FILES = 100
@@ -140,9 +140,14 @@ export const FOOTER_CONTENT = {
 }
 
 export const fileIcon = (name = '') => {
-  if (/\.(zip|rar|7z|tar|gz)$/i.test(name)) return FileArchive
-  if (/\.(pdf|doc|docx|txt|xls|xlsx|ppt|pptx)$/i.test(name)) return FileText
-  return FileCheck2
+  const extension = String(name).split('.').pop().toLowerCase()
+  if (COLLECTION_TYPE_EXTENSIONS['图片'].includes(extension)) return ImageIcon
+  if (COLLECTION_TYPE_EXTENSIONS['视频'].includes(extension)) return Video
+  if (COLLECTION_TYPE_EXTENSIONS['音频'].includes(extension)) return Music2
+  if (COLLECTION_TYPE_EXTENSIONS['压缩包'].includes(extension)) return FileArchive
+  if (COLLECTION_TYPE_EXTENSIONS['代码文件'].includes(extension)) return Code2
+  if (COLLECTION_TYPE_EXTENSIONS['文档'].includes(extension)) return FileText
+  return File
 }
 
 export const MAIN_VIEWS = new Set(['send', 'collect', 'deliver', 'records'])
@@ -216,7 +221,7 @@ export const UPGRADE_ORDER_STATUS_LABELS = {
 }
 export const ACCOUNT_PLAN_RANK = { free: 0, member: 1, team: 2, halfyear: 3, year: 4, enterprise: 5 }
 
-export const ACCOUNT_PLAN_ICON = { free: HardDrive, member: Sparkles, team: Users, halfyear: Users, year: Crown, enterprise: Crown }
+export const ACCOUNT_PLAN_ICON = { free: UserRound, member: BadgeCheck, team: UsersRound, halfyear: Crown, year: Gem, enterprise: Building2 }
 
 export const RECORD_STORAGE_KEY = 'kunqiong-records'
 export const MAX_LOCAL_RECORDS = 100

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
 import { SETTINGS_NAV_ITEMS } from '../lib/constants.js'
 import { bindAccountTarget, normalizeFileCleanupSettings, normalizeNoticeSettings, requestAccountBindCode, saveCloudFileCleanupSettings, saveCloudNoticeSettings } from '../lib/records.js'
-import { ArrowLeft, AlertTriangle, BadgeCheck, Check, ChevronRight, Crown, HardDrive, ImageIcon, KeyRound, RotateCcw, Send, ShieldCheck, Trash2, UserRound, X } from 'lucide-react'
+import { ArrowLeft, AlertTriangle, BadgeCheck, Check, ChevronRight, Crown, HardDrive, ImageIcon, KeyRound, RotateCcw, Send, ShieldCheck, Trash2, UserRound, UsersRound, X } from 'lucide-react'
 import { UserAvatar } from '../components/ui.jsx'
 import { PrototypeAsset } from '../components/prototype-asset.jsx'
 import { displayUserName, formatBytes, formatDateInput, maskPhone } from '../lib/format.js'
@@ -274,7 +274,7 @@ export function SettingsPage({ user, loading, section, onLogin, onLogout, onBack
             ))}
           </nav>
           <div className="settings-sidebar-foot">
-            <ActionButton onClick={onOpenWorkspace}><Crown size={16} /> 会员与团队空间</ActionButton>
+            <ActionButton onClick={onOpenWorkspace}><UsersRound size={16} strokeWidth={1.8} /> 会员与团队空间</ActionButton>
             <ActionButton onClick={onBack}><ArrowLeft size={16} /> 返回发文件</ActionButton>
           </div>
         </aside>

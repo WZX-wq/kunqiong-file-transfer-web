@@ -8,13 +8,29 @@ import { useRemotePlanPricing, useToast } from '../hooks.js'
 import { apiRequest, getCachedAccountData, getCachedAccountSession, getPageAccountSession, mergePlanPricing, upgradeApiRequest } from '../lib/api.js'
 import { parseAlipayCheckout } from '../lib/alipay-checkout.js'
 import { ConfirmModal, FeedbackMessage, PublicShell, Toast } from '../components/common.jsx'
-import { ArrowLeft, BadgeCheck, Building2, Check, ChevronRight, Clock3, Copy, Crown, HardDrive, History, Info, Link2, PencilLine, RefreshCw, RotateCcw, ScanLine, ShieldCheck, Sparkles, UserRound, Users, Wallet, X, Zap } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, Building2, Check, ChevronRight, ClipboardList, Clock3, Copy, Crown, FileUp, HardDrive, Info, Link2, PencilLine, RefreshCw, RotateCcw, ShieldCheck, Sparkles, UserRound, Users, UsersRound, Wallet, X, Zap } from 'lucide-react'
 import { feedbackTone, formatBytes, formatDate, formatPlanPrice } from '../lib/format.js'
 import { PlanSpaceSummary } from '../components/ui.jsx'
 import { PlanCarousel } from '../components/plan-carousel.jsx'
 import { ACCOUNT_PLAN_ICON, ACCOUNT_PLAN_RANK, UPGRADE_ORDER_STATUS_LABELS } from '../lib/constants.js'
 import { TEAM_NAME_MAX, limitInputText } from '../lib/input-limits.js'
 import { paymentDeadline, paymentOrderView } from '../lib/upgrade-payment.js'
+import wechatPayLogo from '../assets/payment/wechat-pay-fill.svg'
+import alipayLogo from '../assets/payment/alipay-fill.svg'
+
+function workspaceBenefitIcon(feature) {
+  const label = String(feature || '')
+  if (/单文件|文件大小|上传大小/.test(label)) return FileUp
+  if (/每个收集任务|收集参与|收集提交人数|参与人数|成员人数/.test(label)) return UsersRound
+  if (/同时进行|并发|进行中.*任务/.test(label)) return ClipboardList
+  if (/团队|协作/.test(label)) return Building2
+  if (/空间|容量/.test(label)) return HardDrive
+  if (/保存|有效期|保留|过期|永久权益/.test(label)) return Clock3
+  if (/安全|检测|扫描/.test(label)) return ShieldCheck
+  if (/分享|链接/.test(label)) return Link2
+  if (/任务/.test(label)) return ClipboardList
+  return BadgeCheck
+}
 
 function AlipayCheckoutFrame({ html }) {
   const frameName = `alipay-checkout-${useId().replace(/:/g, '')}`
@@ -302,16 +318,16 @@ export function WorkspacePage() {
               <div className="ph-stat workspace-activity-stat"><span>文件与任务</span><b>{capacity.fileCount || 0} 个文件</b><small>{capacity.shareCount || 0} 个分享 · {capacity.collectionCount || 0} 个收集任务</small></div>
             </div>
             <div className="workspace-plan-metrics">
-              <div><span><HardDrive size={13} /> 单文件上限</span><b>{formatBytes(plan.singleFileLimitBytes || 0)}</b></div>
-              <div><span><Users size={13} /> 收集参与人数</span><b>{plan.collectionParticipantLimit ? `${plan.collectionParticipantLimit} 人` : '不限'}</b></div>
-              <div><span><Clock3 size={13} /> 同时进行任务</span><b>{plan.activeCollectionLimit ? `${plan.activeCollectionLimit} 个` : '不限'}</b></div>
-              <div><span><Building2 size={13} /> 团队空间</span><b>{(teamSpaceBytes || plan.teamSpaceBytes) ? formatBytes(teamSpaceBytes || plan.teamSpaceBytes) : '未开通'}</b></div>
+              <div><FileUp size={13} /><span>单文件上限</span><b>{formatBytes(plan.singleFileLimitBytes || 0)}</b></div>
+              <div><UsersRound size={13} /><span>收集参与人数</span><b>{plan.collectionParticipantLimit ? `${plan.collectionParticipantLimit} 人` : '不限'}</b></div>
+              <div><ClipboardList size={13} /><span>同时进行任务</span><b>{plan.activeCollectionLimit ? `${plan.activeCollectionLimit} 个` : '不限'}</b></div>
+              <div><Building2 size={13} /><span>团队空间</span><b>{(teamSpaceBytes || plan.teamSpaceBytes) ? formatBytes(teamSpaceBytes || plan.teamSpaceBytes) : '未开通'}</b></div>
             </div>
           </div>
 
           <div className="public-card workspace-benefits-card">
             <div className="workspace-section-heading"><div><p className="eyebrow">当前套餐</p><h2><Crown size={18} /> {currentPlanLabel}</h2><p className="workspace-plan-subtitle">{planValidity} · {formatPlanPrice(planDisplay)}</p></div><a className="text-btn" href="/workspace?view=plans">权益对比 <ChevronRight size={13} /></a></div>
-            <div className="workspace-benefits-grid">{(plan.features || []).map((feature, index) => { const FeatureIcon = [Zap, ShieldCheck, Clock3, Users, ScanLine, History][index % 6]; return <div className="workspace-benefit-item" key={`${plan.id}-${feature}`}><span><FeatureIcon size={16} /></span><strong>{feature}</strong></div> })}</div>
+            <div className="workspace-benefits-grid">{(plan.features || []).map((feature) => { const FeatureIcon = workspaceBenefitIcon(feature); return <div className="workspace-benefit-item" key={`${plan.id}-${feature}`}><span><FeatureIcon size={16} /></span><strong>{feature}</strong></div> })}</div>
             <div className="workspace-plan-attributes" aria-label="套餐与团队权益">
               <span className={plan.permanent ? 'is-on' : 'is-muted'}>{plan.permanent ? <Check size={14} /> : <Clock3 size={14} />} {plan.permanent ? '文件永久保存' : '文件临时保存'}</span>
               <span className={hasTeamPlan || canUseTeamSpace ? 'is-on' : 'is-muted'}>{hasTeamPlan || canUseTeamSpace ? <Check size={14} /> : <X size={14} />} {teamRole === 'member' && !hasTeamPlan ? `共享团队空间${teamSpaceBytes ? ` · ${formatBytes(teamSpaceBytes)}` : ''}` : hasTeamPlan || canUseTeamSpace ? '团队协作已开通' : '团队协作未开通'}</span>
@@ -447,7 +463,7 @@ function PlanCatalogPage({ plans, currentPlan, selectedPlanId, isSelectablePlan,
         return <article className={`plan-catalog-card${item.id === 'member' ? ' featured' : ''}${selectedPlanId === item.id ? ' selected' : ''}${isCurrent ? ' current' : ''}`} key={item.id}>
           {item.id === 'member' && <span className="plan-catalog-flag">个人常用</span>}
           <div className="plan-catalog-card-heading">
-            <span className="plan-catalog-icon"><Icon size={18} /></span>
+            <span className="plan-catalog-icon" aria-hidden="true"><Icon size={21} strokeWidth={1.8} /></span>
             <div><h2>{item.label}</h2><p>{item.tagline || '按当前套餐配置提供权益'}</p></div>
           </div>
           <div className="plan-catalog-price"><strong>{item.id === 'free' || Number(item.monthlyPrice) === 0 ? '¥0' : Number.isFinite(Number(item.monthlyPrice)) ? `¥${(Number(item.monthlyPrice) / 100).toFixed(2)}` : '价格以主站为准'}</strong><span>{item.id === 'free' ? '/ 长期' : item.permanent ? '/ 永久' : item.validityDays ? `/ ${item.validityDays} 天` : ''}</span></div>
@@ -703,7 +719,14 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
     }
   }
 
-  const paymentMethodSelector = <div className="upgrade-pay-type" role="group" aria-label="支付方式"><ActionButton type="button" className={payType === 1 ? 'selected' : ''} aria-pressed={payType === 1} onClick={() => setPayType(1)} disabled={busy}><ScanLine size={15} /> 微信扫码</ActionButton><ActionButton type="button" className={payType === 2 ? 'selected' : ''} aria-pressed={payType === 2} onClick={() => setPayType(2)} disabled={busy}><Wallet size={15} /> 支付宝</ActionButton></div>
+  const paymentMethodSelector = <div className="upgrade-pay-type" role="group" aria-label="支付方式">
+    <ActionButton type="button" className={payType === 1 ? 'selected' : ''} aria-pressed={payType === 1} onClick={() => setPayType(1)} disabled={busy}>
+      <img className="payment-method-logo" src={wechatPayLogo} alt="" aria-hidden="true" width="20" height="20" />微信支付
+    </ActionButton>
+    <ActionButton type="button" className={payType === 2 ? 'selected' : ''} aria-pressed={payType === 2} onClick={() => setPayType(2)} disabled={busy}>
+      <img className="payment-method-logo" src={alipayLogo} alt="" aria-hidden="true" width="20" height="20" />支付宝
+    </ActionButton>
+  </div>
 
   return createPortal(
     <div className="modal-backdrop upgrade-backdrop" onMouseDown={onClose}>
@@ -782,7 +805,7 @@ export function UpgradeModal({ workspace, initialPlanId = '', initialOrder = nul
                     disabled={!canCreateOrder || item.id === 'free' || isIncludedPlan(item) || !priceAvailable(item.id)}
                     aria-pressed={item.id === selectedPlanId}
                   >
-                    <span className="upgrade-plan-top">{(() => { const PlanIcon = accountPlanIcon(item.id); return <span className="upgrade-plan-icon"><PlanIcon size={16} /></span> })()}<strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team && teamEntitlement.teamPlanId && accountPlanRank(item.id) <= accountPlanRank(teamEntitlement.teamPlanId) ? <em>团队已拥有</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
+                    <span className="upgrade-plan-top">{(() => { const PlanIcon = accountPlanIcon(item.id); return <span className="upgrade-plan-icon" aria-hidden="true"><PlanIcon size={18} strokeWidth={1.8} /></span> })()}<strong>{item.label}</strong>{isCurrentPlan(item) ? <em>当前权益</em> : isIncludedPlan(item) ? <em>已包含</em> : item.team && teamEntitlement.teamPlanId && accountPlanRank(item.id) <= accountPlanRank(teamEntitlement.teamPlanId) ? <em>团队已拥有</em> : item.team ? <em className="hot">团队推荐</em> : null}</span>
                     <PlanSpaceSummary plan={item} compact />
                     <span className="upgrade-plan-tags"><strong className="upgrade-plan-price">{formatPlanPrice(item)}</strong><span className="upgrade-plan-detail">{item.permanent ? '永久保存' : '临时保存'}{item.team ? ' · 团队协作' : ''}</span></span>
                     <ul className="upgrade-plan-features">

@@ -8,7 +8,7 @@ import { useConfirmDialog, useDownloadTask } from '../hooks.js'
 import { canPreviewFile, createShareDownloadConfig, createShareFilePreviewConfig, uploadShareInChunks } from '../lib/transfer.js'
 import { createShareRecord, saveLocalRecord, upsertCloudRecords } from '../lib/records.js'
 import { ConfirmModal, FeedbackMessage, PublicShell, Toast } from '../components/common.jsx'
-import { ArrowLeft, Building2, Check, ClipboardCheck, Copy, Crown, Database, Download, Eye, FileText, FolderOpen, HardDrive, Home, Link2, LogOut, PencilLine, Search, Settings2, Trash2, UploadCloud, UserPlus, UserRound, Users, X } from 'lucide-react'
+import { ArrowLeft, Building2, Check, ClipboardCheck, Copy, Crown, Download, Eye, Files, FileText, FolderOpen, HardDrive, Home, Link2, LogOut, PencilLine, Search, Settings2, Trash2, UploadCloud, UserPlus, UserRound, UserRoundCog, Users, X } from 'lucide-react'
 import { formatBytes, formatDate } from '../lib/format.js'
 import { AdminPagination } from '../components/pagination.jsx'
 import { MAX_FILES, MAX_FILE_SIZE } from '../lib/constants.js'
@@ -603,7 +603,7 @@ export function TeamPage() {
     <div className="team-capacity-meta"><span>{capacity.shareCount || 0} 个分享</span><span>{capacity.collectionCount || 0} 个收集任务</span><span>{capacity.fileCount || 0} 个文件</span></div>
   </div>
 
-  return <PublicShell>
+  return <PublicShell className="workspace-shell">
     <section className="team-page">
       <div className="team-page-heading">
         <div className="team-heading-copy">
@@ -618,7 +618,7 @@ export function TeamPage() {
               <small id="team-name-hint">团队名称为 1–{TEAM_NAME_MAX} 个字符</small>
             </ActionForm>
             {teamNameError && <FeedbackMessage message={teamNameError} tone="error" />}
-          </> : <div className="team-heading-title"><h1><Building2 size={24} /> {organization.name}</h1><span className="team-plan-tag">{teamPlanLabel}</span></div>}
+          </> : <div className="team-heading-title"><h1><span className="team-heading-icon"><Building2 size={21} /></span> {organization.name}</h1><span className="team-plan-tag">{teamPlanLabel}</span></div>}
           <p>所有者 {members.find((member) => member.role === 'owner')?.displayName || '团队所有者'} · {members.filter((member) => member.status === 'active').length} 位成员{organization.createdAt ? ` · 创建于 ${formatDate(organization.createdAt)}` : ''}</p>
         </div>
         <div className="team-page-actions">
@@ -629,12 +629,12 @@ export function TeamPage() {
           {!isOwner && <ActionButton type="button" className="secondary-button danger-lite" onClick={leaveTeam} disabled={leavingTeam}><LogOut size={14} /> {leavingTeam ? '正在退出' : '退出团队空间'}</ActionButton>}
         </div>
       </div>
-      {visibleTab !== 'branding' && <div className="team-kpi-grid"><div className="team-kpi"><span><Users size={16} /> 团队成员</span><strong>{members.filter((item) => item.status !== 'invited').length}</strong><small>{members.filter((item) => item.status === 'invited').length} 位待加入</small></div><div className="team-kpi"><span><Database size={16} /> 团队文件</span><strong>{resourceSummary.fileCount}</strong><small>{resourceSummary.total} 个分享与收集任务</small></div><div className="team-kpi"><span><HardDrive size={16} /> 已用容量</span><strong>{formatBytes(usedBytes)}</strong><small>总容量 {formatBytes(totalBytes)}</small></div><div className="team-kpi"><span><Link2 size={16} /> 活跃资源</span><strong>{resourceSummary.active}</strong><small>{isOwner ? '你是团队所有者' : data.canManage ? '团队管理员视图' : '团队成员视图'}</small></div></div>}
+      {visibleTab !== 'branding' && <div className="team-kpi-grid"><div className="team-kpi"><span><span className="team-kpi-icon"><Users size={16} /></span> 团队成员</span><strong>{members.filter((item) => item.status !== 'invited').length}</strong><small>{members.filter((item) => item.status === 'invited').length} 位待加入</small></div><div className="team-kpi"><span><span className="team-kpi-icon"><Files size={16} /></span> 团队文件</span><strong>{resourceSummary.fileCount}</strong><small>{resourceSummary.total} 个分享与收集任务</small></div><div className="team-kpi"><span><span className="team-kpi-icon"><HardDrive size={16} /></span> 已用容量</span><strong>{formatBytes(usedBytes)}</strong><small>总容量 {formatBytes(totalBytes)}</small></div><div className="team-kpi"><span><span className="team-kpi-icon"><Link2 size={16} /></span> 活跃资源</span><strong>{resourceSummary.active}</strong><small>{isOwner ? '你是团队所有者' : data.canManage ? '团队管理员视图' : '团队成员视图'}</small></div></div>}
       <div className="team-tabs-shell">
         <div className="team-tabs" role="tablist" aria-label="团队详情">
           <ActionButton className={visibleTab === 'members' ? 'active' : ''} role="tab" aria-selected={visibleTab === 'members'} onClick={() => changeTab('members')}><Users size={15} /> 成员观察</ActionButton>
-          <ActionButton className={visibleTab === 'resources' ? 'active' : ''} role="tab" aria-selected={visibleTab === 'resources'} onClick={() => changeTab('resources')}><Database size={15} /> 团队资源 <span>{resourceSummary.total}</span></ActionButton>
-          {data.canManage && <ActionButton className={visibleTab === 'manage' ? 'active' : ''} role="tab" aria-selected={visibleTab === 'manage'} onClick={() => changeTab('manage')}><UserPlus size={15} /> 团队成员 <span>{members.length}</span></ActionButton>}
+          <ActionButton className={visibleTab === 'resources' ? 'active' : ''} role="tab" aria-selected={visibleTab === 'resources'} onClick={() => changeTab('resources')}><FolderOpen size={15} /> 团队资源 <span>{resourceSummary.total}</span></ActionButton>
+          {data.canManage && <ActionButton className={visibleTab === 'manage' ? 'active' : ''} role="tab" aria-selected={visibleTab === 'manage'} onClick={() => changeTab('manage')}><UserRoundCog size={15} /> 团队成员 <span>{members.length}</span></ActionButton>}
           {data.canManage && <ActionButton className={visibleTab === 'requests' ? 'active' : ''} role="tab" aria-selected={visibleTab === 'requests'} onClick={() => changeTab('requests')}><ClipboardCheck size={15} /> 入团申请 <span>{joinRequests.length}</span></ActionButton>}
           {data.canManage && <ActionButton className={visibleTab === 'branding' ? 'active' : ''} role="tab" aria-selected={visibleTab === 'branding'} onClick={() => changeTab('branding')}><Palette size={15} /> 团队品牌</ActionButton>}
         </div>
@@ -667,7 +667,7 @@ export function TeamPage() {
                 <ActionButton className="ghost-icon" type="button" onClick={() => { if (!resourceEditAllowed(resource)) { setNotice({ message: '仅资源上传者或团队管理者可以编辑该团队资源', tone: 'error' }); return } window.open(resource.manageUrl, '_blank', 'noopener,noreferrer') }} aria-label={`管理 ${resource.name}`} title={resourceEditAllowed(resource) ? '编辑团队资源' : '仅资源上传者或团队管理者可以编辑'}><Settings2 size={15} /></ActionButton>
                 {resource.canDelete === true && <ActionButton className="ghost-icon team-resource-delete" type="button" onClick={() => deleteResource(resource)} disabled={Boolean(deletingResourceId)} aria-label={`移入回收站 ${resource.name}`} title={deletingResourceId === resource.id ? '处理中…' : `移入团队回收站，${TEAM_TRASH_RETENTION_DAYS} 天内可恢复`}><Trash2 size={15} /></ActionButton>}
               </div>
-            </div>) : <div className="empty-manage"><Database size={25} /><span>{resourceQuery ? '没有匹配的团队文件' : '暂无团队文件，请从专属入口上传'}</span></div>}
+            </div>) : <div className="empty-manage"><FolderOpen size={25} /><span>{resourceQuery ? '没有匹配的团队文件' : '暂无团队文件，请从专属入口上传'}</span></div>}
           </div>
           <AdminPagination page={safeTeamResourcePage} pageCount={teamResourcePageCount} total={resourceTotal} pageSize={teamPageSize} onPageChange={setTeamResourcePage} />
         </div>}

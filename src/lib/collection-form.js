@@ -20,12 +20,12 @@ export const COLLECTION_MATERIAL_TEMPLATES = Object.freeze([
 ])
 
 export const COLLECTION_FIELD_TEMPLATES = Object.freeze([
-  { label: '联系人', type: 'text', required: true, help: '请填写可以联系到你的姓名' },
-  { label: '联系电话', type: 'phone', required: true, help: '例如：13800138000' },
-  { label: '邮箱', type: 'email', required: false, help: '用于接收后续通知' },
+  { label: '联系人', type: 'text', required: true, help: '' },
+  { label: '联系电话', type: 'phone', required: true, help: '' },
+  { label: '邮箱', type: 'email', required: false, help: '' },
   { label: '公司名称', type: 'text', required: false, help: '' },
   { label: '供应商类型', type: 'select', required: true, options: ['生产商', '经销商', '服务商'], help: '' },
-  { label: '备注', type: 'textarea', required: false, help: '可以补充说明材料内容' },
+  { label: '备注', type: 'textarea', required: false, help: '' },
 ])
 
 export const COLLECTION_NAMING_PRESETS = Object.freeze([
@@ -65,7 +65,7 @@ export const COLLECTION_SCENARIOS = Object.freeze([
     customFields: [
       { label: '联系人', type: 'text', required: true },
       { label: '联系电话', type: 'phone', required: true },
-      { label: '提交说明', type: 'textarea', required: false, help: '说明素材的使用场景或注意事项' },
+      { label: '提交说明', type: 'textarea', required: false },
     ],
   },
   {
@@ -95,7 +95,7 @@ export const COLLECTION_SCENARIOS = Object.freeze([
     customFields: [
       { label: '报销人', type: 'text', required: true },
       { label: '费用类型', type: 'select', required: true, options: ['差旅', '办公', '招待', '其他'] },
-      { label: '金额', type: 'number', required: true, help: '填写含税金额，例如 1280.50' },
+      { label: '金额', type: 'number', required: true },
       { label: '备注', type: 'textarea', required: false },
     ],
   },
@@ -382,7 +382,7 @@ export function generateCollectionStructure({ title = '', description = '' } = {
   if (/联系人|姓名|称呼/.test(text)) addField({ label: '联系人', type: 'text', required: true })
   if (/电话|手机|联系方式/.test(text)) addField({ label: '联系电话', type: 'phone', required: true })
   if (/邮箱|邮件|email/i.test(text)) addField({ label: '邮箱', type: 'email', required: false })
-  if (/金额|费用|报销|报价/.test(text)) addField({ label: '金额', type: 'number', required: false, help: '填写数字金额，例如 1280.50' })
+  if (/金额|费用|报销|报价/.test(text)) addField({ label: '金额', type: 'number', required: false })
   if (/日期|时间|入职|截止/.test(text)) addField({ label: '提交日期', type: 'date', required: false })
   if (/备注|说明|补充/.test(text)) addField({ label: '备注', type: 'textarea', required: false })
 
@@ -434,6 +434,7 @@ export function validateCollectionStructure(materials = [], customFields = []) {
       if (options.length < 2) errors.options = '下拉选项至少需要 2 项'
       else if (options.length > 30) errors.options = '下拉选项最多 30 项'
       else if (new Set(options).size !== options.length) errors.options = '下拉选项不能重复'
+      else if (options.some((option) => option.length > 40)) errors.options = '每个下拉选项不能超过 40 个字符'
     }
     if (Object.keys(errors).length) fieldErrors[field.id] = errors
   })

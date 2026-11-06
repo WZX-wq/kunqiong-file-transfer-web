@@ -1,6 +1,6 @@
 import { ActionButton } from './action-button.jsx'
 import React, { useEffect, useState } from 'react'
-import { Building2, ChevronDown, FileText, LogOut, Settings2, UserRound } from 'lucide-react'
+import { ChevronDown, FileText, LogOut, UserRound, UserRoundCog, UsersRound } from 'lucide-react'
 import { displayCompactUserName, displayUserName, maskPhone } from '../lib/format.js'
 import { ACCOUNT_SESSION_EVENT, apiRequest, getCachedAccountSession, getPageAccountSession, isAccountLogoutPending } from '../lib/api.js'
 import { navigateApp } from '../lib/navigation.js'
@@ -107,9 +107,9 @@ export function AuthButton({ user, loading, menuOpen, onLogin, onToggleMenu, onS
             <UserAvatar user={user} />
             <div><strong>{displayUserName(user)}</strong><span>{displayUserSubtitle(user)}</span></div>
           </div>
-          <ActionButton role="menuitem" onClick={onSettings}><Settings2 size={14} /> 账户设置</ActionButton>
+          <ActionButton role="menuitem" onClick={onSettings}><UserRoundCog size={15} strokeWidth={1.8} /> 账户设置</ActionButton>
           <ActionButton role="menuitem" onClick={onOrders}><FileText size={14} /> 我的订单</ActionButton>
-          <ActionButton className="mobile-workspace-link" role="menuitem" onClick={() => navigateApp('/workspace')}><Building2 size={14} /> 会员与团队空间</ActionButton>
+          <ActionButton className="mobile-workspace-link" role="menuitem" onClick={() => navigateApp('/workspace')}><UsersRound size={15} strokeWidth={1.8} /> 会员与团队空间</ActionButton>
           <ActionButton role="menuitem" onClick={onLogout}><LogOut size={14} /> 退出登录</ActionButton>
         </div>
       )}

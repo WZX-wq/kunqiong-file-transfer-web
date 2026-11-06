@@ -18,6 +18,17 @@ import {
 } from '../lib/collection-form.js'
 import { formatBytes } from '../lib/format.js'
 import { formatAllowedTypes } from '../lib/records.js'
+import { limitInputText } from '../lib/input-limits.js'
+
+const FIELD_HELP_PLACEHOLDERS = {
+  text: '例如：请填写联系人姓名',
+  textarea: '例如：请补充说明材料内容',
+  number: '例如：请填写含税金额',
+  phone: '例如：请填写可以联系到你的手机号',
+  email: '例如：请填写用于接收通知的邮箱',
+  select: '例如：请选择符合实际情况的选项',
+  date: '例如：请选择入职日期',
+}
 
 function CollectionPresetDisclosure({ label, count, children }) {
   return (
@@ -61,7 +72,7 @@ function MaterialRow({
             value={material.name}
             maxLength={40}
             autoFocus={material.autoFocus}
-            onChange={(event) => onUpdate({ name: event.target.value })}
+            onChange={(event) => onUpdate({ name: limitInputText(event.target.value, 40) })}
             placeholder="例如：营业执照"
           />
         </label>
@@ -108,7 +119,7 @@ function MaterialRow({
               aria-label={`${material.name || `材料 ${index + 1}`}命名格式`}
               value={material.namingPattern || ''}
               maxLength={COLLECTION_FILENAME_PATTERN_MAX}
-              onChange={(event) => onUpdate({ namingPattern: event.target.value })}
+              onChange={(event) => onUpdate({ namingPattern: limitInputText(event.target.value, COLLECTION_FILENAME_PATTERN_MAX) })}
               placeholder="例如：{提交人}_{材料项}_{原文件名}"
             />
           </label>
@@ -204,7 +215,7 @@ export function CollectionMaterialsEditor({
       </div>
       {bulkOpen && (
         <div className="collection-bulk-add">
-          <textarea aria-label="批量添加材料" value={bulkText} onChange={(event) => setBulkText(event.target.value)} rows={3} placeholder={'每行一个材料名称，例如：\n营业执照\n身份证正反面\n合同文件'} />
+          <textarea aria-label="批量添加材料" value={bulkText} maxLength={30 * 41} onChange={(event) => setBulkText(limitInputText(event.target.value, 30 * 41))} rows={3} placeholder={'每行一个材料名称，例如：\n营业执照\n身份证正反面\n合同文件'} />
           <div className="collection-bulk-actions">
             <small>支持换行、逗号或分号分隔，重复项会自动跳过</small>
             <ActionButton type="button" className="secondary-button" onClick={() => setBulkOpen(false)}>取消</ActionButton>
@@ -265,13 +276,16 @@ function FieldOptionsEditor({ field, index, onUpdate }) {
           className="collection-field-options"
           aria-label={`${field.label || `字段 ${index + 1}`}下拉选项`}
           value={text}
+          maxLength={30 * 41}
           onChange={(event) => {
-            setText(event.target.value)
-            onUpdate({ options: normalizeCollectionFieldOptions(event.target.value) })
+            const next = limitInputText(event.target.value, 30 * 41)
+            setText(next)
+            onUpdate({ options: normalizeCollectionFieldOptions(next) })
           }}
           placeholder="用逗号分隔，例如：生产商，经销商"
         />
       </label>
+      <small>2–30 项，每项最多 40 个字符</small>
       {options.length > 0 && <div className="collection-option-chips">
         {options.map((option) => <span key={option} className="collection-option-chip">{option}<ActionButton type="button" aria-label={`删除选项 ${option}`} onClick={() => onUpdate({ options: options.filter((item) => item !== option) })}>×</ActionButton></span>)}
       </div>}
@@ -328,7 +342,7 @@ function FieldRow({
             value={field.label}
             maxLength={40}
             autoFocus={field.autoFocus}
-            onChange={(event) => onUpdate({ label: event.target.value })}
+            onChange={(event) => onUpdate({ label: limitInputText(event.target.value, 40) })}
             placeholder="字段名称，例如：供应商类型"
           />
         </label>
@@ -356,13 +370,13 @@ function FieldRow({
       </div>
       {error?.label && <small className="collection-inline-error" role="alert">{error.label}</small>}
       <label className="collection-field-help-input">
-        <span>填写提示（可选）</span>
+        <span className="collection-inline-label"><span>填写提示（可选）</span><small className={(field.help || '').length >= 120 ? 'field-count at-limit' : 'field-count'}>{(field.help || '').length}/120</small></span>
         <input
           aria-label={`${field.label || `字段 ${index + 1}`}填写提示`}
           value={field.help || ''}
           maxLength={120}
-          onChange={(event) => onUpdate({ help: event.target.value })}
-          placeholder="例如：请填写可以联系到你的手机号"
+          onChange={(event) => onUpdate({ help: limitInputText(event.target.value, 120) })}
+          placeholder={FIELD_HELP_PLACEHOLDERS[field.type] || '填写给提交者的提示（可选）'}
         />
       </label>
       {error?.help && <small className="collection-inline-error" role="alert">{error.help}</small>}
@@ -559,7 +573,7 @@ export function CollectionStructureAssistant({ form, onApplyStructure, copySourc
         <div className="collection-assistant-row collection-assistant-save">
           <label className="collection-assistant-field">
             <span><Bookmark size={13} />常用结构</span>
-            <input aria-label="结构名称" value={saveName} maxLength={40} onChange={(event) => setSaveName(event.target.value)} placeholder="给当前结构起个名字（可选）" />
+            <input aria-label="结构名称" value={saveName} maxLength={40} onChange={(event) => setSaveName(limitInputText(event.target.value, 40))} placeholder="给当前结构起个名字（可选）" />
           </label>
           <ActionButton type="button" className="secondary-button" onClick={saveCurrent}>存为常用结构</ActionButton>
           {saved.length > 0 && <>

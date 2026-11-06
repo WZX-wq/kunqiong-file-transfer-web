@@ -1,6 +1,6 @@
 /* 保留原生 select 的表单、键盘和辅助技术行为，统一单选控件与展开菜单。 */
 select:not([multiple]):not([size]) {
-  color: #26354a;
+  color: var(--ink);
   background-color: #fff;
   border-color: #dce5f0;
   border-radius: 8px;
@@ -20,7 +20,7 @@ select:not([multiple]):not([size]):focus-visible {
 }
 
 select:not([multiple]):not([size]):disabled {
-  color: #8893a3;
+  color: var(--muted);
   background-color: #f4f6f9;
   border-color: #e4e9f0;
   cursor: not-allowed;
@@ -50,7 +50,7 @@ select:not([multiple]):not([size]):disabled {
     width: 6px;
     height: 6px;
     margin-inline: auto 3px;
-    color: #75849a;
+    color: var(--muted);
     border-right: 1.5px solid currentColor;
     border-bottom: 1.5px solid currentColor;
     transform: translateY(-2px) rotate(45deg);
@@ -70,7 +70,7 @@ select:not([multiple]):not([size]):disabled {
     margin-block: 6px;
     padding: 5px;
     overflow: auto;
-    color: #26354a;
+    color: var(--ink);
     background: #fff;
     border: 1px solid #dce5f0;
     border-radius: 12px;
@@ -101,11 +101,11 @@ select:not([multiple]):not([size]):disabled {
     gap: 16px;
     min-block-size: 36px;
     padding: 8px 10px;
-    color: #26354a;
+    color: var(--ink);
     background: #fff;
     border-radius: 7px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 400;
     line-height: 1.5;
     cursor: pointer;
@@ -140,13 +140,13 @@ select:not([multiple]):not([size]):disabled {
   }
 
   select:not([multiple]):not([size]) option:disabled {
-    color: #9aa4b3;
+    color: var(--muted);
     background: #f7f8fa;
     cursor: not-allowed;
   }
 
   select:not([multiple]):not([size]) option:disabled::checkmark {
-    color: #9aa4b3;
+    color: var(--muted);
   }
 }
 

@@ -1,6 +1,6 @@
 import { ActionButton, ActionForm } from './action-button.jsx'
 import React, { useEffect, useRef, useState } from 'react'
-import { Check, FileText, ImagePlus, Palette, RotateCcw, Upload, X } from 'lucide-react'
+import { Check, FileText, ClipboardList, Palette, RotateCcw, Upload, X } from 'lucide-react'
 import { apiRequest } from '../lib/api.js'
 import { FeedbackMessage } from './common.jsx'
 import { TeamBrand } from './team-brand.jsx'
@@ -93,7 +93,7 @@ export function TeamBrandingPanel({ organization, requestConfirm, onSaved }) {
         {conflict && <div className="team-branding-conflict" role="status"><span>品牌已有新版本，请重新加载后核对。</span><ActionButton type="button" className="secondary-button" disabled={disabled} onClick={reload}><RotateCcw size={15} />重新加载</ActionButton></div>}
         <div className="team-branding-actions"><ActionButton type="submit" className="primary-button" disabled={disabled || conflict || (!dirty && saved.enabled)}><Check size={16} />{busy ? '处理中' : '保存并启用'}</ActionButton><ActionButton type="button" className="secondary-button" disabled={disabled || !saved.enabled} onClick={reset}><RotateCcw size={16} />恢复默认</ActionButton></div>
       </ActionForm>
-      <aside className="team-branding-preview" aria-label="品牌效果预览"><div className="team-branding-preview-heading"><strong><Palette size={17} />效果预览</strong><span>保存后生效</span></div><div className="team-branding-preview-tabs" role="group" aria-label="预览页面"><ActionButton type="button" aria-pressed={preview === 'share'} onClick={() => setPreview('share')}>分享页</ActionButton><ActionButton type="button" aria-pressed={preview === 'collection'} onClick={() => setPreview('collection')}>收集页</ActionButton></div><TeamBrand branding={previewBrand} /><div className="team-branding-preview-content"><span className="team-branding-preview-icon">{preview === 'share' ? <FileText size={26} /> : <ImagePlus size={26} />}</span><h3>{preview === 'share' ? '有人给你发来了文件' : '请提交你的材料'}</h3><p>{preview === 'share' ? '文件资料.pdf' : '填写信息并上传文件'}</p><span className="team-branding-preview-cta">{preview === 'share' ? '下载文件' : '提交文件'}</span></div><p className="team-branding-public-note">名称、Logo 和简介会公开展示。品牌展示不改变文件权限，页面仍保留平台标识。</p></aside>
+      <aside className="team-branding-preview" aria-label="品牌效果预览"><div className="team-branding-preview-heading"><strong><Palette size={17} />效果预览</strong><span>保存后生效</span></div><div className="team-branding-preview-tabs" role="group" aria-label="预览页面"><ActionButton type="button" aria-pressed={preview === 'share'} onClick={() => setPreview('share')}>分享页</ActionButton><ActionButton type="button" aria-pressed={preview === 'collection'} onClick={() => setPreview('collection')}>收集页</ActionButton></div><TeamBrand branding={previewBrand} /><div className="team-branding-preview-content"><span className="team-branding-preview-icon">{preview === 'share' ? <FileText size={26} /> : <ClipboardList size={26} />}</span><h3>{preview === 'share' ? '有人给你发来了文件' : '请提交你的材料'}</h3><p>{preview === 'share' ? '文件资料.pdf' : '填写信息并上传文件'}</p><span className="team-branding-preview-cta">{preview === 'share' ? '下载文件' : '提交文件'}</span></div><p className="team-branding-public-note">名称、Logo 和简介会公开展示。品牌展示不改变文件权限，页面仍保留平台标识。</p></aside>
     </div>
   </section>
 }

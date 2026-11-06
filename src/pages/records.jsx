@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { canReopenCollection, fileCategoryIcon, isDateInputStillOpen, managedFileItemsFromRecords, matchesManagedFileCategory, matchesManagedFileSearch, matchesRecordDate, matchesRecordScope, matchesRecordStatus, normalizeRecord, recordCopyLabel, recordCopyTarget, recordDetail, recordDisplayName, recordDisplayStatus, recordExpiryLabel, recordIconForScope, recordLink, recordManageUrl, recordOpenLabel, recordScopeLabel, recordStatusGroup, recordStatusTone, recordValidityLabel, toDateInputValue } from '../lib/records.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { defaultDeadline, formatBytes, isClosedStatus } from '../lib/format.js'
-import { Archive, ArrowLeft, Building2, CalendarDays, Check, Code2, Copy, Download, ExternalLink, Eye, FileQuestion, FileText, Filter, HardDrive, History, Image as ImageIcon, Inbox, Layers3, Link2, MoreHorizontal, Music2, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, Upload, Video, X } from 'lucide-react'
+import { Archive, ArrowLeft, Building2, CalendarDays, Check, ClipboardList, Code2, Copy, Download, ExternalLink, Eye, FileQuestion, FileText, Filter, HardDrive, History, Image as ImageIcon, Inbox, Layers3, Link2, MoreHorizontal, Music2, PencilLine, QrCode, RefreshCw, RotateCcw, Search, Settings2, Trash2, Upload, Video, X } from 'lucide-react'
 import { DatePicker, FileFormatBadge, FilePreviewModal, QrPreviewModal, RecordNameText, RecordPreviewChooser, RenameRecordModal } from '../components/ui.jsx'
 import { PrototypeAsset, PrototypeFileIcon } from '../components/prototype-asset.jsx'
 import { useDownloadTask } from '../hooks.js'
@@ -23,7 +23,7 @@ const FILE_CATEGORY_ICONS = {
   audio: Music2,
   archive: Archive,
   code: Code2,
-  collection: Inbox,
+  collection: ClipboardList,
   mixed: Layers3,
   other: FileQuestion,
 }

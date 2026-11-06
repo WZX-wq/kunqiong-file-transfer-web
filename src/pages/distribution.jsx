@@ -1,6 +1,6 @@
 import { ActionButton } from '../components/action-button.jsx'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { CheckCircle2, FileArchive, LockKeyhole, RefreshCw, Send, UploadCloud, UserRound, Wand2, XCircle } from 'lucide-react'
+import { CheckCircle2, FilePlus2, LockKeyhole, RefreshCw, Send, UploadCloud, UserRound, Wand2, XCircle } from 'lucide-react'
 import { formatBytes } from '../lib/format.js'
 import { copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 
@@ -190,7 +190,7 @@ export function DistributionView({ user, onLogin, onNotify }) {
         onDragLeave={() => setDragging(false)}
         onDrop={event => { event.preventDefault(); setDragging(false); addFiles(event.dataTransfer?.files) }}
       >
-        <FileArchive size={22} />
+        <FilePlus2 size={22} />
         <span>把文件拖到这里，或点击选择</span>
         <small>支持一次选择多个文件，重复选择会自动去重</small>
       </ActionButton>}
@@ -227,7 +227,7 @@ export function DistributionView({ user, onLogin, onNotify }) {
         onDragLeave={() => setDragging(false)}
         onDrop={event => { event.preventDefault(); setDragging(false); addFiles(event.dataTransfer?.files) }}
       >
-        <FileArchive size={16} />
+        <FilePlus2 size={16} />
         <span>添加更多文件</span>
       </ActionButton>}
 

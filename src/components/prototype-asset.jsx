@@ -1,4 +1,5 @@
 import React from 'react'
+import { fileIcon } from '../lib/constants.js'
 
 const prototypeAssets = import.meta.glob('../assets/prototype-icons/*.png', {
   eager: true,
@@ -28,9 +29,6 @@ const fileTypeAssets = {
   xlsm: 'ft-xls.png',
   csv: 'ft-xls.png',
   docm: 'ft-doc.png',
-  zip: 'ico-folder.png',
-  rar: 'ico-folder.png',
-  '7z': 'ico-folder.png',
 }
 
 export function PrototypeAsset({ name, size = 24, width = size, height = size, className = '', alt = '', ...props }) {
@@ -42,8 +40,12 @@ export function PrototypeAsset({ name, size = 24, width = size, height = size, c
 export function PrototypeFileIcon({ name, fallback: FallbackIcon, size = 24 }) {
   const filename = String(name || '')
   const extension = filename.split('.').pop().toLowerCase()
-  const asset = fileTypeAssets[extension] || (filename ? 'ico-file.png' : '')
+  const asset = fileTypeAssets[extension]
 
-  if (!asset) return FallbackIcon ? <FallbackIcon size={size} /> : null
+  if (!asset) {
+    if (!filename && !FallbackIcon) return null
+    const Icon = filename ? fileIcon(filename) : FallbackIcon
+    return <Icon size={size} aria-hidden="true" />
+  }
   return <PrototypeAsset className="prototype-file-icon" name={asset} size={size} />
 }

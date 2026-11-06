@@ -15,7 +15,7 @@ import { BEFORE_APP_NAVIGATION, isAppRoute, navigateApp } from '../lib/navigatio
 import { useConfirmDialog, useDownloadTask, useToast } from '../hooks.js'
 import { canReopenCollection, clearCloudRecords, collectionStatusText, createCollectionRecord, createShareRecord, deleteAllCloudMessages, deleteCloudMessage, deleteCloudRecords, fetchCloudMessages, fetchCloudRecords, fetchCloudRecordPage, getCollectionToken, getManageToken, isDateInputStillOpen, markAllCloudMessagesRead, markCloudMessageRead, normalizeCollectionTypes, normalizeMessages, normalizeNoticeSettings, normalizeRecord, normalizeRecords, readRecords, recordLink, recordManageUrl, replaceCloudRecords, respondWorkspaceInvitation, saveLocalRecord, syncRecords, toggleCollectionType, upsertCloudRecords, upsertRecords, writeRecords } from '../lib/records.js'
 import { cancelUploadSession, canPreviewFile, clearUploadResume, createCollectionDownloadConfig, createShareDownloadConfig, createShareFilePreviewConfig, createSubmissionDownloadConfig, createSubmissionFilePreviewConfig, readUploadResume, uploadShareInChunks } from '../lib/transfer.js'
-import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock3, CloudUpload, Copy, Download, Eraser, Eye, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Layers, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock3, CloudUpload, Copy, Download, Eraser, Eye, FilePlus2, FileText, FolderOpen, Gauge, HelpCircle, History, Inbox, KeyRound, Layers, Link2, LockKeyhole, Mail, MailCheck, Megaphone, MessageCircle, Pause, Play, QrCode, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserCheck, UserPlus, UserRound, UserX, UsersRound, X } from 'lucide-react'
 import { loadPage } from '../lib/page-loaders.js'
 import { subscribeRefresh } from '../lib/refresh-scheduler.js'
 const SettingsPage = React.lazy(() => loadPage('settings').then(module => ({ default: module.SettingsPage })))
@@ -1090,7 +1090,7 @@ export function WorkspaceApp() {
           <NavItem icon={Send} label="发文件" active={!isSettingsRoute && activeView === 'send'} onClick={() => navigateMainView('send')} />
           <NavItem icon={Inbox} label="收集文件" active={!isSettingsRoute && activeView === 'collect'} onClick={() => navigateMainView('collect')} />
           <NavItem icon={History} label="收发记录" active={!isSettingsRoute && activeView === 'records'} onClick={() => navigateMainView('records')} />
-          <NavItem icon={Building2} label="会员与团队" active={false} onClick={() => navigateApp('/workspace')} />
+          <NavItem icon={UsersRound} label="会员与团队" active={false} onClick={() => navigateApp('/workspace')} />
         </nav>
         <div className="topbar-actions">
           <ActionButton type="button" className={`message-trigger topbar-trash-trigger${isTrashRoute ? ' active' : ''}`} aria-label="回收站" title="回收站" aria-current={isTrashRoute ? 'page' : undefined} onClick={() => { setAuthMenuOpen(false); changeMessagePanel(false); navigateTrash() }}><Trash2 size={18} /></ActionButton>
@@ -1271,7 +1271,7 @@ export function SendView({ batchLimit = MAX_FILES, user, files, inputRef, folder
                 <h2>{isDragging ? '松开即可添加文件' : '拖拽文件或文件夹到这里'}</h2>
                 <p className="send-prototype-drop-copy">支持 PDF / Office / 图片 / 视频 / 压缩包，自动分片上传，中断可续传</p>
                 <div className="send-prototype-actions">
-                  <ActionButton className="primary-button" type="button" onClick={() => inputRef.current?.click()}><FolderOpen size={17} />选择文件</ActionButton>
+                  <ActionButton className="primary-button" type="button" onClick={() => inputRef.current?.click()}><FilePlus2 size={17} />选择文件</ActionButton>
                   <ActionButton className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} />选择文件夹</ActionButton>
                 </div>
                 <div className="send-prototype-retrieve">
@@ -1292,7 +1292,7 @@ export function SendView({ batchLimit = MAX_FILES, user, files, inputRef, folder
               <ValueItem image="act-share.png" title="多端可用" detail="电脑 / 手机 / 平板" />
               <ValueItem image="act-upload.png" title="简单易用" detail="链接、二维码、取件码" />
             </section>
-            <div className="send-prototype-trust"><span><ShieldCheck size={14} />文件仅保留至有效期结束</span><span><LockKeyhole size={14} />支持提取密码</span><span><PrototypeAsset name="ico-scan.png" size={16} />上传前安全检测</span></div>
+            <div className="send-prototype-trust"><span><Clock3 size={14} />文件仅保留至有效期结束</span><span><LockKeyhole size={14} />支持提取密码</span><span><PrototypeAsset name="ico-scan.png" size={16} />上传前安全检测</span></div>
           </>
         ) : showUploadStatus ? (
           <>
@@ -1349,7 +1349,7 @@ export function SendView({ batchLimit = MAX_FILES, user, files, inputRef, folder
                 <h1>{shareResult ? '发送完成' : '已选文件'}</h1>
                 <p>{shareResult ? '分享链接、取件码和二维码已准备好。' : '确认要发送的内容，可继续添加文件或文件夹。'}</p>
               </div>
-              {!shareResult && <div className="send-page-head-actions"><ActionButton className="secondary-button" type="button" onClick={() => inputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件</ActionButton><ActionButton className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件夹</ActionButton></div>}
+              {!shareResult && <div className="send-page-head-actions"><ActionButton className="secondary-button" type="button" onClick={() => inputRef.current?.click()} disabled={isUploading}><FilePlus2 size={16} />添加文件</ActionButton><ActionButton className="secondary-button" type="button" onClick={() => folderInputRef.current?.click()} disabled={isUploading}><FolderOpen size={16} />添加文件夹</ActionButton></div>}
             </div>
             <section className={`upload-panel send-prototype-drop-card send-prototype-queue-card ${isDragging ? 'dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragging(false) }} onDrop={(event) => { event.preventDefault(); setIsDragging(false); addFiles(event.dataTransfer.files) }}>
               <input ref={inputRef} type="file" multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = '' }} />
@@ -1556,7 +1556,8 @@ export function CollectView({ userId = '', authLoading = false, revision = 0, en
   const update = (key, value) => {
     setStructureMessage('')
     setDraftStatus('正在保存草稿…')
-    setForm((current) => ({ ...current, [key]: value }))
+    const next = key === 'title' ? limitInputText(value, COLLECTION_TITLE_MAX) : key === 'description' ? limitInputText(value, COLLECTION_DESCRIPTION_MAX) : value
+    setForm((current) => ({ ...current, [key]: next }))
   }
   const copySources = collectionRecords
     .filter((record) => record.collectionToken || getCollectionToken(record.publicUrl || record.shareUrl))
@@ -2020,7 +2021,7 @@ export function settingsSectionForPath(pathname = '') {
   return SETTINGS_NAV_ITEMS.some((item) => item.key === section) ? section : 'profile'
 }
 
-export function NavItem({ icon: Icon, label, active, onClick }) { return <ActionButton data-prefetch-route={label === '会员与团队' ? '/workspace' : label === '收发记录' ? '/?view=records' : '/'} className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={2} /><span>{label}</span></ActionButton> }
+export function NavItem({ icon: Icon, label, active, onClick }) { return <ActionButton data-prefetch-route={label === '会员与团队' ? '/workspace' : label === '收发记录' ? '/?view=records' : '/'} className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}><span className="nav-item-icon"><Icon size={17} strokeWidth={1.8} /></span><span>{label}</span></ActionButton> }
 
 export function MessageCenter({ user, messages, unreadCount: totalUnread, loading = false, hasMore = false, onLoadMore, open, onToggle, onClose, onMarkRead, onMarkAllRead, onDelete, onClearAll, onLogin, onInvitationAction, onHandoverAction, handoverDecisionId, onNotify }) {
   const { toast, notify: localNotify } = useToast()

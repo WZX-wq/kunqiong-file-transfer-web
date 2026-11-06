@@ -14,7 +14,7 @@ import {
   apiRequest, getUrlParts, markRecordUnavailable
 } from './api.js'
 import {
-  Download, FileArchive, FileCheck2, FileText, Image as ImageIcon, Inbox, Send, UploadCloud
+  ClipboardList, Code2, Download, File, FileArchive, FileText, Image as ImageIcon, Inbox, Layers3, Music2, Send, UploadCloud, Video
 } from 'lucide-react'
 
 const SHARE_PERMISSION_RETRY_MS = 5 * 60 * 1000
@@ -806,9 +806,13 @@ export function fileCategoryLabel(category) {
 export function fileCategoryIcon(category) {
   if (category === 'image') return ImageIcon
   if (category === 'archive') return FileArchive
-  if (category === 'document' || category === 'code') return FileText
-  if (category === 'collection') return Inbox
-  return FileCheck2
+  if (category === 'document') return FileText
+  if (category === 'code') return Code2
+  if (category === 'video') return Video
+  if (category === 'audio') return Music2
+  if (category === 'mixed' || category === 'all') return Layers3
+  if (category === 'collection') return ClipboardList
+  return File
 }
 
 export function matchesManagedFileSearch(item, query) {

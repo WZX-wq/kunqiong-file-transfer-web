@@ -1,0 +1,104 @@
+/* Shared reading scale. Keep semantic colors and existing interaction/motion rules. */
+:root {
+  font-size: 15px;
+  line-height: 1.6;
+  --ink: #111111;
+  --ink-2: #222222;
+  --muted: #404040;
+  --ink-4: #595959;
+  --text-caption: 13px;
+  --text-label: 14px;
+  --text-body: 15px;
+  --text-input: 16px;
+}
+
+body { color: var(--ink); }
+input, select, textarea { color: var(--ink); }
+input::placeholder, textarea::placeholder { color: #595959; opacity: 1; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; }
+:is(.team-page, .admin-page, .orders-page, .records-page) :is(.team-search, .team-inline-search, .admin-search, .orders-search, .record-search-box, .records-search-box, .file-center-search):focus-within {
+  border-color: #8b929c;
+  box-shadow: none;
+  outline: none;
+}
+.team-page .team-invite-input:focus-within {
+  border-color: #8b929c;
+  box-shadow: none;
+}
+:is(.team-search, .team-inline-search, .admin-search, .orders-search, .record-search-box, .records-search-box, .file-center-search) input:focus,
+:is(.team-search, .team-inline-search, .admin-search, .orders-search, .record-search-box, .records-search-box, .file-center-search) input:focus-visible,
+input[type="search"]:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+:where(.primary-button, .secondary-button, .danger-button, .danger-lite) {
+  min-height: 38px;
+  line-height: 1.4;
+}
+.modal-header h2 { font-size: 22px; line-height: 1.35; }
+.modal-header .eyebrow { color: var(--muted); font-size: var(--text-caption); }
+.modal-backdrop.confirm-backdrop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-block: max(12px, env(safe-area-inset-top), env(safe-area-inset-bottom));
+}
+
+/* Larger cards keep prices and benefit descriptions readable without squeezing five columns. */
+.modal.upgrade-modal { width: min(1140px, calc(100vw - 32px)); }
+.upgrade-intro, .upgrade-hint { color: var(--muted); font-size: var(--text-caption); line-height: 1.6; }
+.plan-carousel .workspace-plan-catalog-heading { font-size: var(--text-label); }
+.plan-carousel-track.plan-comparison, .plan-carousel-track.upgrade-plan-grid {
+  grid-auto-columns: minmax(min(250px, 100%), calc((100% - 36px) / 4));
+  gap: 12px;
+}
+.upgrade-plan-card { padding: 16px 14px; gap: 10px; background: #fff; white-space: normal; }
+.upgrade-plan-card.is-current { opacity: 1; }
+.upgrade-plan-card.selected { background: #f0f6ff; }
+.upgrade-plan-top strong { color: var(--ink); font-size: 16px; line-height: 1.45; }
+.upgrade-plan-top em { color: var(--muted); font-size: var(--text-caption); }
+.plan-carousel-track .upgrade-plan-top { min-height: 58px; }
+.plan-space-summary { gap: 10px; }
+.plan-space-summary b, .plan-space-summary.compact b { font-size: 17px; line-height: 1.4; }
+.plan-space-summary small, .plan-space-summary.compact small { color: var(--muted); font-size: var(--text-caption); line-height: 1.5; }
+.plan-price-summary { color: var(--muted) !important; font-size: var(--text-caption) !important; line-height: 1.6 !important; }
+.upgrade-modal > .modal-header h2 { font-size: 20px; }
+.upgrade-plan-price { font-size: 20px; line-height: 1.4; white-space: normal; }
+.upgrade-plan-detail, .upgrade-plan-tags { color: var(--muted); font-size: var(--text-caption); line-height: 1.6; }
+.upgrade-plan-features { gap: 8px; padding-top: 12px; }
+.upgrade-plan-features li { align-items: flex-start; color: var(--ink); font-size: 13px; line-height: 1.6; }
+.upgrade-plan-features li svg { margin-top: 3px; }
+.upgrade-summary { flex-wrap: wrap; }
+.upgrade-summary > span { flex-wrap: wrap; color: var(--ink); font-size: var(--text-label); }
+.upgrade-summary .primary-button { min-height: 40px; font-size: var(--text-label); }
+
+/* Moderate type on membership and team pages while retaining strong contrast. */
+.workspace-overview-page, .team-page { font-size: 14px; line-height: 1.55; }
+.workspace-overview-page .workspace-page-head h1 { font-size: 22px; }
+.workspace-overview-page .workspace-plan-hero h2 { font-size: 23px; }
+.workspace-overview-page .workspace-page-head-copy > p,
+.workspace-overview-page .workspace-plan-hero-copy > p,
+.workspace-overview-page .workspace-plan-note { font-size: 13px; }
+.workspace-overview-page .workspace-plan-hero-side .ph-stat > b { font-size: 18px; }
+.workspace-overview-page .workspace-plan-metrics b { font-size: 15px; }
+.workspace-overview-page .workspace-benefit-item strong { font-size: 13px; }
+.workspace-overview-page .workspace-side-card-head h3 { font-size: 15px; }
+.workspace-overview-page .usage-total b { font-size: 19px; }
+.team-page .team-heading-title h1 { font-size: 23px; }
+.team-page .team-kpi > strong { font-size: 21px; }
+.team-page .team-panel-heading h2 { font-size: 17px; }
+.team-page .team-capacity-number strong { font-size: 20px; }
+
+@media (max-width: 760px) {
+  /* 16px inputs avoid automatic browser zoom while entering text on phones. */
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), select, textarea { font-size: var(--text-input); }
+  .modal.upgrade-modal { width: calc(100vw - 20px); }
+  .plan-carousel-track.plan-comparison, .plan-carousel-track.upgrade-plan-grid {
+    grid-auto-columns: minmax(min(260px, 100%), 82%);
+  }
+  .modal-header h2 { font-size: 20px; }
+  .workspace-overview-page .workspace-page-head h1,
+  .workspace-overview-page .workspace-plan-hero h2,
+  .team-page .team-heading-title h1 { font-size: 21px; }
+  .team-page .team-kpi > strong { font-size: 20px; }
+}

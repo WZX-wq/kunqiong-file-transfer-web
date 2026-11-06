@@ -59,5 +59,5 @@ export function normalizeCollectionFieldOptions(value) {
     .split(/[,，;；\n]/)
     .map((option) => option.trim())
     .filter(Boolean)
-  return [...new Set(options)].slice(0, 30)
+  return [...new Set(options)]
 }

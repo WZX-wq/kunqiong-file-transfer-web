@@ -4,7 +4,7 @@ import { ActionButton } from './action-button.jsx'
 
 import React, { useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { Bell, CheckCircle2, Crown, History, Inbox, Send, ShieldCheck, Trash2, XCircle } from 'lucide-react'
+import { Bell, CheckCircle2, History, Inbox, Send, ShieldCheck, Trash2, UsersRound, XCircle } from 'lucide-react'
 import { feedbackTone } from '../lib/format.js'
 import { PublicAccountActions } from './account.jsx'
 
@@ -83,10 +83,10 @@ export function PublicShell({ children, className = '' }) {
       <div className="public-topbar-content">
         <ProductBrand />
         <nav className="main-nav public-main-nav" aria-label="主导航">
-          <a className={`nav-item${active === 'send' ? ' active' : ''}`} href="/"><Send size={17} /><span>发文件</span></a>
-          <a className={`nav-item${active === 'collect' ? ' active' : ''}`} href="/?view=collect"><Inbox size={17} /><span>收集文件</span></a>
-          <a className={`nav-item${active === 'records' ? ' active' : ''}`} href="/?view=records"><History size={17} /><span>收发记录</span></a>
-          <a className={`nav-item${active === 'workspace' ? ' active' : ''}`} href="/workspace"><Crown size={17} /><span>会员与团队</span></a>
+          <a className={`nav-item${active === 'send' ? ' active' : ''}`} href="/"><span className="nav-item-icon"><Send size={17} /></span><span>发文件</span></a>
+          <a className={`nav-item${active === 'collect' ? ' active' : ''}`} href="/?view=collect"><span className="nav-item-icon"><Inbox size={17} /></span><span>收集文件</span></a>
+          <a className={`nav-item${active === 'records' ? ' active' : ''}`} href="/?view=records"><span className="nav-item-icon"><History size={17} /></span><span>收发记录</span></a>
+          <a className={`nav-item${active === 'workspace' ? ' active' : ''}`} href="/workspace"><span className="nav-item-icon"><UsersRound size={17} strokeWidth={1.8} /></span><span>会员与团队</span></a>
         </nav>
         <div className="topbar-actions public-topbar-actions">
           {showTrash && <a className="public-message-link topbar-trash-link" href={path.startsWith('/team') ? '/trash?tab=team' : '/trash'} aria-label="回收站" title="回收站"><Trash2 size={17} /></a>}
