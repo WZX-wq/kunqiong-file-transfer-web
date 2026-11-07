@@ -82,6 +82,7 @@ export const DEFAULT_ACCOUNT_MESSAGES = [
 // 放在配置层避免两边互相 import。
 export const DEFAULT_SYSTEM_CONFIG = {
   maintenanceMode: false,
+  autoCleanRiskFiles: false,
   defaultShareDays: 3,
   maxShareDays: 30,
   anonymousMaxFileSizeMb: 1228.8,

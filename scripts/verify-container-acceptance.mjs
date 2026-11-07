@@ -46,12 +46,18 @@ const deploy = fs.readFileSync(path.join(root, 'scripts/deploy-test.sh'), 'utf8'
 let template = deploy.slice(deploy.indexOf('write_compose_file()')).match(/cat > "\$target" <<EOF\r?\n([\s\S]*?)\r?\nEOF/)[1]
 for (const [key, value] of Object.entries({ APP_NAME: project, IMAGE_NAME: image, PORT: port, COMPOSE_DIR: fixture.replaceAll('\\', '/') })) template = template.replaceAll('$' + key, String(value))
 assert.ok(!/\$[A-Z_]+/.test(template), 'All Compose variables must be resolved')
+assert.match(template, /KUNQIONG_SCAN_CONCURRENCY:\s+"2"/)
+assert.match(template, /KUNQIONG_SCAN_LARGE_CONCURRENCY:\s+"1"/)
+assert.match(template, /cpus:\s+1\.5/)
+assert.match(template, /mem_limit:\s+2560m/)
+assert.match(template, /memswap_limit:\s+2560m/)
 fs.writeFileSync(path.join(fixture, 'compose.yml'), template)
 fs.copyFileSync(path.join(root, 'deployment/clamd.conf'), path.join(fixture, 'clamd.conf'))
 fs.writeFileSync(path.join(fixture, '.env'), [
   'NODE_ENV=production', 'PORT=' + port, 'KUNQIONG_HOST=0.0.0.0', 'KUNQIONG_DB_ENABLED=false',
   'KUNQIONG_ADMIN_USERNAME=fixture-admin', 'KUNQIONG_ADMIN_PASSWORD=fixture-password',
   'KUNQIONG_RELEASE_SHA=' + release, 'KUNQIONG_SCAN_TIMEOUT_MS=600000',
+  'KUNQIONG_SCAN_CONCURRENCY=2', 'KUNQIONG_SCAN_LARGE_CONCURRENCY=1',
 ].join('\n'))
 // Fault service has the same single-filesystem storage layout as deployment,
 // bounded to 32MiB. No host filesystem is filled.

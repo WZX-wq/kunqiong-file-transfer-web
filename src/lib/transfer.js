@@ -428,12 +428,18 @@ export async function uploadShareInChunks(files, settings, uploadRef, onState, u
   }
 
   assertActive()
+  if (!session.completion && session.deferScan === undefined && uploadConfig.chooseScanMode) {
+    report({ status: 'finalizing', checkStage: 'choosing', phase: '文件已上传，请选择安全扫描方式', progress: 100,
+      uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: 0, etaSeconds: null, error: '', failurePhase: '' })
+    session.deferScan = await uploadConfig.chooseScanMode(files)
+    assertActive()
+  }
   session.checkStartedAt = session.completion?.startedAt || session.checkStartedAt || new Date().toISOString()
   const reportCompletion = (completion, connectionMessage = '') => {
     if (completion) session.completion = completion
-    report({ status: 'finalizing', phase: connectionMessage || (completion?.status === 'publishing' ? '安全检查通过，正在生成分享信息' : '文件已上传，正在进行安全检查'), progress: 100,
+    report({ status: 'finalizing', phase: connectionMessage || (session.deferScan ? '正在生成分享信息，安全扫描将在后台继续' : completion?.status === 'publishing' ? '安全检查通过，正在生成分享信息' : '文件已上传，正在进行安全检查'), progress: 100,
       uploadedBytes: session.totalBytes, totalBytes: session.totalBytes, speedBps: 0, etaSeconds: null,
-      checkStartedAt: completion?.startedAt || session.checkStartedAt, checkStage: completion?.status || 'scanning',
+      checkStartedAt: completion?.startedAt || session.checkStartedAt, checkStage: session.deferScan ? 'background' : completion?.status || 'scanning',
       checkFileIndex: completion?.fileIndex || 0, checkFileCount: completion?.fileCount || files.length,
       checkCompletedCount: completion?.completedFileCount ?? 0, checkActiveCount: completion?.activeFileCount ?? 1,
       currentFile: completion?.currentFile || '', connectionMessage, retryCount: 0, error: '', failurePhase: '' })
@@ -476,7 +482,7 @@ async function finishUploadSession(session, chunkSize, config, report, assertAct
     let data
     try {
       data = needsStart ? await request(`${url}/complete`, {
-        method: 'POST', body: JSON.stringify({ chunkSize, ...(config.completeBody || {}), background: true, retry: session.completion?.status === 'failed' }),
+        method: 'POST', body: JSON.stringify({ chunkSize, ...(config.completeBody || {}), ...(session.deferScan === true ? { deferScan: true } : {}), background: true, retry: session.completion?.status === 'failed' }),
       }) : await request(url)
       assertActive()
       failures = 0

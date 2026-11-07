@@ -28,8 +28,9 @@ function database() {
         return [{ affectedRows: 1 }]
       }
       if (sql.includes('DELETE FROM')) {
-        for (const [id, row] of rows) if (row.createdAt < values[0]) rows.delete(id)
-        return [{ affectedRows: 1 }]
+        let affectedRows = 0
+        for (const [id, row] of rows) if (row.critical === values[0] && row.createdAt < values[1] && affectedRows < 500) { rows.delete(id); affectedRows++ }
+        return [{ affectedRows }]
       }
       throw new Error('Unexpected fixture SQL: ' + sql)
     },

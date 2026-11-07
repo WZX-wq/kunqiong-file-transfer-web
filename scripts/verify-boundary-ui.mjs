@@ -13,13 +13,13 @@ import {GuestQuotaModal,RetrieveModal} from ${JSON.stringify(root + '/src/pages/
 import {AdminLoginModal} from ${JSON.stringify(root + '/src/pages/AdminPage.jsx')};
 import {SharePage} from ${JSON.stringify(root + '/src/pages/public.jsx')};
 import {FilePreviewModal} from ${JSON.stringify(root + '/src/components/ui.jsx')};
-const mode = window.boundaryMode; const api = window.boundaryControls = {saved:0,credentials:null,settings:null};
+const mode = window.boundaryMode; const api = window.boundaryControls = {saved:0,credentials:null,settings:null,retrieveCalls:0};
 function Controls() {
   const [settings,setSettings] = useState({expiryDays:'7',downloadLimit:'custom',customDownloadLimit:'1',codeLength:'6',passwordEnabled:true,password:'legal',...window.boundarySettings});
   api.settings = settings;
   if(mode==='settings') return <SettingsModal settings={settings} setSettings={setSettings} user={{plan:{permanent:true}}} onClose={()=>{}} onSave={()=>api.saved++}/>;
   if(mode==='guest') return <GuestQuotaModal quota={{limitBytes:1024**3,usedBytes:1024**3,incomingBytes:0}} onClose={()=>{}} onLogin={()=>{}}/>;
-  if(mode==='retrieve') return <RetrieveModal code='' setCode={()=>{}} result={null} onClose={()=>{}} onFind={()=>{}}/>;
+  if(mode==='retrieve') return <RetrieveModal code={window.boundarySettings.code || ''} setCode={()=>{}} result={null} autoLookup={Boolean(window.boundarySettings.autoLookup)} onClose={()=>{}} onFind={()=>{api.retrieveCalls++;return window.boundarySettings.holdLookup?new Promise(resolve=>{api.resolveLookup=resolve}):undefined}}/>;
   if(mode==='admin') return <AdminLoginModal onSubmit={value=>api.credentials=value} onBackHome={()=>{}}/>;
   if(mode==='public') return <SharePage token='fixture'/>;
   return <FilePreviewModal preview={{kind:'text',url:'/protected-preview',unlockUrl:'/unlock',file:{name:'safe.txt',size:4}}} onClose={()=>{}}/>;
@@ -58,6 +58,9 @@ await test('Guest quota dialog is portaled outside the send page root',async()=>
 })
 await test('Retrieve dialog is portaled outside the send page root',async()=>{
   const f=await mount('retrieve');try{const dialog=f.document.querySelector('.retrieve-modal');assert.ok(dialog&&f.document.body.contains(dialog)&&!dialog.closest('#root'));assert.equal(dialog.getAttribute('aria-labelledby'),'retrieve-modal-title')}finally{f.dom.window.close()}
+})
+await test('Homepage retrieval code starts lookup automatically without a second click',async()=>{
+  const f=await mount('retrieve',{code:'R7PUT',autoLookup:true,holdLookup:true});try{await waitFor(()=>f.window.boundaryControls.retrieveCalls===1);const button=[...f.document.querySelectorAll('button')].find(item=>item.textContent.includes('正在查找'));assert.ok(button);assert.equal(button.disabled,true);f.window.boundaryControls.resolveLookup();await delay(20);assert.equal(f.window.boundaryControls.retrieveCalls,1)}finally{f.dom.window.close()}
 })
 await test('Settings show password limits, block whitespace, and preserve full Unicode',async()=>{
   const f=await mount('settings');try{

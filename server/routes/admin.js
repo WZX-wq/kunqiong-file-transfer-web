@@ -17,7 +17,7 @@ import {
   configuredAccountPlan, normalizePlanId, normalizeRecordDate, normalizeSystemConfig, publicUser
 } from '../lib/metadata-normalizers.js'
 import {
-  metadata, persistMetadata, refreshAuditPersistence, flushMetadataWrites
+  metadata, persistMetadata, refreshAuditPersistence, flushMetadataWrites, readAuditLogs
 } from '../lib/metadata-store.js'
 import {
   accountUserById, appendAuthResult, configuredAccountPlans, recordAuditLog, safeReturnUrl, syncAccountUserSessions,
@@ -42,6 +42,8 @@ import { keyedDigest } from '../lib/private-key.js'
 import { trackDataOperation } from '../lib/data-context.js'
 import path from 'node:path'
 import { runDatabaseCleanup } from '../lib/database-cleanup.js'
+import { getBackgroundScanStatus } from '../services/background-scans.js'
+import { cleanupBlockedRiskFile } from '../services/risk-file-cleanup.js'
 
 export function registerAdminRoutes(app) {
   const callbacks = new OAuthCallbackRegistry()
@@ -120,6 +122,42 @@ export function registerAdminRoutes(app) {
     try {
       await refreshAuditPersistence()
       res.json(buildAdminOverview())
+    } catch (error) { next(error) }
+  })
+
+  app.get('/api/admin/scans', async (req, res, next) => {
+    const auth = requireAdminSession(req, res)
+    if (!auth) return
+    try {
+      const allLogs = req.dataContext?.auditStore
+        ? await req.dataContext.auditStore.refresh(5000)
+        : readAuditLogs()
+      const scanLogs = allLogs.filter(item => item.type === 'security' && ['passed', 'blocked', 'failed', 'skipped'].includes(item.details?.scanResult))
+      const cleaned = new Set(allLogs.filter(item => ['自动清理风险文件', '手动清理风险文件'].includes(item.action)).map(item => item.details?.scanFileKey))
+      const counts = { all: scanLogs.length, passed: 0, blocked: 0, failed: 0, skipped: 0 }
+      for (const item of scanLogs) counts[item.details.scanResult]++
+      res.set('Cache-Control', 'no-store').json({
+        logs: scanLogs.map(item => ({ ...item, cleaned: cleaned.has(`${item.details?.shareId}:${item.details?.storageOwnerId || ''}:${item.details?.storedName}`) })),
+        total: scanLogs.length, counts, retainedScanResults: scanLogs.length,
+      })
+    } catch (error) { next(error) }
+  })
+
+  app.get('/api/admin/scan-progress', async (req, res, next) => {
+    if (!requireAdminSession(req, res)) return
+    try { res.set('Cache-Control', 'no-store').json(await getBackgroundScanStatus()) }
+    catch (error) { next(error) }
+  })
+
+  app.post('/api/admin/scans/:logId/cleanup', async (req, res, next) => {
+    const auth = requireAdminSession(req, res)
+    if (!auth) return
+    try {
+      const logs = req.dataContext?.auditStore ? await req.dataContext.auditStore.refresh(5000) : readAuditLogs()
+      const log = logs.find(item => item.id === req.params.logId && item.type === 'security' && item.details?.scanResult === 'blocked')
+      if (!log?.details?.shareId || !log.details.storedName) return res.status(400).json({ message: '该扫描记录没有可清理的已发布风险文件' })
+      const result = await cleanupBlockedRiskFile({ ...log.details, actor: auth.user.id, scanLogId: log.id })
+      res.json({ ok: true, ...result, message: result.notified ? '风险文件已清理，已通知文件所有者' : '风险文件已清理，该文件为游客上传，无账号接收站内通知' })
     } catch (error) { next(error) }
   })
 

@@ -6,7 +6,7 @@ export { AdminPagination } from '../components/pagination.jsx'
 // 只被 App 引用，构成完整独立功能域。
 
 import React, { useEffect, useRef, useState } from 'react'
-import { BarChart3, Check, ChevronLeft, ChevronRight, Copy, Database, Eraser, Eye, ExternalLink, HardDrive, Inbox, KeyRound, Link2, LockKeyhole, LogOut, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, Users, X, XCircle } from 'lucide-react'
+import { BarChart3, Check, ChevronLeft, ChevronRight, Copy, Database, Eraser, Eye, ExternalLink, FileSearch, HardDrive, Inbox, KeyRound, Link2, LoaderCircle, LockKeyhole, LogOut, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, Users, X, XCircle } from 'lucide-react'
 import { useConfirmDialog, useToast } from '../hooks.js'
 import { apiRequest } from '../lib/api.js'
 import { ConfirmModal, ProductBrand, Toast } from '../components/common.jsx'
@@ -14,7 +14,7 @@ import { formatBytes, formatDate } from '../lib/format.js'
 import { copyTextWithFeedback } from '../lib/clipboard-feedback.js'
 import { limitInputText } from '../lib/input-limits.js'
 
-const ADMIN_TABS = new Set(['dashboard', 'resources', 'users', 'security', 'config'])
+const ADMIN_TABS = new Set(['dashboard', 'resources', 'users', 'security', 'scans', 'config'])
 
 function readAdminTab(search) {
   const tab = new URLSearchParams(search).get('tab')
@@ -330,7 +330,7 @@ export function AdminPage() {
   return (
     <div className="admin-shell">
       <AdminTopbar username={adminInfo?.username} />
-      <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['resources', '资源管理', Database], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <ActionButton type="button" className={tab === key ? 'active' : ''} aria-current={tab === key ? 'page' : undefined} key={key} onClick={() => changeTab(key)}><Icon size={16} /> {label}</ActionButton>)}</nav>
+      <nav className="admin-tabs" aria-label="后台模块">{[['dashboard', '数据看板', BarChart3], ['resources', '资源管理', Database], ['users', '用户管理', Users], ['security', '安全日志', ShieldCheck], ['scans', '扫描结果', FileSearch], ['config', '系统配置', SlidersHorizontal]].map(([key, label, Icon]) => <ActionButton type="button" className={tab === key ? 'active' : ''} aria-current={tab === key ? 'page' : undefined} key={key} onClick={() => changeTab(key)}><Icon size={16} /> {label}</ActionButton>)}</nav>
       <main className="admin-page">
         <div className="admin-inner">
         <div className="admin-heading"><div><p className="eyebrow">鲲穹运营后台</p><h1>系统管理</h1><p>统一查看用户、安全日志、运行配置和系统概览。</p></div><div className="admin-heading-actions">{adminInfo?.username && <span className="admin-identity" title={`当前登录管理员：${adminInfo.username}`}><ShieldCheck size={14} /> {adminInfo.username}</span>}<ActionButton className="secondary-button" onClick={runCleanup}><Eraser size={15} /> 执行清理</ActionButton><ActionButton className="secondary-button" onClick={load}><RefreshCw size={15} /> 刷新数据</ActionButton><ActionButton className="secondary-button" onClick={logoutAdmin}><LogOut size={15} /> 退出后台</ActionButton></div></div>
@@ -339,9 +339,10 @@ export function AdminPage() {
           {tab === 'dashboard' && <><div className="admin-kpi-grid">{dashboardCards.map(([label, value, Icon]) => <div className="admin-kpi" key={label}><span><Icon size={17} /> {label}</span><strong>{value}</strong></div>)}</div><div className="admin-columns"><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">近 7 天</p><h2>运营趋势</h2></div></div><div className="admin-trend-chart" role="img" aria-label="近 7 天活跃用户、上传和下载趋势"><div className="admin-chart-axis">{[trendMax, Math.round(trendMax * .67), Math.round(trendMax * .33), 0].map((value, index) => <span key={`${value}-${index}`}>{value}</span>)}</div><div className="admin-chart-plot">{trend.map((item) => <div className="admin-chart-day" key={item.date} title={`${item.label} · 活跃用户 ${item.activeUsers} · 上传 ${item.uploads} · 下载 ${item.downloads}`}><div className="admin-chart-bars"><i className="active" style={{ height: `${(item.activeUsers / trendMax) * 100}%` }} /><i className="upload" style={{ height: `${(item.uploads / trendMax) * 100}%` }} /><i className="download" style={{ height: `${(item.downloads / trendMax) * 100}%` }} /></div><span>{item.label}</span></div>)}</div></div><small className="admin-trend-legend"><span><i />活跃用户</span><span><i className="upload" />上传</span><span><i className="download" />下载</span></small></div><div className="public-card admin-panel"><div className="admin-panel-heading"><div><p className="eyebrow">资源状态</p><h2>运营概览</h2></div></div><div className="admin-status-list"><span><i className="status-dot active" /> 活跃资源 <strong>{stats.activeResources || 0}</strong></span><span><i className="status-dot muted" /> 已禁用用户 <strong>{Math.max(0, (stats.users || 0) - (stats.activeUsers || 0))}</strong></span><span><i className="status-dot review" /> 团队空间 <strong>{stats.activeOrganizations || 0}</strong></span></div><div className="admin-log-list">{(data.auditLogs || []).slice(0, 4).map((item) => <div key={item.id}><span>{item.action}</span><small>{formatDate(item.createdAt)} · {item.status || '-'}</small></div>)}</div></div></div></>}
           {tab === 'resources' && <AdminResources resources={data.resources} total={data.totals?.resources ?? data.resources.length} requestConfirm={requestConfirm} onChanged={(message, tone, overview) => { if (overview) { setData((current) => ({ ...current, ...overview })) } else { load() } if (message) showToast(message, tone) }} />}
           {tab === 'users' && <AdminUsers plans={data.plans} users={data.users} total={data.totals?.users ?? data.users.length} onUpdate={updateUser} />}
-          {tab === 'security' && <AdminLogs logs={data.auditLogs} total={data.totals?.auditLogs ?? data.auditLogs.length} />}
+          {tab === 'security' && <AdminLogs logs={data.auditLogs.filter(item => !item.details?.scanResult)} total={data.totals?.auditLogs ?? data.auditLogs.length} />}
+          {tab === 'scans' && <AdminScanResults logs={data.auditLogs} config={data.config} requestConfirm={requestConfirm} onConfigChange={config => setData(current => ({ ...current, config }))} onNotice={showToast} />}
           {tab === 'config' && <AdminConfig plans={data.plans} planDefaults={data.planDefaults} config={data.config} saving={savingConfig} onSubmit={saveConfig} />}
-          {tab === 'dashboard' && <div className="public-card admin-panel admin-quick-panel"><div className="admin-panel-heading"><div><p className="eyebrow">快捷操作</p><h2>常用入口</h2></div><span>待清理资源 <strong>{stats.pendingCleanup || 0}</strong></span></div><div className="admin-quick-grid">{[['resources', '资源管理', '查看分享与收集资源', Database], ['users', '用户管理', '查看账号与套餐权益', Users], ['security', '安全日志', '审计操作与安全事件', ShieldCheck], ['config', '系统配置', '配置上传限制与套餐', SlidersHorizontal]].map(([key, label, detail, Icon]) => <ActionButton type="button" className="admin-quick-link" key={key} onClick={() => changeTab(key)}><span><Icon size={16} /></span><strong>{label}</strong><small>{detail}</small></ActionButton>)}</div></div>}
+          {tab === 'dashboard' && <div className="public-card admin-panel admin-quick-panel"><div className="admin-panel-heading"><div><p className="eyebrow">快捷操作</p><h2>常用入口</h2></div><span>待清理资源 <strong>{stats.pendingCleanup || 0}</strong></span></div><div className="admin-quick-grid">{[['resources', '资源管理', '查看分享与收集资源', Database], ['users', '用户管理', '查看账号与套餐权益', Users], ['security', '安全日志', '查看访问与管理事件', ShieldCheck], ['scans', '扫描结果', '查看文件安全检查结论', FileSearch], ['config', '系统配置', '配置上传限制与套餐', SlidersHorizontal]].map(([key, label, detail, Icon]) => <ActionButton type="button" className="admin-quick-link" key={key} onClick={() => changeTab(key)}><span><Icon size={16} /></span><strong>{label}</strong><small>{detail}</small></ActionButton>)}</div></div>}
         </div>
         </div>
       </main>
@@ -451,6 +452,148 @@ export function AdminConfig({ plans = [], planDefaults = [], config = {}, saving
     <label className="switch-row"><div><strong>维护模式</strong><span>开启后会阻止非管理员创建分享、收集任务或提交文件。</span></div><input name="maintenanceMode" type="checkbox" defaultChecked={config.maintenanceMode} /></label>
     <ActionButton className="primary-button" disabled={saving}><SlidersHorizontal size={15} /> {saving ? '保存中' : '保存配置'}</ActionButton>
   </ActionForm>
+}
+
+const SCAN_CATEGORIES = [
+  { id: 'all', label: '全部结果', icon: FileSearch },
+  { id: 'scanning', label: '扫描中', icon: LoaderCircle },
+  { id: 'passed', label: '扫描通过', icon: Check },
+  { id: 'blocked', label: '威胁拦截', icon: ShieldCheck },
+  { id: 'failed', label: '扫描未完成', icon: XCircle },
+  { id: 'skipped', label: '已跳过', icon: Eraser },
+]
+
+function scanResultLabel(result) {
+  return result === 'passed' ? '扫描通过' : result === 'blocked' ? '发现威胁，已拦截' : result === 'skipped' ? '扫描已跳过' : '扫描未完成'
+}
+
+function AdminScanLogRow({ item, onCleanup }) {
+  const scanResult = item.details?.scanResult
+  const duration = Number(item.durationMs) || 0
+  const fileName = item.details?.fileName || item.targetId
+  return <div className={`admin-scan-row ${scanResult}`}>
+    <div className="admin-scan-row-main">
+      <span className="admin-scan-result-label">{scanResultLabel(scanResult)}</span>
+      <strong className="admin-scan-file-name" title={fileName}>{fileName ? `文件：${fileName}` : '文件名称未记录'}</strong>
+      {item.details?.background && <span className="admin-scan-origin">后台扫描{item.details.shareId ? ` · 分享 ${item.details.shareId}` : ''}</span>}
+      {item.details?.finding && <span className="admin-scan-finding">检测结果：{item.details.finding}{item.details.signature ? ` · ${item.details.signature}` : ''}</span>}
+      {item.details?.errorCode && <span className="admin-scan-finding">原因：{item.details.errorCode}</span>}
+    </div>
+    <div className="admin-scan-row-meta"><span>{formatDate(item.createdAt)}</span><span>{item.details?.scanEngine === 'clamav' ? 'ClamAV' : scanResult === 'skipped' ? '未配置扫描引擎' : '扫描引擎异常'}</span><span>{formatBytes(item.details?.size || 0)}</span><span>耗时 {duration >= 1000 ? `${(duration / 1000).toFixed(1)} 秒` : `${duration} 毫秒`}</span>{scanResult === 'blocked' && (item.cleaned ? <strong className="admin-risk-cleaned">风险文件已清理</strong> : item.details?.shareId && item.details?.storedName ? <ActionButton type="button" className="admin-risk-clean-button" onClick={() => onCleanup(item)}><Trash2 size={13} />清理风险文件</ActionButton> : <span>未发布或已移除，无需清理</span>)}</div>
+  </div>
+}
+
+function AdminScanProgressRow({ item, now }) {
+  const elapsedSeconds = Math.floor(Math.max(0, now - Date.parse(item.startedAt)) / 1000)
+  const elapsed = elapsedSeconds < 60 ? `${elapsedSeconds} 秒` : `${Math.floor(elapsedSeconds / 60)} 分 ${elapsedSeconds % 60} 秒`
+  return <div className="admin-scan-progress-row" key={`${item.shareId}:${item.fileName}`}>
+    <div className="admin-scan-progress-heading"><span className="admin-scan-result-label scanning"><LoaderCircle size={13} />扫描中</span><strong>{item.fileName}</strong><span>分享 {item.shareId}</span></div>
+    <div className="admin-scan-progress-track" aria-label="扫描正在进行，具体百分比暂不可用"><i /></div>
+    <div className="admin-scan-row-meta"><span>文件 {item.fileIndex} / {item.fileCount}</span><span>已完成 {item.completedFileCount} 个</span><span>{formatBytes(item.size)}</span><span>已用时 {elapsed}</span><span>扫描引擎处理中</span></div>
+  </div>
+}
+
+export function AdminScanResults({ logs = [], config = {}, requestConfirm, onConfigChange, onNotice }) {
+  const [category, setCategory] = useState('all')
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [result, setResult] = useState(null)
+  const [progress, setProgress] = useState({ active: [], queuedCount: 0 })
+  const [clock, setClock] = useState(Date.now())
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [reload, setReload] = useState(0)
+  const generation = useRef(0)
+  const progressCount = useRef(null)
+  const pageSize = 10
+  const fallbackLogs = logs.filter(item => item.type === 'security' && SCAN_CATEGORIES.some(option => option.id !== 'all' && option.id === item.details?.scanResult))
+  useEffect(() => {
+    const request = ++generation.current
+    setLoading(true); setError('')
+    apiRequest('/api/admin/scans').then(data => {
+      if (generation.current === request) setResult(data)
+    }).catch(err => {
+      if (generation.current === request) setError(err.message || '扫描结果加载失败')
+    }).finally(() => { if (generation.current === request) setLoading(false) })
+    return () => { generation.current++ }
+  }, [reload, logs])
+  useEffect(() => {
+    let mounted = true, busy = false
+    const refresh = async () => {
+      if (busy || document.visibilityState === 'hidden') return
+      busy = true
+      try {
+        const data = await apiRequest('/api/admin/scan-progress')
+        if (mounted) {
+          const count = Number(data.pendingCount) || 0
+          if (progressCount.current !== null && count < progressCount.current) setReload(value => value + 1)
+          progressCount.current = count
+          setProgress(data)
+        }
+      }
+      catch { /* Keep the last progress snapshot visible during transient errors. */ }
+      finally { busy = false }
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 2000)
+    return () => { mounted = false; window.clearInterval(timer) }
+  }, [])
+  useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
+  useEffect(() => {
+    const timer = window.setInterval(() => { if (document.visibilityState !== 'hidden') setReload(value => value + 1) }, 10000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const scanLogs = result?.logs || fallbackLogs
+  const activeScans = progress.active || []
+  const queuedCount = Number(progress.queuedCount) || 0
+  const scanningCount = activeScans.length + queuedCount
+  const resultCounts = result?.counts || Object.fromEntries(SCAN_CATEGORIES.map(option => [option.id, option.id === 'all' ? fallbackLogs.length : fallbackLogs.filter(item => item.details.scanResult === option.id).length]))
+  const counts = { ...resultCounts, all: (result?.total ?? fallbackLogs.length) + scanningCount, scanning: scanningCount }
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const filtered = scanLogs.filter(item => (category === 'all' || item.details.scanResult === category)
+    && (!normalizedQuery || `${item.details?.fileName || item.targetId} ${item.details?.finding || ''} ${item.details?.signature || ''} ${item.details?.errorCode || ''} ${item.details?.shareId || ''}`.toLocaleLowerCase().includes(normalizedQuery)))
+  const total = category === 'scanning' ? scanningCount : filtered.length
+  const retained = result?.retainedScanResults ?? fallbackLogs.length
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  const safePage = Math.min(page, pageCount)
+  const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize)
+  const chooseCategory = value => { setCategory(value); setPage(1) }
+  const toggleAutoCleanup = async () => {
+    const enabled = config.autoCleanRiskFiles === true
+    const confirmed = await requestConfirm({
+      title: enabled ? '关闭自动清理风险文件' : '开启自动清理风险文件',
+      detail: enabled ? '关闭后风险文件仍会被拦截，可在扫描结果中手动清理。' : '开启后将自动永久删除已确认拦截的风险文件，包括尚未清理的历史风险文件，并通知文件所有者。扫描未完成或已跳过的文件不会被删除。',
+      confirmText: enabled ? '确认关闭' : '确认开启', tone: enabled ? 'default' : 'danger',
+    })
+    if (!confirmed) return
+    try {
+      const data = await apiRequest('/api/admin/config', { method: 'PATCH', body: JSON.stringify({ autoCleanRiskFiles: !enabled }) })
+      onConfigChange(data.config)
+      onNotice(enabled ? '已关闭自动清理风险文件' : '已开启自动清理风险文件')
+    } catch (err) { onNotice(err.message || '风险文件清理设置保存失败', 'error') }
+  }
+  const cleanup = async item => {
+    const confirmed = await requestConfirm({ title: '清理风险文件', detail: `将永久删除「${item.details?.fileName || item.targetId}」，并通知文件所有者。其他文件和扫描记录会保留，操作不可恢复。`, confirmText: '确认清理', tone: 'danger' })
+    if (!confirmed) return
+    try {
+      const response = await apiRequest(`/api/admin/scans/${encodeURIComponent(item.id)}/cleanup`, { method: 'POST' })
+      setResult(current => current && ({ ...current, logs: current.logs.map(log => log.id === item.id ? { ...log, cleaned: true } : log) }))
+      onNotice(response.message || '风险文件已清理，已通知文件所有者')
+    } catch (err) { onNotice(err.message || '风险文件清理失败', 'error') }
+  }
+  return <section className="public-card admin-panel admin-scan-panel">
+    <div className="admin-panel-heading"><div><p className="eyebrow">文件安全</p><h2>扫描结果</h2><p className="admin-scan-caption">按检查结论分类查看文件记录</p></div><span>{loading && !result ? '正在加载扫描记录' : `保留记录 ${retained} 条 · 当前分类 ${total} 条`}</span></div>
+    <div className="admin-risk-cleanup-settings"><div><strong>自动清理风险文件</strong><p>仅清理已拦截的风险文件，保留扫描记录并通知文件所有者</p></div><ActionButton type="button" className="admin-risk-cleanup-switch" role="switch" aria-label="自动清理风险文件" aria-checked={config.autoCleanRiskFiles === true} onClick={toggleAutoCleanup}><i aria-hidden="true" /><span>{config.autoCleanRiskFiles ? '已开启' : '已关闭'}</span></ActionButton></div>
+    <div className="admin-scan-categories" role="group" aria-label="扫描结果分类">
+      {SCAN_CATEGORIES.map(({ id, label, icon: Icon }) => <button type="button" data-result={id} className={`admin-scan-category${category === id ? ' active' : ''}`} aria-pressed={category === id} key={id} onClick={() => chooseCategory(id)}><span><Icon size={15} />{label}</span><strong>{counts[id]}</strong></button>)}
+    </div>
+    <label className="admin-search admin-scan-search"><Search size={15} /><input maxLength={160} value={query} onChange={event => { setQuery(event.target.value); setPage(1) }} placeholder="搜索文件名、威胁名称或分享 ID" /></label>
+    {error && <div className="admin-scan-error" role="alert">{error} <button type="button" onClick={() => setReload(value => value + 1)}>重新加载</button></div>}
+    {category !== 'scanning' && activeScans.length > 0 && <div className="admin-scan-progress-list" aria-label="正在扫描的文件">{activeScans.map(item => <AdminScanProgressRow key={`${item.shareId}:${item.fileName}`} item={item} now={clock} />)}</div>}
+    {category !== 'scanning' && queuedCount > 0 && <div className="admin-scan-queued"><LoaderCircle size={15} /><strong>{queuedCount} 个文件等待扫描</strong><span>扫描器空闲后会自动处理</span></div>}
+    {category === 'scanning' ? <div className="admin-scan-progress-list" aria-live="polite">{activeScans.map(item => <AdminScanProgressRow key={`${item.shareId}:${item.fileName}`} item={item} now={clock} />)}{queuedCount > 0 && <div className="admin-scan-queued"><LoaderCircle size={15} /><strong>{queuedCount} 个文件排队中</strong><span>扫描器空闲后会自动处理</span></div>}{!scanningCount && <div className="empty-manage"><LoaderCircle size={25} /><span>当前没有扫描中的文件</span></div>}</div> : <div className="admin-scan-list" aria-live="polite" aria-busy={loading}>{visible.length ? visible.map(item => <AdminScanLogRow key={item.id} item={item} onCleanup={cleanup} />) : <div className="empty-manage"><FileSearch size={25} /><span>{loading ? '正在加载扫描结果' : retained ? '没有符合条件的扫描结果' : '暂无扫描结果'}</span></div>}</div>}
+    {category !== 'scanning' && <AdminPagination page={safePage} pageCount={pageCount} total={total} pageSize={pageSize} onPageChange={setPage} />}
+  </section>
 }
 
 export function AdminLogs({ logs = [], total = 0 }) {

@@ -40,6 +40,7 @@ import {
 import { fileMetadataInput, relativePathsInput, uniqueFilePaths } from '../lib/file-input.js'
 import { integerInput, textInput } from '../lib/input-validation.js'
 import { validateCollectionSubmissionInput } from '../lib/collection-forms.js'
+import { wakeBackgroundScans } from '../services/background-scans.js'
 
 export function registerUploadRoutes(app) {
   app.post('/api/upload-sessions', (req, res, next) => Promise.resolve().then(async () => {
@@ -358,9 +359,12 @@ function prepareUpload(req, session) {
 }
 
 async function completeUpload(req, session, mergedFiles) {
-  await assertSafeUploadFiles(mergedFiles, (file, index, progress) => {
+  const deferScan = session.mode === 'share' && req.body.deferScan === true
+  if (deferScan) {
+    for (const file of mergedFiles) Object.assign(file, { reviewStatus: 'pending', scanAccess: 'early' })
+  } else await assertSafeUploadFiles(mergedFiles, (file, index, progress) => {
     if (session.completion) session.completion = { ...session.completion, ...progress, currentFile: file?.name || '', fileIndex: file ? index + 1 : 0 }
-  })
+  }, { userId: session.ownerUserId })
   assertUploadSessionOwner(session, req)
   assertUploadCapacity(session, session.id)
   assertServiceWritable(req)
@@ -392,5 +396,6 @@ async function completeUpload(req, session, mergedFiles) {
     uploadSessionId: session.id,
   }, req)
   addGuestUsage(session.guestKey, mergedFiles)
+  if (deferScan) wakeBackgroundScans()
   return { share: publicShare(share, req, true, true) }
 }

@@ -81,6 +81,7 @@ async function start() {
   child = spawn(process.execPath, ['server.mjs'], { cwd: fixture, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: {
     ...cleanEnv, PORT: String(port), KUNQIONG_HOST: '127.0.0.1', NODE_ENV: 'production',
     KUNQIONG_DB_ENABLED: 'false', KUNQIONG_SCAN_MODE: 'required',
+    KUNQIONG_ADMIN_USERNAME: 'fixture-admin', KUNQIONG_ADMIN_PASSWORD: 'fixture-admin-password',
     KUNQIONG_CLAMAV_HOST: '127.0.0.1', KUNQIONG_CLAMAV_PORT: String(scanner.address().port),
   } })
   child.stderr.on('data', (data) => { errors += data })
@@ -147,6 +148,12 @@ try {
   scannerResult = 'stream: OK'
   const completed = await api(url + '/complete', {})
   check('Hashed upload publishes after scanning', completed.status === 201 && completed.data.share.files[0].scanEngine === 'clamav')
+  const adminLogin = await fetch(base + '/api/admin/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'fixture-admin', password: 'fixture-admin-password' }) })
+  assert.equal(adminLogin.status, 200)
+  const adminCookie = adminLogin.headers.get('set-cookie').split(';')[0]
+  const adminOverview = await fetch(base + '/api/admin/overview', { headers: { cookie: adminCookie } }).then(response => response.json())
+  const scanLog = adminOverview.auditLogs.find(item => item.type === 'security' && item.details?.scanResult === 'passed' && item.targetId === 'hashed-chunks.bin')
+  check('Administrator audit feed includes file scan verdict, engine, size and duration', scanLog?.action === '文件扫描通过' && scanLog.details.scanEngine === 'clamav' && scanLog.details.size === original.length && scanLog.durationMs >= 0)
   check('Each scan retry receives the complete original bytes', scanned.length === 8 && scanned.every(bytes => bytes.equals(original)))
   const download = await fetch(base + `/api/shares/${completed.data.share.id}/files/0/download`, { headers: { cookie: 'kunqiong_session=upload-fixture-session' } })
   check('Downloaded file matches all original bytes', download.status === 200 && Buffer.from(await download.arrayBuffer()).equals(original))
@@ -216,6 +223,11 @@ try {
   const blocked = await until(async () => { const state = (await api(blockedUrl)).data.completion; return state.status === 'failed' && state })
   check('Threat verdict persists as an explicit safe error', blocked.error.status === 415 && blocked.error.code === 'scan_threat_detected')
   check('Threat verdict identifies the affected file and detection name', blocked.error.scanFile === 'background.bin' && blocked.error.scanFinding?.signature === 'Fixture.Threat' && blocked.error.scanFinding?.label && blocked.error.scanFinding?.advice)
+  const blockedAdminLogin = await fetch(base + '/api/admin/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'fixture-admin', password: 'fixture-admin-password' }) })
+  const blockedAdminCookie = blockedAdminLogin.headers.get('set-cookie').split(';')[0]
+  const blockedOverview = await fetch(base + '/api/admin/overview', { headers: { cookie: blockedAdminCookie } }).then(response => response.json())
+  const blockedScanLog = blockedOverview.auditLogs.find(item => item.type === 'security' && item.details?.scanResult === 'blocked' && item.targetId === 'background.bin')
+  check('Administrator audit feed records blocked scan and safe detection signature', blockedScanLog?.action === '文件扫描拦截' && blockedScanLog.details.signature === 'Fixture.Threat' && blockedScanLog.details.finding)
   await api(blockedUrl + '/complete', { background: true, retry: true })
   check('Risk file is never published or repeatedly rescanned', scanned.length === blockedCount + 1 && shares().length === beforeShares + 1)
   const duplicateRisk = await prepared('renamed-risk.bin')
@@ -276,6 +288,44 @@ try {
     check('Scanner finding explains risk and remediation: '+label,result.status===415&&result.data.scanFile==='安装包/'+name&&result.data.scanFinding.label.includes(label)&&result.data.scanFinding.advice.includes(advice))
     check('Only a safe detection name is returned',result.data.scanFinding.signature===(signature.startsWith('/')?'':signature)&&!JSON.stringify(result.data).includes('/internal/scanner'))
   }
+  // Explicit opt-in publishes first; ordinary uploads above still fail closed.
+  async function earlyUpload(name) {
+    const bytes = Buffer.from('early-access-fixture-' + name)
+    const created = await api('/api/upload-sessions', { files: [{ name, size: bytes.length }] })
+    const url = '/api/upload-sessions/' + created.data.sessionId, body = new FormData()
+    body.append('fileIndex', '0'); body.append('chunkIndex', '0'); body.append('totalChunks', '1')
+    body.append('chunk', new Blob([bytes]), name)
+    assert.equal((await api(url + '/chunks', body)).status, 200)
+    const response = await api(url + '/complete', { background: true, deferScan: true })
+    assert.equal(response.status, 202)
+    const complete = await until(async () => { const state = (await api(url)).data.completion; return state.status === 'complete' && state })
+    return { url, share: complete.result.share, bytes }
+  }
+  for (const [name, verdict, status] of [
+    ['early-safe.txt', 'stream: OK', 200],
+    ['early-threat.txt', 'stream: Win.Trojan.EarlyFixture FOUND', 415],
+    ['early-failed.txt', 'stream: fixture scan error ERROR', 503],
+  ]) {
+    scannerResult = verdict; holdScan = true
+    const early = await earlyUpload(name)
+    check('Opt-in publishes a pending file before scanner response: ' + name, early.share.files[0].reviewStatus === 'pending')
+    const download = await fetch(base + `/api/shares/${early.share.id}/files/0/download`, { headers: { cookie: 'kunqiong_session=upload-fixture-session' } })
+    check('Opt-in allows immediate download without waiting: ' + name, download.status === 200 && Buffer.from(await download.arrayBuffer()).equals(early.bytes))
+    await until(() => heldScans.length)
+    holdScan = false; heldScans.shift()()
+    await until(() => shares().find(share => share.id === early.share.id)?.files[0].reviewStatus !== 'pending')
+    const after = await fetch(base + `/api/shares/${early.share.id}/files/0/download`, { headers: { cookie: 'kunqiong_session=upload-fixture-session' } })
+    check('Background verdict controls subsequent downloads: ' + name, after.status === status)
+    await after.arrayBuffer()
+    const repeated = await api(early.url + '/complete', { background: true, deferScan: true })
+    check('Opt-in completion retry keeps one share: ' + name, repeated.data.completion.result.share.id === early.share.id && shares().filter(share => share.uploadSessionId === early.url.split('/').at(-1)).length === 1)
+  }
+  scannerResult = 'stream: OK'; holdScan = true
+  const restartedEarly = await earlyUpload('early-restart.txt')
+  await until(() => heldScans.length)
+  await stop(); holdScan = false; heldScans.shift()(); await start()
+  await until(() => shares().find(share => share.id === restartedEarly.share.id)?.files[0].reviewStatus === 'approved')
+  check('Restart resumes persisted background scanning without browser polling', shares().find(share => share.id === restartedEarly.share.id)?.files[0].scanEngine === 'clamav')
   scannerResult='stream: OK'
   const expiredUrl = await prepared(), beforeLogout = shares().length
   holdScan = true

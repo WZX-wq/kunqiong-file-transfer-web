@@ -493,6 +493,7 @@ export function validateShareRequest(share, req, options = {}) {
 
 export function assertFilesDownloadable(files = []) {
   if (files.some((file) => file.reviewStatus === 'blocked')) throw httpError(415, '文件安全检查未通过，无法下载或预览')
+  if (files.some((file) => file.reviewStatus === 'scan_failed')) throw httpError(503, '文件安全扫描未完成，已暂停访问，请联系管理员核查')
   return true
 }
 
@@ -604,10 +605,40 @@ async function scanFileBytesUncached(filePath) {
 
 export const scanFileBytes = createScanCoordinator({ scan: scanFileBytesUncached, concurrency: scanConcurrency, largeConcurrency: scanLargeConcurrency, largeFileBytes: scanLargeFileBytes })
 
-export async function assertSafeUploadFiles(files = [], onFile) {
+export async function assertSafeUploadFiles(files = [], onFile, audit = {}) {
   await scanFileBatch(files, async (file) => {
+    const startedAt = Date.now()
+    const targetId = file.relativePath || file.originalname || file.name
+    const recordScanResult = (result, error = null) => {
+      try {
+        recordAuditLog({
+          type: 'security',
+          action: result === 'passed' ? '文件扫描通过' : result === 'blocked' ? '文件扫描拦截' : result === 'skipped' ? '文件扫描跳过' : '文件扫描未完成',
+          status: result === 'passed' ? 200 : result === 'blocked' ? 415 : result === 'skipped' ? 0 : (error?.status || 503),
+          durationMs: Date.now() - startedAt,
+          targetId,
+          userId: audit.userId || '',
+          details: {
+            scanResult: result,
+            fileName: String(targetId || '').slice(0, 1024),
+            ...(file.storedName ? { storedName: String(file.storedName).slice(0, 255) } : {}),
+            ...(file.storageOwnerId ? { storageOwnerId: String(file.storageOwnerId).slice(0, 120) } : {}),
+            scanEngine: file.scanEngine || (clamavHost ? 'clamav' : 'unavailable'),
+            size: Number(file.size) || 0,
+            ...(audit.shareId ? { shareId: audit.shareId } : {}),
+            ...(audit.background ? { background: true } : {}),
+            ...(error?.code ? { errorCode: String(error.code).slice(0, 80) } : {}),
+            ...(error?.scanFinding?.label ? { finding: String(error.scanFinding.label).slice(0, 120) } : {}),
+            ...(error?.scanFinding?.signature ? { signature: String(error.scanFinding.signature).slice(0, 200) } : {}),
+          },
+        })
+      } catch (auditError) {
+        console.error(JSON.stringify({ event: 'scan_audit_write_failed', code: auditError.code || 'AUDIT_STORE_FAILED' }))
+      }
+    }
     try {
       Object.assign(file, await scanFileBytes(file.tempPath || file.path))
+      recordScanResult(file.reviewStatus === 'approved' ? 'passed' : file.reviewStatus === 'unscanned' ? 'skipped' : 'failed')
     } catch (error) {
       // Concurrent identical uploads can share a scanner job. Keep each upload's
       // filename on its own error rather than mutating that shared verdict.
@@ -615,8 +646,8 @@ export async function assertSafeUploadFiles(files = [], onFile) {
       if (String(error.code || '').startsWith('scan_')) failure.scanFile = file.relativePath || file.originalname || file.name
       if (error.code === 'scan_threat_detected') {
         file.reviewStatus = 'blocked'
-        recordAuditLog({ type: 'security', action: '文件扫描拦截', targetId: file.originalname || file.name })
       }
+      recordScanResult(error.code === 'scan_threat_detected' ? 'blocked' : 'failed', error)
       throw failure
     }
   }, { concurrency: scanConcurrency, onProgress: onFile })
@@ -627,9 +658,17 @@ export async function ensureStoredFilesScanned(files, directory) {
   let changed = false
   for (const file of files) {
     if (file.reviewStatus === 'approved' && file.scanEngine === 'clamav' && file.scannedAt) continue
+    // Only an explicit upload choice can create this persisted state. A later
+    // threat/failure verdict replaces pending and is rejected above.
+    if (file.reviewStatus === 'pending' && file.scanAccess === 'early') continue
     const targetPath = resolveStoredFilePath(file, directory, userFilesRoot)
     if (!targetPath || !fs.existsSync(targetPath)) throw httpError(410, '文件已清理，无法读取')
-    try { Object.assign(file, await scanFileBytes(targetPath)); changed = true }
+    try {
+      const checked = { ...file, tempPath: targetPath }
+      const share = metadata.shares.find(item => item.files?.includes(file))
+      await assertSafeUploadFiles([checked], undefined, { userId: share?.ownerUserId, shareId: share?.id })
+      Object.assign(file, { reviewStatus: checked.reviewStatus, scanEngine: checked.scanEngine, scannedAt: checked.scannedAt }); changed = true
+    }
     catch (error) { if (error.code === 'scan_threat_detected') file.reviewStatus = 'blocked'; persistMetadata(); throw error }
   }
   if (changed) persistMetadata()
@@ -1500,6 +1539,7 @@ export async function publishUploadedFiles(tempFiles, directory, { attach, detac
       return {
         name: file.name, relativePath, storedName, ...(storageOwnerId ? { storageOwnerId } : {}), size: Number(file.size || 0), mimeType: file.mimeType || 'application/octet-stream',
         reviewStatus: file.reviewStatus || 'unscanned', scanEngine: file.scanEngine || null, scannedAt: file.scannedAt || null,
+        ...(file.scanAccess === 'early' && file.reviewStatus === 'pending' ? { scanAccess: 'early' } : {}),
         ...(file.originalName ? { originalName: file.originalName } : {}),
         ...(file.originalRelativePath ? { originalRelativePath: file.originalRelativePath } : {}),
         ...(file.materialId ? { materialId: file.materialId } : {}),

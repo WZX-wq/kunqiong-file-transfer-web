@@ -14,13 +14,13 @@ let passed=0,failures=[]
 function check(label,value){if(value){passed++;console.log('PASS '+label)}else{failures.push(label);console.log('FAIL '+label)}}
 async function wait(fn){for(let i=0;i<150;i++){if(fn())return;await delay(10)}throw Error('render timeout')}
 const plans=Object.values(ACCOUNT_PLANS)
-const defaultConfig=()=>({defaultShareDays:3,maxShareDays:30,anonymousMaxFileSizeMb:500,anonymousTotalSizeMb:1024,maxBatchFiles:100,auditLogRetentionDays:90,orphanGraceHours:24,anonymousCollectionParticipantLimit:10,anonymousActiveCollectionLimit:1,maintenanceMode:false,planOverrides:{}})
+const defaultConfig=()=>({defaultShareDays:3,maxShareDays:30,anonymousMaxFileSizeMb:500,anonymousTotalSizeMb:1024,maxBatchFiles:100,auditLogRetentionDays:90,auditAccessLogRetentionDays:7,auditCleanupIntervalMinutes:60,orphanGraceHours:24,anonymousCollectionParticipantLimit:10,anonymousActiveCollectionLimit:1,maintenanceMode:false,planOverrides:{}})
 const overview=()=>({stats:{users:1},totals:{users:1,resources:1,auditLogs:0},users:[{id:'fixture',nickname:'敏感用户记录',planId:'free',status:'active'}],resources:[{id:'fixture',kind:'share',name:'敏感文件',status:'active',totalSize:4}],trend:[],auditLogs:[],plans,config:defaultConfig()})
-async function mount(route,{priceError=false,unavailable=false,authenticated=true,resourceCount=1,retiredPending=false,managedPlan='',configuredOverrides={} }={}){
+async function mount(route,{priceError=false,unavailable=false,authenticated=true,resourceCount=1,retiredPending=false,managedPlan='',configuredOverrides={},scanLogs=false,scanProgress=false }={}){
  const errors=[],vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e.message))
  const dom=new JSDOM('<div id="root"></div>',{url:'http://fixture.local'+route,runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc})
  const {window}=dom,document=window.document;let admin=authenticated,account=true,held=null,hold=false,calls=[],sessionHold=false,sessionRelease=null,sessionFailure=null
- const adminData=overview();adminData.config.planOverrides=configuredOverrides;if(resourceCount>1){adminData.resources=Array.from({length:resourceCount},(_,i)=>({id:'fixture-'+i,kind:'share',name:i===5?'<img src=x onerror=alert(1)>':'验收资源-'+i,status:'active',totalSize:4}));adminData.totals.resources=resourceCount}
+ const adminData=overview();adminData.config.planOverrides=configuredOverrides;if(scanLogs){adminData.auditLogs=[{id:'scan-pass',type:'security',action:'文件扫描通过',targetId:'资料.zip',durationMs:1250,createdAt:new Date().toISOString(),details:{scanResult:'passed',scanEngine:'clamav',size:2048}},{id:'scan-block',type:'security',action:'文件扫描拦截',targetId:'风险文件.exe',durationMs:420,createdAt:new Date().toISOString(),details:{scanResult:'blocked',scanEngine:'clamav',shareId:'fixture-share',storedName:'fixture-risk.exe',storageOwnerId:'fixture',size:4096,finding:'发现木马程序',signature:'Fixture.Trojan'}},{id:'scan-failed',type:'security',action:'文件扫描未完成',targetId:'未完成.docx',durationMs:30000,createdAt:new Date().toISOString(),details:{scanResult:'failed',scanEngine:'clamav',size:1024,errorCode:'scan_timeout'}},{id:'scan-skip',type:'security',action:'文件扫描跳过',targetId:'跳过.txt',durationMs:12,createdAt:new Date().toISOString(),details:{scanResult:'skipped',size:24}}];adminData.auditLogs.push({id:'admin-event',type:'admin',action:'更新系统配置',targetId:'config',durationMs:0,createdAt:new Date().toISOString(),details:{}});adminData.totals.auditLogs=adminData.auditLogs.length}if(resourceCount>1){adminData.resources=Array.from({length:resourceCount},(_,i)=>({id:'fixture-'+i,kind:'share',name:i===5?'<img src=x onerror=alert(1)>':'验收资源-'+i,status:'active',totalSize:4}));adminData.totals.resources=resourceCount}
  window.fetch=async(url,opts={})=>{calls.push({url,method:opts.method||'GET',body:opts.body?JSON.parse(opts.body):undefined});let status=200,data={}
   if(url==='/api/auth/me')data={user:account?{id:'fixture',nickname:'fixture'}:null}
   else if(url==='/api/account/workspace')data={plan:plans.find(plan=>plan.id===managedPlan)||plans[0],plans,teamEntitlement:managedPlan?{organizationId:'legacy-org',teamPlanId:'enterprise',teamPlanLabel:'历史企业权益',restrictedByAdmin:true,canUseTeamSpace:!!plans.find(plan=>plan.id===managedPlan)?.team}:undefined,capacity:{},orders:retiredPending?[{id:'retired-pending',planId:'enterprise',planLabel:'历史企业权益',retired:true,status:'pending_payment',amount:15900,createdAt:new Date().toISOString()}]:[]}
@@ -32,10 +32,13 @@ async function mount(route,{priceError=false,unavailable=false,authenticated=tru
    if(Number.isInteger(sessionFailure)){status=sessionFailure;data={message:'后台会话已失效'}}
   }
   else if(url==='/api/admin/overview'){data=adminData;if(!admin){status=401;data={message:'请先登录后台'}}if(hold)await new Promise(r=>held=r)}
+  else if(url==='/api/admin/scans'){const all=adminData.auditLogs.filter(item=>item.type==='security'&&item.details?.scanResult),counts={all:all.length,passed:0,blocked:0,failed:0,skipped:0};for(const item of all)counts[item.details.scanResult]++;data={logs:all,total:all.length,counts,retainedScanResults:all.length};if(!admin){status=401;data={message:'请先登录后台'}}}
+  else if(url==='/api/admin/scan-progress')data=scanProgress?{active:[{shareId:'share-progress',fileName:'大型压缩包.zip',fileIndex:2,fileCount:3,completedFileCount:1,size:1024**3,startedAt:new Date(Date.now()-14000).toISOString()}],queuedCount:2,pendingCount:4}:{active:[],queuedCount:0,pendingCount:0}
   else if(url==='/api/admin/logout'){admin=false;data={ok:true}}
   else if(url==='/api/admin/login'){admin=true;data={admin:{username:'fixture-admin'},overview:overview()}}
   else if(url==='/api/admin/cleanup')data={overview:overview()}
-  else if(url==='/api/admin/config'){const body=JSON.parse(opts.body),message=systemConfigError(body,defaultConfig());status=message?400:200;data=message?{message}:{config:body}}
+  else if(url==='/api/admin/config'){const body=JSON.parse(opts.body),message=systemConfigError(body,defaultConfig());status=message?400:200;if(!message)adminData.config={...adminData.config,...body};data=message?{message}:{config:adminData.config}}
+  else if(/^\/api\/admin\/scans\/[^/]+\/cleanup$/.test(url)){const log=adminData.auditLogs.find(item=>item.id===url.split('/')[4]);if(log)log.cleaned=true;data={ok:true}}
   else if(url.startsWith('/api/admin/resources/')){adminData.resources=adminData.resources.filter(x=>x.id!==url.split('/').at(-1));adminData.totals.resources=adminData.resources.length;data={ok:true,overview:adminData}}
   else if(url==='/api/guest/quota')data={enabled:false}
   return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}})
@@ -147,6 +150,28 @@ const resourceUI=await mount('/admin',{resourceCount:21});try{
  await resourceUI.click('删除');await resourceUI.click('删除资源');check('ADMIN-009 确认后单次删除且列表更新',resourceUI.calls.filter(x=>x.method==='DELETE').length===1&&resourceUI.document.body.textContent.includes('没有匹配的资源'));
  await searchFor('');check('ADMIN-009 清除搜索后资源总数准确',resourceUI.document.querySelector('.admin-pagination').textContent.includes('/ 20'));check('ADMIN 资源UI无运行错误',resourceUI.errors.length===0);
 }finally{resourceUI.dom.window.close()}
+const scanLogUI=await mount('/admin',{scanLogs:true,scanProgress:true});try{
+ await scanLogUI.click('扫描结果');await delay(30);let text=scanLogUI.document.querySelector('.admin-scan-list').textContent
+ check('ADMIN-扫描结果有独立顶部栏和六类状态计数',scanLogUI.document.querySelectorAll('.admin-scan-category').length===6&&[...scanLogUI.document.querySelectorAll('.admin-scan-category strong')].map(item=>item.textContent).join(',')==='7,3,1,1,1,1')
+ check('ADMIN-扫描进度展示文件序号、完成数与耗时',scanLogUI.document.querySelector('.admin-scan-progress-list').textContent.includes('大型压缩包.zip')&&scanLogUI.document.querySelector('.admin-scan-progress-list').textContent.includes('文件 2 / 3')&&scanLogUI.document.querySelector('.admin-scan-progress-list').textContent.includes('已完成 1 个')&&scanLogUI.document.querySelector('.admin-scan-progress-list').textContent.includes('已用时'))
+ check('ADMIN-扫描队列显示等待数量',scanLogUI.document.querySelector('.admin-scan-queued').textContent.includes('2 个文件等待扫描'))
+ scanLogUI.document.querySelector('.admin-scan-category[data-result="scanning"]').click();await delay(30);check('ADMIN-扫描中分类展示实时任务和队列',scanLogUI.document.querySelector('.admin-scan-progress-list').textContent.includes('扫描引擎处理中')&&scanLogUI.document.querySelector('.admin-scan-progress-list').textContent.includes('2 个文件排队中'))
+ check('ADMIN-扫描结果展示文件、耗时、威胁签名和错误原因',text.includes('资料.zip')&&text.includes('扫描通过')&&text.includes('1.3 秒')&&text.includes('风险文件.exe')&&text.includes('Fixture.Trojan')&&text.includes('scan_timeout'))
+ scanLogUI.document.querySelector('.admin-scan-category[data-result="blocked"]').click();await delay(30);check('ADMIN-威胁分类只展示拦截文件',scanLogUI.document.querySelector('.admin-scan-list').textContent.includes('风险文件.exe')&&!scanLogUI.document.querySelector('.admin-scan-list').textContent.includes('资料.zip'))
+ const search=scanLogUI.document.querySelector('.admin-scan-search input');Object.getOwnPropertyDescriptor(scanLogUI.window.HTMLInputElement.prototype,'value').set.call(search,'Fixture.Trojan');search.dispatchEvent(new scanLogUI.window.Event('input',{bubbles:true}));await delay(280);check('ADMIN-扫描结果可搜索威胁名称',scanLogUI.document.querySelector('.admin-scan-list').textContent.includes('风险文件.exe'))
+ const toggle=scanLogUI.document.querySelector('[role="switch"][aria-label="自动清理风险文件"]')
+ check('ADMIN-风险文件自动清理默认关闭',toggle.getAttribute('aria-checked')==='false')
+ await scanLogUI.click('自动清理风险文件');check('ADMIN-开启自动清理需要确认',!!scanLogUI.document.querySelector('.confirm-modal'));await scanLogUI.click('取消')
+ check('ADMIN-取消开启不保存配置',!scanLogUI.calls.some(call=>call.url==='/api/admin/config'))
+ await scanLogUI.click('自动清理风险文件');await scanLogUI.click('确认开启')
+ check('ADMIN-确认开启后显示开关状态并只发一次请求',toggle.getAttribute('aria-checked')==='true'&&scanLogUI.calls.filter(call=>call.url==='/api/admin/config'&&call.body.autoCleanRiskFiles===true).length===1)
+ await scanLogUI.click('自动清理风险文件');await scanLogUI.click('确认关闭');check('ADMIN-支持关闭自动清理',toggle.getAttribute('aria-checked')==='false')
+ await scanLogUI.click('清理风险文件');await scanLogUI.click('取消');check('ADMIN-取消手动清理不发请求',!scanLogUI.calls.some(call=>call.url.endsWith('/cleanup')))
+ await scanLogUI.click('清理风险文件');const confirm=scanLogUI.document.querySelector('.confirm-modal .primary-button');confirm.click();confirm.click();await delay(60)
+ check('ADMIN-手动清理防止重复提交并展示完成提示',scanLogUI.calls.filter(call=>call.url==='/api/admin/scans/scan-block/cleanup').length===1&&scanLogUI.document.querySelector('.admin-scan-list').textContent.includes('风险文件已清理')&&scanLogUI.document.body.textContent.includes('已通知文件所有者'))
+ await scanLogUI.click('安全日志');check('ADMIN-扫描结果与普通安全日志分离',!scanLogUI.document.querySelector('.admin-log-list-large').textContent.includes('资料.zip')&&scanLogUI.document.querySelector('.admin-log-list-large').textContent.includes('更新系统配置'))
+ check('ADMIN 扫描结果列表无运行错误',scanLogUI.errors.length===0)
+}finally{scanLogUI.dom.window.close()}
 const f=await mount('/admin');try{const before=f.calls.length;await f.click('执行清理');check('ADMIN-008 出现确认弹窗',!!f.document.querySelector('.confirm-modal'));await f.click('取消');check('ADMIN-008 取消不发清理请求',!f.calls.slice(before).some(x=>x.url==='/api/admin/cleanup'));await f.click('执行清理');f.document.querySelector('.confirm-modal .primary-button').click();await delay(60);check('ADMIN-008 确认只发一次POST',f.calls.filter(x=>x.url==='/api/admin/cleanup'&&x.method==='POST').length===1);await f.click('退出后台');check('ADMIN-011 退出清空界面',!!f.document.querySelector('.admin-login-modal'));check('ADMIN UI 无运行错误',f.errors.length===0)}finally{f.dom.window.close()}
 const catalogUI=await mount('/workspace?view=plans');try{
  check('套餐卡片不再提供历史企业套餐',catalogUI.document.querySelectorAll('.plan-catalog-card').length===5&&!catalogUI.document.querySelector('[data-plan-id="enterprise"]'));

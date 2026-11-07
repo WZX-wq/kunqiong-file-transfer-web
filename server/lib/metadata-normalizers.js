@@ -207,6 +207,7 @@ export function normalizeSystemConfig(value = {}) {
   return {
     entitlementsVersion: 1,
     maintenanceMode: Boolean(source.maintenanceMode),
+    autoCleanRiskFiles: source.autoCleanRiskFiles === true,
     defaultShareDays: Number.isFinite(defaultShareDays) ? Math.min(365, Math.max(1, Math.floor(defaultShareDays))) : DEFAULT_SYSTEM_CONFIG.defaultShareDays,
     maxShareDays: Number.isFinite(maxShareDays) ? Math.min(365, Math.max(1, Math.floor(maxShareDays))) : DEFAULT_SYSTEM_CONFIG.maxShareDays,
     anonymousMaxFileSizeMb: Number.isFinite(anonymousMaxFileSizeMb) ? Math.min(20480, Math.max(1, anonymousMaxFileSizeMb)) : DEFAULT_SYSTEM_CONFIG.anonymousMaxFileSizeMb,

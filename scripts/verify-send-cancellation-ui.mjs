@@ -26,7 +26,7 @@ async function mount({ server, storage = {}, guest = false, currentUploadLimitBy
   const s = server || { requests: [], pending: [], sessions: new Map(), completed: [], next: 0, holdCreate: false, releaseCreate: null, holdDelete: false, releaseDelete: null, holdComplete: false, releaseComplete: null }
   for (const [key, value] of Object.entries(storage)) window.localStorage.setItem(key, value)
   window.fetch = async (url, options = {}) => {
-    s.requests.push({ url, method: options.method || 'GET' })
+    s.requests.push({ url, method: options.method || 'GET', options })
     let status = 200, data = {}
     if (url === '/api/auth/me') data = { user: guest ? null : { id: 'owner', username: 'owner' } }
     else if (url === '/api/runtime-config') data = { upload: { singleFileLimitBytes: currentUploadLimitBytes }, maxSupportedFileSizeBytes: 20 * 1024 ** 3, maxBatchFiles: 100 }
@@ -84,6 +84,12 @@ async function mount({ server, storage = {}, guest = false, currentUploadLimitBy
   window.eval(code)
   await waitFor(() => document.querySelector('.send-prototype-dropzone') && !document.querySelector('.auth-loading'), 'Send page mounts')
   const button = label => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === label || b.getAttribute('aria-label') === label)
+  const scanChoices = new window.MutationObserver(() => {
+    // Existing scenarios choose the safe default as a real user would. The
+    // explicit opt-in scenario below holds the dialog and asserts both choices.
+    if (!s.manualScanChoice) button('继续等待安全扫描')?.click()
+  })
+  scanChoices.observe(document.body, { childList: true, subtree: true })
   const click = async label => { const b = button(label); assert.ok(b && !b.disabled, 'Enabled button: ' + label); b.click(); await delay(30) }
   const choose = async items => {
     const input = document.querySelector('.upload-panel input[type=file]:not([webkitdirectory])')
@@ -105,6 +111,19 @@ async function test(name, run) {
   try { await run(f); check(name + ': no React errors', !f.errors.length) }
   finally { f.s.releaseCreate?.(); f.s.releaseDelete?.(); f.s.releaseComplete?.(); f.close() }
 }
+
+await test('Explicit background scanning choice', async f => {
+  f.s.manualScanChoice = true
+  await f.choose([file('choice.zip')]); await f.start(); await waitFor(() => f.s.pending.length, 'Choice upload starts')
+  await f.s.pending[0].accept()
+  await waitFor(() => f.button('跳过等待，立即分享'), 'Scan choice is shown after byte transfer')
+  const dialog = f.document.querySelector('.confirm-modal')
+  check('Scan choice explains estimate, background processing and download risk', dialog.textContent.includes('预计') && dialog.textContent.includes('后台继续扫描') && dialog.textContent.includes('无法追回'))
+  check('Choosing a mode does not prematurely start scanning', !f.s.requests.some(request => request.url.endsWith('/complete')))
+  await f.click('跳过等待，立即分享')
+  await waitFor(() => f.document.querySelector('.share-result'), 'Early share shows')
+  check('Explicit skip wait choice is sent exactly once', f.s.requests.filter(request => request.url.endsWith('/complete')).length === 1 && JSON.parse(f.s.requests.find(request => request.url.endsWith('/complete')).options.body).deferScan === true)
+})
 
 await test('In-app navigation protects active uploads', async f => {
   await f.choose([file('navigation.bin')]); await f.start()
@@ -280,6 +299,7 @@ await test('Finalization cannot be cancelled accidentally', async f => {
   f.s.holdComplete = true
   await f.choose([file('publishing.bin')]); await f.start(); await waitFor(() => f.s.pending.length, 'Publishing batch starts')
   await f.s.pending[0].accept(); await waitFor(() => f.s.releaseComplete, 'Publish response held')
+  await waitFor(() => f.document.querySelector('.progress-label')?.textContent.includes('正在进行安全检查'), 'React renders the selected scan phase')
   check('Finalization explains the safety check without a false upload ETA', f.document.querySelector('.progress-label').textContent.includes('正在进行安全检查') && f.document.querySelector('.upload-metrics').textContent.includes('等待安全检查结果') && !f.document.querySelector('.upload-metrics').textContent.includes('剩余'))
   check('Removal is unavailable while scanning/publishing and clear is disabled', !f.button('移除 publishing.bin') && f.button('清空文件').disabled)
   await f.choose([file('unwanted.bin')])

@@ -35,6 +35,7 @@ import { requestMetrics } from './server/lib/request-metrics.js'
 import { runWithDataContext } from './server/lib/data-context.js'
 import { requireSharedDataKey } from './server/lib/private-key.js'
 import { scheduleRelationalMaintenance } from './server/lib/relational-maintenance.js'
+import { startBackgroundScans } from './server/services/background-scans.js'
 import { flushDataOperations } from './server/lib/data-context.js'
 
 import {
@@ -417,8 +418,9 @@ const server = app.listen(serverPort, serverHost, () => {
   })
 })
 
-let cleanupTimer, paymentTimer, initialPaymentCheck, auditLogTimer
+let cleanupTimer, paymentTimer, initialPaymentCheck, auditLogTimer, stopBackgroundScans
 function startMaintenance() {
+  stopBackgroundScans = startBackgroundScans()
   if (databasePool) {
     const timers = scheduleRelationalMaintenance(databaseMaintenancePool)
     cleanupTimer = timers.cleanup
@@ -463,6 +465,7 @@ async function shutdown(signal) {
   clearInterval(paymentTimer)
   clearTimeout(initialPaymentCheck)
   clearInterval(auditLogTimer)
+  stopBackgroundScans?.()
   const deadline = setTimeout(() => {
     console.error('服务关闭等待超时，已停止进程')
     server.closeAllConnections?.()

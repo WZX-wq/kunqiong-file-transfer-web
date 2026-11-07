@@ -29,6 +29,7 @@ import { ConfirmModal, ProductBrand, Toast } from '../components/common.jsx'
 import { fetchOwnedCollectionPage, getRecordOwner } from '../lib/records.js'
 import { RECIPIENT_TEXT_MAX, recipientInputError } from '../../server/lib/contact-input.js'
 import { limitInputText } from '../lib/input-limits.js'
+import { estimateScanWait } from '../lib/scan-estimate.js'
 import { respondWorkspaceOwnershipHandover } from '../lib/records.js'
 import { clearCollectionDraft, collectionStructureFromTask, hasCollectionDraftContent, loadCollectionDraft, mergeCollectionStructure, saveCollectionDraft, validateCollectionStructure } from '../lib/collection-form.js'
 
@@ -75,6 +76,7 @@ export function WorkspaceApp() {
   const [uploadState, setUploadState] = useState(createUploadState())
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [retrieveOpen, setRetrieveOpen] = useState(() => /^[A-Z0-9]{4,6}$/i.test(new URLSearchParams(window.location.search).get('retrieve') || ''))
+  const [retrieveAutoLookup, setRetrieveAutoLookup] = useState(false)
   const [retrievalCode, setRetrievalCode] = useState(() => (new URLSearchParams(window.location.search).get('retrieve') || '').toUpperCase())
   const [retrieveResult, setRetrieveResult] = useState(null)
   const [shareResult, setShareResult] = useState(null)
@@ -400,7 +402,13 @@ export function WorkspaceApp() {
         if (!isCurrent()) return
         setUploadProgress(progress)
         setUploadState((current) => ({ ...current, ...nextState, progress }))
-      })
+      }, { chooseScanMode: selectedFiles => requestConfirm({
+        eyebrow: '上传完成',
+        title: '是否跳过安全扫描等待',
+        detail: `${estimateScanWait(selectedFiles)}。默认等待扫描通过后再开放文件。选择跳过等待后即可分享和下载，后台继续扫描，结果记录在管理员后台；检出威胁或检查失败后会阻止后续访问，已经下载的副本无法追回。`,
+        cancelText: '继续等待安全扫描',
+        confirmText: '跳过等待，立即分享',
+      }) })
       const data = await session.task
       if (!isCurrent()) return
       setShareResult(data.share)
@@ -412,7 +420,7 @@ export function WorkspaceApp() {
         refreshAuthUser().catch(() => {})
         (messageOpen ? refreshMessages(authUser) : refreshMessageSummary(authUser)).catch(() => {})
       }
-      setToast(data.share.deliveryRecipients?.length ? '文件已上传，通知状态已更新' : '文件已上传，分享信息已生成')
+      setToast(data.share.files?.some(file => file.reviewStatus === 'pending') ? '文件已上传，可立即分享和下载，后台安全扫描中' : data.share.deliveryRecipients?.length ? '文件已上传，通知状态已更新' : '文件已上传，分享信息已生成')
       if (!authUser?.id) refreshGuestQuota()
     } catch (error) {
       if (!isCurrent() || error.name === 'UploadCancelledError') return
@@ -940,6 +948,7 @@ export function WorkspaceApp() {
 
   const closeRetrieve = () => {
     setRetrieveOpen(false)
+    setRetrieveAutoLookup(false)
     setRetrieveResult(null)
     setRetrievalCode('')
   }
@@ -1128,7 +1137,14 @@ export function WorkspaceApp() {
             onReset={resetSend}
             onCopy={copyValue}
             onCopyQrImage={copyQrImage}
-            onRetrieve={(code) => { if (code) setRetrievalCode(String(code).toUpperCase()); setRetrieveOpen(true) }}
+            onRetrieve={(code) => {
+              setRetrieveResult(null)
+              if (code) {
+                setRetrievalCode(String(code).toUpperCase())
+                setRetrieveAutoLookup(true)
+              } else setRetrieveAutoLookup(false)
+              setRetrieveOpen(true)
+            }}
             onOpenDistribution={() => navigateMainView('deliver')}
             guestQuota={guestQuota}
             onLogin={startLogin}
@@ -1147,7 +1163,7 @@ export function WorkspaceApp() {
             records={records}
             onCreate={createCollection}
             onResetResult={() => setCollectionResult(null)}
-            onRetrieve={() => setRetrieveOpen(true)}
+            onRetrieve={() => { setRetrieveAutoLookup(false); setRetrieveOpen(true) }}
             onCopy={copyValue}
             onCopyQrImage={copyQrImage}
             onOpenManager={openCollectionManager}
@@ -1171,7 +1187,7 @@ export function WorkspaceApp() {
       </footer>
 
       {settingsOpen && <SettingsModal settings={settings} setSettings={setSettings} user={authUser} onClose={() => setSettingsOpen(false)} onSave={() => { setSettingsOpen(false); setToast('分享设置已保存') }} />}
-      {retrieveOpen && <RetrieveModal code={retrievalCode} setCode={setRetrievalCode} result={retrieveResult} onClose={closeRetrieve} onFind={lookupShare} />}
+      {retrieveOpen && <RetrieveModal code={retrievalCode} setCode={setRetrievalCode} result={retrieveResult} autoLookup={retrieveAutoLookup} onClose={closeRetrieve} onFind={lookupShare} />}
       {footerContentKey && <ContentModal content={FOOTER_CONTENT[footerContentKey]} onClose={() => setFooterContentKey('')} />}
       {managementTarget && (
         <ManageItemModal
@@ -1236,7 +1252,7 @@ export function SendView({ batchLimit = MAX_FILES, user, files, inputRef, folder
   const waitingFileCount = Math.max(files.length - completedFileCount - (uploadState.status === 'uploading' || uploadState.status === 'paused' ? 1 : 0), 0)
   const queueStatusText = uploadState.status === 'paused' ? `已暂停 · ${completedFileCount} 个已完成`
     : uploadState.status === 'failed' ? `上传已中断 · ${completedFileCount} 个已完成`
-      : uploadState.status === 'finalizing' ? `安全检查中 · ${files.length} 个已上传`
+      : uploadState.status === 'finalizing' ? `${uploadState.checkStage === 'choosing' ? '等待选择扫描方式' : uploadState.checkStage === 'background' ? '正在生成分享信息' : '安全检查中'} · ${files.length} 个已上传`
         : `1 个上传中 · ${completedFileCount} 个已完成${waitingFileCount ? ` · ${waitingFileCount} 个等待中` : ''}`
   const canRemoveDuringUpload = uploadState.status !== 'finalizing' && uploadState.failurePhase !== 'query'
   return (
@@ -1299,7 +1315,7 @@ export function SendView({ batchLimit = MAX_FILES, user, files, inputRef, folder
             <div className="send-page-head">
               <div className="send-page-head-copy">
                 <h1>正在上传 {files.length} 个文件</h1>
-                <p>{uploadState.status === 'paused' ? '上传已暂停，已传分片会保留，可随时继续。' : uploadState.status === 'failed' ? '上传已中断，可重试本次上传或取消后重新选择文件。' : uploadState.status === 'finalizing' ? '文件已传输完成，正在执行安全检查并生成取件信息。' : '上传过程请保持页面打开，中断后可以继续。'}</p>
+                <p>{uploadState.status === 'paused' ? '上传已暂停，已传分片会保留，可随时继续。' : uploadState.status === 'failed' ? '上传已中断，可重试本次上传或取消后重新选择文件。' : uploadState.status === 'finalizing' ? uploadState.checkStage === 'choosing' ? '文件已传输完成，请选择等待安全扫描或立即分享。' : uploadState.checkStage === 'background' ? '正在生成取件信息，安全扫描将在后台继续。' : '文件已传输完成，正在执行安全检查并生成取件信息。' : '上传过程请保持页面打开，中断后可以继续。'}</p>
               </div>
               <div className="send-page-head-actions">
                 {uploadState.status === 'uploading' && <ActionButton className="secondary-button" type="button" onClick={onPause} disabled={!isUploading}><Pause size={15} />暂停</ActionButton>}
@@ -1373,27 +1389,29 @@ export function SendView({ batchLimit = MAX_FILES, user, files, inputRef, folder
 export function UploadProgressPanel({ progress, uploadState, fileCount = 0, fileIndex = 0 }) {
   const failed = uploadState.status === 'failed'
   const checking = uploadState.status === 'finalizing'
+  const choosing = checking && uploadState.checkStage === 'choosing'
+  const background = checking && uploadState.checkStage === 'background'
   const publishing = checking && uploadState.checkStage === 'publishing'
   const transportDone = checking || ['scan', 'threat', 'query'].includes(uploadState.failurePhase)
   // 状态文案沿用真实阶段：上传中/已暂停/安全检查/生成取件码，不虚构分片序号。
   const phasePrefix = String(uploadState.phase || '')
   const statusText = uploadState.status === 'paused' ? '已暂停'
     : failed ? (uploadState.phase || '上传中断')
-      : checking ? (publishing ? '安全检查通过，正在生成取件码' : '正在进行安全检查')
+      : checking ? (choosing ? '请选择安全扫描方式' : background ? '正在生成分享信息' : publishing ? '安全检查通过，正在生成取件码' : '正在进行安全检查')
         : phasePrefix.includes('重试') ? '正在重试上传'
           : phasePrefix.includes('恢复') ? '已恢复上传进度'
             : phasePrefix.includes('创建') ? '正在创建上传会话'
               : '上传中'
   const phaseOneState = transportDone ? 'done' : failed ? 'failed' : 'active'
-  const phaseTwoState = publishing ? 'done' : checking ? 'active' : ['scan', 'threat'].includes(uploadState.failurePhase) ? 'failed' : 'pending'
-  const phaseThreeState = publishing ? 'active' : 'pending'
+  const phaseTwoState = publishing ? 'done' : checking && !choosing && !background ? 'active' : ['scan', 'threat'].includes(uploadState.failurePhase) ? 'failed' : 'pending'
+  const phaseThreeState = publishing || background ? 'active' : 'pending'
   const phaseOneCopy = phaseOneState === 'done' ? `${fileCount || 1} 个文件已全部上传`
     : phaseOneState === 'failed' ? '上传已中断，可重试本次上传'
       : uploadState.status === 'paused' ? '已暂停，已传分片会保留'
         : `正在上传 ${uploadState.currentFile || '文件'}`
   const phaseTwoCopy = phaseTwoState === 'done' ? '安全检查已通过'
     : phaseTwoState === 'active' ? (uploadState.checkFileCount > 1 ? `正在检测 ${uploadState.checkFileCount} 个文件` : '正在检测已上传的文件')
-      : phaseTwoState === 'failed' ? '安全检查未通过，已停止发布' : '上传完成后逐文件检测'
+      : phaseTwoState === 'failed' ? '安全检查未通过，已停止发布' : choosing ? '等待选择扫描方式' : background ? '后台继续扫描，结果记录在管理员后台' : '上传完成后逐文件检测'
   const phaseThreeCopy = phaseThreeState === 'active' ? '正在生成链接、二维码与取件码' : '完成后生成链接、二维码与取件码'
   const totalBytes = uploadState.totalBytes || 0
   const byteRatio = totalBytes ? Math.min(100, Math.round(((uploadState.uploadedBytes || 0) / totalBytes) * 100)) : 0
@@ -1413,7 +1431,7 @@ export function UploadProgressPanel({ progress, uploadState, fileCount = 0, file
       <div className="upload-metrics">
         <span>已传 {formatBytes(uploadState.uploadedBytes)} / {formatBytes(uploadState.totalBytes)}</span>
         <span>{transportDone ? '文件传输已完成' : failed ? '上传已中断' : <>速度 {uploadState.speedBps ? `${formatBytes(uploadState.speedBps)}/s` : '计算中'}</>}</span>
-        <span>{transportDone ? uploadState.failurePhase === 'threat' ? '已阻止发布' : uploadState.failurePhase === 'scan' ? '安全检查未通过' : uploadState.failurePhase === 'query' ? '处理结果待查询' : publishing ? '正在完成发布' : '等待安全检查结果' : failed ? '可重试或取消本次上传' : uploadState.status === 'paused' ? '已暂停，可继续上传' : <>剩余 {formatDuration(uploadState.etaSeconds)}</>}</span>
+        <span>{transportDone ? uploadState.failurePhase === 'threat' ? '已阻止发布' : uploadState.failurePhase === 'scan' ? '安全检查未通过' : uploadState.failurePhase === 'query' ? '处理结果待查询' : choosing ? '等待选择扫描方式' : publishing || background ? '正在完成发布' : '等待安全检查结果' : failed ? '可重试或取消本次上传' : uploadState.status === 'paused' ? '已暂停，可继续上传' : <>剩余 {formatDuration(uploadState.etaSeconds)}</>}</span>
       </div>
 
       <div className="upload-phase-list">
@@ -1422,7 +1440,7 @@ export function UploadProgressPanel({ progress, uploadState, fileCount = 0, file
         <div className={`upload-phase ${phaseThreeState}`}><i>{phaseThreeState === 'done' ? <Check size={12} /> : '3'}</i><div><b>生成取件码</b><small>{phaseThreeCopy}</small></div>{phaseThreeState === 'active' && <span className="upload-phase-badge">进行中</span>}</div>
       </div>
 
-      {checking && <SecurityCheckStatus startedAt={uploadState.checkStartedAt} stage={uploadState.checkStage} currentFile={uploadState.currentFile} fileIndex={uploadState.checkFileIndex} fileCount={uploadState.checkFileCount} completedCount={uploadState.checkCompletedCount} activeCount={uploadState.checkActiveCount} connectionMessage={uploadState.connectionMessage} />}
+      {checking && !choosing && !background && <SecurityCheckStatus startedAt={uploadState.checkStartedAt} stage={uploadState.checkStage} currentFile={uploadState.currentFile} fileIndex={uploadState.checkFileIndex} fileCount={uploadState.checkFileCount} completedCount={uploadState.checkCompletedCount} activeCount={uploadState.checkActiveCount} connectionMessage={uploadState.connectionMessage} />}
       {uploadState.retryCount > 0 && <small className="upload-retry-note">已自动重试 {uploadState.retryCount} 次</small>}
       {uploadState.error && (['threat', 'scan'].includes(uploadState.failurePhase)
         ? <SecurityCheckFailure message={uploadState.error} code={uploadState.errorCode} fileName={uploadState.scanFile} finding={uploadState.scanFinding} />
@@ -1483,6 +1501,7 @@ export function ShareResult({ result, settings, onCopy, onCopyQrImage, onReset }
             </div>
           )}
         </div>
+        {result.files?.some(file => file.reviewStatus === 'pending') && <p className="result-security" role="status"><ShieldCheck size={14} /> 后台安全扫描中，可立即分享和下载，扫描结果记录在管理员后台</p>}
         {result.deliveryRecipients?.length > 0 && <ShareNotificationStatus result={result} />}
         <div className="result-actions">
           <ActionButton className="secondary-button" onClick={onReset}><RotateCcw size={15} /> 继续发送</ActionButton>
@@ -1900,11 +1919,14 @@ export function CollectionFilesPanel({ data, onClose, onRefresh, onManageSetting
   )
 }
 
-export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
+export function RetrieveModal({ code, setCode, result, autoLookup = false, onClose, onFind }) {
   const findButtonRef = useRef(null)
   const verifyButtonRef = useRef(null)
+  const autoLookupStartedRef = useRef(false)
+  const lookupBusyRef = useRef(false)
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [lookupBusy, setLookupBusy] = useState(false)
   const [requiresLogin, setRequiresLogin] = useState(false)
   const { downloadTask, startDownload, retryDownload, downloadBusy } = useDownloadTask()
   const [previewItem, setPreviewItem] = useState(null)
@@ -1919,9 +1941,18 @@ export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
     try { const data = await apiRequest(`/api/shares/lookup/${code.trim().toUpperCase()}`, { method: 'POST', body: JSON.stringify({ password }) }); setError(''); setRequiresLogin(false); onFind(data) } catch (err) { setError(err.message); setRequiresLogin(err.code === 'directed_login_required') }
   }
   const findShare = async () => {
+    if (lookupBusyRef.current) return
+    lookupBusyRef.current = true
+    setLookupBusy(true)
     setError('')
     try { await onFind() } catch (err) { setError(err.message); setRequiresLogin(err.code === 'directed_login_required') }
+    finally { lookupBusyRef.current = false; setLookupBusy(false) }
   }
+  useEffect(() => {
+    if (!autoLookup || !code.trim() || autoLookupStartedRef.current) return
+    autoLookupStartedRef.current = true
+    void findShare()
+  }, [autoLookup, code, onFind])
   const loginAsRecipient = () => {
     const returnTo = new URL(window.location.href)
     returnTo.searchParams.set('retrieve', code.trim().toUpperCase())
@@ -1965,7 +1996,7 @@ export function RetrieveModal({ code, setCode, result, onClose, onFind }) {
             </>
           )}
         </div>
-        {!result && <div className="modal-footer retrieve-footer"><ActionButton ref={findButtonRef} className="primary-button" onClick={findShare}><KeyRound size={16} /> 查找文件</ActionButton></div>}
+        {!result && <div className="modal-footer retrieve-footer"><ActionButton ref={findButtonRef} className="primary-button" disabled={lookupBusy} onClick={findShare}>{lookupBusy ? '正在查找...' : <><KeyRound size={16} /> 查找文件</>}</ActionButton></div>}
       </div>
     </div>,
     document.body,
