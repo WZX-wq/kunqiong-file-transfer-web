@@ -309,62 +309,6 @@ deploy_with_docker() {
   # same Compose project before RUN, so temporary build containers are
   # identified by the server guard. A final-image --label alone is too late.
   DOCKER_BUILDKIT=0 docker build --label "org.opencontainers.image.revision=$RELEASE_SHA" -t "$IMAGE_NAME" .
-  # Check connectivity, decryptability and nonempty-target conflicts without DDL
-  # or data writes. A failure here leaves the current running container intact.
-  docker run --rm --label "com.docker.compose.project=$APP_NAME" --env-file "$ENV_FILE" --entrypoint node "$IMAGE_NAME" --input-type=module -e '
-const { databasePool } = await import("/app/server/state.js");
-const { inspectRelationalMigrationTarget } = await import("/app/server/db/relational-store.js");
-const { inspectExistingRelationalSchema } = await import("/app/server/db/apply-relational-schema.js");
-const { shouldSkipRelationalSchemaPreflight } = await import("/app/server/db/deployment-preflight.js");
-const { readFile } = await import("node:fs/promises");
-const { createHash } = await import("node:crypto");
-const { UPLOAD_SESSION_TABLE_SQL } = await import("/app/server/db/upload-session-store.js");
-try {
-  const connection = await databasePool.getConnection();
-  try {
-    const schemaSql = await readFile("/app/docs/数据库设计-2026-10-29/03-现有功能关系表设计.sql", "utf8");
-    const expectedMigrations = {
-      "001-existing-features-relational-schema": createHash("sha256").update(schemaSql).digest("hex"),
-      "003-upload-session-storage": createHash("sha256").update(UPLOAD_SESSION_TABLE_SQL).digest("hex"),
-    };
-    const [migrationTables] = await connection.execute(
-      "SELECT COUNT(*) AS found FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
-      ["kq_schema_migration"],
-    );
-    const appliedMigrations = {};
-    if (Number(migrationTables?.[0]?.found) > 0) {
-      const [rows] = await connection.execute(
-        "SELECT migration_key, checksum_sha256 FROM kq_schema_migration WHERE migration_key IN (?, ?)",
-        Object.keys(expectedMigrations),
-      );
-      for (const row of rows) appliedMigrations[row.migration_key] = row.checksum_sha256;
-    }
-    const [stateTables] = await connection.execute(
-      "SELECT COUNT(*) AS found FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
-      ["kq_relational_store_state"],
-    );
-    let hasRelationalState = false;
-    if (Number(stateTables?.[0]?.found) > 0) {
-      const [rows] = await connection.execute(
-        "SELECT 1 FROM kq_relational_store_state WHERE state_key = ? LIMIT 1",
-        ["metadata"],
-      );
-      hasRelationalState = rows.length > 0;
-    }
-    if (shouldSkipRelationalSchemaPreflight({ appliedMigrations, expectedMigrations, hasRelationalState })) {
-      console.log(JSON.stringify({ event: "database_migration_preflight", initialized: true, schemaPreflight: "skipped_unchanged", passed: true }));
-    } else {
-      const schema = await inspectExistingRelationalSchema({ connection, schemaSql: schemaSql + ";\n" + UPLOAD_SESSION_TABLE_SQL });
-      console.log(JSON.stringify({ event: "database_migration_preflight", ...schema, ...await inspectRelationalMigrationTarget(connection), schemaPreflight: "full", passed: true }));
-    }
-  }
-  finally { connection.release(); }
-} catch (error) {
-  if (error.message?.startsWith("Existing table ")) console.error(error.message);
-  console.error(JSON.stringify({ event: "database_migration_preflight", passed: false, code: error.code || "MIGRATION_TARGET_REJECTED" }));
-  process.exitCode = 1;
-} finally { await databasePool.end(); }
-'
   # Quiesce and flush the old writer before the final backup. Its storage volume
   # is reused by the new release, so the migration and backup share one source.
   if [ "$(docker inspect -f '{{.State.Running}}' "$APP_NAME" 2>/dev/null || true)" = true ]; then

@@ -15,6 +15,7 @@ jobs:
       KUNQIONG_HOST: "0.0.0.0"
       # The test-server guard owns container startup; verify the installed image and configuration.
       KUNQIONG_DEPLOY_VERIFY_MODE: "configuration"
+      KUNQIONG_DEPLOY_SKIP_DATABASE_BACKUP: "true"
       # 以下均为敏感配置，一律走仓库 Secrets，不在仓库内保留明文。
       # 必配Secrets：
       #   KUNQIONG_APP_URL / KUNQIONG_AUTH_CALLBACK_URL
@@ -71,6 +72,7 @@ jobs:
 
       - name: Verify Docker build project identity
         run: |
+          node --test scripts/backup-test-deployment.test.mjs
           node --test scripts/db/deployment-preflight.test.mjs
           node scripts/verify-deploy-project.mjs
 

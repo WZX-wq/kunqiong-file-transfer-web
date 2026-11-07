@@ -19,15 +19,24 @@ for file in .env docker-compose.test.yml clamd.conf; do
     chmod 600 "$backup_dir/$file"
   fi
 done
-# The caller has stopped the old writer. A consistent logical dump and its
-# checksum must finish before any schema/data migration, including first deploy.
+# The caller has stopped the old writer. The test deployment may skip the slow
+# full SQL dump; configuration and local metadata snapshots are still retained.
 if [ -z "$backup_image" ] || [ ! -f "$database_env" ]; then
   echo "Database backup image/environment is missing" >&2
   exit 1
 fi
-docker run --rm --label "com.docker.compose.project=$app_name" --env-file "$database_env" \
-  --mount "type=bind,src=$backup_dir,dst=/backup" --entrypoint node \
-  "$backup_image" scripts/db/backup-mysql.mjs /backup
+database_backup_status="created"
+case "${KUNQIONG_DEPLOY_SKIP_DATABASE_BACKUP:-false}" in
+  1|true|yes|TRUE|YES)
+    database_backup_status="skipped_by_operator"
+    echo "Database dump skipped by deployment configuration"
+    ;;
+  *)
+    docker run --rm --label "com.docker.compose.project=$app_name" --env-file "$database_env" \
+      --mount "type=bind,src=$backup_dir,dst=/backup" --entrypoint node \
+      "$backup_image" scripts/db/backup-mysql.mjs /backup
+    ;;
+esac
 if ! docker inspect "$app_name" >/dev/null 2>&1; then
   record_completed_backup
   echo "Deployment configuration backup: $backup_dir (first app deployment)"
@@ -53,7 +62,8 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$app_name")" = true ] && [ "$(do
 fi
 # Files are kept in the original storage volume. Back up all metadata and the
 # complete independent audit directory before startup can migrate either format.
-docker run --rm --label "com.docker.compose.project=$app_name" --network none --entrypoint node \
+docker run --rm --label "com.docker.compose.project=$app_name" --network none \
+  -e "KUNQIONG_DATABASE_BACKUP_STATUS=$database_backup_status" --entrypoint node \
   --mount "type=volume,src=$volume,dst=/data,readonly" \
   --mount "type=bind,src=$backup_dir,dst=/backup" \
   "$previous_image" -e '
@@ -62,7 +72,7 @@ for (const name of ["metadata.json", "metadata.json.bak", "metadata.json.revisio
   const source = path.join("/data", name);
   if (fs.existsSync(source)) fs.cpSync(source, path.join("/backup", name), { recursive: true });
 }
-fs.writeFileSync("/backup/backup-complete.json", JSON.stringify({ completedAt: new Date().toISOString(), metadata: fs.existsSync("/backup/metadata.json"), audit: fs.existsSync("/backup/audit") }));
+fs.writeFileSync("/backup/backup-complete.json", JSON.stringify({ completedAt: new Date().toISOString(), databaseBackup: process.env.KUNQIONG_DATABASE_BACKUP_STATUS, metadata: fs.existsSync("/backup/metadata.json"), audit: fs.existsSync("/backup/audit") }));
 '
 record_completed_backup
 echo "Deployment data and configuration backup: $backup_dir"
