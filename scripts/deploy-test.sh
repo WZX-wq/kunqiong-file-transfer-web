@@ -309,16 +309,16 @@ deploy_with_docker() {
   # same Compose project before RUN, so temporary build containers are
   # identified by the server guard. A final-image --label alone is too late.
   DOCKER_BUILDKIT=0 docker build --label "org.opencontainers.image.revision=$RELEASE_SHA" -t "$IMAGE_NAME" .
-  # Quiesce and flush the old writer before the final backup. Its storage volume
-  # is reused by the new release, so the migration and backup share one source.
-  if [ "$(docker inspect -f '{{.State.Running}}' "$APP_NAME" 2>/dev/null || true)" = true ]; then
-    docker stop --time 40 "$APP_NAME" >/dev/null
+  # The database is already provisioned on the test server. Check only the
+  # recorded schema/version markers; never run DDL, backfill rows, or create a
+  # deployment backup as part of an ordinary application release.
+  local schema_network network_args=()
+  schema_network="$(docker inspect -f '{{range $name, $config := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$APP_NAME" 2>/dev/null | head -n 1 || true)"
+  if [ -n "$schema_network" ]; then
+    network_args=(--network "$schema_network")
   fi
-  bash scripts/backup-test-deployment.sh "$APP_NAME" "$COMPOSE_DIR" "$RELEASE_SHA" "$IMAGE_NAME" "$ENV_FILE"
-  # Versioned SQL backfill runs once outside HTTP startup. Subsequent releases
-  # only check its migration key; they never reload all business data.
-  docker run --rm --label "com.docker.compose.project=$APP_NAME" --env-file "$ENV_FILE" \
-    --entrypoint node "$IMAGE_NAME" scripts/db/migrate-on-demand.mjs --apply
+  docker run --rm --label "com.docker.compose.project=$APP_NAME" "${network_args[@]}" --env-file "$ENV_FILE" \
+    --entrypoint node "$IMAGE_NAME" scripts/db/check-migration-state.mjs
 
   mkdir -p "$COMPOSE_DIR"
   write_compose_file "$COMPOSE_DIR/$COMPOSE_FILE"
@@ -459,7 +459,7 @@ deploy_with_process_manager() {
   cd "$DEPLOY_DIR"
   npm ci --omit=dev
   mkdir -p storage
-  node scripts/db/migrate-on-demand.mjs --apply
+  node scripts/db/check-migration-state.mjs
 
   if command -v pm2 >/dev/null 2>&1; then
     if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
